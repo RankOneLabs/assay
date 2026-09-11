@@ -56,9 +56,12 @@ passing a small test suite does not waive a missing acceptance requirement.
 ## Implemented boundaries
 
 The local consistency investigation and full offline acceptance pipeline are
-implemented, but a production coding-agent worker and paid experiment are not
-included. Callers supply a repository/task adapter and an optional ambiguity
-judge; the bundled Jig adapter accepts explicitly materialized prompt strings.
+implemented. The [single-file pilot adapter](consistency-pilot.md) now renders
+repository/task inputs and extracts structured source through Jig, with fresh
+attempt state and explicit authorization/billing limits. Provider factories and
+optional ambiguity judges remain caller-supplied. A repository-editing coding
+agent and paid experiment are not included; the generic Jig adapter still accepts
+explicitly materialized prompt strings.
 Preparation stages and component-level cost aggregation fail explicitly.
 These are documented integration boundaries, not claims of full experimental
 or producer-attestation support.

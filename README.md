@@ -129,8 +129,11 @@ an exclusion, an injected failure, ordinal reporting, and offline export.
 Its synthetic worker tests the machinery; its results are not experimental
 evidence about a real coding agent.
 
-Production workers and ambiguity judges are caller-supplied adapters. The
-included `JigWorker` accepts already-materialized prompt strings; it does not
+The [single-file pilot workflow](docs/consistency-pilot.md) adds a
+`ConsistencyWorker` that renders repository/task inputs, calls Jig with isolated
+attempt state, and extracts structured source output. Provider factories and any
+ambiguity judges remain caller-supplied. The generic `JigWorker` accepts
+already-materialized prompt strings; it does not
 silently stringify repository JSON. A coding-agent worker for the consistency
 investigation must explicitly bind its repository/task input rendering and
 output-source extraction in its configuration. Jig resources must expose stable
@@ -138,4 +141,5 @@ configuration, and system prompts must be static before authorization. Jig's
 unqualified default cost totals are retained in traces but marked unavailable
 for spend reporting. Authorized preparation stages and component-level PAA cost
 aggregation are not supported; they are rejected explicitly. No paid or
-production-agent experiment is included in acceptance testing.
+production-agent experiment is included in acceptance testing. The pilot's tests
+exercise the real Jig runner with a fake provider; they do not run generated code.
