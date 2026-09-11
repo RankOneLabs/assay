@@ -15,6 +15,7 @@
           "type": "integer"
         },
         "bootstrap_samples": {
+          "maximum": 100000,
           "minimum": 100,
           "title": "Bootstrap Samples",
           "type": "integer"

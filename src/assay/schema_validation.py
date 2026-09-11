@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from jsonschema import FormatChecker
+from jsonschema import Draft7Validator, FormatChecker
 from jsonschema.validators import validator_for
 from referencing import Registry, Resource
 from referencing.exceptions import NoSuchResource
@@ -45,7 +45,7 @@ def schema_validators(store: ObjectStore, snapshot: StudySnapshot) -> dict[str, 
         schema = json.loads(data)
         if canonical_json(schema) != data:
             raise ValueError(f"noncanonical JSON at {ref}")
-        validator_for(schema).check_schema(schema)
+        validator_for(schema, default=Draft7Validator).check_schema(schema)
         schema_id = schema.get("$id")
         if not isinstance(schema_id, str):
             raise ValueError(f"schema at {ref} requires an $id")
@@ -56,6 +56,8 @@ def schema_validators(store: ObjectStore, snapshot: StudySnapshot) -> dict[str, 
         registry = registry.with_resource(schema_id, resource).with_resource(ref, resource)
         schemas[ref] = schema
     return {
-        ref: validator_for(schema)(schema, registry=registry, format_checker=FormatChecker())
+        ref: validator_for(schema, default=Draft7Validator)(
+            schema, registry=registry, format_checker=FormatChecker()
+        )
         for ref, schema in schemas.items()
     }

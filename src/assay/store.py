@@ -102,7 +102,7 @@ class _VerificationSession(ObjectStore):
         self.byte_limit = byte_limit
         self.cached_bytes = 0
         self.cache: OrderedDict[str, bytes] = OrderedDict()
-        self.edges: dict[str, frozenset[str]] = {}
+        self.edges: dict[tuple[str, str], frozenset[tuple[str, str]]] = {}
 
     def read_bytes(self, ref: ObjectRef | str) -> bytes:
         key = str(ref)

@@ -19,6 +19,8 @@ from assay.models import (
     StudySnapshot,
 )
 from assay.planning import validate_plan_snapshot
+from assay.references import object_edges, walk_closure
+from assay.references import reference_closure as reference_closure
 from assay.schema_validation import SUPPORTED_CONTRACTS as SUPPORTED_CONTRACTS
 from assay.schema_validation import schema_validators
 from assay.store import ObjectRef, ObjectStore, verification_session
@@ -49,46 +51,13 @@ def validate_schema_document(
     schema_validators(store, snapshot)[schema_ref].validate(document)
 
 
-def _references(value: Any) -> set[str]:
-    if isinstance(value, str):
-        if value.startswith("sha256:"):
-            ObjectRef(value)
-            return {value}
-        return set()
-    if isinstance(value, dict):
-        return set().union(*(_references(item) for item in value.values()))
-    if isinstance(value, (list, tuple)):
-        return set().union(*(_references(item) for item in value))
-    return set()
-
-
-def reference_closure(store: ObjectStore, roots: tuple[str, ...]) -> set[str]:
-    """Read and hash-check every transitive object; non-JSON artifacts are valid leaves."""
-    session = verification_session(store)
-    pending = list(roots)
-    seen: set[str] = set()
-    while pending:
-        ref = pending.pop()
-        if ref in seen:
-            continue
-        seen.add(ref)
-        if ref not in session.edges:
-            data = session.read_bytes(ref)
-            try:
-                value = json.loads(data)
-            except (ValueError, UnicodeDecodeError):
-                session.edges[ref] = frozenset()
-            else:
-                session.edges[ref] = frozenset(_references(value))
-        pending.extend(session.edges[ref] - seen)
-    return seen
-
-
 def verify_snapshot(store: ObjectStore, snapshot: StudySnapshot) -> None:
     """Raise for incomplete materialization or task/evaluator/schema mismatches."""
     store = verification_session(store)
     snapshot = StudySnapshot.model_validate(snapshot.model_dump(mode="json"))
-    reference_closure(store, tuple(_references(snapshot.model_dump(mode="json"))))
+    walk_closure(store, object_edges(snapshot.model_dump(mode="json")))
+    for realization in snapshot.realizations:
+        _json(store, realization.artifact_ref)
     task = _json(store, snapshot.paa_task_ref)
     validate_schema_document(store, snapshot, snapshot.task_schema_ref, task)
     scopes = task.get("scopes")
@@ -152,6 +121,9 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
                 raise ValueError("execution coordinate does not match manifest and plan")
             if outcome.run_id != manifest.run_id or outcome.plan_ref != manifest.plan_ref:
                 raise ValueError("execution belongs to a different run or plan")
+            for artifact in (outcome.input_ref, outcome.output_ref, outcome.trace_ref):
+                if artifact is not None:
+                    _json(store, artifact)
             outcomes[key] = outcome
         except Exception as error:
             failures.append(VerificationFailure("execution_record", f"{key}: {error}"))
@@ -172,6 +144,8 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
                     raise ValueError("failure coordinate differs from manifest and plan")
                 if failure.run_id != manifest.run_id or failure.plan_ref != manifest.plan_ref:
                     raise ValueError("evaluation failure belongs to another run or plan")
+                if failure.trace_ref is not None:
+                    _json(store, failure.trace_ref)
                 if outcome.status == "failed" and failure.error_type != "ExecutionUnavailable":
                     raise ValueError("failed worker must produce an explicit unavailable skip")
                 if outcome.status == "succeeded":
@@ -226,12 +200,34 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
                 raise ValueError("evidence payload coordinates differ from manifest and plan")
             if manifest.execution_records[coordinate.cell_id] not in record["source_references"]:
                 raise ValueError("evidence omits its execution source")
+            evidence_sources = {str(ObjectRef(ref)) for ref in record["source_references"]}
+            details = record["payload"].get("detail_refs")
+            if not isinstance(details, list):
+                raise ValueError("evidence detail_refs must be an array of object references")
+            detail_refs = {str(ObjectRef(ref)) for ref in details}
+            required_sources = {
+                manifest.execution_records[coordinate.cell_id],
+                snapshot.paa_task_ref,
+                expected_worker["configuration_ref"],
+                declaration.basis_ref,
+                *detail_refs,
+            }
+            if not required_sources <= evidence_sources:
+                raise ValueError(
+                    "evidence omits authoritative task/configuration/basis/detail sources"
+                )
+            for detail_ref in detail_refs:
+                _json(store, detail_ref)
             if record["producer"] != {"id": "assay", "version": plan.assay_version}:
                 raise ValueError("evidence producer differs from plan")
             _check_timestamps(record)
         except Exception as error:
             failures.append(VerificationFailure("evaluation_record", f"{key}: {error}"))
-    if set(manifest.operating_records) != expected_operating:
+    missing_operating = expected_operating - manifest.operating_records.keys()
+    if (
+        manifest.operating_records.keys() - expected_operating
+        or missing_operating - set(manifest.missing_coordinates)
+    ):
         failures.append(
             VerificationFailure("operating_coordinates", "attempt accounting is incomplete")
         )
@@ -239,6 +235,8 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
         try:
             record = _json(store, ref)
             validators[snapshot.operating_schema_ref].validate(record)
+            for source in record["source_references"]:
+                ObjectRef(source)
             if "components" in record:
                 raise ValueError("component prices are unsupported; provide complete attempt price")
             role, _, coordinate_id = key.partition(":")
@@ -305,7 +303,11 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
     # explicit unavailable terminal record; omissions cannot masquerade as skips.
     required_evaluation = set(evaluations)
     missing = tuple(
-        sorted((cells.keys() - actual_execution) | (required_evaluation - actual_evaluation))
+        sorted(
+            (cells.keys() - actual_execution)
+            | (required_evaluation - actual_evaluation)
+            | missing_operating
+        )
     )
     if manifest.missing_coordinates != missing:
         failures.append(VerificationFailure("missing_coordinates", "missing list is inconsistent"))

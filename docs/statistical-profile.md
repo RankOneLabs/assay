@@ -24,6 +24,11 @@ Each bootstrap replicate consumes exactly `n` accepted indices. Both domains
 generate `bootstrap_samples` replicates. This definition is independent of
 NumPy, host byte order, vectorization, and batching.
 
+`bootstrap_samples` must be an integer from 100 through 100,000 inclusive;
+the wire schema and both public statistical entry points enforce this bound.
+This limits replicate allocation, not total verification cost: CPU work still
+scales with subject count, candidate count, and the number of reports verified.
+
 ## Arithmetic
 
 Convert each finite binary64 delta to its exact integer ratio. Their denominators

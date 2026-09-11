@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -15,6 +16,9 @@ from pydantic import (
     model_validator,
 )
 
+from assay.immutable import freeze
+from assay.statistical_limits import MAX_BOOTSTRAP_SAMPLES
+
 Sha256Ref = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 Identifier = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
 NonEmpty = Annotated[str, StringConstraints(min_length=1)]
@@ -22,6 +26,22 @@ NonEmpty = Annotated[str, StringConstraints(min_length=1)]
 
 class WireModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def freeze_payloads(self) -> Self:
+        return self._freeze_payloads()
+
+    def _freeze_payloads(self) -> Self:
+        for name in type(self).model_fields:
+            object.__setattr__(self, name, freeze(getattr(self, name)))
+        return self
+
+    def model_copy(
+        self, *, update: Mapping[str, Any] | None = None, deep: bool = False
+    ) -> Self:
+        # Preserve Pydantic's unvalidated-copy semantics, but never introduce
+        # mutable JSON containers through a copy's updates.
+        return super().model_copy(update=update, deep=deep)._freeze_payloads()
 
 
 class Subject(WireModel):
@@ -299,7 +319,7 @@ class RunManifest(WireModel):
 class StatisticalProfile(WireModel):
     name: Literal["paired-v2"] = "paired-v2"
     seed: int = Field(ge=0, strict=True)
-    bootstrap_samples: int = Field(ge=100, strict=True)
+    bootstrap_samples: int = Field(ge=100, le=MAX_BOOTSTRAP_SAMPLES, strict=True)
     alpha: float = Field(default=0.05, ge=0.05, le=0.05)
     min_subjects: Literal[10] = 10
 

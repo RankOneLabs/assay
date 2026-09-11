@@ -9,6 +9,8 @@ from fractions import Fraction
 from hashlib import sha256
 from statistics import fmean, pstdev
 
+from assay.statistical_limits import validate_sampling
+
 
 @dataclass(frozen=True, slots=True)
 class PairedComparison:
@@ -75,8 +77,9 @@ def bootstrap_paired(
     deltas: list[float], *, seed: int, samples: int
 ) -> tuple[tuple[float, float], float]:
     """paired-v2 exact resampling arithmetic; see docs/statistical-profile.md."""
-    if not deltas or samples < 100 or seed < 0 or not all(math.isfinite(x) for x in deltas):
-        raise ValueError("finite nonempty deltas, samples>=100 and seed>=0 required")
+    validate_sampling(seed=seed, samples=samples)
+    if not deltas or not all(math.isfinite(x) for x in deltas):
+        raise ValueError("finite nonempty deltas required")
     values, denominator = _integer_values(deltas)
     n, total = len(values), sum(values)
     observed_stream = _IndexStream(seed, b"observed")
@@ -110,8 +113,9 @@ def compare_scalar(
     alpha: float = 0.05,
 ) -> tuple[PairedComparison, ...]:
     """Aggregate evaluator repeats, then worker repeats, then pair subjects."""
-    if alpha != 0.05 or bootstrap_samples < 100 or seed < 0:
-        raise ValueError("paired-v2 requires alpha=.05, samples>=100 and seed>=0")
+    validate_sampling(seed=seed, samples=bootstrap_samples)
+    if alpha != 0.05:
+        raise ValueError("paired-v2 requires alpha=.05")
     if reference in candidates or len(candidates) != len(set(candidates)):
         raise ValueError("candidate family must be unique and exclude reference")
     evaluator_groups: dict[tuple[str, str, int], list[float]] = defaultdict(list)

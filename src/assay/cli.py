@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from assay.store import ObjectStore
+from assay.store import ObjectIntegrityError, ObjectStore
 from assay.verify import export_bundle, verify_bundle
 
 
@@ -20,7 +20,7 @@ def main() -> int:
     if args.command == "export":
         try:
             export_bundle(ObjectStore(args.store), args.root_ref, args.destination)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, ObjectIntegrityError) as exc:
             print(f"export_failed: {exc}")
             return 1
         return 0

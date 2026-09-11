@@ -112,6 +112,7 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
     spread: list[Any] = []
     seen_subject_arms: set[tuple[str, str]] = set()
     operating_refs: list[str] = []
+    compatibility: bytes | None = None
     numeric = config.metric == "scalar" or config.ordinal_mapping is not None
     for manifest_ref in sorted(config.manifest_refs):
         problems = verify_manifest(store, manifest_ref)
@@ -122,6 +123,25 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
             raise ReportError("reports require complete manifests")
         plan = ExecutionPlan.model_validate(_read(store, manifest.plan_ref))
         snapshot = StudySnapshot.model_validate(_read(store, plan.snapshot_ref))
+        # Populations, exclusions and cost estimates can differ across shards;
+        # task semantics and authorized execution settings cannot.
+        fingerprint = canonical_json({
+            "task_ref": snapshot.paa_task_ref,
+            "scope": snapshot.paa_scope,
+            "task_schema_ref": snapshot.task_schema_ref,
+            "evidence_schema_ref": snapshot.evidence_schema_ref,
+            "operating_schema_ref": snapshot.operating_schema_ref,
+            "pricing_catalog_ref": snapshot.pricing_catalog_ref,
+            "pricing_assumptions": snapshot.pricing_assumptions,
+            "worker_repeats": plan.worker_repeats,
+            "preparation_mode": plan.preparation_mode,
+            "concurrency": plan.concurrency,
+            "jig_revision": plan.jig_revision,
+            "assay_version": plan.assay_version,
+        })
+        if compatibility is not None and fingerprint != compatibility:
+            raise ReportError("run compatibility drift across selected manifests")
+        compatibility = fingerprint
         evaluator = next((e for e in snapshot.evaluators if e.id == config.evaluator_id), None)
         if evaluator is None or not arms <= {a.id for a in snapshot.arms}:
             raise ReportError("report evaluator or arm absent from snapshot")

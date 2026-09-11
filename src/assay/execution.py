@@ -215,6 +215,7 @@ async def execute_plan(
     execution_records: dict[str, str] = {}
     evaluation_records: dict[str, str] = {}
     operating_records: dict[str, str] = {}
+    expected_operating: set[str] = set()
     outputs: dict[str, str] = {}
     fatal: Exception | None = None
 
@@ -336,6 +337,7 @@ async def execute_plan(
         )
         attempt_ref = str(store.publish_json(outcome.model_dump(mode="json")))
         execution_records[cell.id] = attempt_ref
+        expected_operating.add(f"worker:{cell.id}")
         record_operating(
             key=f"worker:{cell.id}",
             attempt_ref=attempt_ref,
@@ -451,6 +453,7 @@ async def execute_plan(
         attempt_ref = str(store.publish_json(record))
         evaluation_records[coordinate.id] = attempt_ref
         if attempted:
+            expected_operating.add(f"evaluator:{coordinate.id}")
             record_operating(
                 key=f"evaluator:{coordinate.id}",
                 attempt_ref=attempt_ref,
@@ -491,7 +494,10 @@ async def execute_plan(
     if fatal is None:
         await bounded(plan.evaluations, run_evaluation)
     expected = set(cells) | {item.id for item in plan.evaluations}
-    missing = tuple(sorted(expected - execution_records.keys() - evaluation_records.keys()))
+    missing = tuple(sorted(
+        (expected - execution_records.keys() - evaluation_records.keys())
+        | (expected_operating - operating_records.keys())
+    ))
     manifest = RunManifest(
         run_id=run_id,
         plan_ref=authorization,

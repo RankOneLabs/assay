@@ -22,7 +22,7 @@ the reviewed failures before any pull request is marked ready.
    reject duplicates and subject drift, aggregate evaluator then worker repeats,
    and report missingness before paired effects. Support scalar, ordinal and
    classification outcomes with deterministic subject-level inference, fixed
-   paired-v1 thresholds, and an explicit Holm family. Persist report artifacts
+   paired-v2 thresholds, and an explicit Holm family. Persist report artifacts
    so offline verification can recompute them.
 5. Integration: supply the local consistency investigation outside the core,
    exercise both repeat axes and failures/exclusions without paid calls, and

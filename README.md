@@ -10,7 +10,8 @@ in the intentionally untracked `comms/` directory.
 
 ## Install and check
 
-Python 3.12+ and Git are required. Jig and the development PAA schema corpus are
+Python 3.12+, Git, and uv are required. Install uv with `python -m pip install uv`
+before running the commands below. Jig and the development PAA schema corpus are
 pinned to immutable upstream commits over public HTTPS; sibling checkouts and
 provider credentials are not required.
 
@@ -66,6 +67,34 @@ missing objects, and recomputes reports. It proves integrity relative to the
 supplied plan, not producer identity or that omitted real-world attempts never
 happened. A working store can hold multiple roots; export before strict bundle
 verification.
+
+Object closure follows the declared reference fields of each governed artifact,
+not strings that happen to look like hashes. Extension JSON (worker configuration,
+interventions, input/output/trace data, evaluator details, and pricing data) can
+declare additional dependencies using a reserved `assay_object_refs` array of
+`sha256:` addresses at any object level. Each referenced extension object follows
+the same convention; binary artifacts are leaves. Free-text labels, categories,
+schema examples/defaults, and descriptions are not links. See
+[object references](docs/object-references.md) for the traversal contract.
+
+Reports can combine population shards and complementary exclusions, but require
+matching task/scope/contracts, selected arm/evaluator declarations, worker repeat
+count, concurrency, preparation mode, Jig/Assay versions, and pricing assumptions
+and catalog. Different task revisions cannot be pooled merely because the arm
+and evaluator names match.
+
+An incomplete manifest lists missing terminal coordinates and missing accounting
+coordinates (`worker:<cell>` or `evaluator:<evaluation>`). Accounting is expected
+for each recorded worker and each recorded evaluation of a successful worker;
+unavailable evaluations after failed workers do not claim an evaluator attempt.
+Consistent partial progress produces `incomplete_run`, remains inspectable through
+`RunFailed`, and cannot be exported or used to build a report as a complete run.
+
+Governed models own recursively read-only JSON containers, including copied model
+updates. `model_dump(mode="json")` returns a detached, mutable serialization for
+building a new declaration. As with Pydantic's frozen models, this is an API
+invariant, not a security boundary against hostile Python extensions deliberately
+bypassing the mutation guards.
 
 ## Reproducibility and schema maintenance
 
