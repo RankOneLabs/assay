@@ -148,3 +148,10 @@ for spend reporting. Authorized preparation stages and component-level PAA cost
 aggregation are not supported; they are rejected explicitly. No paid or
 production-agent experiment is included in acceptance testing. The pilot's tests
 exercise the real Jig runner with a fake provider; they do not run generated code.
+
+The [full DRY experiment](docs/dry-experiment.md) adds a 12-subject balanced
+population, a declared counterbalanced schedule, and separate abstraction and
+finite-case correctness reports. Generated code is evaluated only inside a
+digest-pinned, resource-bounded Docker container with no network or host mounts.
+The live experiment still requires review, exact-plan approval, and an explicit
+paid-run decision.
