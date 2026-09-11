@@ -35,9 +35,10 @@ Supply a `ClientFactory` from `assay.adapters.consistency`:
 
 This is a trusted extension boundary. Assay can check configuration equality, not
 prove that an arbitrary client tells the truth or that a mutable remote alias is
-reproducible. No provider/model has been selected or qualified by this change.
-The existing Jig provider clients need this small describing/factory wrapper;
-they cannot be passed directly as factories.
+reproducible. The [OpenRouter smoke integration](openrouter-smoke.md) supplies a
+describing/factory wrapper for initial Qwen runs. It is tested with intercepted
+HTTP, not yet qualified with a live provider. Other Jig provider clients still
+need their own wrapper; they cannot be passed directly as factories.
 
 `PilotSettings` binds the static system prompt, inference settings, maximum prompt
 bytes, maximum output tokens, attempt/request counts, timeouts and billing policy.

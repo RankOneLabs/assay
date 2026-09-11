@@ -85,11 +85,27 @@ class PilotSettings(WireModel):
         return self
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class CompletionNotSent(WorkerFailure):
+    """Trusted client assertion: this completion failed before any HTTP send.
+
+    Ordinary failures and transport errors must remain WorkerFailure, even when
+    an exception suggests no charge. This marker is internal, not a wire field.
+    """
+
+
 class DescribedClient(LLMClient):
     """configuration includes model, endpoint, revision, billing and retry policy."""
 
     def configuration(self) -> dict[str, Any]:
         raise NotImplementedError
+
+    async def complete_result(self, params: CompletionParams) -> LLMResponse | WorkerFailure:
+        """Adapt exception-based providers; governed clients may return failures directly."""
+        try:
+            return await self.complete(params)
+        except Exception as error:
+            return WorkerFailure(type(error).__name__, str(error))
 
 
 class ClientFactory(Protocol):
@@ -227,6 +243,7 @@ class _BoundedClient(LLMClient):
         self._model = model
         self.settings = admission.settings
         self.requests = 0
+        self.not_sent = 0
         self.usages: list[dict[str, Any]] = []
         self.response_models: list[str] = []
         self.uncertain = False
@@ -243,7 +260,13 @@ class _BoundedClient(LLMClient):
         )
         try:
             async with asyncio.timeout(self.settings.request_timeout_s):
-                response = await self.inner.complete(params)
+                response = await self.inner.complete_result(params)
+            if isinstance(response, WorkerFailure):
+                if isinstance(response, CompletionNotSent):
+                    self.not_sent += 1
+                else:
+                    self.uncertain = self.admission.halted = True
+                return response
             usage = response.usage
             for value in (usage.input_tokens, usage.output_tokens):
                 if type(value) is not int or not 0 <= value <= 2**53 - 1:
@@ -279,13 +302,21 @@ class _BoundedClient(LLMClient):
 
     def accounting(self) -> Accounting:
         usage = {
-            "llm_calls": self.requests,
+            "llm_calls": self.requests - self.not_sent,
             "input_tokens": sum(item["input_tokens"] for item in self.usages),
             "output_tokens": sum(item["output_tokens"] for item in self.usages),
         }
         if self.uncertain:
             # Do not present partial token totals as complete attempt usage.
-            return Accounting(usage={"llm_calls": self.requests})
+            return Accounting(usage={"llm_calls": self.requests - self.not_sent})
+        if self.not_sent and self.not_sent == self.requests:
+            return Accounting(
+                usage=usage,
+                amount=0,
+                currency="USD",
+                coverage="measured",
+                basis="client-confirmed-no-http-send",
+            )
         costs = [item["cost"] for item in self.usages]
         if costs and all(cost is not None for cost in costs):
             return Accounting(
