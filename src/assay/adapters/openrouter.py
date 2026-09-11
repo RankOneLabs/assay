@@ -10,16 +10,41 @@ from importlib.metadata import version
 from typing import Any
 
 import httpx
-from jig.core.types import CompletionParams, LLMResponse
+from jig.core.types import CompletionParams, LLMResponse, ToolDefinition
 from jig.llm.openrouter import OpenRouterClient
 from pydantic import Field
 
-from assay.adapters.consistency import DescribedClient
+from assay.adapters.consistency import CompletionNotSent, DescribedClient, SourceOutput
 from assay.canonical import canonical_json
 from assay.execution import WorkerFailure
 from assay.models import WireModel
 
 ENDPOINT = "https://openrouter.ai/api/v1"
+
+
+def source_output_tool() -> ToolDefinition:
+    """Fresh copy of the pinned Jig runner's source-only submission contract."""
+    return ToolDefinition(
+        name="submit_output",
+        description=(
+            "Submit your final answer. Call this exactly once when you have "
+            "your result — do not produce a free-form text response as your "
+            "final answer."
+        ),
+        parameters=SourceOutput.model_json_schema(),
+        strict=True,
+    )
+
+
+def _source_tools_match(tools: list[ToolDefinition] | None) -> bool:
+    if tools is None or len(tools) != 1 or not isinstance(tools[0], ToolDefinition):
+        return False
+    try:
+        return canonical_json(dataclasses.asdict(tools[0])) == canonical_json(
+            dataclasses.asdict(source_output_tool())
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 class OpenRouterSettings(WireModel):
@@ -30,12 +55,14 @@ class OpenRouterSettings(WireModel):
     provider_name: str = Field(min_length=1, pattern=r"^\S(?:.*\S)?$")
     max_prompt_price: float = Field(gt=0, le=100, allow_inf_nan=False)
     max_completion_price: float = Field(gt=0, le=1000, allow_inf_nan=False)
-    max_request_bytes: int = Field(default=65_536, ge=1, le=1_000_000, strict=True)
+    max_request_body_bytes: int = Field(default=65_536, ge=1, le=1_000_000, strict=True)
     max_output_tokens: int = Field(default=2048, ge=1, le=32_768, strict=True)
     timeout_s: float = Field(default=30, gt=0, le=600, allow_inf_nan=False)
 
     def routing(self) -> dict[str, Any]:
         return {
+            "data_collection": "deny",
+            "zdr": True,
             "only": [self.provider],
             "order": [self.provider],
             "allow_fallbacks": False,
@@ -69,12 +96,13 @@ class OpenRouterFactory:
         return {
             "model": self.settings.model,
             "endpoint": ENDPOINT,
-            "revision": "assay-openrouter-source-v1",
+            "revision": "assay-openrouter-source-v2",
             "billing": "paid",
             "hidden_retries": 0,
             "settings": self.settings.model_dump(mode="json"),
             "routing": self.settings.routing(),
             "tool_choice": "submit_output",
+            "tool_definition": dataclasses.asdict(source_output_tool()),
             "transforms": [],
             "plugins": [],
             "stream": False,
@@ -159,9 +187,9 @@ class _PilotClient(OpenRouterClient, DescribedClient):
 
     async def _check_request(self, request: httpx.Request) -> None:
         if request.method != "POST" or str(request.url) != ENDPOINT + "/chat/completions":
-            self._failure = WorkerFailure("InvalidRequest", "unexpected OpenRouter endpoint")
-        elif len(request.content) > self.settings.max_request_bytes:
-            self._failure = WorkerFailure("InvalidRequest", "complete request exceeds byte limit")
+            self._failure = CompletionNotSent("InvalidRequest", "unexpected OpenRouter endpoint")
+        elif len(request.content) > self.settings.max_request_body_bytes:
+            self._failure = CompletionNotSent("InvalidRequest", "request body exceeds byte limit")
         if self._failure is not None:
             raise _RequestRejected(self._failure)
 
@@ -184,7 +212,7 @@ class _PilotClient(OpenRouterClient, DescribedClient):
 
     async def complete_result(self, params: CompletionParams) -> LLMResponse | WorkerFailure:
         if self._closed:
-            return WorkerFailure("ClientClosed", "OpenRouter client is closed")
+            return CompletionNotSent("ClientClosed", "OpenRouter client is closed")
         if self._failure is not None:
             return self._failure
         if (
@@ -193,9 +221,9 @@ class _PilotClient(OpenRouterClient, DescribedClient):
             or params.response_format is not None
             or type(params.max_tokens) is not int
             or not 1 <= params.max_tokens <= self.settings.max_output_tokens
-            or [tool.name for tool in params.tools or []] != ["submit_output"]
+            or not _source_tools_match(params.tools)
         ):
-            return WorkerFailure("InvalidRequest", "unsupported source-pilot request settings")
+            return CompletionNotSent("InvalidRequest", "unsupported source-pilot request settings")
         try:
             return await super().complete(params)
         except Exception as error:

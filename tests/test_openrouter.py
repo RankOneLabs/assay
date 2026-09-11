@@ -11,10 +11,10 @@ from unittest.mock import patch
 import httpx
 import paa_contracts
 import pytest
-from jig.core.types import CompletionParams, LLMResponse, Message, Role, ToolDefinition
+from jig.core.types import CompletionParams, LLMResponse, Message, Role
 
-from assay.adapters.consistency import ConsistencyWorker, SourceOutput
-from assay.adapters.openrouter import ENDPOINT, QWEN_NOVITA, OpenRouterFactory
+from assay.adapters.consistency import CompletionNotSent, ConsistencyWorker
+from assay.adapters.openrouter import ENDPOINT, QWEN_NOVITA, OpenRouterFactory, source_output_tool
 from assay.canonical import canonical_json
 from assay.execution import WorkerFailure, WorkerSuccess
 from assay.investigations.consistency import TASKS
@@ -66,7 +66,7 @@ def params() -> CompletionParams:
     return CompletionParams(
         messages=[Message(Role.USER, "write a function")],
         system="test system",
-        tools=[ToolDefinition("submit_output", "Submit source", SourceOutput.model_json_schema())],
+        tools=[source_output_tool()],
         temperature=0,
         max_tokens=2048,
     )
@@ -166,6 +166,8 @@ async def test_real_sdk_request_routing_limits_usage_and_cleanup(wire: Wire) -> 
         assert request.headers["authorization"] == "Bearer test-secret-not-a-real-key"
         body = json.loads(request.content)
         assert body["provider"] == QWEN_NOVITA.routing()
+        assert body["provider"]["data_collection"] == "deny"
+        assert body["provider"]["zdr"] is True
         assert body["model"] == QWEN_NOVITA.model
         assert body["max_tokens"] == 2048 and body["temperature"] == 0
         assert body["tool_choice"] == {"type": "function", "function": {"name": "submit_output"}}
@@ -260,9 +262,9 @@ async def test_completion_overrides_fail_before_http(wire: Wire, update: dict[st
 
 
 @pytest.mark.asyncio
-async def test_full_request_byte_bound_includes_system_schema_and_history(wire: Wire) -> None:
+async def test_request_body_byte_bound_includes_system_schema_and_history(wire: Wire) -> None:
     owner = OpenRouterFactory(
-        QWEN_NOVITA.model_copy(update={"max_request_bytes": 1000}), "test-key"
+        QWEN_NOVITA.model_copy(update={"max_request_body_bytes": 1000}), "test-key"
     )
     client = owner.create()
     try:
@@ -442,3 +444,180 @@ async def test_runtime_sdk_version_drift_fails_before_provider_calls(
             allow_paid=True,
         )
     assert isinstance(result, PilotFailed) and not wire.requests
+
+
+def test_source_tool_matches_pinned_jig_and_configuration_is_detached(wire: Wire) -> None:
+    from jig.core.runner import _build_submit_output_tool
+
+    from assay.adapters.consistency import SourceOutput
+
+    assert source_output_tool() == _build_submit_output_tool(SourceOutput)
+    owner = factory()
+    changed = owner.configuration()
+    changed["tool_definition"]["parameters"].clear()
+    changed["routing"]["zdr"] = False
+    assert owner.configuration()["tool_definition"] == dataclasses.asdict(source_output_tool())
+    assert owner.configuration()["routing"]["zdr"] is True
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"parameters": {}},
+        {"parameters": {"type": "object", "properties": {"command": {"type": "string"}}}},
+        {"description": "Run a command"},
+        {"strict": False},
+        {"strict": 1},
+        {"identity_fields": ["source"]},
+    ],
+)
+@pytest.mark.asyncio
+async def test_changed_submission_definition_is_rejected_before_send(
+    wire: Wire, update: dict[str, Any]
+) -> None:
+    client = factory().create()
+    try:
+        tool = dataclasses.replace(source_output_tool(), **update)
+        result = await client.complete_result(dataclasses.replace(params(), tools=[tool]))
+        assert isinstance(result, CompletionNotSent)
+    finally:
+        await client.aclose()
+    assert not wire.requests
+
+
+@pytest.mark.parametrize("privacy", [{"zdr": False}, {"data_collection": "allow"}])
+@pytest.mark.asyncio
+async def test_privacy_overrides_are_rejected(wire: Wire, privacy: dict[str, Any]) -> None:
+    client = factory().create()
+    try:
+        result = await client.complete_result(
+            dataclasses.replace(params(), provider_params={"extra_body": {"provider": privacy}})
+        )
+        assert isinstance(result, CompletionNotSent)
+    finally:
+        await client.aclose()
+    assert not wire.requests
+
+
+@pytest.mark.asyncio
+async def test_no_privacy_eligible_route_fails_without_fallback(wire: Wire) -> None:
+    wire.status = 404
+    wire.payload = {"error": {"message": "No endpoints satisfy privacy requirements"}}
+    worker = ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True)
+    first = await worker.run(input_value=realization(), arm_id="clean")
+    second = await worker.run(input_value=realization(), arm_id="clean")
+    assert isinstance(first, WorkerFailure) and isinstance(second, WorkerFailure)
+    assert second.error_type == "BudgetHalted"
+    assert len(wire.requests) == 1
+    routing = json.loads(wire.requests[0].content)["provider"]
+    assert routing["only"] == ["novita/fp8"] and routing["allow_fallbacks"] is False
+    assert routing["data_collection"] == "deny" and routing["zdr"] is True
+
+
+@pytest.mark.parametrize("rejection", ["parameters", "body"])
+@pytest.mark.asyncio
+async def test_local_rejection_keeps_ledger_open_and_reservation_consumed(
+    wire: Wire, rejection: str
+) -> None:
+    from assay.adapters.consistency import _Admission, _BoundedClient
+
+    policy = qwen_smoke_settings().model_copy(update={"max_total_requests": 2})
+    admission = _Admission(policy)
+    client = factory().create()
+    bounded = _BoundedClient(client, admission, QWEN_NOVITA.model)
+    bad = dataclasses.replace(
+        params(),
+        **({"reasoning": True} if rejection == "parameters" else {"system": "x" * 65_536}),
+    )
+    try:
+        result = await bounded.complete_result(bad)
+        assert isinstance(result, CompletionNotSent)
+        assert not admission.halted and not bounded.uncertain and not wire.requests
+        assert admission.requests == 1
+        assert bounded.accounting().amount == 0
+        assert bounded.accounting().coverage == "measured"
+        assert bounded.accounting().usage == {"llm_calls": 0, "input_tokens": 0, "output_tokens": 0}
+    finally:
+        await client.aclose()
+    later = factory().create()
+    next_attempt = _BoundedClient(later, admission, QWEN_NOVITA.model)
+    try:
+        assert isinstance(await next_attempt.complete_result(params()), LLMResponse)
+        refused = await next_attempt.complete_result(params())
+        assert isinstance(refused, WorkerFailure) and refused.error_type == "RequestLimit"
+        assert admission.requests == 2 and len(wire.requests) == 1
+    finally:
+        await later.aclose()
+
+
+@pytest.mark.asyncio
+async def test_body_limit_boundary_excludes_headers(wire: Wire) -> None:
+    client = factory().create()
+    try:
+        await client.complete(params())
+    finally:
+        await client.aclose()
+    body_size = len(wire.requests[0].content)
+    for limit in (body_size, body_size - 1):
+        client = OpenRouterFactory(
+            QWEN_NOVITA.model_copy(update={"max_request_body_bytes": limit}), "test-key"
+        ).create()
+        try:
+            result = await client.complete_result(params())
+            assert isinstance(result, LLMResponse if limit == body_size else CompletionNotSent)
+        finally:
+            await client.aclose()
+    assert len(wire.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_preserves_known_zero_for_local_rejection(wire: Wire) -> None:
+    owner = OpenRouterFactory(
+        QWEN_NOVITA.model_copy(update={"max_request_body_bytes": 1}), "test-key"
+    )
+    worker = ConsistencyWorker(owner, qwen_smoke_settings(), allow_paid=True)
+    for _ in range(2):
+        result = await worker.run(input_value=realization(), arm_id="clean")
+        assert isinstance(result, WorkerFailure) and result.error_type == "InvalidRequest"
+        assert result.accounting.amount == 0 and result.accounting.coverage == "measured"
+        assert not result.trace["billing_uncertain"]
+    assert not wire.requests
+
+
+@pytest.mark.asyncio
+async def test_success_then_no_send_preserves_paid_usage(wire: Wire) -> None:
+    from assay.adapters.consistency import _Admission, _BoundedClient
+
+    client = factory().create()
+    admission = _Admission(qwen_smoke_settings())
+    bounded = _BoundedClient(client, admission, QWEN_NOVITA.model)
+    try:
+        assert isinstance(await bounded.complete_result(params()), LLMResponse)
+        refused = await bounded.complete_result(dataclasses.replace(params(), reasoning=True))
+        assert isinstance(refused, CompletionNotSent)
+        assert not admission.halted and not bounded.uncertain
+        accounting = bounded.accounting()
+        assert accounting.amount == 0.0000205 and accounting.coverage == "estimated"
+        assert accounting.usage == {"llm_calls": 1, "input_tokens": 100, "output_tokens": 50}
+        assert admission.requests == 2 and len(wire.requests) == 1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_failure_name_alone_does_not_assert_no_send(wire: Wire) -> None:
+    from assay.adapters.consistency import _Admission, _BoundedClient
+
+    client = factory().create()
+    admission = _Admission(qwen_smoke_settings())
+    bounded = _BoundedClient(client, admission, QWEN_NOVITA.model)
+    try:
+        with patch.object(
+            client, "complete_result", return_value=WorkerFailure("InvalidRequest", "unknown")
+        ):
+            result = await bounded.complete_result(params())
+        assert isinstance(result, WorkerFailure)
+        assert admission.halted and bounded.uncertain
+        assert bounded.accounting().amount is None
+    finally:
+        await client.aclose()

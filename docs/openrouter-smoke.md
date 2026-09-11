@@ -21,20 +21,33 @@ not a cryptographic pin of remote weights or serving infrastructure.
   `require_parameters: true`. Neither model fallback nor default load balancing
   is requested. The response must identify the exact requested model and Novita;
   the returned provider name does not independently prove the FP8 endpoint tag.
+- Each request requires `data_collection: "deny"` and `zdr: true`. OpenRouter
+  must reject routing when the pinned endpoint cannot meet both; neither the
+  privacy constraints nor the provider restriction is relaxed on failure.
+  This is upstream routing enforcement, not a local capability check: OpenRouter
+  receives the request, and its policy enforcement remains a trust boundary.
 - The only tool choice is `submit_output`; plugins and message transforms are
   explicitly empty. Caller provider overrides, reasoning switches, and alternate
   response formats are rejected. This profile is source-only, not a generic SDK.
+  The complete submission tool definition (including schema, description and
+  strictness) is fixed, recorded in configuration, and checked before sending.
 - SDK retries are zero; the HTTP transport does not follow redirects or use
   environment proxy settings. The SDK major is constrained to 2 for the current
   HTTPX integration and its exact resolved version is locked in `uv.lock`.
-- A 65,536-byte cap applies to the **complete serialized HTTP request**, including
-  system prompt, schema, and any conversation history. Output is capped at 2,048
+- `max_request_body_bytes` caps the **serialized JSON request body** at 65,536
+  bytes, including system prompt, schema, and any conversation history. It excludes
+  HTTP headers, request-line/protocol overhead, and TLS framing. Output is capped at 2,048
   tokens; the transport timeout is 30 seconds, within the pilot attempt deadline.
 - Raw JSON model/provider identity and required token counts/cost are checked
   before SDK coercion or Jig's missing-usage defaults. Missing cost never falls
   back to Jig's local pricing table. Malformed/unknown billing stops further
   requests through the existing pilot ledger. Published cost remains estimated
   USD credit usage, not an independent invoice audit.
+- A typed, client-confirmed rejection before any HTTP send does not make billing
+  uncertain or halt later attempts. An attempt consisting only of such rejections
+  has zero calls and zero cost. Admission reservations are still never refunded;
+  transport errors, timeouts, and unknown failures remain potentially billable
+  and halt further requests. Error-type strings alone never establish no-send.
 - SDK error bodies are not copied into result messages; the existing worker
   trace retains prompts, spans, response model names, and valid usage. The
   integration does not persist full HTTP bodies, headers, or generation IDs.
@@ -97,6 +110,8 @@ print(store.read_bytes(prepared.snapshot_ref).decode())
 `.assay/` is ignored by Git; preserve the object store and export each completed
 run for archival. A dependency/configuration change requires preparing and
 inspecting a new plan. Publish/review the implementation before a live run.
+The v2 privacy/tool policy and body-limit setting invalidate previously prepared
+v1 configurations; prepare and independently approve a new plan after updating.
 
 ## Execute only after plan and budget approval
 
