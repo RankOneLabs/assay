@@ -1,0 +1,95 @@
+{
+  "$defs": {
+    "EvaluationCoordinate": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*:w[0-9]+$",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "evaluator_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Evaluator Id",
+          "type": "string"
+        },
+        "evaluator_repeat": {
+          "minimum": 0,
+          "title": "Evaluator Repeat",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cell_id",
+        "evaluator_id",
+        "evaluator_repeat"
+      ],
+      "title": "EvaluationCoordinate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "plan_ref": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Plan Ref",
+      "type": "string"
+    },
+    "started_at": {
+      "title": "Started At",
+      "type": "string"
+    },
+    "completed_at": {
+      "title": "Completed At",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "assay-evaluation-failure/0.1.0",
+      "default": "assay-evaluation-failure/0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "coordinate": {
+      "$ref": "#/$defs/EvaluationCoordinate"
+    },
+    "error_type": {
+      "title": "Error Type",
+      "type": "string"
+    },
+    "error_message": {
+      "title": "Error Message",
+      "type": "string"
+    },
+    "trace_ref": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Trace Ref"
+    }
+  },
+  "required": [
+    "run_id",
+    "plan_ref",
+    "started_at",
+    "completed_at",
+    "coordinate",
+    "error_type",
+    "error_message"
+  ],
+  "title": "EvaluationFailure",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-evaluation-failure.schema.json"
+}

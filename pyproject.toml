@@ -1,0 +1,48 @@
+[project]
+name = "assay"
+version = "0.1.0"
+description = "Reproducible paired experiments for agent systems"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "jig @ git+https://github.com/RankOneLabs/jig.git@0da33666a7dd70ad2c98a38fb461f960fc6291ad",
+  "pydantic>=2.7",
+  "jsonschema>=4.23",
+]
+
+[project.scripts]
+assay = "assay.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/assay"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"schemas" = "assay/schemas"
+
+[dependency-groups]
+dev = [
+  "pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8", "mypy>=1.13", "types-jsonschema",
+  "paa-contracts @ git+https://github.com/RankOneLabs/paa.git@b3f9fd9c124c748e4ae2231c61d3a87928d5d47f#subdirectory=packages/paa-contracts",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
