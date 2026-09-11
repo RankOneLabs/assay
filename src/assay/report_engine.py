@@ -12,8 +12,8 @@ from typing import Any
 from assay._version import __version__
 from assay.canonical import canonical_json, digest_bytes
 from assay.models import ExecutionPlan, ReportConfig, RunManifest, StudySnapshot
-from assay.reporting import _holm, compare_scalar
-from assay.store import ObjectRef, ObjectStore
+from assay.reporting import _holm, bootstrap_paired, paired_effect
+from assay.store import ObjectRef, ObjectStore, verification_session
 
 
 class ReportError(ValueError):
@@ -94,6 +94,7 @@ def classification_metrics(
 def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
     from assay.verify import verify_manifest
 
+    store = verification_session(store)
     config = ReportConfig.model_validate(config.model_dump(mode="json"))
     if config.engine_version != __version__:
         raise ReportError("unsupported report engine version")
@@ -242,25 +243,16 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
         left = [values[(s, config.reference_arm)] for s in common]
         right = [values[(s, candidate)] for s in common]
         if numeric:
-            rows = [
-                (s, a, 0, 0, float(values[(s, a)]))
-                for s in common
-                for a in (candidate, config.reference_arm)
-            ]
-            scalar = compare_scalar(
-                rows,
-                reference=config.reference_arm,
-                candidates=[candidate],
-                seed=profile.seed,
-                bootstrap_samples=profile.bootstrap_samples,
-            )[0]
             deltas = [float(b) - float(a) for a, b in zip(left, right, strict=True)]
+            interval, p_value = (
+                bootstrap_paired(deltas, seed=profile.seed, samples=profile.bootstrap_samples)
+                if len(deltas) >= profile.min_subjects
+                else (None, None)
+            )
             result.update(
-                effect=scalar.effect,
-                confidence_interval=list(scalar.confidence_interval)
-                if scalar.confidence_interval
-                else None,
-                p_value=scalar.p_value,
+                effect=paired_effect(deltas),
+                confidence_interval=list(interval) if interval is not None else None,
+                p_value=p_value,
                 between_subject_spread=pstdev(deltas) if deltas else None,
                 test="centered_bootstrap",
             )

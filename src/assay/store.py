@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,7 +52,11 @@ class ObjectStore:
             if target.read_bytes() != data:
                 raise ObjectCollisionError(f"different bytes at {ref}")
             return ref
-        fd, temporary = tempfile.mkstemp(prefix=".publish-", dir=target.parent)
+        # Staging is not part of the committed object namespace. A crash can
+        # leave temporary files here without making a valid bundle corrupt.
+        staging = self.root / "staging"
+        staging.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".publish-", dir=staging)
         temporary_path = Path(temporary)
         try:
             with os.fdopen(fd, "wb") as stream:
@@ -81,3 +86,39 @@ class ObjectStore:
         if digest_bytes(data) != expected:
             raise ObjectIntegrityError(f"object bytes do not match {expected}")
         return data
+
+
+class _VerificationSession(ObjectStore):
+    """Operation-local verified bytes, never a persistent trust/cache decision.
+
+    Repeated reads see the same verified bytes while resident. Evicted objects
+    are re-read and hash-checked. Closure edges contain only references, not
+    payloads; retaining them avoids walking the same closure repeatedly.
+    """
+
+    def __init__(self, source: ObjectStore, byte_limit: int = 16 * 1024 * 1024) -> None:
+        super().__init__(source.root)
+        self.source = source
+        self.byte_limit = byte_limit
+        self.cached_bytes = 0
+        self.cache: OrderedDict[str, bytes] = OrderedDict()
+        self.edges: dict[str, frozenset[str]] = {}
+
+    def read_bytes(self, ref: ObjectRef | str) -> bytes:
+        key = str(ref)
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        data = self.source.read_bytes(ref)
+        if len(data) <= self.byte_limit:
+            while self.cached_bytes + len(data) > self.byte_limit:
+                _, evicted = self.cache.popitem(last=False)
+                self.cached_bytes -= len(evicted)
+            self.cache[key] = data
+            self.cached_bytes += len(data)
+        return data
+
+
+def verification_session(store: ObjectStore) -> _VerificationSession:
+    """Reuse a session only inside one top-level verification/report operation."""
+    return store if isinstance(store, _VerificationSession) else _VerificationSession(store)

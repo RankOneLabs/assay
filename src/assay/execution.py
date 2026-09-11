@@ -11,11 +11,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
-from jsonschema import FormatChecker
-from jsonschema.validators import validator_for
-from referencing import Registry, Resource
-from referencing.jsonschema import DRAFT7
-
 from assay.canonical import canonical_json, digest_bytes
 from assay.models import (
     CellCoordinate,
@@ -26,6 +21,7 @@ from assay.models import (
     StudySnapshot,
 )
 from assay.planning import authorize, validate_plan_snapshot
+from assay.schema_validation import schema_validators
 from assay.store import ObjectRef, ObjectStore
 from assay.verify import verify_snapshot
 
@@ -196,42 +192,13 @@ async def execute_plan(
             ):
                 raise ValueError(f"evaluator configuration mismatch: {declaration.id}")
         # Resolve the complete input/schema closure before any potentially paid call.
-        inputs = {
-            cell.id: json.loads(store.read_bytes(cell.realization_ref)) for cell in plan.cells
-        }
+        for input_ref in {cell.realization_ref for cell in plan.cells}:
+            json.loads(store.read_bytes(input_ref))
         for subject in snapshot.subjects:
             store.read_bytes(subject.payload_ref)
         store.read_bytes(snapshot.pricing_catalog_ref)
         task = json.loads(store.read_bytes(snapshot.paa_task_ref))
-        schema_refs = [
-            snapshot.task_schema_ref,
-            snapshot.evidence_schema_ref,
-            snapshot.operating_schema_ref,
-            *(item.payload_schema_ref for item in snapshot.evaluators),
-        ]
-        schemas = {ref: json.loads(store.read_bytes(ref)) for ref in schema_refs}
-        registry: Registry[Any] = Registry()
-        for schema in schemas.values():
-            validator_for(schema).check_schema(schema)
-            if "$id" in schema:
-                registry = registry.with_resource(
-                    schema["$id"], Resource.from_contents(schema, default_specification=DRAFT7)
-                )
-        validators = {
-            ref: validator_for(schema)(schema, registry=registry, format_checker=FormatChecker())
-            for ref, schema in schemas.items()
-        }
-        validators[snapshot.task_schema_ref].validate(task)
-        if snapshot.paa_scope is None:
-            if task.get("scopes"):
-                raise ValueError("scoped PAA task requires a declared scope")
-        elif snapshot.paa_scope not in task.get("scopes", []):
-            raise ValueError("PAA scope is not declared")
-        for declaration in snapshot.evaluators:
-            if declaration.identity not in task["evaluators"]:
-                raise ValueError(f"evaluator identity is absent from task: {declaration.id}")
-            if schemas[declaration.payload_schema_ref].get("$id") != declaration.payload_schema:
-                raise ValueError("companion schema identity does not match its pinned bytes")
+        validators = schema_validators(store, snapshot)
         # A plan and configuration used as record references must themselves be durable.
         store.publish_bytes(plan_bytes)
         for arm in snapshot.arms:
@@ -248,7 +215,7 @@ async def execute_plan(
     execution_records: dict[str, str] = {}
     evaluation_records: dict[str, str] = {}
     operating_records: dict[str, str] = {}
-    outputs: dict[str, tuple[Any, str]] = {}
+    outputs: dict[str, str] = {}
     fatal: Exception | None = None
 
     def record_operating(
@@ -327,7 +294,7 @@ async def execute_plan(
             if canonical_json(workers[arm.id].configuration(arm.id)) != canonical_json(arm.worker):
                 raise ValueError("worker configuration changed after authorization")
             result = await workers[arm.id].run(
-                input_value=json.loads(canonical_json(inputs[cell.id])), arm_id=arm.id
+                input_value=json.loads(store.read_bytes(cell.realization_ref)), arm_id=arm.id
             )
             if not isinstance(result, WorkerSuccess | WorkerFailure):
                 raise TypeError("worker returned an invalid Result")
@@ -353,7 +320,7 @@ async def execute_plan(
         output_ref = None
         if isinstance(result, WorkerSuccess):
             output_ref = str(store.publish_json(result.output))
-            outputs[cell.id] = (result.output, output_ref)
+            outputs[cell.id] = output_ref
         outcome = ExecutionOutcome(
             coordinate=cell,
             run_id=run_id,
@@ -395,8 +362,8 @@ async def execute_plan(
                 ):
                     raise ValueError("evaluator configuration changed after authorization")
                 result = await evaluators[declaration.id].evaluate(
-                    input_value=json.loads(canonical_json(inputs[cell.id])),
-                    output=json.loads(canonical_json(output[0])),
+                    input_value=json.loads(store.read_bytes(cell.realization_ref)),
+                    output=json.loads(store.read_bytes(output)),
                     coordinate=coordinate,
                 )
                 if not isinstance(result, EvaluationSuccess | EvaluationFailed):
@@ -422,7 +389,7 @@ async def execute_plan(
                 "declaration_version": task["version"],
                 "scope": snapshot.paa_scope,
                 "subject": {"kind": "run", "id": f"{run_id}:{cell.id}"},
-                "boundary": {"input_ref": cell.realization_ref, "output_ref": output[1]},
+                "boundary": {"input_ref": cell.realization_ref, "output_ref": output},
                 "evaluator": declaration.identity,
                 "verdict": {"value": result.verdict, "reason_codes": list(result.reason_codes)},
                 "worker": {

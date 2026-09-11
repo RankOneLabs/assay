@@ -9,12 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from jsonschema import FormatChecker
-from jsonschema.validators import validator_for
-from referencing import Registry, Resource
-from referencing.exceptions import NoSuchResource
-from referencing.jsonschema import DRAFT7
-
 from assay.canonical import canonical_json, digest_bytes
 from assay.models import (
     EvaluationFailure,
@@ -25,20 +19,9 @@ from assay.models import (
     StudySnapshot,
 )
 from assay.planning import validate_plan_snapshot
-from assay.store import ObjectRef, ObjectStore
-
-# Canonical artifacts from the supported paa-contracts 0.3 release. The contract
-# package is a conformance dependency, never a runtime dependency. A bundle may
-# not substitute permissive schemas under the normative schema identifiers.
-SUPPORTED_CONTRACTS = {
-    "task_schema_ref": "sha256:f94bc8419ec304b32578af87fb6f4dcde5dee681980a661d24ec512e1c5a862d",
-    "evidence_schema_ref": (
-        "sha256:d5b2ffc21d6aa9529c65eb643d2fcff9090a63af904b6c40dfe1c12fe48a1784"
-    ),
-    "operating_schema_ref": (
-        "sha256:131f4842243c50005b9af041308d5893e05b53ee7c3c38ef82bd706bf8657c23"
-    ),
-}
+from assay.schema_validation import SUPPORTED_CONTRACTS as SUPPORTED_CONTRACTS
+from assay.schema_validation import schema_validators
+from assay.store import ObjectRef, ObjectStore, verification_session
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,41 +42,11 @@ def _json(store: ObjectStore, ref: str, expected_schema: str | None = None) -> A
     return value
 
 
-def _deny_remote(uri: str) -> Resource[Any]:
-    raise NoSuchResource(uri)
-
-
-def _schema_registry(store: ObjectStore, snapshot: StudySnapshot) -> Registry[Any]:
-    if any(getattr(snapshot, field) != ref for field, ref in SUPPORTED_CONTRACTS.items()):
-        raise ValueError("snapshot substitutes an unsupported normative PAA contract")
-    registry: Registry[Any] = Registry(retrieve=_deny_remote)  # type: ignore[call-arg]
-    refs = [snapshot.task_schema_ref, snapshot.evidence_schema_ref, snapshot.operating_schema_ref]
-    refs.extend(item.payload_schema_ref for item in snapshot.evaluators)
-    identities: dict[str, str] = {}
-    for ref in refs:
-        schema = _json(store, ref)
-        validator_for(schema).check_schema(schema)
-        schema_id = schema.get("$id")
-        if not isinstance(schema_id, str):
-            raise ValueError(f"schema at {ref} requires an $id")
-        if schema_id in identities and identities[schema_id] != ref:
-            raise ValueError(f"different schemas claim the same identity {schema_id}")
-        identities[schema_id] = ref
-        resource = Resource.from_contents(schema, default_specification=DRAFT7)
-        registry = registry.with_resource(schema_id, resource).with_resource(ref, resource)
-    return registry
-
-
 def validate_schema_document(
     store: ObjectStore, snapshot: StudySnapshot, schema_ref: str, document: Any
 ) -> None:
     """Validate pinned schemas without network retrieval."""
-    schema = _json(store, schema_ref)
-    cls = validator_for(schema)
-    cls.check_schema(schema)
-    cls(
-        schema, registry=_schema_registry(store, snapshot), format_checker=FormatChecker()
-    ).validate(document)
+    schema_validators(store, snapshot)[schema_ref].validate(document)
 
 
 def _references(value: Any) -> set[str]:
@@ -111,27 +64,31 @@ def _references(value: Any) -> set[str]:
 
 def reference_closure(store: ObjectStore, roots: tuple[str, ...]) -> set[str]:
     """Read and hash-check every transitive object; non-JSON artifacts are valid leaves."""
+    session = verification_session(store)
     pending = list(roots)
     seen: set[str] = set()
     while pending:
         ref = pending.pop()
         if ref in seen:
             continue
-        data = store.read_bytes(ref)
         seen.add(ref)
-        try:
-            value = json.loads(data)
-        except (ValueError, UnicodeDecodeError):
-            continue
-        pending.extend(_references(value) - seen)
+        if ref not in session.edges:
+            data = session.read_bytes(ref)
+            try:
+                value = json.loads(data)
+            except (ValueError, UnicodeDecodeError):
+                session.edges[ref] = frozenset()
+            else:
+                session.edges[ref] = frozenset(_references(value))
+        pending.extend(session.edges[ref] - seen)
     return seen
 
 
 def verify_snapshot(store: ObjectStore, snapshot: StudySnapshot) -> None:
     """Raise for incomplete materialization or task/evaluator/schema mismatches."""
+    store = verification_session(store)
     snapshot = StudySnapshot.model_validate(snapshot.model_dump(mode="json"))
     reference_closure(store, tuple(_references(snapshot.model_dump(mode="json"))))
-    _schema_registry(store, snapshot)
     task = _json(store, snapshot.paa_task_ref)
     validate_schema_document(store, snapshot, snapshot.task_schema_ref, task)
     scopes = task.get("scopes")
@@ -157,6 +114,7 @@ def _check_timestamps(record: dict[str, Any]) -> None:
 
 
 def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[VerificationFailure, ...]:
+    store = verification_session(store)
     failures: list[VerificationFailure] = []
     try:
         manifest = RunManifest.model_validate(
@@ -172,17 +130,7 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
         verify_snapshot(store, snapshot)
         reference_closure(store, (manifest_ref,))
         task = _json(store, snapshot.paa_task_ref)
-        registry = _schema_registry(store, snapshot)
-        validators: dict[str, Any] = {}
-        for ref in [
-            snapshot.evidence_schema_ref,
-            snapshot.operating_schema_ref,
-            *(item.payload_schema_ref for item in snapshot.evaluators),
-        ]:
-            schema = _json(store, ref)
-            validators[ref] = validator_for(schema)(
-                schema, registry=registry, format_checker=FormatChecker()
-            )
+        validators = schema_validators(store, snapshot)
     except Exception as error:
         return (VerificationFailure("manifest_context", str(error)),)
     cells = {cell.id: cell for cell in plan.cells}
@@ -373,6 +321,7 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
 def verify_report(store: ObjectStore, report_ref: str) -> tuple[VerificationFailure, ...]:
     from assay.report_engine import build_report
 
+    store = verification_session(store)
     try:
         report = _json(store, report_ref)
         config = ReportConfig.model_validate(
@@ -388,6 +337,7 @@ def verify_report(store: ObjectStore, report_ref: str) -> tuple[VerificationFail
 
 def verify_bundle(store: ObjectStore, root_ref: str) -> tuple[VerificationFailure, ...]:
     """An exported bundle contains exactly the root's reference closure."""
+    store = verification_session(store)
     try:
         root = _json(store, root_ref)
         failures = (
@@ -413,6 +363,7 @@ def verify_bundle(store: ObjectStore, root_ref: str) -> tuple[VerificationFailur
 
 def export_bundle(store: ObjectStore, root_ref: str, destination: Path | str) -> ObjectStore:
     """Copy a verified root's exact object closure into an empty directory."""
+    store = verification_session(store)
     root = _json(store, root_ref)
     failures = (
         verify_report(store, root_ref)

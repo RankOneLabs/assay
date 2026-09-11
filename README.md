@@ -38,7 +38,7 @@ uv build
    failed workers produce explicit unavailable evaluations. Persistence failure
    stops new scheduling, settles active calls, and returns recoverable progress.
 5. Build a `ReportConfig` containing exact manifest and evaluator-record refs,
-   reference/candidate arms, both repeat aggregations, and a seeded `paired-v1`
+   reference/candidate arms, both repeat aggregations, and a seeded `paired-v2`
    statistical profile. Numeric reports require an explicit `scalar_direction`
    (`higher_is_better` or `lower_is_better`). Call `persist_report` to publish
    the config, common-subject sets, and reproducible report.
@@ -66,6 +66,27 @@ missing objects, and recomputes reports. It proves integrity relative to the
 supplied plan, not producer identity or that omitted real-world attempts never
 happened. A working store can hold multiple roots; export before strict bundle
 verification.
+
+## Reproducibility and schema maintenance
+
+Bootstrap sampling and arithmetic follow the versioned
+[paired-v2 contract](docs/statistical-profile.md), independent of NumPy. Legacy
+`paired-v1` report configurations are rejected rather than silently recomputed
+using a changed algorithm. Existing run evidence can support a newly configured
+v2 report.
+
+Publication uses `staging/` outside `objects/sha256/`; interrupted-publication
+residue there is not a committed bundle object. Unexpected entries in the
+committed namespace are still rejected. Verification/report/export operations
+share a bounded 16 MiB verified-byte cache, discarded after the operation;
+evicted bytes are hash-checked again when read. Reference metadata is retained
+for the operation. Execution retains output references, not payloads, and each
+evaluation decodes the hash-verified published output afresh.
+
+Wire schemas have an explicit seven-file inventory. Regenerate with
+`uv run python -m assay.schema_export`; CI enforces
+`uv run python -m assay.schema_export --check`. Tests anchor schema paths to the
+repository rather than the invoking working directory.
 
 ## Consistency investigation and boundaries
 

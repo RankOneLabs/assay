@@ -8,7 +8,6 @@ dependencies = [
   "jig @ git+https://github.com/RankOneLabs/jig.git@0da33666a7dd70ad2c98a38fb461f960fc6291ad",
   "pydantic>=2.7",
   "jsonschema>=4.23",
-  "numpy>=1.26",
 ]
 
 [project.scripts]

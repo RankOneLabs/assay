@@ -19,5 +19,6 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check src tests
       - run: uv run mypy src
+      - run: uv run python -m assay.schema_export --check
       - run: uv run pytest -q
       - run: uv build

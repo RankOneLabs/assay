@@ -297,7 +297,7 @@ class RunManifest(WireModel):
 
 
 class StatisticalProfile(WireModel):
-    name: Literal["paired-v1"] = "paired-v1"
+    name: Literal["paired-v2"] = "paired-v2"
     seed: int = Field(ge=0, strict=True)
     bootstrap_samples: int = Field(ge=100, strict=True)
     alpha: float = Field(default=0.05, ge=0.05, le=0.05)

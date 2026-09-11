@@ -74,7 +74,8 @@ def test_generated_snapshot_schema_rejects_nested_invalid_and_unknown_fields(
     tmp_path: Path,
 ) -> None:
     fixture = execution_fixture(ObjectStore(tmp_path))
-    schema = json.loads(Path("schemas/assay-study-snapshot.schema.json").read_text())
+    path = Path(__file__).resolve().parents[1] / "schemas/assay-study-snapshot.schema.json"
+    schema = json.loads(path.read_text())
     validator = Draft202012Validator(schema)
     document = fixture.snapshot.model_dump(mode="json")
     validator.validate(document)

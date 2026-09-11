@@ -44,7 +44,6 @@ source = { editable = "." }
 dependencies = [
     { name = "jig" },
     { name = "jsonschema" },
-    { name = "numpy" },
     { name = "pydantic" },
 ]
 
@@ -62,7 +61,6 @@ dev = [
 requires-dist = [
     { name = "jig", git = "https://github.com/RankOneLabs/jig.git?rev=0da33666a7dd70ad2c98a38fb461f960fc6291ad" },
     { name = "jsonschema", specifier = ">=4.23" },
-    { name = "numpy", specifier = ">=1.26" },
     { name = "pydantic", specifier = ">=2.7" },
 ]
 

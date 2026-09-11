@@ -10,6 +10,7 @@ from test_execution import execution_fixture
 from assay.canonical import CanonicalizationError, canonical_json, digest_bytes
 from assay.models import Exclusion, PriceEstimate
 from assay.planning import AuthorizationError, authorize, compile_plan
+from assay.schema_export import check_schemas, schema_documents
 from assay.store import ObjectCollisionError, ObjectStore
 
 
@@ -74,7 +75,11 @@ def test_exclusion_removes_only_declared_pair(tmp_path: Path) -> None:
 
 
 def test_schema_files_are_valid_and_closed() -> None:
-    for path in Path("schemas").glob("*.schema.json"):
+    directory = Path(__file__).resolve().parents[1] / "schemas"
+    check_schemas(directory)
+    assert len(schema_documents()) == 7
+    for name in schema_documents():
+        path = directory / name
         schema = json.loads(path.read_text())
         Draft202012Validator.check_schema(schema)
         assert schema["additionalProperties"] is False

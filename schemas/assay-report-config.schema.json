@@ -4,8 +4,8 @@
       "additionalProperties": false,
       "properties": {
         "name": {
-          "const": "paired-v1",
-          "default": "paired-v1",
+          "const": "paired-v2",
+          "default": "paired-v2",
           "title": "Name",
           "type": "string"
         },

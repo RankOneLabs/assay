@@ -5,9 +5,9 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from dataclasses import dataclass
+from fractions import Fraction
+from hashlib import sha256
 from statistics import fmean, pstdev
-
-import numpy as np
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,28 +35,69 @@ def _holm(p_values: list[float]) -> list[float]:
     return adjusted
 
 
+class _IndexStream:
+    """paired-v2 SHA-256 counter stream with unbiased uint64 rejection sampling."""
+
+    def __init__(self, seed: int, domain: bytes) -> None:
+        self.prefix = b"assay/paired-v2\0" + str(seed).encode("ascii") + b"\0" + domain + b"\0"
+        self.counter = 0
+        self.words: list[int] = []
+
+    def index(self, size: int) -> int:
+        if not 0 < size <= 2**64:
+            raise ValueError("sample population must fit uint64")
+        limit = 2**64 - 2**64 % size
+        while True:
+            if not self.words:
+                block = sha256(self.prefix + self.counter.to_bytes(16, "big")).digest()
+                self.counter += 1
+                self.words = [int.from_bytes(block[i:i + 8], "big") for i in (24, 16, 8, 0)]
+            word = self.words.pop()
+            if word < limit:
+                return word % size
+
+
+def _integer_values(values: list[float]) -> tuple[list[int], int]:
+    ratios = [float(value).as_integer_ratio() for value in values]
+    denominator = max(d for _, d in ratios)
+    return [n * (denominator // d) for n, d in ratios], denominator
+
+
+def paired_effect(deltas: list[float]) -> float | None:
+    """Exactly sum binary64 inputs, then round the rational mean once."""
+    if not deltas:
+        return None
+    values, denominator = _integer_values(deltas)
+    return float(Fraction(sum(values), len(values) * denominator))
+
+
 def bootstrap_paired(
     deltas: list[float], *, seed: int, samples: int
 ) -> tuple[tuple[float, float], float]:
-    """Compute paired-v1 arithmetic, independently of the report's n>=10 gate."""
+    """paired-v2 exact resampling arithmetic; see docs/statistical-profile.md."""
     if not deltas or samples < 100 or seed < 0 or not all(math.isfinite(x) for x in deltas):
         raise ValueError("finite nonempty deltas, samples>=100 and seed>=0 required")
-    values = np.asarray(deltas, dtype=float)
-    rng = np.random.default_rng(seed)
-    centered = values - values.mean()
-    # Bound the temporary index/value matrix for large subject sets.
-    batch = max(1, 1_000_000 // len(values))
-    observed = np.concatenate([
-        rng.choice(values, size=(min(batch, samples - start), len(values))).mean(axis=1)
-        for start in range(0, samples, batch)
-    ])
-    null = np.concatenate([
-        rng.choice(centered, size=(min(batch, samples - start), len(values))).mean(axis=1)
-        for start in range(0, samples, batch)
-    ])
-    interval = (float(np.quantile(observed, .025)), float(np.quantile(observed, .975)))
-    p_value = (1 + int(np.count_nonzero(np.abs(null) >= abs(values.mean())))) / (samples + 1)
-    return interval, p_value
+    values, denominator = _integer_values(deltas)
+    n, total = len(values), sum(values)
+    observed_stream = _IndexStream(seed, b"observed")
+    null_stream = _IndexStream(seed, b"null")
+    observed = sorted(
+        sum(values[observed_stream.index(n)] for _ in range(n)) for _ in range(samples)
+    )
+    extreme = sum(
+        abs(sum(values[null_stream.index(n)] for _ in range(n)) - total) >= abs(total)
+        for _ in range(samples)
+    )
+
+    def quantile(numerator: int) -> float:
+        index, remainder = divmod((samples - 1) * numerator, 40)
+        upper = min(index + 1, samples - 1)
+        return float(Fraction(
+            observed[index] * (40 - remainder) + observed[upper] * remainder,
+            40 * n * denominator,
+        ))
+
+    return (quantile(1), quantile(39)), float(Fraction(1 + extreme, samples + 1))
 
 
 def compare_scalar(
@@ -70,7 +111,7 @@ def compare_scalar(
 ) -> tuple[PairedComparison, ...]:
     """Aggregate evaluator repeats, then worker repeats, then pair subjects."""
     if alpha != 0.05 or bootstrap_samples < 100 or seed < 0:
-        raise ValueError("paired-v1 requires alpha=.05, samples>=100 and seed>=0")
+        raise ValueError("paired-v2 requires alpha=.05, samples>=100 and seed>=0")
     if reference in candidates or len(candidates) != len(set(candidates)):
         raise ValueError("candidate family must be unique and exclude reference")
     evaluator_groups: dict[tuple[str, str, int], list[float]] = defaultdict(list)
@@ -98,13 +139,11 @@ def compare_scalar(
             )
         )
         excluded = tuple(sorted(all_subjects - set(common)))
-        deltas = np.array(
-            [
-                subject_values[(subject, candidate)] - subject_values[(subject, reference)]
-                for subject in common
-            ]
-        )
-        effect = float(deltas.mean()) if len(deltas) else None
+        deltas = [
+            subject_values[(subject, candidate)] - subject_values[(subject, reference)]
+            for subject in common
+        ]
+        effect = paired_effect(deltas)
         spreads = [
             pstdev(workers[(subject, arm)]) for subject in common for arm in (reference, candidate)
         ]
@@ -114,7 +153,7 @@ def compare_scalar(
         decision = "descriptive_only"
         if len(deltas) >= 10:
             interval, p_value = bootstrap_paired(
-                deltas.tolist(), seed=seed, samples=bootstrap_samples
+                deltas, seed=seed, samples=bootstrap_samples
             )
         interim.append(
             (
