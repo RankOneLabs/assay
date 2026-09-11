@@ -49,6 +49,27 @@ def compile_plan(
     realization = {(item.subject_id, item.arm_id): item for item in snapshot.realizations}
     if len(excluded) != len(exclusions) or not excluded <= set(realization):
         raise ValueError("exclusions must be unique existing subject/arm pairs")
+    subjects = sorted(snapshot.subjects, key=lambda item: item.id)
+    arms = sorted(snapshot.arms, key=lambda item: item.id)
+    schedules = {arm.conditions.get("assay_execution_schedule") for arm in arms}
+    if schedules == {None}:
+        ordered_coordinates = (
+            (subject, arm, repeat)
+            for subject in subjects
+            for arm in arms
+            if (subject.id, arm.id) not in excluded
+            for repeat in range(worker_repeats)
+        )
+    elif schedules == {"subject-counterbalanced-v1"} and len(arms) == 2:
+        ordered_coordinates = (
+            (subject, arm, repeat)
+            for subject_index, subject in enumerate(subjects)
+            for repeat in range(worker_repeats)
+            for arm in (arms if (subject_index + repeat) % 2 == 0 else list(reversed(arms)))
+            if (subject.id, arm.id) not in excluded
+        )
+    else:
+        raise ValueError("execution schedule must be absent or a common supported value")
     cells = tuple(
         CellCoordinate(
             subject_id=subject.id,
@@ -56,10 +77,7 @@ def compile_plan(
             worker_repeat=repeat,
             realization_ref=realization[(subject.id, arm.id)].artifact_ref,
         )
-        for subject in sorted(snapshot.subjects, key=lambda item: item.id)
-        for arm in sorted(snapshot.arms, key=lambda item: item.id)
-        if (subject.id, arm.id) not in excluded
-        for repeat in range(worker_repeats)
+        for subject, arm, repeat in ordered_coordinates
     )
     evaluations = tuple(
         EvaluationCoordinate(cell_id=cell.id, evaluator_id=evaluator.id, evaluator_repeat=repeat)

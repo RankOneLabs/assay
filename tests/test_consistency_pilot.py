@@ -137,6 +137,7 @@ async def test_real_jig_runner_source_extraction_isolation_and_usage() -> None:
         assert set(prompt) == {"instruction", "repository"}
         assert "reused_source" not in params.messages[0].content
         assert "primitive" not in params.messages[0].content
+        assert "primitives" not in params.messages[0].content
 
 
 @pytest.mark.parametrize("mutation", ["path", "source", "instruction", "top", "oversize"])
@@ -613,15 +614,20 @@ async def test_response_model_drift_preserves_provider_details() -> None:
 
 
 @pytest.mark.parametrize(
-    "source",
+    ("source", "error_type"),
     [
-        "def implement(value=normalize_name('default')):\n    return value\n",
-        "@normalize_name('decorator')\ndef implement(value):\n    return value\n",
-        "def implement(value):\n    return\n",
+        ("def implement(value=normalize_name('default')):\n    return value\n", "InvalidOutput"),
+        (
+            "@normalize_name('decorator')\ndef implement(value):\n    return value\n",
+            "InvalidOutput",
+        ),
+        ("def implement(value):\n    return\n", "AmbiguousStructure"),
     ],
 )
 @pytest.mark.asyncio
-async def test_calls_outside_return_expression_are_not_reuse(source: str) -> None:
+async def test_calls_outside_return_expression_are_not_reuse(
+    source: str, error_type: str
+) -> None:
     result = await StructuralEvaluator().evaluate(
         input_value={"task": TASKS[0].model_dump()},
         output={"source": source},
@@ -629,7 +635,7 @@ async def test_calls_outside_return_expression_are_not_reuse(source: str) -> Non
             cell_id="s:clean:w0", evaluator_id="abstraction", evaluator_repeat=0
         ),
     )
-    assert isinstance(result, EvaluationFailed) and result.error_type == "AmbiguousStructure"
+    assert isinstance(result, EvaluationFailed) and result.error_type == error_type
 
 
 @pytest.mark.parametrize("failure", ["provider", "ambiguous", "export"])

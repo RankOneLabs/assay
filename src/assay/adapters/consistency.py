@@ -37,8 +37,9 @@ from assay.models import WireModel
 
 SYSTEM_PROMPT = (
     "Complete the coding task using the supplied repository as context. "
-    "Return only the new implement function and any necessary imports as source, "
-    "not the existing repository or an explanation. Submit the structured source output."
+    "Return only any necessary imports and the new implement function as source. "
+    "The function must have no docstring and exactly one return statement; do not include "
+    "the existing repository or an explanation. Submit the structured source output."
 )
 
 
