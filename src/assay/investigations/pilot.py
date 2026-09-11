@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.metadata import distribution
@@ -50,10 +51,23 @@ def installed_jig_revision() -> str:
     direct = distribution("jig").read_text("direct_url.json")
     if direct is None:
         raise ValueError("pilot requires a VCS-pinned Jig installation")
-    revision = json.loads(direct)["vcs_info"]["commit_id"]
-    if not isinstance(revision, str) or len(revision) != 40:
-        raise ValueError("invalid installed Jig revision")
-    return revision
+    metadata = json.loads(direct)
+    if not isinstance(metadata, dict) or "dir_info" in metadata or "archive_info" in metadata:
+        raise ValueError("pilot requires a non-editable VCS-pinned Jig installation")
+    vcs = metadata.get("vcs_info")
+    if not isinstance(vcs, dict) or vcs.get("vcs") != "git":
+        raise ValueError("pilot requires Git provenance for Jig")
+    revision = vcs.get("commit_id")
+    requested = vcs.get("requested_revision")
+    if (
+        not isinstance(revision, str)
+        or re.fullmatch(r"[0-9a-fA-F]{40}", revision) is None
+        or not isinstance(requested, str)
+        or re.fullmatch(r"[0-9a-fA-F]{40}", requested) is None
+        or requested.lower() != revision.lower()
+    ):
+        raise ValueError("Jig must be requested at its exact full Git commit revision")
+    return revision.lower()
 
 
 def prepare_pilot(

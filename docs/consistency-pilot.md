@@ -79,8 +79,10 @@ Inspect the snapshot's worker settings as well as the plan. Defaults yield three
 tasks × two arms × two worker repeats = **12 executions**, with one deterministic
 evaluation per successful execution and concurrency **1**. Jig's installed VCS
 revision is read from package metadata, not supplied as an arbitrary label.
-Unpinned/editable Jig installs fail closed. Materialization validates the snapshot
-without constructing a provider client. Total expected cost remains explicitly
+The requested revision must be a full hexadecimal Git commit matching the resolved
+commit. Branch/tag, unpinned, and editable Jig installs fail closed. This checks
+installation metadata, not the installed source bytes. Materialization validates
+the snapshot without constructing a provider client. Total expected cost remains explicitly
 unavailable: a reservation ceiling is not a prediction of spend.
 
 ## Execute an independently approved plan

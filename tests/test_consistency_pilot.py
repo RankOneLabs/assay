@@ -7,6 +7,7 @@ import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import paa_contracts
 import pytest
@@ -25,6 +26,7 @@ from assay.investigations.pilot import (
     PilotFailed,
     PilotPrepared,
     PilotSucceeded,
+    installed_jig_revision,
     prepare_pilot,
     run_pilot,
 )
@@ -238,6 +240,96 @@ async def test_external_cancellation_propagates_and_closes_client() -> None:
     assert isinstance(again, WorkerFailure) and again.error_type == "BudgetHalted"
 
 
+@pytest.mark.parametrize("cancel_during_attempt", [False, True])
+@pytest.mark.parametrize("close_outcome", ["success", "error", "timeout"])
+@pytest.mark.asyncio
+async def test_repeated_cancellation_drains_bounded_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    cancel_during_attempt: bool,
+    close_outcome: str,
+) -> None:
+    factory = FakeFactory()
+    factory.block = cancel_during_attempt
+    close_started, close_release, close_finished = (asyncio.Event() for _ in range(3))
+    close_tasks: list[asyncio.Task[Any]] = []
+    create = factory.create
+
+    def create_with_slow_close() -> DescribedClient:
+        client = create()
+
+        async def close() -> None:
+            current = asyncio.current_task()
+            assert current is not None
+            close_tasks.append(current)
+            close_started.set()
+            try:
+                await close_release.wait()
+                if close_outcome == "error":
+                    raise RuntimeError("close failed")
+                factory.closed += 1
+            finally:
+                close_finished.set()
+
+        monkeypatch.setattr(client, "aclose", close)
+        return client
+
+    monkeypatch.setattr(factory, "create", create_with_slow_close)
+    worker = ConsistencyWorker(factory, PilotSettings(cleanup_timeout_s=0.1))
+    task = asyncio.create_task(worker.run(input_value=realization(), arm_id="clean"))
+    if cancel_during_attempt:
+        await asyncio.wait_for(factory.started.wait(), 1)
+        task.cancel()
+    await asyncio.wait_for(close_started.wait(), 1)
+    for _ in range(3):
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert not close_finished.is_set()
+    if close_outcome != "timeout":
+        close_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 1)
+    assert close_finished.is_set()
+    assert len(close_tasks) == 1 and close_tasks[0].done()
+    assert factory.closed == (1 if close_outcome == "success" else 0)
+
+
+@pytest.mark.parametrize("provider_failure", [False, True])
+@pytest.mark.asyncio
+async def test_cleanup_timeout_is_drained_and_preserves_result_details(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_failure: bool,
+) -> None:
+    factory = FakeFactory()
+    if provider_failure:
+        factory.error = RuntimeError("provider failed")
+    close_finished = asyncio.Event()
+    create = factory.create
+
+    def create_with_stuck_close() -> DescribedClient:
+        client = create()
+
+        async def close() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                close_finished.set()
+
+        monkeypatch.setattr(client, "aclose", close)
+        return client
+
+    monkeypatch.setattr(factory, "create", create_with_stuck_close)
+    result = await ConsistencyWorker(factory, PilotSettings(cleanup_timeout_s=0.01)).run(
+        input_value=realization(),
+        arm_id="clean",
+    )
+    assert close_finished.is_set()
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == ("RuntimeError" if provider_failure else "CleanupFailed")
+    assert result.trace["cleanup_error"].startswith("TimeoutError:")
+    assert result.accounting.usage["llm_calls"] == 1
+
+
 @pytest.mark.asyncio
 async def test_created_client_drift_fails_before_completion() -> None:
     factory = FakeFactory()
@@ -404,6 +496,101 @@ async def test_pilot_preflight_refuses_without_provider_calls(tmp_path: Path, dr
 def test_invalid_policies(settings: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         PilotSettings(**settings)
+
+
+@pytest.mark.parametrize("mode", ["offline", "paid"])
+@pytest.mark.parametrize("basis", ["", " ", "\t\n"])
+def test_blank_pricing_basis_rejected_in_all_modes(mode: str, basis: str) -> None:
+    with pytest.raises(ValueError, match="pricing basis must be nonblank"):
+        PilotSettings(
+            mode=mode,
+            pricing_basis=basis,
+            max_spend_usd="1" if mode == "paid" else "0",
+            request_cost_bound_usd="0.01" if mode == "paid" else "0",
+        )
+
+
+def jig_metadata(**overrides: Any) -> dict[str, Any]:
+    return {
+        "url": "https://github.com/RankOneLabs/jig.git",
+        "vcs_info": {"vcs": "git", "commit_id": "a" * 40, "requested_revision": "a" * 40},
+        **overrides,
+    }
+
+
+@pytest.mark.parametrize(
+    "direct",
+    [
+        None,
+        "{",
+        "null",
+        "[]",
+        "{}",
+        json.dumps(jig_metadata(dir_info={"editable": True})),
+        json.dumps(jig_metadata(dir_info={"editable": False})),
+        json.dumps(jig_metadata(archive_info={})),
+        json.dumps(jig_metadata(vcs_info=None)),
+        *(
+            json.dumps(jig_metadata(vcs_info={**jig_metadata()["vcs_info"], **change}))
+            for change in (
+                {"vcs": "hg"},
+                {"commit_id": "z" * 40},
+                {"commit_id": 123},
+                {"commit_id": "a" * 39},
+                {"requested_revision": "main"},
+                {"requested_revision": "v1.0"},
+                {"requested_revision": None},
+                {"requested_revision": "a" * 7},
+                {"requested_revision": "b" * 40},
+            )
+        ),
+    ],
+)
+def test_installed_jig_rejects_unpinned_or_invalid_metadata(direct: str | None) -> None:
+    with patch("assay.investigations.pilot.distribution") as distribution:
+        distribution.return_value.read_text.return_value = direct
+        with pytest.raises(ValueError):
+            installed_jig_revision()
+
+
+@pytest.mark.parametrize("requested", ["a" * 40, "A" * 40])
+def test_installed_jig_accepts_exact_commit_pin(requested: str) -> None:
+    metadata = jig_metadata()
+    metadata["vcs_info"]["requested_revision"] = requested
+    with patch("assay.investigations.pilot.distribution") as distribution:
+        distribution.return_value.read_text.return_value = json.dumps(metadata)
+        assert installed_jig_revision() == "a" * 40
+        distribution.assert_called_once_with("jig")
+        distribution.return_value.read_text.assert_called_once_with("direct_url.json")
+
+
+@pytest.mark.asyncio
+async def test_unpinned_runtime_fails_prepare_and_run_before_provider_calls(tmp_path: Path) -> None:
+    store, factory = ObjectStore(tmp_path), FakeFactory()
+    prepared = prepare(store, factory, PilotSettings())
+    metadata = jig_metadata()
+    metadata["vcs_info"]["requested_revision"] = "main"
+    with patch("assay.investigations.pilot.distribution") as distribution:
+        distribution.return_value.read_text.return_value = json.dumps(metadata)
+        failed_prepare = prepare_pilot(
+            store,
+            factory=factory,
+            settings=PilotSettings(),
+            schemas={
+                name: paa_contracts.load_schema(name)
+                for name in ("paa-task", "paa-evidence-record", "paa-operating-record")
+            },
+        )
+        failed_run = await run_pilot(
+            store,
+            plan_ref=prepared.plan_ref,
+            authorization=prepared.plan_ref,
+            factory=factory,
+        )
+    for result in (failed_prepare, failed_run):
+        assert isinstance(result, PilotFailed)
+        assert result.error_type == "ValueError" and "exact full Git commit" in result.message
+    assert factory.created == 0 and factory.calls == []
 
 
 def test_worker_policy_cannot_diverge_from_ledger() -> None:

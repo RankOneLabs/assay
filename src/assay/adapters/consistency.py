@@ -68,6 +68,8 @@ class PilotSettings(WireModel):
 
     @model_validator(mode="after")
     def valid_budget(self) -> PilotSettings:
+        if not self.pricing_basis.strip():
+            raise ValueError("pricing basis must be nonblank")
         if self.request_timeout_s > self.attempt_timeout_s:
             raise ValueError("request timeout must not exceed attempt timeout")
         if self.mode == "offline":
@@ -75,7 +77,6 @@ class PilotSettings(WireModel):
                 raise ValueError("offline mode cannot authorize spend")
         elif not (
             0 < self.request_cost_bound_usd <= self.max_spend_usd
-            and self.pricing_basis.strip()
             and self.pricing_basis != "offline-no-provider-charges"
         ):
             raise ValueError(
@@ -297,6 +298,31 @@ class _BoundedClient(LLMClient):
         return Accounting(usage=usage)
 
 
+async def _close_client(client: DescribedClient, timeout_s: float) -> WorkerFailure | None:
+    """Drain a separately timed close despite repeated caller cancellation."""
+
+    async def close() -> WorkerFailure | None:
+        try:
+            async with asyncio.timeout(timeout_s):
+                await client.aclose()
+        except Exception as error:
+            return WorkerFailure("CleanupFailed", f"{type(error).__name__}: {error}")
+        return None
+
+    # The deadline belongs to the close task, so caller cancellation neither
+    # interrupts cleanup nor restarts its timeout. The provider must cooperate.
+    closing = asyncio.create_task(close())
+    cancellation: asyncio.CancelledError | None = None
+    while not closing.done():
+        try:
+            await asyncio.shield(closing)
+        except asyncio.CancelledError as error:
+            cancellation = error
+    if cancellation is not None:
+        raise cancellation
+    return closing.result()
+
+
 @dataclasses.dataclass(frozen=True)
 class ConsistencyWorker:
     """Fresh client, trace, tools and conversation per attempt; no generated code execution."""
@@ -391,11 +417,8 @@ class ConsistencyWorker:
             result = WorkerFailure(type(error).__name__, str(error))
         finally:
             if client is not None:
-                try:
-                    async with asyncio.timeout(self.settings.cleanup_timeout_s):
-                        await client.aclose()
-                except Exception as error:
-                    cleanup_error = f"{type(error).__name__}: {error}"
+                cleanup = await _close_client(client, self.settings.cleanup_timeout_s)
+                cleanup_error = None if cleanup is None else cleanup.message
         if cleanup_error is not None and isinstance(result, WorkerSuccess):
             result = WorkerFailure("CleanupFailed", cleanup_error)
         detail = {
