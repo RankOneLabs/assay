@@ -15,6 +15,7 @@ from jig.llm.openrouter import OpenRouterClient
 from pydantic import Field
 
 from assay.adapters.consistency import CompletionNotSent, DescribedClient, SourceOutput
+from assay.adapters.openrouter_diagnostics import ResponseDiagnostics, diagnostic_policy
 from assay.canonical import canonical_json
 from assay.execution import WorkerFailure
 from assay.models import WireModel
@@ -96,7 +97,7 @@ class OpenRouterFactory:
         return {
             "model": self.settings.model,
             "endpoint": ENDPOINT,
-            "revision": "assay-openrouter-source-v2",
+            "revision": "assay-openrouter-source-v3",
             "billing": "paid",
             "hidden_retries": 0,
             "settings": self.settings.model_dump(mode="json"),
@@ -108,6 +109,7 @@ class OpenRouterFactory:
             "stream": False,
             "usage": "required-inline-openrouter-cost-no-local-price-fallback",
             "response_identity": "exact-model-and-provider-name",
+            "diagnostics": diagnostic_policy(),
             "transport": {
                 "openai": version("openai"),
                 "httpx": version("httpx"),
@@ -164,6 +166,7 @@ class _PilotClient(OpenRouterClient, DescribedClient):
         self.settings = settings
         self._configuration = canonical_json(configuration)
         self._failure: WorkerFailure | None = None
+        self._diagnostics = ResponseDiagnostics(api_key)
         http = httpx.AsyncClient(
             timeout=settings.timeout_s,
             follow_redirects=False,
@@ -186,6 +189,7 @@ class _PilotClient(OpenRouterClient, DescribedClient):
         return value
 
     async def _check_request(self, request: httpx.Request) -> None:
+        self._diagnostics.request(request.content)
         if request.method != "POST" or str(request.url) != ENDPOINT + "/chat/completions":
             self._failure = CompletionNotSent("InvalidRequest", "unexpected OpenRouter endpoint")
         elif len(request.content) > self.settings.max_request_body_bytes:
@@ -194,15 +198,26 @@ class _PilotClient(OpenRouterClient, DescribedClient):
             raise _RequestRejected(self._failure)
 
     async def _check_response(self, response: httpx.Response) -> None:
+        self._diagnostics.status(response.status_code)
         if not response.is_success:
             return  # SDK raises; complete_result publishes only a safe status message.
         await response.aread()
         try:
-            self._failure = _response_failure(response.json(), self.settings)
+            data = response.json()
         except (ValueError, UnicodeError, OverflowError):
+            self._diagnostics.invalid_json()
             self._failure = WorkerFailure("InvalidResponse", "invalid OpenRouter JSON response")
+        else:
+            self._diagnostics.response(data)
+            try:
+                self._failure = _response_failure(data, self.settings)
+            except (ValueError, UnicodeError, OverflowError):
+                self._failure = WorkerFailure("InvalidResponse", "invalid OpenRouter JSON response")
         if self._failure is not None:
             raise _RequestRejected(self._failure)
+
+    def diagnostics(self) -> dict[str, Any]:
+        return self._diagnostics.snapshot()
 
     def _apply_extra_kwargs(self, kwargs: dict[str, Any]) -> None:
         super()._apply_extra_kwargs(kwargs)

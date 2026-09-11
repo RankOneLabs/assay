@@ -50,7 +50,38 @@ not a cryptographic pin of remote weights or serving infrastructure.
   and halt further requests. Error-type strings alone never establish no-send.
 - SDK error bodies are not copied into result messages; the existing worker
   trace retains prompts, spans, response model names, and valid usage. The
-  integration does not persist full HTTP bodies, headers, or generation IDs.
+  integration does not persist full HTTP bodies or headers.
+
+## Response diagnostics (v3)
+
+The worker trace's `provider_diagnostics` records allowlisted observations before
+SDK parsing, including failed attempts. Each request-hook observation includes
+the SHA-256 digest and byte count of the actual serialized JSON body, whether a
+response arrived, and its HTTP status when available. A hook observation is not
+proof that bytes were sent: locally rejected requests can also reach this hook.
+Failures rejected before the hook have no request observation.
+
+For successful HTTP responses with parseable JSON, diagnostics include a bounded
+generation ID, choice count, first-choice finish/native-finish reasons, known
+message-field types (including missing versus null), content character count,
+and tool-call count/names. Field types distinguish legacy `function_call`, refusal,
+and reasoning-only shapes without recording their contents. Non-2xx responses
+record status only; their error bodies are not inspected for diagnostic fields.
+
+Capture is capped at ten request observations per client and eight tool names per
+response, with explicit truncation flags. Generation IDs are limited to 128 ASCII
+identifier characters with a `gen-` prefix; finish reasons/tool names to 64 ASCII
+identifier characters. Invalid labels or labels containing the active API key
+are omitted (null), never truncated into potentially sensitive prefixes. Arbitrary
+field names, content, reasoning, refusal text, arguments, and headers are excluded.
+These observations are detached from provider response objects. Returned
+diagnostic snapshots are also detached and remain available after client cleanup.
+
+Diagnostics do not alter response validation, introduce retries, accept legacy
+calls as submissions, or mark otherwise known usage as unavailable. They remain
+provider observations, not independent proof of a remote model's behavior.
+An exception retrieving optional client diagnostics produces a fixed
+`capture_failed` marker without replacing the worker outcome or accounting.
 
 See OpenRouter's [provider-routing contract](https://openrouter.ai/docs/guides/routing/provider-selection)
 and [usage-accounting contract](https://openrouter.ai/docs/cookbook/administration/usage-accounting).
@@ -110,8 +141,9 @@ print(store.read_bytes(prepared.snapshot_ref).decode())
 `.assay/` is ignored by Git; preserve the object store and export each completed
 run for archival. A dependency/configuration change requires preparing and
 inspecting a new plan. Publish/review the implementation before a live run.
-The v2 privacy/tool policy and body-limit setting invalidate previously prepared
-v1 configurations; prepare and independently approve a new plan after updating.
+The v3 diagnostic policy is bound into the provider configuration and invalidates
+previously prepared v1/v2 configurations. Prepare and independently approve a new
+plan after updating; the completed first v2 run remains unchanged.
 
 ## Execute only after plan and budget approval
 

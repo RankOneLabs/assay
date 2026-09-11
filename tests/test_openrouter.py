@@ -15,7 +15,8 @@ from jig.core.types import CompletionParams, LLMResponse, Message, Role
 
 from assay.adapters.consistency import CompletionNotSent, ConsistencyWorker
 from assay.adapters.openrouter import ENDPOINT, QWEN_NOVITA, OpenRouterFactory, source_output_tool
-from assay.canonical import canonical_json
+from assay.adapters.openrouter_diagnostics import ResponseDiagnostics
+from assay.canonical import canonical_json, digest_bytes
 from assay.execution import WorkerFailure, WorkerSuccess
 from assay.investigations.consistency import TASKS
 from assay.investigations.openrouter_smoke import qwen_smoke_settings
@@ -78,6 +79,7 @@ class Wire:
         self.transports: set[int] = set()
         self.closed: set[int] = set()
         self.payload: Any = response_payload()
+        self.raw: bytes | None = None
         self.status = 200
         self.error: Exception | None = None
         self.dynamic = False
@@ -105,7 +107,11 @@ def wire(monkeypatch: pytest.MonkeyPatch) -> Wire:
             prompt = json.loads(next(m["content"] for m in body["messages"] if m["role"] == "user"))
             task = next(t for t in TASKS if t.instruction == prompt["instruction"])
             payload = response_payload(task.reused_source)
-        return httpx.Response(state.status, content=json.dumps(payload), request=request)
+        return httpx.Response(
+            state.status,
+            content=state.raw if state.raw is not None else json.dumps(payload),
+            request=request,
+        )
 
     async def close(transport: httpx.AsyncHTTPTransport) -> None:
         state.closed.add(id(transport))
@@ -372,6 +378,12 @@ async def test_prepare_paid_gates_and_two_mocked_runs_export_verified_bundles(
         )
         assert isinstance(result, PilotSucceeded), result
         assert verify_bundle(ObjectStore(destination), result.report_ref) == ()
+        manifest = json.loads(store.read_bytes(result.manifest_ref))
+        for outcome_ref in manifest["execution_records"].values():
+            outcome = json.loads(store.read_bytes(outcome_ref))
+            trace = json.loads(ObjectStore(destination).read_bytes(outcome["trace_ref"]))
+            observations = trace["provider_diagnostics"]["requests"]
+            assert len(observations) == 1 and observations[0]["tool_call_count"] == 1
         assert len(wire.requests) == (index + 1) * 12
     assert wire.closed == wire.transports
 
@@ -621,3 +633,222 @@ async def test_failure_name_alone_does_not_assert_no_send(wire: Wire) -> None:
         assert bounded.accounting().amount is None
     finally:
         await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "shape", ["normal", "empty", "legacy", "refusal", "reasoning", "tool_finish_without_calls"]
+)
+@pytest.mark.asyncio
+async def test_diagnostics_distinguish_response_shapes_without_changing_results(
+    wire: Wire, shape: str
+) -> None:
+    choice = wire.payload["choices"][0]
+    message = choice["message"]
+    choice["native_finish_reason"] = "stop"
+    if shape != "normal":
+        function = message.pop("tool_calls")[0]["function"]
+        choice["finish_reason"] = "stop"
+        if shape == "legacy":
+            message["function_call"] = function
+            choice["finish_reason"] = "function_call"
+        elif shape == "refusal":
+            message["refusal"] = "private refusal text"
+            choice["finish_reason"] = "content_filter"
+        elif shape == "reasoning":
+            message["reasoning"] = "private reasoning text"
+        elif shape == "tool_finish_without_calls":
+            choice["finish_reason"] = "tool_calls"
+    result = await ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True).run(
+        input_value=realization(), arm_id="clean"
+    )
+    if shape == "normal":
+        assert isinstance(result, WorkerSuccess)
+    else:
+        assert (
+            isinstance(result, WorkerFailure) and result.error_type == "AgentSchemaNotCalledError"
+        )
+    assert result.accounting.amount == 0.0000205 and result.accounting.coverage == "estimated"
+    assert not result.trace["billing_uncertain"]
+    assert len(wire.requests) == 1 and wire.closed == wire.transports
+    diagnostics = result.trace["provider_diagnostics"]
+    event = diagnostics["requests"][0]
+    assert event["request_body_sha256"] == digest_bytes(wire.requests[0].content)
+    assert event["request_body_bytes"] == len(wire.requests[0].content)
+    assert event["response_received"] and event["http_status"] == 200
+    assert event["generation_id"] == "gen-fake-only"
+    assert event["finish_reason"] == choice["finish_reason"]
+    assert event["native_finish_reason"] == "stop"
+    assert event["choice_count"] == 1 and event["content_characters"] is None
+    assert event["message_fields"]["content"] == "null"
+    assert event["message_fields"]["function_call"] == (
+        "object" if shape == "legacy" else "missing"
+    )
+    assert event["message_fields"]["refusal"] == ("string" if shape == "refusal" else "missing")
+    assert event["message_fields"]["reasoning"] == ("string" if shape == "reasoning" else "missing")
+    encoded = canonical_json(diagnostics)
+    for private in (b"private", b"test-secret", b"arguments", b"authorization"):
+        assert private not in encoded
+
+
+@pytest.mark.parametrize("case", ["http_error", "invalid_json", "invalid_usage", "transport"])
+@pytest.mark.asyncio
+async def test_failure_diagnostics_survive_without_weakening_billing(wire: Wire, case: str) -> None:
+    if case == "http_error":
+        wire.status = 500
+        wire.payload = {"error": {"message": "do-not-copy-error-body"}}
+    elif case == "invalid_json":
+        wire.raw = b"not-json-do-not-copy"
+    elif case == "invalid_usage":
+        wire.payload["usage"]["cost"] = "invalid"
+    else:
+        wire.error = httpx.ReadTimeout("do-not-copy-error-body")
+    worker = ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True)
+    result = await worker.run(input_value=realization(), arm_id="clean")
+    assert isinstance(result, WorkerFailure)
+    assert result.accounting.coverage == "unavailable" and result.trace["billing_uncertain"]
+    diagnostics = result.trace["provider_diagnostics"]
+    event = diagnostics["requests"][0]
+    assert event["response_received"] == (case != "transport")
+    if case == "invalid_json":
+        assert event["json_state"] == "invalid"
+    elif case == "invalid_usage":
+        assert event["tool_names"] == ["submit_output"]
+    assert b"do-not-copy" not in canonical_json(diagnostics)
+    assert isinstance(await worker.run(input_value=realization(), arm_id="clean"), WorkerFailure)
+    assert len(wire.requests) == 1
+
+
+def test_diagnostic_recording_is_bounded_detached_and_redacts_metadata() -> None:
+    recorder = ResponseDiagnostics("sensitive-key")
+    payload = response_payload()
+    payload["id"] = "gen-sensitive-key"
+    choice = payload["choices"][0]
+    choice["finish_reason"] = "sensitive-key"
+    choice["native_finish_reason"] = "x" * 10000
+    message = choice["message"]
+    message["content"] = "private" * 10000
+    message["unrecognized-sensitive-key"] = "private"
+    message["tool_calls"] = [{"function": {"name": "sensitive-key", "arguments": "private"}}] * 100
+    for _ in range(12):
+        recorder.request(b"bounded input")
+        recorder.status(200)
+        recorder.response(payload)
+    result = recorder.snapshot()
+    assert result["truncated"] and len(result["requests"]) == 10
+    event = result["requests"][0]
+    assert event["generation_id"] is None and event["finish_reason"] is None
+    assert event["native_finish_reason"] is None
+    assert event["content_characters"] == 70000
+    assert event["tool_call_count"] == 100 and len(event["tool_names"]) == 8
+    assert event["tool_names_truncated"]
+    encoded = canonical_json(result)
+    assert len(encoded) < 12000
+    assert b"sensitive-key" not in encoded and b"private" not in encoded
+    result["requests"].clear()
+    payload["id"] = "gen-changed"
+    assert len(recorder.snapshot()["requests"]) == 10
+    assert recorder.snapshot()["requests"][0]["generation_id"] is None
+
+
+@pytest.mark.parametrize(
+    "value", [None, [], True, 7, "text", {"choices": [None]}, {"choices": [{"message": []}]}]
+)
+def test_malformed_response_shapes_are_safe_to_record(value: Any) -> None:
+    recorder = ResponseDiagnostics("test-key")
+    recorder.request(b"body")
+    recorder.status(200)
+    recorder.response(value)
+    assert canonical_json(recorder.snapshot())
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_are_fresh_per_client_and_available_after_close(wire: Wire) -> None:
+    first, second = factory().create(), factory().create()
+    try:
+        await first.complete(params())
+        assert second.diagnostics()["requests"] == []
+        first.diagnostics()["requests"].clear()
+    finally:
+        await first.aclose()
+        await second.aclose()
+    assert len(first.diagnostics()["requests"]) == 1
+    assert second.diagnostics()["requests"] == []
+
+
+@pytest.mark.asyncio
+async def test_broken_optional_diagnostics_do_not_erase_success_or_usage(wire: Wire) -> None:
+    from assay.adapters.openrouter import _PilotClient
+
+    with patch.object(_PilotClient, "diagnostics", side_effect=RuntimeError("private-error")):
+        result = await ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True).run(
+            input_value=realization(), arm_id="clean"
+        )
+    assert isinstance(result, WorkerSuccess) and result.accounting.amount == 0.0000205
+    assert result.trace["provider_diagnostics"] == {"capture_failed": True}
+
+
+def test_diagnostic_policy_is_bound_and_detached(wire: Wire) -> None:
+    owner = factory()
+    configuration = owner.configuration()
+    assert configuration["revision"] == "assay-openrouter-source-v3"
+    assert configuration["diagnostics"]["max_requests"] == 10
+    configuration["diagnostics"]["message_fields"].clear()
+    assert owner.configuration()["diagnostics"]["message_fields"]
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_keep_each_request_paired_with_its_response(wire: Wire) -> None:
+    client = factory().create()
+    try:
+        for generation_id in ("gen-first", "gen-second"):
+            wire.payload["id"] = generation_id
+            await client.complete(params())
+    finally:
+        await client.aclose()
+    events = client.diagnostics()["requests"]
+    assert [event["generation_id"] for event in events] == ["gen-first", "gen-second"]
+    assert all(event["tool_call_count"] == 1 for event in events)
+
+
+def test_excess_diagnostic_requests_do_not_overwrite_last_retained_response() -> None:
+    recorder = ResponseDiagnostics("test-key")
+    for index in range(12):
+        payload = response_payload()
+        payload["id"] = f"gen-{index}"
+        recorder.request(str(index).encode())
+        recorder.status(200)
+        recorder.response(payload)
+    events = recorder.snapshot()["requests"]
+    assert [e["generation_id"] for e in events] == [f"gen-{i}" for i in range(10)]
+
+
+@pytest.mark.asyncio
+async def test_v2_plan_is_rejected_by_v3_worker_before_http(wire: Wire, tmp_path: Path) -> None:
+    class V2Factory(OpenRouterFactory):
+        def configuration(self) -> dict[str, Any]:
+            value = super().configuration()
+            value["revision"] = "assay-openrouter-source-v2"
+            del value["diagnostics"]
+            return value
+
+    store = ObjectStore(tmp_path)
+    prepared = prepare_pilot(
+        store,
+        factory=V2Factory(),
+        settings=qwen_smoke_settings(),
+        schemas={
+            name: paa_contracts.load_schema(name)
+            for name in ("paa-task", "paa-evidence-record", "paa-operating-record")
+        },
+    )
+    assert isinstance(prepared, PilotPrepared)
+    with patch.object(OpenRouterFactory, "create", side_effect=AssertionError("unexpected client")):
+        result = await run_pilot(
+            store,
+            plan_ref=prepared.plan_ref,
+            authorization=prepared.plan_ref,
+            factory=factory(),
+            allow_paid=True,
+        )
+    assert isinstance(result, PilotFailed)
+    assert "configuration mismatch" in result.message and not wire.requests
