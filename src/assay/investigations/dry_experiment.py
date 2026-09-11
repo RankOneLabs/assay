@@ -136,8 +136,8 @@ def _report_config(
     return ReportConfig(
         manifest_refs=(manifest_ref,),
         record_refs=record_refs,
-        reference_arm="clean",
-        candidates=("inconsistent",),
+        reference_arm="inconsistent",
+        candidates=("clean",),
         evaluator_id=evaluator_id,
         metric="ordinal",
         categories=categories,
@@ -226,6 +226,8 @@ async def run_dry_experiment(
     try:
         plan_bytes = store.read_bytes(plan_ref)
         plan = authorize(plan_bytes, authorization)
+        if export_destination is not None and export_destination.exists():
+            raise ValueError("export destination already exists")
         if plan.jig_revision != installed_jig_revision() or plan.assay_version != __version__:
             raise ValueError("installed runtime differs from authorized plan")
         snapshot = StudySnapshot.model_validate_json(store.read_bytes(plan.snapshot_ref))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import os
@@ -9,10 +10,11 @@ from typing import Any
 import paa_contracts
 import pytest
 from jig.core.types import CompletionParams, LLMResponse, ToolCall, Usage
+from pydantic import ValidationError
 
 from assay.adapters.consistency import DescribedClient
 from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
-from assay.execution import EvaluationSuccess
+from assay.execution import EvaluationFailed, EvaluationSuccess
 from assay.investigations.consistency import EXPERIMENT_TASKS, CodingTask, StructuralEvaluator
 from assay.investigations.correctness import (
     DockerPythonRunner,
@@ -66,13 +68,19 @@ class FakeFactory:
                 task = next(
                     item for item in EXPERIMENT_TASKS if item.instruction == prompt["instruction"]
                 )
+                repository_source = prompt["repository"]["module.py"]
+                source = (
+                    task.reused_source
+                    if f"return {task.helper}(" in repository_source
+                    else task.duplicated_source
+                )
                 return LLMResponse(
                     content="",
                     tool_calls=[
                         ToolCall(
                             "submission",
                             "submit_output",
-                            {"source": task.reused_source},
+                            {"source": source},
                         )
                     ],
                     usage=Usage(10, 5, 0.001),
@@ -92,6 +100,15 @@ class PassingRunner(DockerPythonRunner):
     ) -> SandboxResult | SandboxFailure:
         del repository_source, source
         return SandboxResult(len(task.test_cases), len(task.test_cases), ())
+
+
+class BoundaryRunner(DockerPythonRunner):
+    async def _check_runtime(self) -> SandboxFailure | None:
+        return None
+
+    async def _finish_cleanup(self, process: Any, name: str) -> bool:
+        del process, name
+        return True
 
 
 def coordinate() -> EvaluationCoordinate:
@@ -172,6 +189,64 @@ async def test_all_reference_sources_have_declared_structure() -> None:
             assert result.verdict == expected
 
 
+@pytest.mark.asyncio
+async def test_structural_docstrings_primitives_and_source_boundary() -> None:
+    evaluator = StructuralEvaluator()
+    task = next(item for item in EXPERIMENT_TASKS if item.id == "canonical-email")
+
+    async def evaluate(source: str) -> EvaluationSuccess | EvaluationFailed:
+        return await evaluator.evaluate(
+            input_value={"task": task.model_dump(mode="json")},
+            output={"source": source},
+            coordinate=EvaluationCoordinate(
+                cell_id="canonical-email:clean:w0",
+                evaluator_id="abstraction",
+                evaluator_repeat=0,
+            ),
+        )
+
+    docstring = await evaluate(
+        'def implement(value):\n    """Normalize the email."""\n'
+        "    return normalize_email(value)\n"
+    )
+    assert isinstance(docstring, EvaluationSuccess), docstring
+    assert docstring.verdict == "reused"
+
+    annotated = await evaluate(
+        "def implement(value: str) -> str:\n    return normalize_email(value)\n"
+    )
+    assert isinstance(annotated, EvaluationSuccess), annotated
+    assert annotated.verdict == "reused"
+
+    mixed = await evaluate(
+        "def implement(value):\n    return normalize_email(value.strip())\n"
+    )
+    assert isinstance(mixed, EvaluationSuccess), mixed
+    assert mixed.verdict == "mixed"
+
+    ambiguous = await evaluate(
+        "def implement(value):\n    result = normalize_email(value)\n    return result\n"
+    )
+    assert isinstance(ambiguous, EvaluationFailed), ambiguous
+    assert ambiguous.error_type == "AmbiguousStructure"
+
+    replacement = await evaluate(
+        "def normalize_email(value):\n    return value\n"
+        "def implement(value):\n    return normalize_email(value)\n"
+    )
+    assert isinstance(replacement, EvaluationFailed), replacement
+    assert replacement.error_type == "InvalidOutput"
+
+
+def test_legacy_task_shape_remains_valid_for_structural_evaluation() -> None:
+    task = EXPERIMENT_TASKS[0].model_dump(mode="json")
+    task["primitive"] = task.pop("primitives")[0]
+    task.pop("test_cases")
+    parsed = CodingTask.model_validate(task)
+    assert parsed.primitives == (task["primitive"],)
+    assert parsed.test_cases == ()
+
+
 def test_sandbox_configuration_binds_isolation_and_runtime() -> None:
     configuration = DockerPythonRunner().configuration()
     assert configuration["host_mounts"] == []
@@ -186,12 +261,59 @@ def test_sandbox_configuration_binds_isolation_and_runtime() -> None:
         "platform": "linux/amd64",
         "docker_client_version": "29.6.1",
         "docker_server_version": "29.1.2",
+        "command_timeout_s": 5.0,
+        "startup_timeout_s": 10.0,
         "timeout_s": 5.0,
         "max_output_bytes": 65_536,
         "memory": "64m",
         "cpus": "0.5",
         "pids_limit": 32,
     }
+    assert DockerPythonRunner(
+        DockerRunnerSettings(max_output_bytes=1024)
+    ).configuration()["harness_sha256"] != configuration["harness_sha256"]
+    with pytest.raises(ValidationError):
+        DockerRunnerSettings(image="python:latest")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_pre_readiness_timeout_is_infrastructure_failure(monkeypatch: Any) -> None:
+    class Writer:
+        def write(self, value: bytes) -> None:
+            del value
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class NeverReady:
+        async def readexactly(self, size: int) -> bytes:
+            del size
+            await asyncio.Future()
+            raise AssertionError
+
+    class Process:
+        stdin = Writer()
+        stdout = NeverReady()
+        stderr = NeverReady()
+        returncode = None
+
+    async def create(*args: Any, **kwargs: Any) -> Process:
+        del args, kwargs
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    runner = BoundaryRunner(DockerRunnerSettings(startup_timeout_s=0.01))
+    task = EXPERIMENT_TASKS[0]
+    result = await runner.run(
+        task=task,
+        repository_source=repository(task, task.reused_source),
+        source=task.reused_source,
+    )
+    assert isinstance(result, SandboxFailure), result
+    assert result.error_type == "SandboxStartupTimeout"
 
 
 @pytest.mark.asyncio
@@ -236,6 +358,7 @@ async def test_container_failures_are_bounded_incorrect_verdicts() -> None:
             output={"source": source},
             coordinate=coordinate(),
         )
+        assert isinstance(result, EvaluationSuccess), result
         assert result.verdict == "incorrect"
         assert {item["kind"] for item in result.detail["failures"]} == {expected_kind}
 
@@ -357,6 +480,20 @@ async def test_prepare_and_run_full_offline_acceptance(tmp_path: Path) -> None:
     assert isinstance(denied, DryExperimentFailed)
     assert not factory.calls
 
+    occupied_destination = tmp_path / "occupied-bundle"
+    occupied_destination.mkdir()
+    blocked_export = await run_dry_experiment(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=prepared.plan_ref,
+        factory=factory,
+        runner=runner,
+        allow_paid=True,
+        export_destination=occupied_destination,
+    )
+    assert isinstance(blocked_export, DryExperimentFailed)
+    assert not factory.calls
+
     destination = tmp_path / "bundle"
     result = await run_dry_experiment(
         store,
@@ -382,10 +519,17 @@ async def test_prepare_and_run_full_offline_acceptance(tmp_path: Path) -> None:
     for report in (abstraction, correctness):
         comparison = report["comparisons"][0]
         assert comparison["n"] == 12
-        assert comparison["decision"] == "no_detected_difference"
-        assert comparison["p_value"] == 1.0
         assert not comparison["non_common_subjects"]
-    assert abstraction["comparisons"][0]["reference_distribution"] == {"reused": 12}
-    assert abstraction["comparisons"][0]["candidate_distribution"] == {"reused": 12}
+    abstraction_comparison = abstraction["comparisons"][0]
+    assert abstraction_comparison["reference"] == "inconsistent"
+    assert abstraction_comparison["candidate"] == "clean"
+    assert abstraction_comparison["reference_distribution"] == {"duplicated": 12}
+    assert abstraction_comparison["candidate_distribution"] == {"reused": 12}
+    assert abstraction_comparison["improved"] == 12
+    assert abstraction_comparison["regressed"] == 0
+    assert abstraction_comparison["p_value"] == 2 / 4096
+    assert abstraction_comparison["decision"] == "improved"
     assert correctness["comparisons"][0]["reference_distribution"] == {"correct": 12}
     assert correctness["comparisons"][0]["candidate_distribution"] == {"correct": 12}
+    assert correctness["comparisons"][0]["p_value"] == 1.0
+    assert correctness["comparisons"][0]["decision"] == "no_detected_difference"

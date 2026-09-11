@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import EvaluationFailed, EvaluationResult, EvaluationSuccess
-from assay.investigations.consistency import CodingTask
+from assay.investigations.consistency import CodingTask, parse_candidate_source
 from assay.models import EvaluationCoordinate, WireModel
 
 CORRECTNESS_CATEGORIES = ("incorrect", "correct")
@@ -39,13 +39,18 @@ sys.stdout.write(dumps(result, allow_nan=False, ensure_ascii=False,
 """
 
 _HARNESS_TEMPLATE = r"""import json
+import os
+import selectors
 import subprocess
 import sys
 
 dumps = json.dumps
 loads = json.loads
 candidate_harness = __CANDIDATE_HARNESS__
+max_output_bytes = __MAX_OUTPUT_BYTES__
 payload = loads(sys.stdin.read())
+sys.stderr.write("R")
+sys.stderr.flush()
 passed = 0
 failures = []
 for index, case in enumerate(payload["cases"]):
@@ -55,17 +60,38 @@ for index, case in enumerate(payload["cases"]):
             "source": payload["source"],
             "input": case["input"],
         }, allow_nan=False, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        child = subprocess.run(
+        child = subprocess.Popen(
             [sys.executable, "-I", "-S", "-c", candidate_harness],
-            input=child_payload, text=True, capture_output=True, check=False,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
-        if len(child.stdout.encode("utf-8")) > 65536 or len(child.stderr.encode("utf-8")) > 65536:
+        child.stdin.write(child_payload.encode("utf-8"))
+        child.stdin.close()
+        selector = selectors.DefaultSelector()
+        selector.register(child.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(child.stderr, selectors.EVENT_READ, "stderr")
+        streams = {"stdout": bytearray(), "stderr": bytearray()}
+        exceeded = False
+        while selector.get_map():
+            for key, _events in selector.select():
+                chunk = os.read(key.fileobj.fileno(), 4096)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                streams[key.data].extend(chunk)
+                if sum(len(value) for value in streams.values()) > max_output_bytes:
+                    exceeded = True
+                    child.kill()
+                    break
+            if exceeded:
+                break
+        child.wait()
+        if exceeded:
             failures.append({"case": index, "kind": "output_limit"})
             continue
         if child.returncode:
             failures.append({"case": index, "kind": "abnormal_exit"})
             continue
-        child_result = loads(child.stdout)
+        child_result = loads(streams["stdout"].decode("utf-8"))
         if not isinstance(child_result, dict) or child_result.get("ok") is not True:
             kind = child_result.get("kind", "protocol_error")
             if not isinstance(kind, str) or not kind or len(kind) > 100:
@@ -91,16 +117,21 @@ result = {"passed": passed, "total": len(payload["cases"]), "failures": failures
 sys.stdout.write(dumps(result, allow_nan=False, sort_keys=True, separators=(",", ":")))
 """
 
-_HARNESS = _HARNESS_TEMPLATE.replace(
-    "__CANDIDATE_HARNESS__", json.dumps(_CANDIDATE_HARNESS, ensure_ascii=False)
-)
+def _render_harness(max_output_bytes: int) -> str:
+    return _HARNESS_TEMPLATE.replace(
+        "__CANDIDATE_HARNESS__", json.dumps(_CANDIDATE_HARNESS, ensure_ascii=False)
+    ).replace("__MAX_OUTPUT_BYTES__", str(max_output_bytes))
 
 
 class DockerRunnerSettings(WireModel):
-    image: str = PYTHON_IMAGE
+    image: Literal[
+        "python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"
+    ] = "python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"
     platform: Literal["linux/amd64"] = "linux/amd64"
     docker_client_version: Literal["29.6.1"] = "29.6.1"
     docker_server_version: Literal["29.1.2"] = "29.1.2"
+    command_timeout_s: float = 5.0
+    startup_timeout_s: float = 10.0
     timeout_s: float = 5.0
     max_output_bytes: int = 65_536
     memory: Literal["64m"] = "64m"
@@ -130,15 +161,16 @@ class DockerPythonRunner:
 
     def __init__(self, settings: DockerRunnerSettings | None = None) -> None:
         self.settings = settings or DockerRunnerSettings()
+        self._harness = _render_harness(self.settings.max_output_bytes)
         self._runtime_checked = False
         self._runtime_lock = asyncio.Lock()
 
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "docker-python-functional",
-            "version": "1",
+            "version": "2",
             "settings": self.settings.model_dump(mode="json"),
-            "harness_sha256": digest_bytes(_HARNESS.encode("utf-8")),
+            "harness_sha256": digest_bytes(self._harness.encode("utf-8")),
             "network": "none",
             "root_filesystem": "read-only",
             "host_mounts": [],
@@ -158,8 +190,36 @@ class DockerPythonRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout, _ = await process.communicate()
+        try:
+            async with asyncio.timeout(self.settings.command_timeout_s):
+                stdout, _ = await process.communicate()
+        except TimeoutError as error:
+            await self._finish_process(process)
+            raise OSError("Docker command timed out") from error
+        except asyncio.CancelledError:
+            await self._finish_process(process)
+            raise
         return process.returncode or 0, stdout
+
+    @staticmethod
+    async def _stop_process(process: asyncio.subprocess.Process) -> None:
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(3):
+                    await process.wait()
+
+    async def _finish_process(self, process: asyncio.subprocess.Process) -> None:
+        closing = asyncio.create_task(self._stop_process(process))
+        cancellation: asyncio.CancelledError | None = None
+        while not closing.done():
+            try:
+                await asyncio.shield(closing)
+            except asyncio.CancelledError as error:
+                cancellation = error
+        if cancellation is not None:
+            raise cancellation
 
     async def _check_runtime(self) -> SandboxFailure | None:
         async with self._runtime_lock:
@@ -189,34 +249,25 @@ class DockerPythonRunner:
             self._runtime_checked = True
             return None
 
-    async def _read_limited(self, stream: asyncio.StreamReader) -> bytes:
+    async def _read_limited(self, stream: asyncio.StreamReader, total: list[int]) -> bytes:
         output = bytearray()
         while chunk := await stream.read(4096):
             output.extend(chunk)
-            if len(output) > self.settings.max_output_bytes:
+            total[0] += len(chunk)
+            if total[0] > self.settings.max_output_bytes:
                 raise _OutputLimitExceeded
         return bytes(output)
 
     async def _remove(self, name: str) -> bool:
         try:
-            process = await asyncio.create_subprocess_exec(
-                "docker",
-                "rm",
-                "-f",
-                name,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            async with asyncio.timeout(3):
-                code = await process.wait()
+            code, _ = await self._command("docker", "rm", "-f", name)
             if code == 0:
                 return True
             check_code, remaining = await self._command(
                 "docker", "ps", "-aq", "--filter", f"name=^/{name}$"
             )
             return check_code == 0 and not remaining.strip()
-        except (OSError, TimeoutError):
+        except OSError:
             return False
 
     async def _cleanup(self, process: asyncio.subprocess.Process | None, name: str) -> bool:
@@ -245,6 +296,12 @@ class DockerPythonRunner:
     async def run(
         self, *, task: CodingTask, repository_source: str, source: str
     ) -> SandboxResult | SandboxFailure:
+        try:
+            parse_candidate_source(source, helper=task.helper)
+        except (SyntaxError, ValueError) as error:
+            return SandboxFailure("InvalidOutput", str(error))
+        if not task.test_cases:
+            return SandboxFailure("InvalidInput", "correctness evaluation requires test cases")
         failure = await self._check_runtime()
         if failure is not None:
             return failure
@@ -298,29 +355,37 @@ class DockerPythonRunner:
             "-I",
             "-S",
             "-c",
-            _HARNESS,
+            self._harness,
         )
         process: asyncio.subprocess.Process | None = None
         stdout = b""
         candidate_failure: str | None = None
         infrastructure_failure: SandboxFailure | None = None
+        ready = False
         try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            assert process.stdin is not None
-            assert process.stdout is not None
-            assert process.stderr is not None
-            process.stdin.write(payload)
-            await process.stdin.drain()
-            process.stdin.close()
+            async with asyncio.timeout(self.settings.startup_timeout_s):
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                assert process.stdin is not None
+                assert process.stdout is not None
+                assert process.stderr is not None
+                process.stdin.write(payload)
+                await process.stdin.drain()
+                process.stdin.close()
+                ready = await process.stderr.readexactly(1) == b"R"
+            if not ready:
+                infrastructure_failure = SandboxFailure(
+                    "SandboxStartupFailed", "sandbox harness did not become ready"
+                )
+            output_total = [0]
             async with asyncio.timeout(self.settings.timeout_s):
                 stdout, _stderr, returncode = await asyncio.gather(
-                    self._read_limited(process.stdout),
-                    self._read_limited(process.stderr),
+                    self._read_limited(process.stdout, output_total),
+                    self._read_limited(process.stderr, output_total),
                     process.wait(),
                 )
             if returncode:
@@ -331,7 +396,16 @@ class DockerPythonRunner:
                 else:
                     candidate_failure = "abnormal_exit"
         except TimeoutError:
-            candidate_failure = "timeout"
+            if ready:
+                candidate_failure = "timeout"
+            else:
+                infrastructure_failure = SandboxFailure(
+                    "SandboxStartupTimeout", "sandbox harness startup timed out"
+                )
+        except asyncio.IncompleteReadError:
+            infrastructure_failure = SandboxFailure(
+                "SandboxStartupFailed", "sandbox harness exited before readiness"
+            )
         except _OutputLimitExceeded:
             candidate_failure = "output_limit"
         except OSError:
@@ -389,10 +463,11 @@ class FunctionalCorrectnessEvaluator:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "consistency-functional-correctness",
-            "version": "1",
+            "version": "2",
             "categories": list(CORRECTNESS_CATEGORIES),
             "runner": self.runner.configuration(),
             "comparison": "canonical-json-output-equality",
+            "source_boundary": "optional-docstring-imports-one-implement",
         }
 
     async def evaluate(
@@ -410,7 +485,10 @@ class FunctionalCorrectnessEvaluator:
             source = output["source"]
             if not isinstance(source, str):
                 raise ValueError("worker output source must be a string")
-        except (KeyError, TypeError, ValueError) as error:
+            parse_candidate_source(source, helper=task.helper)
+            if not task.test_cases:
+                raise ValueError("correctness evaluation requires test cases")
+        except (KeyError, TypeError, ValueError, SyntaxError) as error:
             return EvaluationFailed("InvalidOutput", str(error))
         result = await self.runner.run(
             task=task, repository_source=repository_source, source=source
