@@ -50,7 +50,48 @@ not a cryptographic pin of remote weights or serving infrastructure.
   and halt further requests. Error-type strings alone never establish no-send.
 - SDK error bodies are not copied into result messages; the existing worker
   trace retains prompts, spans, response model names, and valid usage. The
-  integration does not persist full HTTP bodies, headers, or generation IDs.
+  integration does not persist full HTTP bodies or headers.
+
+## Response diagnostics (v3)
+
+The worker trace's `provider_diagnostics` records allowlisted observations before
+SDK parsing, including failed attempts. Each request-hook observation includes
+the SHA-256 digest and byte count of the actual serialized JSON body, whether a
+response arrived, and its HTTP status when available. A hook observation is not
+proof that bytes were sent: locally rejected requests can also reach this hook.
+Failures rejected before the hook have no request observation.
+
+For successful HTTP responses with parseable JSON, diagnostics include a bounded
+generation-ID hash, choice count, first-choice finish/native-finish reasons, known
+message-field types (including missing versus null), content character count,
+and tool-call count/names. Field types distinguish legacy `function_call`, refusal,
+and reasoning-only shapes without recording their contents. Non-2xx responses
+record status only; their error bodies are not inspected for diagnostic fields.
+
+Capture is capped at ten request observations per client and eight tool names per
+response, with explicit truncation flags. Generation IDs are limited to 128 ASCII
+identifier characters with a `gen-` prefix, then recorded only as
+`generation_id_sha256`; raw IDs are never retained. Hashes support equality checks,
+not direct provider lookup, and are not a guarantee of anonymity for guessable IDs.
+Invalid IDs or IDs containing the active API key are omitted (null).
+Finish and native-finish reasons allow only `stop`, `length`, `tool_calls`,
+`content_filter`, `function_call`, and `error`; tool names allow only `submit_output`.
+Other string labels become a fixed `unknown` marker (including labels longer than
+64 characters); missing/non-string labels and bounded labels containing the active
+API key become null. No arbitrary label is retained or truncated. Arbitrary
+field names, content, reasoning, refusal text, arguments, and headers are excluded.
+These observations are detached from provider response objects. Returned
+diagnostic snapshots are also detached and remain available after client cleanup.
+The `openrouter-response-shape-v2` policy is bound into provider configuration;
+plans prepared under the earlier raw-ID diagnostic policy require re-preparation.
+
+Diagnostics do not alter response validation, introduce retries, accept legacy
+calls as submissions, or mark otherwise known usage as unavailable. They remain
+provider observations, not independent proof of a remote model's behavior.
+Optional client diagnostics are validated as canonical-JSON-compatible objects
+and detached before attaching them to the trace. Retrieval or validation failures
+produce a fixed `capture_failed` marker without replacing the worker outcome,
+trace, or accounting.
 
 See OpenRouter's [provider-routing contract](https://openrouter.ai/docs/guides/routing/provider-selection)
 and [usage-accounting contract](https://openrouter.ai/docs/cookbook/administration/usage-accounting).
@@ -110,8 +151,9 @@ print(store.read_bytes(prepared.snapshot_ref).decode())
 `.assay/` is ignored by Git; preserve the object store and export each completed
 run for archival. A dependency/configuration change requires preparing and
 inspecting a new plan. Publish/review the implementation before a live run.
-The v2 privacy/tool policy and body-limit setting invalidate previously prepared
-v1 configurations; prepare and independently approve a new plan after updating.
+The v3 diagnostic policy is bound into the provider configuration and invalidates
+previously prepared v1/v2 configurations. Prepare and independently approve a new
+plan after updating; the completed first v2 run remains unchanged.
 
 ## Execute only after plan and budget approval
 

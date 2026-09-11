@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import math
 import uuid
 from datetime import UTC, datetime
@@ -99,6 +100,10 @@ class DescribedClient(LLMClient):
 
     def configuration(self) -> dict[str, Any]:
         raise NotImplementedError
+
+    def diagnostics(self) -> dict[str, Any] | None:
+        """Detached, credential-free observations; optional for trusted providers."""
+        return None
 
     async def complete_result(self, params: CompletionParams) -> LLMResponse | WorkerFailure:
         """Adapt exception-based providers; governed clients may return failures directly."""
@@ -460,6 +465,18 @@ class ConsistencyWorker:
             "response_models": [] if bounded is None else bounded.response_models,
             "billing_uncertain": False if bounded is None else bounded.uncertain,
         }
+        if client is not None:
+            try:
+                diagnostics = client.diagnostics()
+                if diagnostics is not None:
+                    if not isinstance(diagnostics, dict):
+                        raise ValueError("provider diagnostics must be an object")
+                    diagnostics = json.loads(canonical_json(diagnostics))
+            except Exception:
+                # Observability must not discard an outcome or its known usage.
+                diagnostics = {"capture_failed": True}
+            if diagnostics is not None:
+                detail["provider_diagnostics"] = diagnostics
         return dataclasses.replace(
             result,
             trace=detail,
