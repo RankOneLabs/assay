@@ -1,0 +1,247 @@
+{
+  "$defs": {
+    "CellCoordinate": {
+      "additionalProperties": false,
+      "properties": {
+        "subject_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Subject Id",
+          "type": "string"
+        },
+        "arm_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Arm Id",
+          "type": "string"
+        },
+        "worker_repeat": {
+          "minimum": 0,
+          "title": "Worker Repeat",
+          "type": "integer"
+        },
+        "realization_ref": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Realization Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject_id",
+        "arm_id",
+        "worker_repeat",
+        "realization_ref"
+      ],
+      "title": "CellCoordinate",
+      "type": "object"
+    },
+    "EvaluationCoordinate": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*:w[0-9]+$",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "evaluator_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Evaluator Id",
+          "type": "string"
+        },
+        "evaluator_repeat": {
+          "minimum": 0,
+          "title": "Evaluator Repeat",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cell_id",
+        "evaluator_id",
+        "evaluator_repeat"
+      ],
+      "title": "EvaluationCoordinate",
+      "type": "object"
+    },
+    "Exclusion": {
+      "additionalProperties": false,
+      "properties": {
+        "subject_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Subject Id",
+          "type": "string"
+        },
+        "arm_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Arm Id",
+          "type": "string"
+        },
+        "classification": {
+          "minLength": 1,
+          "title": "Classification",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject_id",
+        "arm_id",
+        "classification",
+        "reason"
+      ],
+      "title": "Exclusion",
+      "type": "object"
+    },
+    "PriceEstimate": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Amount"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "coverage": {
+          "enum": [
+            "measured",
+            "estimated",
+            "unavailable",
+            "mixed"
+          ],
+          "title": "Coverage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "coverage"
+      ],
+      "title": "PriceEstimate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "assay-execution-plan/0.1.0",
+      "default": "assay-execution-plan/0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot_ref": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Snapshot Ref",
+      "type": "string"
+    },
+    "preparation_mode": {
+      "default": "none",
+      "enum": [
+        "none",
+        "authorized"
+      ],
+      "title": "Preparation Mode",
+      "type": "string"
+    },
+    "worker_repeats": {
+      "minimum": 1,
+      "title": "Worker Repeats",
+      "type": "integer"
+    },
+    "concurrency": {
+      "default": 4,
+      "minimum": 1,
+      "title": "Concurrency",
+      "type": "integer"
+    },
+    "exclusions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Exclusion"
+      },
+      "title": "Exclusions",
+      "type": "array"
+    },
+    "cells": {
+      "items": {
+        "$ref": "#/$defs/CellCoordinate"
+      },
+      "title": "Cells",
+      "type": "array"
+    },
+    "evaluations": {
+      "items": {
+        "$ref": "#/$defs/EvaluationCoordinate"
+      },
+      "title": "Evaluations",
+      "type": "array"
+    },
+    "declaration_hashes": {
+      "items": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Declaration Hashes",
+      "type": "array"
+    },
+    "execution_conditions_ref": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Execution Conditions Ref",
+      "type": "string"
+    },
+    "cost_estimate": {
+      "$ref": "#/$defs/PriceEstimate"
+    },
+    "arm_cost_estimates": {
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9_.-]*$": {
+          "$ref": "#/$defs/PriceEstimate"
+        }
+      },
+      "title": "Arm Cost Estimates",
+      "type": "object"
+    },
+    "jig_revision": {
+      "title": "Jig Revision",
+      "type": "string"
+    },
+    "assay_version": {
+      "title": "Assay Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "snapshot_ref",
+    "worker_repeats",
+    "cells",
+    "evaluations",
+    "declaration_hashes",
+    "execution_conditions_ref",
+    "cost_estimate",
+    "arm_cost_estimates",
+    "jig_revision",
+    "assay_version"
+  ],
+  "title": "ExecutionPlan",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-execution-plan.schema.json"
+}

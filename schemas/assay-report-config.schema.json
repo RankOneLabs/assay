@@ -1,0 +1,197 @@
+{
+  "$defs": {
+    "StatisticalProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "paired-v1",
+          "default": "paired-v1",
+          "title": "Name",
+          "type": "string"
+        },
+        "seed": {
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        },
+        "bootstrap_samples": {
+          "minimum": 100,
+          "title": "Bootstrap Samples",
+          "type": "integer"
+        },
+        "alpha": {
+          "default": 0.05,
+          "maximum": 0.05,
+          "minimum": 0.05,
+          "title": "Alpha",
+          "type": "number"
+        },
+        "min_subjects": {
+          "const": 10,
+          "default": 10,
+          "title": "Min Subjects",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "seed",
+        "bootstrap_samples"
+      ],
+      "title": "StatisticalProfile",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "assay-report-config/0.1.0",
+      "default": "assay-report-config/0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "manifest_refs": {
+      "items": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Manifest Refs",
+      "type": "array"
+    },
+    "record_refs": {
+      "items": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Record Refs",
+      "type": "array"
+    },
+    "reference_arm": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+      "title": "Reference Arm",
+      "type": "string"
+    },
+    "candidates": {
+      "items": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Candidates",
+      "type": "array"
+    },
+    "evaluator_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+      "title": "Evaluator Id",
+      "type": "string"
+    },
+    "metric": {
+      "enum": [
+        "scalar",
+        "ordinal",
+        "classification"
+      ],
+      "title": "Metric",
+      "type": "string"
+    },
+    "scalar_direction": {
+      "anyOf": [
+        {
+          "enum": [
+            "higher_is_better",
+            "lower_is_better"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Scalar Direction"
+    },
+    "evaluator_repeat_aggregation": {
+      "enum": [
+        "mean",
+        "median",
+        "majority"
+      ],
+      "title": "Evaluator Repeat Aggregation",
+      "type": "string"
+    },
+    "worker_repeat_aggregation": {
+      "enum": [
+        "mean",
+        "median",
+        "majority"
+      ],
+      "title": "Worker Repeat Aggregation",
+      "type": "string"
+    },
+    "ordinal_mapping": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ordinal Mapping"
+    },
+    "categories": {
+      "default": [],
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Categories",
+      "type": "array"
+    },
+    "positive_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Positive Label"
+    },
+    "label_key": {
+      "default": "label",
+      "minLength": 1,
+      "title": "Label Key",
+      "type": "string"
+    },
+    "statistical_profile": {
+      "$ref": "#/$defs/StatisticalProfile"
+    },
+    "engine_version": {
+      "title": "Engine Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "manifest_refs",
+    "record_refs",
+    "reference_arm",
+    "candidates",
+    "evaluator_id",
+    "metric",
+    "evaluator_repeat_aggregation",
+    "worker_repeat_aggregation",
+    "statistical_profile",
+    "engine_version"
+  ],
+  "title": "ReportConfig",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-report-config.schema.json"
+}

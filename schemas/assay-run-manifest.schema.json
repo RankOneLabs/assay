@@ -1,0 +1,72 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "assay-run-manifest/0.1.0",
+      "default": "assay-run-manifest/0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "plan_ref": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Plan Ref",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "incomplete"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "execution_records": {
+      "additionalProperties": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Execution Records",
+      "type": "object"
+    },
+    "evaluation_records": {
+      "additionalProperties": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Evaluation Records",
+      "type": "object"
+    },
+    "operating_records": {
+      "additionalProperties": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Operating Records",
+      "type": "object"
+    },
+    "missing_coordinates": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing Coordinates",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "plan_ref",
+    "status",
+    "execution_records",
+    "evaluation_records",
+    "missing_coordinates"
+  ],
+  "title": "RunManifest",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-run-manifest.schema.json"
+}

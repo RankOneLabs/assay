@@ -1,0 +1,143 @@
+{
+  "$defs": {
+    "CellCoordinate": {
+      "additionalProperties": false,
+      "properties": {
+        "subject_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Subject Id",
+          "type": "string"
+        },
+        "arm_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Arm Id",
+          "type": "string"
+        },
+        "worker_repeat": {
+          "minimum": 0,
+          "title": "Worker Repeat",
+          "type": "integer"
+        },
+        "realization_ref": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Realization Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject_id",
+        "arm_id",
+        "worker_repeat",
+        "realization_ref"
+      ],
+      "title": "CellCoordinate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "plan_ref": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Plan Ref",
+      "type": "string"
+    },
+    "started_at": {
+      "title": "Started At",
+      "type": "string"
+    },
+    "completed_at": {
+      "title": "Completed At",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "assay-execution-outcome/0.1.0",
+      "default": "assay-execution-outcome/0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "coordinate": {
+      "$ref": "#/$defs/CellCoordinate"
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "input_ref": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Input Ref",
+      "type": "string"
+    },
+    "output_ref": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output Ref"
+    },
+    "trace_ref": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Trace Ref"
+    },
+    "error_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Type"
+    },
+    "error_message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Message"
+    }
+  },
+  "required": [
+    "run_id",
+    "plan_ref",
+    "started_at",
+    "completed_at",
+    "coordinate",
+    "status",
+    "input_ref"
+  ],
+  "title": "ExecutionOutcome",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-execution-outcome.schema.json"
+}
