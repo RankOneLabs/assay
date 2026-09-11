@@ -10,8 +10,9 @@ in the intentionally untracked `comms/` directory.
 
 ## Install and check
 
-Python 3.12+, Git, and uv are required. Install uv with `python -m pip install uv`
-before running the commands below. Jig and the development PAA schema corpus are
+Python 3.12+, Git, and uv 0.10.2 are required. Install the tested uv version with
+`python -m pip install "uv==0.10.2"` before running the commands below. CI and
+`tool.uv.required-version` enforce the same version. Jig and the development PAA schema corpus are
 pinned to immutable upstream commits over public HTTPS; sibling checkouts and
 provider credentials are not required.
 

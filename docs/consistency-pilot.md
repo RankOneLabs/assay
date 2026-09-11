@@ -48,6 +48,13 @@ converts back to `WorkerFailure`. External cancellation propagates.
 
 ## Prepare and inspect — no provider calls
 
+Use uv 0.10.2, as pinned in the [installation instructions](../README.md#install-and-check),
+project configuration, and CI. Older uv versions can omit the requested Git
+revision from installation metadata. Upgrading uv alone does not repair an
+existing installation: if Jig's `direct_url.json` lacks `requested_revision`, run
+`uv sync --locked --reinstall-package jig` with the pinned uv version before
+preparing a plan. Do not hand-edit the metadata or bypass provenance validation.
+
 The library API is authoritative; no new CLI or automatic provider loading is
 introduced. With your `factory` defined, materialize using the pinned schema corpus
 (available in the development environment), or supply the same schemas yourself:
