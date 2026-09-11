@@ -1,10 +1,12 @@
 # OpenRouter smoke runs
 
-The first two proposed runs use `qwen/qwen3-coder-30b-a3b-instruct` through
-`novita/fp8`. Each run is the existing 12-execution clean/inconsistent pilot,
-not a two-model comparison. Inspect the first run before starting the second.
-Haiku is a later, separately prepared model configuration; it is not a fallback
-for Qwen and its results must not be pooled with Qwen as one worker.
+The first two qualification runs used `qwen/qwen3-coder-30b-a3b-instruct`
+through `novita/fp8`. The next proposed run uses the fixed
+`anthropic/claude-3-haiku` model through `amazon-bedrock`; it does not use the
+moving `~anthropic/claude-haiku-latest` alias. Each run is the existing
+12-execution clean/inconsistent pilot, not a cross-model comparison. Haiku is a
+separately prepared model configuration, not a fallback for Qwen, and results
+from the two workers must not be pooled as though they were one worker.
 
 These are plumbing smoke tests on three synthetic subjects. They do not establish
 a DRY effect, measure functional correctness, or execute generated source.
@@ -14,13 +16,14 @@ a DRY effect, measure functional correctness, or execute generated source.
 `OpenRouterFactory` wraps the pinned Jig OpenRouter adapter. It creates a fresh
 SDK/HTTP client per attempt and binds the model, provider endpoint tag, expected
 response provider name, rate caps, SDK/HTTP library versions, and transport policy
-into the study. Qwen's model slug is also its catalogue canonical slug; this is
-not a cryptographic pin of remote weights or serving infrastructure.
+into the study. The model slugs are catalogue canonical slugs; neither is a
+cryptographic pin of remote weights or serving infrastructure.
 
 - Routing uses one explicit `only`/`order` entry, `allow_fallbacks: false`, and
   `require_parameters: true`. Neither model fallback nor default load balancing
-  is requested. The response must identify the exact requested model and Novita;
-  the returned provider name does not independently prove the FP8 endpoint tag.
+  is requested. The response must identify the exact requested model and expected
+  provider name. A returned provider name does not independently prove the
+  selected endpoint tag.
 - Each request requires `data_collection: "deny"` and `zdr: true`. OpenRouter
   must reject routing when the pinned endpoint cannot meet both; neither the
   privacy constraints nor the provider restriction is relaxed on failure.
@@ -113,6 +116,16 @@ tokens, and a 160,000-token endpoint context limit. These rates are sent as
 reservation. This calculation assumes the stated token limit and no other
 charges. The byte cap is not a tokenizer-based proof of a token bound.
 
+`haiku_smoke_settings()` separately proposes a **$1.44 admission ceiling**:
+at most 24 requests, reserving $0.06 each, without refunds. The
+[Amazon Bedrock endpoint catalogue](https://openrouter.ai/api/v1/models/anthropic/claude-3-haiku/endpoints)
+was checked on 2026-09-11: $0.25 per million input tokens, $1.25 per million
+output tokens, a 200,000-token context limit, and required tool-choice support.
+At those rates, 200,000 input plus 2,048 output tokens would cost $0.05256,
+below the $0.06 reservation. This is a conservative admission bound, not expected
+spend; the synthetic prompts are much smaller. The same assumptions and remote
+trust boundaries apply.
+
 Before execution, recheck that the endpoint, rate caps and context limit still
 apply, and use an OpenRouter credits-only account/key with no BYOK or paid account
 plugins/presets. Configure an appropriate provider-side key limit separately.
@@ -126,17 +139,17 @@ with `uv run python`. Preparation does not read the API key or create a client:
 
 ```python
 import paa_contracts
-from assay.adapters.openrouter import OpenRouterFactory
-from assay.investigations.openrouter_smoke import qwen_smoke_settings
+from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
+from assay.investigations.openrouter_smoke import haiku_smoke_settings
 from assay.investigations.pilot import PilotPrepared, prepare_pilot
 from assay.store import ObjectStore
 
-store = ObjectStore(".assay/qwen-smoke")
-factory = OpenRouterFactory()
+store = ObjectStore(".assay/haiku-smoke")
+factory = OpenRouterFactory(HAIKU_BEDROCK)
 prepared = prepare_pilot(
     store,
     factory=factory,
-    settings=qwen_smoke_settings(),
+    settings=haiku_smoke_settings(),
     schemas={name: paa_contracts.load_schema(name) for name in (
         "paa-task", "paa-evidence-record", "paa-operating-record"
     )},
@@ -151,6 +164,8 @@ print(store.read_bytes(prepared.snapshot_ref).decode())
 `.assay/` is ignored by Git; preserve the object store and export each completed
 run for archival. A dependency/configuration change requires preparing and
 inspecting a new plan. Publish/review the implementation before a live run.
+For the Qwen profile, use the default `OpenRouterFactory()` together with
+`qwen_smoke_settings()` and a separate object store.
 The v3 diagnostic policy is bound into the provider configuration and invalidates
 previously prepared v1/v2 configurations. Prepare and independently approve a new
 plan after updating; the completed first v2 run remains unchanged.
@@ -167,18 +182,18 @@ In a separate operator step, supply the independently inspected plan hash:
 ```python
 import asyncio
 from pathlib import Path
-from assay.adapters.openrouter import OpenRouterFactory
+from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
 from assay.investigations.pilot import run_pilot
 from assay.store import ObjectStore
 
 # approved_plan_ref must be supplied from the independent inspection/approval.
 result = asyncio.run(run_pilot(
-    ObjectStore(".assay/qwen-smoke"),
+    ObjectStore(".assay/haiku-smoke"),
     plan_ref=approved_plan_ref,
     authorization=approved_plan_ref,
-    factory=OpenRouterFactory(),
+    factory=OpenRouterFactory(HAIKU_BEDROCK),
     allow_paid=True,
-    export_destination=Path(".assay/qwen-smoke-run-1-bundle"),
+    export_destination=Path(".assay/haiku-smoke-run-1-bundle"),
 ))
 print(result)
 ```
