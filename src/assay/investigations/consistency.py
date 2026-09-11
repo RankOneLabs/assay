@@ -79,7 +79,7 @@ TASKS = (
         family="architectural",
         instruction="Add implement(value) returning a decoded JSON record.",
         helper="decode_record",
-        primitives=("loads",),
+        primitives=("json.loads",),
         helper_source="import json\ndef decode_record(value):\n    return json.loads(value)\n",
         test_cases=_functional_cases(
             {"input": '{"a":1}', "expected": {"a": 1}},
@@ -161,7 +161,7 @@ EXPERIMENT_TASKS = (
         family="architectural",
         instruction="Add implement(value) returning compact JSON with object keys sorted.",
         helper="encode_record",
-        primitives=("dumps",),
+        primitives=("json.dumps",),
         helper_source=(
             "import json\n"
             "def encode_record(value):\n"
@@ -312,6 +312,36 @@ def parse_candidate_source(source: str, *, helper: str) -> tuple[ast.Module, ast
     return tree, function
 
 
+def _import_origins(tree: ast.Module) -> dict[str, str]:
+    origins: dict[str, str] = {}
+    for statement in tree.body:
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                bound = alias.asname or alias.name.split(".", 1)[0]
+                origins[bound] = alias.name if alias.asname else bound
+        elif isinstance(statement, ast.ImportFrom):
+            module = "." * statement.level + (statement.module or "")
+            for alias in statement.names:
+                if alias.name != "*":
+                    origins[alias.asname or alias.name] = f"{module}.{alias.name}"
+    return origins
+
+
+def _call_origin(node: ast.expr, origins: Mapping[str, str]) -> str | None:
+    if isinstance(node, ast.Name):
+        return origins.get(node.id, node.id)
+    if not isinstance(node, ast.Attribute):
+        return None
+    attributes = [node.attr]
+    value = node.value
+    while isinstance(value, ast.Attribute):
+        attributes.append(value.attr)
+        value = value.value
+    if isinstance(value, ast.Name) and value.id in origins:
+        return ".".join((origins[value.id], *reversed(attributes)))
+    return node.attr
+
+
 class StructuralEvaluator:
     def __init__(self, judge: AmbiguityJudge | None = None) -> None:
         self.judge = judge
@@ -319,7 +349,7 @@ class StructuralEvaluator:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "consistency-structure",
-            "version": "3",
+            "version": "4",
             "categories": list(CATEGORIES),
             "target_function": "implement",
             "accepted_module": "optional-docstring-then-imports-then-one-function",
@@ -336,7 +366,7 @@ class StructuralEvaluator:
             source = output["source"]
             if not isinstance(source, str):
                 raise ValueError("worker output source must be a string")
-            _tree, function = parse_candidate_source(source, helper=task.helper)
+            tree, function = parse_candidate_source(source, helper=task.helper)
         except (KeyError, TypeError, ValueError, SyntaxError) as error:
             return EvaluationFailed("InvalidOutput", str(error))
         # Limit automatic classification to straight-line return expressions.
@@ -369,19 +399,14 @@ class StructuralEvaluator:
         )
         straight = expression is not None and not indirect
         calls = [node.func for node in nodes if isinstance(node, ast.Call)]
-        names = {
-            node.id if isinstance(node, ast.Name) else node.attr
-            for node in calls
-            if isinstance(node, ast.Name | ast.Attribute)
-        }
-        helper_used = any(isinstance(node, ast.Name) and node.id == task.helper for node in calls)
+        origins = _import_origins(ast.parse(task.helper_source))
+        origins.update(_import_origins(tree))
+        call_origins = [_call_origin(node, origins) for node in calls]
+        names = {name for name in call_origins if name is not None}
+        helper_used = task.helper in names
         primitives_used = sorted(names.intersection(task.primitives))
         allowed_calls = {*task.primitives, task.helper}
-        unknown_call = any(
-            not isinstance(node, ast.Name | ast.Attribute)
-            or (node.id if isinstance(node, ast.Name) else node.attr) not in allowed_calls
-            for node in calls
-        )
+        unknown_call = any(name not in allowed_calls for name in call_origins)
         straight = straight and not unknown_call
         detail = {"route": "structural", "calls": sorted(names), "family": task.family}
         if straight and (helper_used or primitives_used):

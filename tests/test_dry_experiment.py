@@ -237,6 +237,43 @@ async def test_structural_docstrings_primitives_and_source_boundary() -> None:
     assert isinstance(replacement, EvaluationFailed), replacement
     assert replacement.error_type == "InvalidOutput"
 
+    decoding = next(item for item in EXPERIMENT_TASKS if item.id == "record-decoding")
+
+    async def evaluate_decoding(source: str) -> EvaluationSuccess | EvaluationFailed:
+        return await evaluator.evaluate(
+            input_value={"task": decoding.model_dump(mode="json")},
+            output={"source": source},
+            coordinate=EvaluationCoordinate(
+                cell_id="record-decoding:clean:w0",
+                evaluator_id="abstraction",
+                evaluator_repeat=0,
+            ),
+        )
+
+    qualified = await evaluate_decoding(
+        "def implement(value):\n    return json.loads(value)\n"
+    )
+    assert isinstance(qualified, EvaluationSuccess), qualified
+    assert qualified.verdict == "duplicated"
+
+    aliased = await evaluate_decoding(
+        "from json import loads as decode\n"
+        "def implement(value):\n    return decode(value)\n"
+    )
+    assert isinstance(aliased, EvaluationSuccess), aliased
+    assert aliased.verdict == "duplicated"
+
+    wrong_origin = await evaluate_decoding(
+        "import pickle\ndef implement(value):\n    return pickle.loads(value)\n"
+    )
+    assert isinstance(wrong_origin, EvaluationFailed), wrong_origin
+    assert wrong_origin.error_type == "AmbiguousStructure"
+    assert wrong_origin.detail == {
+        "route": "structural",
+        "calls": ["pickle.loads"],
+        "family": "architectural",
+    }
+
 
 def test_legacy_task_shape_remains_valid_for_structural_evaluation() -> None:
     task = EXPERIMENT_TASKS[0].model_dump(mode="json")
@@ -274,6 +311,22 @@ def test_sandbox_configuration_binds_isolation_and_runtime() -> None:
     ).configuration()["harness_sha256"] != configuration["harness_sha256"]
     with pytest.raises(ValidationError):
         DockerRunnerSettings(image="python:latest")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("command_timeout_s", 0),
+        ("startup_timeout_s", -1),
+        ("timeout_s", float("inf")),
+        ("max_output_bytes", 0),
+    ],
+)
+def test_sandbox_settings_reject_nonpositive_or_nonfinite_bounds(
+    field: str, value: float
+) -> None:
+    with pytest.raises(ValidationError):
+        DockerRunnerSettings.model_validate({field: value})
 
 
 @pytest.mark.asyncio

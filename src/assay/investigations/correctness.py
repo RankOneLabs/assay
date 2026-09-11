@@ -9,6 +9,8 @@ import json
 import uuid
 from typing import Any, Literal
 
+from pydantic import Field
+
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import EvaluationFailed, EvaluationResult, EvaluationSuccess
 from assay.investigations.consistency import CodingTask, parse_candidate_source
@@ -130,10 +132,10 @@ class DockerRunnerSettings(WireModel):
     platform: Literal["linux/amd64"] = "linux/amd64"
     docker_client_version: Literal["29.6.1"] = "29.6.1"
     docker_server_version: Literal["29.1.2"] = "29.1.2"
-    command_timeout_s: float = 5.0
-    startup_timeout_s: float = 10.0
-    timeout_s: float = 5.0
-    max_output_bytes: int = 65_536
+    command_timeout_s: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    startup_timeout_s: float = Field(default=10.0, gt=0, allow_inf_nan=False)
+    timeout_s: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    max_output_bytes: int = Field(default=65_536, gt=0, strict=True)
     memory: Literal["64m"] = "64m"
     cpus: Literal["0.5"] = "0.5"
     pids_limit: Literal[32] = 32
