@@ -85,7 +85,7 @@ class StructuralEvaluator:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "consistency-structure",
-            "version": "1",
+            "version": "2",
             "categories": list(CATEGORIES),
             "target_function": "implement",
             "judge": None if self.judge is None else self.judge.configuration(),
@@ -113,8 +113,26 @@ class StructuralEvaluator:
         function = functions[0]
         # Limit automatic classification to straight-line return expressions.
         # Calls hidden in branches, nested functions, or aliases need adjudication.
-        straight = len(function.body) == 1 and isinstance(function.body[0], ast.Return)
-        calls = [node.func for node in ast.walk(function) if isinstance(node, ast.Call)]
+        statement = function.body[0] if len(function.body) == 1 else None
+        expression = statement.value if isinstance(statement, ast.Return) else None
+        nodes = list(ast.walk(expression)) if expression is not None else []
+        # ast.walk also visits deferred or conditional expressions: a helper
+        # inside a returned lambda/generator need not execute at all.
+        indirect = any(
+            isinstance(
+                node,
+                ast.Lambda
+                | ast.GeneratorExp
+                | ast.ListComp
+                | ast.SetComp
+                | ast.DictComp
+                | ast.IfExp
+                | ast.BoolOp,
+            )
+            for node in nodes
+        )
+        straight = expression is not None and not indirect
+        calls = [node.func for node in nodes if isinstance(node, ast.Call)]
         names = {
             node.id if isinstance(node, ast.Name) else node.attr
             for node in calls
@@ -203,7 +221,8 @@ def materialize_consistency(
             {
                 "categories": list(CATEGORIES),
                 "definition": "Direct helper reuse; mixed includes duplicate primitive calls.",
-                "ambiguous": "Judge only when straight-line call structure cannot decide.",
+                "ambiguous": "Judge when direct, unconditional call structure cannot decide; "
+                "deferred and conditional expressions are ambiguous.",
             }
         )
     )
@@ -213,7 +232,7 @@ def materialize_consistency(
         "technique": "deterministic" if evaluator.judge is None else "llm_judge",
         "evaluation_basis": {"kind": "rubric", "ref": basis_ref},
         "epistemic_status": "proxy",
-        "version": "1",
+        "version": "2",
         "authority": "advisory",
     }
     declaration = EvaluatorDeclaration(
