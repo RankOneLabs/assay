@@ -130,6 +130,10 @@ an exclusion, an injected failure, ordinal reporting, and offline export.
 Its synthetic worker tests the machinery; its results are not experimental
 evidence about a real coding agent.
 
+The [OpenRouter smoke integration](docs/openrouter-smoke.md) provides the initial
+Qwen/Novita factory, with fixed routing, explicit rate caps, and offline transport
+tests. Live runs still require independent plan and spending approval.
+
 The [single-file pilot workflow](docs/consistency-pilot.md) adds a
 `ConsistencyWorker` that renders repository/task inputs, calls Jig with isolated
 attempt state, and extracts structured source output. Provider factories and any

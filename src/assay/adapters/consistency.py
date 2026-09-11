@@ -91,6 +91,13 @@ class DescribedClient(LLMClient):
     def configuration(self) -> dict[str, Any]:
         raise NotImplementedError
 
+    async def complete_result(self, params: CompletionParams) -> LLMResponse | WorkerFailure:
+        """Adapt exception-based providers; governed clients may return failures directly."""
+        try:
+            return await self.complete(params)
+        except Exception as error:
+            return WorkerFailure(type(error).__name__, str(error))
+
 
 class ClientFactory(Protocol):
     def configuration(self) -> dict[str, Any]: ...
@@ -243,7 +250,10 @@ class _BoundedClient(LLMClient):
         )
         try:
             async with asyncio.timeout(self.settings.request_timeout_s):
-                response = await self.inner.complete(params)
+                response = await self.inner.complete_result(params)
+            if isinstance(response, WorkerFailure):
+                self.uncertain = self.admission.halted = True
+                return response
             usage = response.usage
             for value in (usage.input_tokens, usage.output_tokens):
                 if type(value) is not int or not 0 <= value <= 2**53 - 1:
