@@ -36,9 +36,14 @@ valid content addresses. This is a reserved key, not a suffix-based heuristic:
 ```
 
 These dependencies must exist, are hash-checked, and are included in export. Their
-JSON dependencies use the same convention; non-JSON content is a leaf. A custom
-field named `artifact_ref` alone is not a dependency declaration. Producers must
-include that address in `assay_object_refs` as well. This replaces the previous
+JSON dependencies use the same convention; non-JSON content is a leaf. Parseable
+JSON bytes must match Assay's canonical encoding before their references
+are traversed or cached. Duplicate keys, nonfinite numbers, and noncanonical
+encodings are rejected, not treated as opaque leaves. This applies even to JSON
+objects with no references. Opaque non-JSON artifacts remain valid leaves.
+
+A custom field named `artifact_ref` alone is not a dependency declaration.
+Producers must include that address in `assay_object_refs` as well. This replaces the previous
 implicit traversal of arbitrary `sha256:` strings; re-export existing runs if
 their extension data did not depend on implicit edges, otherwise rematerialize
 the affected study with explicit dependencies and a new authorized plan.

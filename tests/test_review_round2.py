@@ -106,7 +106,15 @@ async def test_execution_artifacts_require_canonical_json(
                 manifest[group][coordinate] = new
         root = str(store.publish_json(manifest))
     failures = verify_manifest(store, root)
-    assert any(f.code == "execution_record" for f in failures)
+    if data == b"not JSON":
+        assert any(f.code == "execution_record" for f in failures)
+    else:
+        # Parseable noncanonical artifacts now fail at the closure boundary,
+        # before per-outcome validation. The error must identify those bytes.
+        assert any(
+            f.code == "manifest_context" and f"noncanonical JSON at {record[field]}" in f.message
+            for f in failures
+        )
 
 
 @pytest.mark.parametrize("attempt", [1, 2, 4])

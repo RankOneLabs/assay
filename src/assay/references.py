@@ -10,6 +10,7 @@ from jsonschema.validators import validator_for
 from referencing import Resource
 from referencing.jsonschema import DRAFT7
 
+from assay.canonical import canonical_json
 from assay.store import ObjectRef, ObjectStore, verification_session
 
 type Edge = tuple[str, str]
@@ -168,6 +169,11 @@ def walk_closure(store: ObjectStore, roots: set[Edge]) -> set[str]:
             except (ValueError, UnicodeDecodeError):
                 session.edges[edge] = frozenset()
             else:
+                # Parsed JSON must have one canonical interpretation before it
+                # contributes edges. Keep rejection outside the parse fallback:
+                # invalid canonical values must not become opaque leaves.
+                if canonical_json(value) != data:
+                    raise ValueError(f"noncanonical JSON at {ref}")
                 session.edges[edge] = frozenset(object_edges(value, role))
         pending.extend(session.edges[edge] - seen)
     return {ref for ref, _ in seen}
