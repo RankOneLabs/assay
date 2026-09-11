@@ -5,7 +5,7 @@ description = "Reproducible paired experiments for agent systems"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "jig @ git+https://github.com/RankOneLabs/jig.git@0da33666a7dd70ad2c98a38fb461f960fc6291ad",
+  "jig @ git+https://github.com/RankOneLabs/jig.git@5932f7237a369fe705512915ef4033da0ca27c74",
   "pydantic>=2.7",
   "jsonschema>=4.23",
 ]
@@ -26,7 +26,7 @@ packages = ["src/assay"]
 [dependency-groups]
 dev = [
   "pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8", "mypy>=1.13", "types-jsonschema",
-  "paa-contracts @ git+https://github.com/RankOneLabs/paa.git@b3f9fd9c124c748e4ae2231c61d3a87928d5d47f#subdirectory=packages/paa-contracts",
+  "paa-contracts @ git+https://github.com/RankOneLabs/paa.git@1e054d02a36d1da832e8a1c9cf10974131b09f5d#subdirectory=packages/paa-contracts",
 ]
 
 [tool.hatch.metadata]
