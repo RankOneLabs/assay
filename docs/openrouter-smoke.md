@@ -62,7 +62,7 @@ proof that bytes were sent: locally rejected requests can also reach this hook.
 Failures rejected before the hook have no request observation.
 
 For successful HTTP responses with parseable JSON, diagnostics include a bounded
-generation ID, choice count, first-choice finish/native-finish reasons, known
+generation-ID hash, choice count, first-choice finish/native-finish reasons, known
 message-field types (including missing versus null), content character count,
 and tool-call count/names. Field types distinguish legacy `function_call`, refusal,
 and reasoning-only shapes without recording their contents. Non-2xx responses
@@ -70,18 +70,28 @@ record status only; their error bodies are not inspected for diagnostic fields.
 
 Capture is capped at ten request observations per client and eight tool names per
 response, with explicit truncation flags. Generation IDs are limited to 128 ASCII
-identifier characters with a `gen-` prefix; finish reasons/tool names to 64 ASCII
-identifier characters. Invalid labels or labels containing the active API key
-are omitted (null), never truncated into potentially sensitive prefixes. Arbitrary
+identifier characters with a `gen-` prefix, then recorded only as
+`generation_id_sha256`; raw IDs are never retained. Hashes support equality checks,
+not direct provider lookup, and are not a guarantee of anonymity for guessable IDs.
+Invalid IDs or IDs containing the active API key are omitted (null).
+Finish and native-finish reasons allow only `stop`, `length`, `tool_calls`,
+`content_filter`, `function_call`, and `error`; tool names allow only `submit_output`.
+Other string labels become a fixed `unknown` marker (including labels longer than
+64 characters); missing/non-string labels and bounded labels containing the active
+API key become null. No arbitrary label is retained or truncated. Arbitrary
 field names, content, reasoning, refusal text, arguments, and headers are excluded.
 These observations are detached from provider response objects. Returned
 diagnostic snapshots are also detached and remain available after client cleanup.
+The `openrouter-response-shape-v2` policy is bound into provider configuration;
+plans prepared under the earlier raw-ID diagnostic policy require re-preparation.
 
 Diagnostics do not alter response validation, introduce retries, accept legacy
 calls as submissions, or mark otherwise known usage as unavailable. They remain
 provider observations, not independent proof of a remote model's behavior.
-An exception retrieving optional client diagnostics produces a fixed
-`capture_failed` marker without replacing the worker outcome or accounting.
+Optional client diagnostics are validated as canonical-JSON-compatible objects
+and detached before attaching them to the trace. Retrieval or validation failures
+produce a fixed `capture_failed` marker without replacing the worker outcome,
+trace, or accounting.
 
 See OpenRouter's [provider-routing contract](https://openrouter.ai/docs/guides/routing/provider-selection)
 and [usage-accounting contract](https://openrouter.ai/docs/cookbook/administration/usage-accounting).

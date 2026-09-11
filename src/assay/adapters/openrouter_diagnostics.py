@@ -12,6 +12,9 @@ MAX_REQUESTS = 10
 MAX_TOOL_NAMES = 8
 MAX_ID_CHARS = 128
 MAX_LABEL_CHARS = 64
+POLICY_REVISION = "openrouter-response-shape-v2"
+FINISH_REASONS = ("stop", "length", "tool_calls", "content_filter", "function_call", "error")
+TOOL_NAMES = ("submit_output",)
 MESSAGE_FIELDS = (
     "content",
     "tool_calls",
@@ -25,11 +28,16 @@ MESSAGE_FIELDS = (
 
 def diagnostic_policy() -> dict[str, Any]:
     return {
-        "revision": "openrouter-response-shape-v1",
+        "revision": POLICY_REVISION,
         "max_requests": MAX_REQUESTS,
         "max_tool_names": MAX_TOOL_NAMES,
         "max_id_chars": MAX_ID_CHARS,
         "max_label_chars": MAX_LABEL_CHARS,
+        "generation_id": "sha256-only",
+        "finish_reasons": list(FINISH_REASONS),
+        "native_finish_reasons": list(FINISH_REASONS),
+        "tool_names": list(TOOL_NAMES),
+        "unknown_label": "unknown",
         "message_fields": list(MESSAGE_FIELDS),
         "content_measure": "characters-not-bytes",
         "raw_bodies": False,
@@ -60,15 +68,21 @@ class ResponseDiagnostics:
         self._current: dict[str, Any] | None = None
         self._truncated = False
 
-    def _label(self, value: Any, *, generation_id: bool = False) -> str | None:
-        limit = MAX_ID_CHARS if generation_id else MAX_LABEL_CHARS
-        if not isinstance(value, str) or not 0 < len(value) <= limit:
+    def _label(self, value: Any, allowed: tuple[str, ...]) -> str | None:
+        if not isinstance(value, str):
             return None
-        if self._secret in value or re.fullmatch(r"[A-Za-z0-9_-]+", value) is None:
+        if not 0 < len(value) <= MAX_LABEL_CHARS:
+            return "unknown"
+        if self._secret in value:
             return None
-        if generation_id and not value.startswith("gen-"):
+        return value if value in allowed else "unknown"
+
+    def _generation_id_sha256(self, value: Any) -> str | None:
+        if not isinstance(value, str) or not 0 < len(value) <= MAX_ID_CHARS:
             return None
-        return value
+        if self._secret in value or re.fullmatch(r"gen-[A-Za-z0-9_-]+", value) is None:
+            return None
+        return digest_bytes(value.encode("ascii"))
 
     def request(self, body: bytes) -> None:
         self._current = None
@@ -97,7 +111,7 @@ class ResponseDiagnostics:
         event["json_state"] = _kind(data)
         if not isinstance(data, dict):
             return
-        event["generation_id"] = self._label(data.get("id"), generation_id=True)
+        event["generation_id_sha256"] = self._generation_id_sha256(data.get("id"))
         choices = data.get("choices")
         event["choices_kind"] = _kind(choices) if "choices" in data else "missing"
         event["choice_count"] = len(choices) if isinstance(choices, list) else None
@@ -105,7 +119,7 @@ class ResponseDiagnostics:
             return
         choice = choices[0]
         for name in ("finish_reason", "native_finish_reason"):
-            event[name] = self._label(choice.get(name))
+            event[name] = self._label(choice.get(name), FINISH_REASONS)
         message = choice.get("message")
         event["message_kind"] = _kind(message) if "message" in choice else "missing"
         if not isinstance(message, dict):
@@ -119,7 +133,7 @@ class ResponseDiagnostics:
         event["tool_call_count"] = len(calls) if isinstance(calls, list) else None
         if isinstance(calls, list):
             event["tool_names"] = [
-                self._label(call["function"].get("name"))
+                self._label(call["function"].get("name"), TOOL_NAMES)
                 if isinstance(call, dict) and isinstance(call.get("function"), dict)
                 else None
                 for call in calls[:MAX_TOOL_NAMES]
@@ -129,7 +143,7 @@ class ResponseDiagnostics:
     def snapshot(self) -> dict[str, Any]:
         return copy.deepcopy(
             {
-                "revision": "openrouter-response-shape-v1",
+                "revision": POLICY_REVISION,
                 "requests": self._requests,
                 "truncated": self._truncated,
             }

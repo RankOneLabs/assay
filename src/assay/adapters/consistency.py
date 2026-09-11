@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import math
 import uuid
 from datetime import UTC, datetime
@@ -467,6 +468,10 @@ class ConsistencyWorker:
         if client is not None:
             try:
                 diagnostics = client.diagnostics()
+                if diagnostics is not None:
+                    if not isinstance(diagnostics, dict):
+                        raise ValueError("provider diagnostics must be an object")
+                    diagnostics = json.loads(canonical_json(diagnostics))
             except Exception:
                 # Observability must not discard an outcome or its known usage.
                 diagnostics = {"capture_failed": True}

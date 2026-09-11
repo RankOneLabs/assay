@@ -384,6 +384,8 @@ async def test_prepare_paid_gates_and_two_mocked_runs_export_verified_bundles(
             trace = json.loads(ObjectStore(destination).read_bytes(outcome["trace_ref"]))
             observations = trace["provider_diagnostics"]["requests"]
             assert len(observations) == 1 and observations[0]["tool_call_count"] == 1
+            assert observations[0]["generation_id_sha256"] == digest_bytes(b"gen-fake-only")
+            assert b"gen-fake-only" not in canonical_json(trace["provider_diagnostics"])
         assert len(wire.requests) == (index + 1) * 12
     assert wire.closed == wire.transports
 
@@ -675,7 +677,8 @@ async def test_diagnostics_distinguish_response_shapes_without_changing_results(
     assert event["request_body_sha256"] == digest_bytes(wire.requests[0].content)
     assert event["request_body_bytes"] == len(wire.requests[0].content)
     assert event["response_received"] and event["http_status"] == 200
-    assert event["generation_id"] == "gen-fake-only"
+    assert event["generation_id_sha256"] == digest_bytes(b"gen-fake-only")
+    assert "generation_id" not in event
     assert event["finish_reason"] == choice["finish_reason"]
     assert event["native_finish_reason"] == "stop"
     assert event["choice_count"] == 1 and event["content_characters"] is None
@@ -736,8 +739,8 @@ def test_diagnostic_recording_is_bounded_detached_and_redacts_metadata() -> None
     result = recorder.snapshot()
     assert result["truncated"] and len(result["requests"]) == 10
     event = result["requests"][0]
-    assert event["generation_id"] is None and event["finish_reason"] is None
-    assert event["native_finish_reason"] is None
+    assert event["generation_id_sha256"] is None and event["finish_reason"] is None
+    assert event["native_finish_reason"] == "unknown"
     assert event["content_characters"] == 70000
     assert event["tool_call_count"] == 100 and len(event["tool_names"]) == 8
     assert event["tool_names_truncated"]
@@ -747,7 +750,86 @@ def test_diagnostic_recording_is_bounded_detached_and_redacts_metadata() -> None
     result["requests"].clear()
     payload["id"] = "gen-changed"
     assert len(recorder.snapshot()["requests"]) == 10
-    assert recorder.snapshot()["requests"][0]["generation_id"] is None
+    assert recorder.snapshot()["requests"][0]["generation_id_sha256"] is None
+
+
+@pytest.mark.parametrize("label", ["sk-or-v1-second-credential", "private_label", "x" * 65, ""])
+def test_unknown_response_labels_are_not_retained(label: str) -> None:
+    recorder = ResponseDiagnostics("different-active-key")
+    payload = response_payload()
+    payload["id"] = "gen-sk-or-v1-second-credential"
+    choice = payload["choices"][0]
+    choice["finish_reason"] = choice["native_finish_reason"] = label
+    choice["message"]["tool_calls"][0]["function"]["name"] = label
+    recorder.request(b"body")
+    recorder.response(payload)
+    snapshot = recorder.snapshot()
+    event = snapshot["requests"][0]
+    assert event["generation_id_sha256"] == digest_bytes(payload["id"].encode())
+    assert "generation_id" not in event
+    assert event["finish_reason"] == event["native_finish_reason"] == "unknown"
+    assert event["tool_names"] == ["unknown"]
+    encoded = canonical_json(snapshot)
+    assert b"second-credential" not in encoded
+    if label:
+        assert label.encode() not in encoded
+
+
+@pytest.mark.parametrize(
+    "label", ["stop", "length", "tool_calls", "content_filter", "function_call", "error"]
+)
+def test_only_allowlisted_labels_are_retained_per_field(label: str) -> None:
+    recorder = ResponseDiagnostics("test-key")
+    payload = response_payload()
+    choice = payload["choices"][0]
+    choice["finish_reason"] = choice["native_finish_reason"] = label
+    choice["message"]["tool_calls"].append({"function": {"name": label}})
+    recorder.request(b"body")
+    recorder.response(payload)
+    event = recorder.snapshot()["requests"][0]
+    assert event["finish_reason"] == event["native_finish_reason"] == label
+    assert event["tool_names"] == ["submit_output", "unknown"]
+
+
+@pytest.mark.parametrize(
+    "value", [None, [], 7, "", "gen-", "other-id", "gen-☃", "gen-" + "x" * 125]
+)
+def test_invalid_generation_ids_are_omitted(value: Any) -> None:
+    recorder = ResponseDiagnostics("test-key")
+    recorder.request(b"body")
+    recorder.response({"id": value})
+    assert recorder.snapshot()["requests"][0]["generation_id_sha256"] is None
+
+
+def test_maximum_length_generation_id_is_hashed_without_retaining_raw_id() -> None:
+    recorder = ResponseDiagnostics("test-key")
+    generation_id = "gen-" + "x" * 124
+    recorder.request(b"body")
+    recorder.response({"id": generation_id})
+    snapshot = recorder.snapshot()
+    assert snapshot["requests"][0]["generation_id_sha256"] == digest_bytes(generation_id.encode())
+    assert generation_id.encode() not in canonical_json(snapshot)
+
+
+@pytest.mark.asyncio
+async def test_other_credential_in_response_metadata_is_not_in_worker_diagnostics(
+    wire: Wire,
+) -> None:
+    token = "sk-or-v1-second-credential"
+    wire.payload["id"] = "gen-" + token
+    wire.payload["choices"][0]["native_finish_reason"] = token
+    result = await ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True).run(
+        input_value=realization(), arm_id="clean"
+    )
+    assert isinstance(result, WorkerSuccess)
+    assert result.accounting.amount == 0.0000205
+    diagnostics = result.trace["provider_diagnostics"]
+    assert diagnostics["requests"][0]["generation_id_sha256"] == digest_bytes(
+        ("gen-" + token).encode()
+    )
+    assert diagnostics["requests"][0]["native_finish_reason"] == "unknown"
+    assert token.encode() not in canonical_json(diagnostics)
+    assert len(wire.requests) == 1
 
 
 @pytest.mark.parametrize(
@@ -787,13 +869,82 @@ async def test_broken_optional_diagnostics_do_not_erase_success_or_usage(wire: W
     assert result.trace["provider_diagnostics"] == {"capture_failed": True}
 
 
+@pytest.mark.parametrize("worker_fails", [False, True])
+@pytest.mark.parametrize(
+    "diagnostics",
+    [{"bad": object()}, {"bad": {1}}, {"bad": float("nan")}, {1: "bad"}, []],
+    ids=["unsupported-object", "set", "nan", "non-string-key", "non-object-root"],
+)
+@pytest.mark.asyncio
+async def test_invalid_optional_diagnostics_preserve_result_and_trace(
+    wire: Wire, diagnostics: Any, worker_fails: bool
+) -> None:
+    from assay.adapters.openrouter import _PilotClient
+
+    if worker_fails:
+        wire.payload["choices"][0]["message"].pop("tool_calls")
+    with patch.object(_PilotClient, "diagnostics", return_value=diagnostics):
+        result = await ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True).run(
+            input_value=realization(), arm_id="clean"
+        )
+    if worker_fails:
+        assert isinstance(result, WorkerFailure)
+        assert result.error_type == "AgentSchemaNotCalledError"
+    else:
+        assert isinstance(result, WorkerSuccess)
+        assert result.output == {"source": TASKS[0].reused_source}
+    assert result.accounting.amount == 0.0000205
+    assert result.accounting.coverage == "estimated"
+    assert result.trace["provider_diagnostics"] == {"capture_failed": True}
+    assert result.trace["prompt"] and result.trace["spans"] and result.trace["provider_usage"]
+    assert not result.trace["billing_uncertain"]
+    assert canonical_json(result.trace)
+    assert len(wire.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_optional_diagnostics_are_detached_at_worker_boundary(wire: Wire) -> None:
+    from assay.adapters.openrouter import _PilotClient
+
+    diagnostics: dict[str, Any] = {"requests": [{"status": "ok"}]}
+    with patch.object(_PilotClient, "diagnostics", return_value=diagnostics):
+        result = await ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True).run(
+            input_value=realization(), arm_id="clean"
+        )
+    diagnostics["requests"][0]["status"] = object()
+    assert isinstance(result, WorkerSuccess)
+    assert result.trace["provider_diagnostics"] == {"requests": [{"status": "ok"}]}
+    assert canonical_json(result.trace)
+
+
+@pytest.mark.asyncio
+async def test_absent_optional_diagnostics_remain_absent(wire: Wire) -> None:
+    from assay.adapters.openrouter import _PilotClient
+
+    with patch.object(_PilotClient, "diagnostics", return_value=None):
+        result = await ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True).run(
+            input_value=realization(), arm_id="clean"
+        )
+    assert isinstance(result, WorkerSuccess)
+    assert "provider_diagnostics" not in result.trace
+    assert canonical_json(result.trace)
+
+
 def test_diagnostic_policy_is_bound_and_detached(wire: Wire) -> None:
     owner = factory()
     configuration = owner.configuration()
     assert configuration["revision"] == "assay-openrouter-source-v3"
     assert configuration["diagnostics"]["max_requests"] == 10
+    assert configuration["diagnostics"]["revision"] == "openrouter-response-shape-v2"
+    assert configuration["diagnostics"]["generation_id"] == "sha256-only"
+    configuration["diagnostics"]["finish_reasons"].clear()
+    configuration["diagnostics"]["native_finish_reasons"].clear()
+    configuration["diagnostics"]["tool_names"].clear()
     configuration["diagnostics"]["message_fields"].clear()
     assert owner.configuration()["diagnostics"]["message_fields"]
+    assert owner.configuration()["diagnostics"]["finish_reasons"]
+    assert owner.configuration()["diagnostics"]["native_finish_reasons"]
+    assert owner.configuration()["diagnostics"]["tool_names"] == ["submit_output"]
 
 
 @pytest.mark.asyncio
@@ -806,7 +957,9 @@ async def test_diagnostics_keep_each_request_paired_with_its_response(wire: Wire
     finally:
         await client.aclose()
     events = client.diagnostics()["requests"]
-    assert [event["generation_id"] for event in events] == ["gen-first", "gen-second"]
+    assert [event["generation_id_sha256"] for event in events] == [
+        digest_bytes(value) for value in (b"gen-first", b"gen-second")
+    ]
     assert all(event["tool_call_count"] == 1 for event in events)
 
 
@@ -819,22 +972,42 @@ def test_excess_diagnostic_requests_do_not_overwrite_last_retained_response() ->
         recorder.status(200)
         recorder.response(payload)
     events = recorder.snapshot()["requests"]
-    assert [e["generation_id"] for e in events] == [f"gen-{i}" for i in range(10)]
+    assert [e["generation_id_sha256"] for e in events] == [
+        digest_bytes(f"gen-{i}".encode()) for i in range(10)
+    ]
 
 
+@pytest.mark.parametrize("old_policy", ["v2", "raw-id"])
 @pytest.mark.asyncio
-async def test_v2_plan_is_rejected_by_v3_worker_before_http(wire: Wire, tmp_path: Path) -> None:
-    class V2Factory(OpenRouterFactory):
+async def test_old_plan_is_rejected_before_http(
+    wire: Wire, tmp_path: Path, old_policy: str
+) -> None:
+    class OldFactory(OpenRouterFactory):
         def configuration(self) -> dict[str, Any]:
             value = super().configuration()
-            value["revision"] = "assay-openrouter-source-v2"
-            del value["diagnostics"]
+            if old_policy == "v2":
+                value["revision"] = "assay-openrouter-source-v2"
+                del value["diagnostics"]
+            else:
+                value["diagnostics"] = {
+                    key: item
+                    for key, item in value["diagnostics"].items()
+                    if key
+                    not in {
+                        "generation_id",
+                        "finish_reasons",
+                        "native_finish_reasons",
+                        "tool_names",
+                        "unknown_label",
+                    }
+                }
+                value["diagnostics"]["revision"] = "openrouter-response-shape-v1"
             return value
 
     store = ObjectStore(tmp_path)
     prepared = prepare_pilot(
         store,
-        factory=V2Factory(),
+        factory=OldFactory(),
         settings=qwen_smoke_settings(),
         schemas={
             name: paa_contracts.load_schema(name)
