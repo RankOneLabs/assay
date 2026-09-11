@@ -87,6 +87,17 @@ QWEN_NOVITA = OpenRouterSettings(
 )
 
 
+# Catalogue checked 2026-09-11. The fixed model slug avoids the moving
+# `~anthropic/claude-haiku-latest` alias; this remains a remote service boundary.
+HAIKU_BEDROCK = OpenRouterSettings(
+    model="anthropic/claude-3-haiku",
+    provider="amazon-bedrock",
+    provider_name="Amazon Bedrock",
+    max_prompt_price=0.25,
+    max_completion_price=1.25,
+)
+
+
 @dataclasses.dataclass(frozen=True)
 class OpenRouterFactory:
     settings: OpenRouterSettings = QWEN_NOVITA

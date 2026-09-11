@@ -4,6 +4,7 @@ import asyncio
 import copy
 import dataclasses
 import json
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -14,12 +15,18 @@ import pytest
 from jig.core.types import CompletionParams, LLMResponse, Message, Role
 
 from assay.adapters.consistency import CompletionNotSent, ConsistencyWorker
-from assay.adapters.openrouter import ENDPOINT, QWEN_NOVITA, OpenRouterFactory, source_output_tool
+from assay.adapters.openrouter import (
+    ENDPOINT,
+    HAIKU_BEDROCK,
+    QWEN_NOVITA,
+    OpenRouterFactory,
+    source_output_tool,
+)
 from assay.adapters.openrouter_diagnostics import ResponseDiagnostics
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import WorkerFailure, WorkerSuccess
 from assay.investigations.consistency import TASKS
-from assay.investigations.openrouter_smoke import qwen_smoke_settings
+from assay.investigations.openrouter_smoke import haiku_smoke_settings, qwen_smoke_settings
 from assay.investigations.pilot import (
     PilotFailed,
     PilotPrepared,
@@ -144,6 +151,57 @@ def test_configuration_is_detached_and_secret_free(wire: Wire) -> None:
     assert canonical_json(owner.configuration()) == declared
     assert b"test-secret" not in declared and "test-secret" not in repr(owner)
     assert not wire.requests
+
+
+@pytest.mark.asyncio
+async def test_haiku_profile_binds_exact_model_route_prices_and_budget(wire: Wire) -> None:
+    wire.payload["model"] = HAIKU_BEDROCK.model
+    wire.payload["provider"] = HAIKU_BEDROCK.provider_name
+    owner = OpenRouterFactory(HAIKU_BEDROCK, "test-secret-not-a-real-key")
+    policy = haiku_smoke_settings()
+    result = await ConsistencyWorker(owner, policy, allow_paid=True).run(
+        input_value=realization(), arm_id="clean"
+    )
+
+    assert isinstance(result, WorkerSuccess), result
+    body = json.loads(wire.requests[0].content)
+    assert body["model"] == "anthropic/claude-3-haiku"
+    assert body["provider"] == {
+        "data_collection": "deny",
+        "zdr": True,
+        "only": ["amazon-bedrock"],
+        "order": ["amazon-bedrock"],
+        "allow_fallbacks": False,
+        "require_parameters": True,
+        "max_price": {"prompt": 0.25, "completion": 1.25, "request": 0},
+    }
+    assert result.trace["response_models"] == ["anthropic/claude-3-haiku"]
+    assert policy.max_total_requests == 24
+    assert policy.request_cost_bound_usd == Decimal("0.06")
+    assert policy.max_spend_usd == Decimal("1.44")
+    assert wire.closed == wire.transports
+
+
+def test_haiku_preparation_binds_profile_without_creating_client(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path)
+    owner = OpenRouterFactory(HAIKU_BEDROCK)
+    with patch.object(OpenRouterFactory, "create", side_effect=AssertionError("unexpected client")):
+        prepared = prepare_pilot(
+            store,
+            factory=owner,
+            settings=haiku_smoke_settings(),
+            schemas={
+                name: paa_contracts.load_schema(name)
+                for name in ("paa-task", "paa-evidence-record", "paa-operating-record")
+            },
+        )
+
+    assert isinstance(prepared, PilotPrepared), prepared
+    snapshot = StudySnapshot.model_validate_json(store.read_bytes(prepared.snapshot_ref))
+    provider = snapshot.arms[0].worker["provider"]
+    assert provider == snapshot.arms[1].worker["provider"]
+    assert provider["model"] == HAIKU_BEDROCK.model
+    assert provider["routing"]["only"] == [HAIKU_BEDROCK.provider]
 
 
 @pytest.mark.asyncio
