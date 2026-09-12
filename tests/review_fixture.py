@@ -4,7 +4,7 @@ import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import paa_contracts
 import pytest
@@ -21,6 +21,9 @@ from assay.models import Exclusion, StudySnapshot
 from assay.planning import compile_plan
 from assay.store import ObjectStore
 from assay.verify import export_bundle, verify_bundle, verify_manifest, verify_snapshot
+
+if TYPE_CHECKING:
+    from review_fixture_studies import ReviewStudies
 
 HOSTILE_STRINGS = (
     "</script><script>window.pwned=true</script>",
@@ -80,6 +83,7 @@ class ReviewFixture:
     result: RunSucceeded
     bundle: ObjectStore
     damaged_stores: dict[str, ObjectStore]
+    studies: ReviewStudies
 
     @property
     def manifest_ref(self) -> str:
@@ -181,7 +185,10 @@ async def materialize_review_fixture(root: Path) -> ReviewFixture:
     if verify_bundle(bundle, str(outcome.manifest_ref)):
         raise AssertionError("review fixture bundle does not verify")
     damaged = _damaged_bundle_variants(bundle, outcome, root / "damaged")
-    return ReviewFixture(store, snapshot, outcome, bundle, damaged)
+    from review_fixture_studies import materialize_review_studies
+
+    studies = await materialize_review_studies(store, root / "report-bundles")
+    return ReviewFixture(store, snapshot, outcome, bundle, damaged, studies)
 
 
 @pytest.fixture

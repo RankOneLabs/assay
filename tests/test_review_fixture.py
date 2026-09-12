@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from review_fixture import (
@@ -12,13 +11,15 @@ from review_fixture import (
     materialize_review_fixture,
 )
 
-from assay.models import EvaluationFailure
+from assay._version import __version__
+from assay.models import EvaluationFailure, ReportConfig
+from assay.report_engine import ReportError, build_report
 from assay.verify import verify_bundle, verify_manifest
 
 
-@pytest.fixture
-async def fixture(tmp_path: Path) -> ReviewFixture:
-    return await materialize_review_fixture(tmp_path)
+@pytest.fixture(scope="module")
+async def fixture(tmp_path_factory: pytest.TempPathFactory) -> ReviewFixture:
+    return await materialize_review_fixture(tmp_path_factory.mktemp("review-fixture"))
 
 
 def test_primary_manifest_is_complete_and_verifies(fixture: ReviewFixture) -> None:
@@ -78,3 +79,30 @@ def test_damaged_variants_have_hash_mismatched_objects(fixture: ReviewFixture) -
     assert set(fixture.damaged_stores) == {"manifest", "evaluation", "execution", "unexpected"}
     for store in fixture.damaged_stores.values():
         assert verify_bundle(store, fixture.manifest_ref)
+
+
+def test_review_studies_cover_report_shapes_and_inference(fixture: ReviewFixture) -> None:
+    studies = fixture.studies
+    assert set(studies.reports) == {
+        "scalar",
+        "mapped_ordinal",
+        "unmapped_ordinal",
+        "classification",
+    }
+    for name, config in studies.report_configs.items():
+        assert build_report(fixture.store, config) == studies.reports[name]
+        assert verify_bundle(studies.report_bundles[name], studies.report_refs[name]) == ()
+    comparisons = [report["comparisons"][0] for report in studies.reports.values()]
+    assert any(item["n"] >= 10 and item["p_value"] is not None for item in comparisons)
+    assert any(item["decision"] == "descriptive_only" for item in comparisons)
+    assert studies.reports["unmapped_ordinal"]["comparisons"][0]["n"] == 12
+
+
+def test_stale_engine_report_pins_unsupported_config(fixture: ReviewFixture) -> None:
+    studies = fixture.studies
+    stale_report = json.loads(fixture.store.read_bytes(studies.stale_report_ref))
+    stale_config = json.loads(fixture.store.read_bytes(stale_report["config_ref"]))
+    assert stale_report["config_ref"] == studies.stale_config_ref
+    assert stale_config["engine_version"] != __version__
+    with pytest.raises(ReportError, match="unsupported report engine version"):
+        build_report(fixture.store, ReportConfig.model_validate(stale_config))
