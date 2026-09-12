@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +129,27 @@ def test_realistic_fixtures_are_large_valid_and_treatment_isolated() -> None:
         assert all(fixture.task.helper not in right for _, right in changed)
 
 
+def test_fixture_validation_rejects_a_fourth_changed_expression() -> None:
+    fixture = REALISTIC_PILOT_FIXTURES[0]
+    inconsistent = dict(fixture.inconsistent_repository)
+    inconsistent[fixture.target_path] = inconsistent[fixture.target_path].replace(
+        "return None if value is None else normalize_sku(value)",
+        "return None if value is None else value.strip().upper()",
+    )
+    with pytest.raises(ValueError, match="exactly three target lines"):
+        validate_repository_fixture(replace(fixture, inconsistent_repository=inconsistent))
+
+
+def test_fixture_validation_rejects_changed_clean_line_without_helper_call() -> None:
+    fixture = REALISTIC_PILOT_FIXTURES[0]
+    clean = dict(fixture.clean_repository)
+    clean[fixture.target_path] = clean[fixture.target_path].replace(
+        "return normalize_sku(value)", "return str(value)", 1
+    )
+    with pytest.raises(ValueError, match="governed helper calls"):
+        validate_repository_fixture(replace(fixture, clean_repository=clean))
+
+
 def test_realistic_repositories_render_without_hidden_task_fields() -> None:
     for fixture in REALISTIC_PILOT_FIXTURES:
         value = {
@@ -238,6 +260,22 @@ async def test_sandbox_rejects_repository_cases_over_tmpfs_budget() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sandbox_storage_budget_accounts_for_small_file_and_directory_overhead() -> None:
+    fixture = REALISTIC_PILOT_FIXTURES[0]
+    repository = {fixture.target_path: fixture.task.helper_source}
+    repository.update({f"data/d{index}/value.txt": "x" for index in range(199)})
+    result = await DockerPythonRunner().run(
+        task=fixture.task,
+        repository=repository,
+        target_path=fixture.target_path,
+        source=fixture.task.reused_source,
+    )
+    assert result == SandboxFailure(
+        "InvalidInput", "repository cases exceed the sandbox storage budget"
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(
     not RUN_DOCKER_TESTS, reason="requires explicitly prepared pinned Docker runtime"
 )
@@ -308,6 +346,37 @@ async def test_realistic_package_init_can_be_the_target() -> None:
         task=task,
         repository=repository,
         target_path=target_path,
+        source=task.reused_source,
+    )
+    assert isinstance(result, SandboxResult), result
+    assert result.passed == result.total == len(task.test_cases)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not RUN_DOCKER_TESTS, reason="requires explicitly prepared pinned Docker runtime"
+)
+async def test_sandbox_target_can_shadow_a_cached_standard_library_module() -> None:
+    helper_source = "def normalize(value):\n    return value.strip().upper()\n"
+    task = CodingTask(
+        id="cached-module-target",
+        family="architectural",
+        instruction="In json.py, add implement(value) returning normalized text.",
+        helper="normalize",
+        primitives=("strip", "upper"),
+        helper_source=helper_source,
+        target_path="json.py",
+        test_cases=(
+            {"input": " abc ", "expected": "ABC"},
+            {"input": "x", "expected": "X"},
+        ),
+        reused_source="def implement(value):\n    return normalize(value)\n",
+        duplicated_source="def implement(value):\n    return value.strip().upper()\n",
+    )
+    result = await DockerPythonRunner().run(
+        task=task,
+        repository={"json.py": helper_source},
+        target_path="json.py",
         source=task.reused_source,
     )
     assert isinstance(result, SandboxResult), result

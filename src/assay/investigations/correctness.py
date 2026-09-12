@@ -22,6 +22,23 @@ CORRECTNESS_CATEGORIES = ("incorrect", "correct")
 PYTHON_IMAGE = "python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"
 TMPFS_SIZE_BYTES = 1_048_576
 REPOSITORY_STORAGE_BUDGET_BYTES = TMPFS_SIZE_BYTES * 3 // 4
+TMPFS_BLOCK_BYTES = 4_096
+
+
+def _repository_case_storage_bytes(
+    repository: Mapping[str, str], target_path: str, source: str
+) -> int:
+    """Conservatively estimate tmpfs data pages and directory blocks for one case."""
+    directories = {"."}
+    allocated = 0
+    for raw_path, content in repository.items():
+        parts = raw_path.split("/")
+        directories.update("/".join(parts[:index]) for index in range(1, len(parts)))
+        if raw_path == target_path:
+            content = content + "\n" + source
+        size = len(content.encode("utf-8"))
+        allocated += max(TMPFS_BLOCK_BYTES, -(-size // TMPFS_BLOCK_BYTES) * TMPFS_BLOCK_BYTES)
+    return allocated + len(directories) * TMPFS_BLOCK_BYTES
 
 _CANDIDATE_HARNESS = r"""import importlib
 import json
@@ -57,6 +74,15 @@ try:
         module_parts.pop()
     module_name = ".".join(module_parts) or "candidate"
     importlib.invalidate_caches()
+    module_prefixes = tuple(
+        ".".join(module_parts[:index]) for index in range(1, len(module_parts) + 1)
+    )
+    for cached_name in tuple(sys.modules):
+        if any(
+            cached_name == prefix or cached_name.startswith(prefix + ".")
+            for prefix in module_prefixes
+        ):
+            sys.modules.pop(cached_name, None)
     module = importlib.import_module(module_name)
     implementation = getattr(module, "implement", None)
     if not callable(implementation):
@@ -216,6 +242,7 @@ class DockerPythonRunner:
             "user": "65534:65534",
             "tmpfs": "/tmp:rw,noexec,nosuid,nodev,size=1m",
             "repository_storage_budget_bytes": REPOSITORY_STORAGE_BUDGET_BYTES,
+            "repository_storage_estimator": "tmpfs-pages-and-directories-v1",
             "ulimits": {"core": "0:0", "fsize": "1048576:1048576", "nofile": "64:64"},
         }
 
@@ -347,10 +374,10 @@ class DockerPythonRunner:
             validated_repository = validate_repository(repository)
             if target_path != task.target_path or target_path not in validated_repository:
                 raise ValueError("target file does not match the governed task")
-            per_case_bytes = sum(
-                len(content.encode("utf-8")) for content in validated_repository.values()
-            ) + len(source.encode("utf-8")) + 1
-            if per_case_bytes * len(task.test_cases) > REPOSITORY_STORAGE_BUDGET_BYTES:
+            per_case_storage = _repository_case_storage_bytes(
+                validated_repository, target_path, source
+            )
+            if per_case_storage * len(task.test_cases) > REPOSITORY_STORAGE_BUDGET_BYTES:
                 raise ValueError("repository cases exceed the sandbox storage budget")
         except ValueError as error:
             return SandboxFailure("InvalidInput", str(error))

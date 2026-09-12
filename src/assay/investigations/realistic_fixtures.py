@@ -585,6 +585,26 @@ def validate_repository_fixture(fixture: RepositoryFixture) -> None:
     differing = [path for path in clean if clean[path] != inconsistent[path]]
     if differing != [fixture.target_path]:
         raise ValueError("treatment must be confined to the target module")
+    clean_target_lines = clean[fixture.target_path].splitlines()
+    inconsistent_target_lines = inconsistent[fixture.target_path].splitlines()
+    try:
+        changed_lines = [
+            (clean_line, inconsistent_line)
+            for clean_line, inconsistent_line in zip(
+                clean_target_lines, inconsistent_target_lines, strict=True
+            )
+            if clean_line != inconsistent_line
+        ]
+    except ValueError as error:
+        raise ValueError("treatment target line counts must match") from error
+    if len(changed_lines) != 3:
+        raise ValueError("treatment must change exactly three target lines")
+    helper_call = f"{fixture.task.helper}("
+    if any(
+        helper_call not in clean_line or helper_call in inconsistent_line
+        for clean_line, inconsistent_line in changed_lines
+    ):
+        raise ValueError("treatment lines must replace exactly three governed helper calls")
     for repository in (clean, inconsistent):
         lines = repository_lines(repository)
         if lines != 1_225:
