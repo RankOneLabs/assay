@@ -31,19 +31,24 @@ jobs:
           python-version: '3.13'
       - name: Build the core wheel without a JavaScript toolchain
         run: |
-          clean_path="$(dirname "$(command -v uv)"):/usr/bin:/bin"
-          PATH="$clean_path" uv build --wheel
+          clean_path="$(mktemp -d "$RUNNER_TEMP/assay-core-bin.XXXXXX")"
+          ln -s "$(command -v uv)" "$clean_path/uv"
           ! PATH="$clean_path" command -v node
+          ! PATH="$clean_path" command -v npm
+          ! PATH="$clean_path" command -v bun
+          PATH="$clean_path" uv build --wheel
           wheel_path="$(realpath dist/*.whl)"
           cd "$RUNNER_TEMP"
-          PATH="$clean_path" uv venv --python 3.13 assay-core
-          PATH="$clean_path" uv pip install --python assay-core/bin/python "$wheel_path"
+          uv venv --python 3.13 assay-core
+          uv pip install --python assay-core/bin/python "$wheel_path"
           assay-core/bin/python - <<'PY'
           from importlib.metadata import distribution
+          from importlib.util import find_spec
           from importlib.resources import files
 
           import assay.review
 
+          assert find_spec("fastapi") is None
           installed = distribution("assay").files or ()
           assert any(str(path).startswith("assay/schemas/") for path in installed)
           static = files("assay.review").joinpath("static")
