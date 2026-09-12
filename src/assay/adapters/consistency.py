@@ -34,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from assay.canonical import canonical_json
 from assay.execution import Accounting, WorkerFailure, WorkerResult, WorkerSuccess
 from assay.models import WireModel
+from assay.repository import validate_repository
 
 SYSTEM_PROMPT = (
     "Complete the coding task using the supplied repository as context. "
@@ -126,13 +127,9 @@ def render_input(value: Any, limit: int) -> WorkerSuccess | WorkerFailure:
         if not isinstance(value, dict) or set(value) != {"task", "repository", "base_subject_ref"}:
             raise ValueError("expected a materialized consistency realization")
         instruction = value["task"]["instruction"]
-        repository = value["repository"]
+        repository = validate_repository(value["repository"], max_total_bytes=limit)
         if not isinstance(instruction, str) or not instruction.strip():
             raise ValueError("task instruction must be nonempty text")
-        if not isinstance(repository, dict) or set(repository) != {"module.py"}:
-            raise ValueError("pilot supports exactly module.py")
-        if not isinstance(repository["module.py"], str):
-            raise ValueError("repository source must be text")
         prompt = canonical_json({"instruction": instruction, "repository": repository})
         if len(prompt) > limit:
             raise ValueError("rendered input exceeds the authorized byte limit")
@@ -393,7 +390,7 @@ class ConsistencyWorker:
             "version": "1",
             "provider": provider,
             "settings": self.settings.model_dump(mode="json"),
-            "rendering": "instruction-and-module-canonical-json-v1",
+            "rendering": "instruction-and-repository-map-canonical-json-v2",
             "extraction": "parsed-source-only-v1",
             "output_schema": SourceOutput.model_json_schema(),
             "runtime": {

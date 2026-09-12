@@ -33,7 +33,7 @@ from assay.investigations.dry_experiment import (
 )
 from assay.models import EvaluationCoordinate, ExecutionPlan, StudySnapshot
 from assay.store import ObjectStore
-from assay.verify import verify_bundle, verify_manifest
+from assay.verify import reference_closure, verify_bundle, verify_manifest
 
 RUN_DOCKER_TESTS = os.environ.get("ASSAY_RUN_DOCKER_TESTS") == "1"
 
@@ -96,9 +96,14 @@ class FakeFactory:
 
 class PassingRunner(DockerPythonRunner):
     async def run(
-        self, *, task: CodingTask, repository_source: str, source: str
+        self,
+        *,
+        task: CodingTask,
+        repository: dict[str, str],
+        target_path: str,
+        source: str,
     ) -> SandboxResult | SandboxFailure:
-        del repository_source, source
+        del repository, target_path, source
         return SandboxResult(len(task.test_cases), len(task.test_cases), ())
 
 
@@ -293,6 +298,7 @@ def test_sandbox_configuration_binds_isolation_and_runtime() -> None:
     assert configuration["no_new_privileges"] is True
     assert configuration["seccomp"] == "builtin"
     assert configuration["pull"] == "never"
+    assert configuration["repository_storage_budget_bytes"] == 786_432
     assert configuration["settings"] == {
         "image": ("python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"),
         "platform": "linux/amd64",
@@ -362,7 +368,8 @@ async def test_pre_readiness_timeout_is_infrastructure_failure(monkeypatch: Any)
     task = EXPERIMENT_TASKS[0]
     result = await runner.run(
         task=task,
-        repository_source=repository(task, task.reused_source),
+        repository={task.target_path: repository(task, task.reused_source)},
+        target_path=task.target_path,
         source=task.reused_source,
     )
     assert isinstance(result, SandboxFailure), result
@@ -379,7 +386,8 @@ async def test_pinned_container_accepts_both_reference_implementations() -> None
         for source in (task.reused_source, task.duplicated_source):
             result = await runner.run(
                 task=task,
-                repository_source=repository(task, source),
+                repository={task.target_path: repository(task, source)},
+                target_path=task.target_path,
                 source=source,
             )
             assert isinstance(result, SandboxResult), result
@@ -435,7 +443,8 @@ async def test_candidate_cannot_forge_supervisor_result_protocol() -> None:
     )
     result = await runner.run(
         task=task,
-        repository_source=repository(task, task.reused_source),
+        repository={task.target_path: repository(task, task.reused_source)},
+        target_path=task.target_path,
         source=source,
     )
     assert isinstance(result, SandboxResult), result
@@ -478,7 +487,12 @@ async def test_container_has_no_network_root_write_or_provider_credential() -> N
         ("import os\ndef implement(value):\n    return 'OPENROUTER_API_KEY' not in os.environ\n"),
     )
     for source in sources:
-        result = await runner.run(task=task, repository_source=task.helper_source, source=source)
+        result = await runner.run(
+            task=task,
+            repository={task.target_path: task.helper_source},
+            target_path=task.target_path,
+            source=source,
+        )
         assert isinstance(result, SandboxResult), result
         assert result.passed == result.total == 1
 
@@ -498,6 +512,7 @@ async def test_prepare_and_run_full_offline_acceptance(tmp_path: Path) -> None:
     assert isinstance(prepared, DryExperimentPrepared), prepared
     assert prepared.executions == 48 and prepared.evaluations == 96
     assert factory.created == 0
+    assert len(reference_closure(store, (prepared.plan_ref,))) > 40
     snapshot = StudySnapshot.model_validate_json(store.read_bytes(prepared.snapshot_ref))
     plan = ExecutionPlan.model_validate_json(store.read_bytes(prepared.plan_ref))
     assert {arm.conditions["assay_execution_schedule"] for arm in snapshot.arms} == {

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -16,6 +16,7 @@ from assay.execution import Evaluator, RunFailed, WorkerFailure, execute_plan
 from assay.investigations.consistency import (
     CATEGORIES,
     EXPERIMENT_TASKS,
+    CodingTask,
     StructuralEvaluator,
     materialize_consistency,
 )
@@ -84,6 +85,33 @@ def _validate_haiku_profile(factory: ClientFactory, settings: PilotSettings) -> 
         raise ValueError("DRY experiment provider differs from the governed Haiku profile")
 
 
+def publish_plan_dependencies(store: ObjectStore, snapshot: StudySnapshot) -> None:
+    """Publish every snapshot-derived object referenced directly by compile_plan."""
+    for declaration in (*snapshot.arms, *snapshot.evaluators):
+        store.publish_json(declaration.model_dump(mode="json"))
+    store.publish_json(
+        [arm.conditions for arm in sorted(snapshot.arms, key=lambda item: item.id)]
+    )
+
+
+def _repository_for(
+    task: CodingTask,
+    arm_id: str,
+    repository_variants: Mapping[str, Mapping[str, Mapping[str, str]]] | None,
+) -> dict[str, str]:
+    if repository_variants is not None:
+        try:
+            return dict(repository_variants[task.id][arm_id])
+        except KeyError as error:
+            raise ValueError(f"missing {arm_id} repository for task {task.id}") from error
+    example = task.reused_source if arm_id == "clean" else task.duplicated_source
+    return {
+        task.target_path: (
+            task.helper_source + "\n" + example.replace("implement", "existing_feature")
+        )
+    }
+
+
 def prepare_dry_experiment(
     store: ObjectStore,
     *,
@@ -111,6 +139,7 @@ def prepare_dry_experiment(
         )
         verify_snapshot(store, snapshot)
         snapshot_ref = str(store.publish_json(snapshot.model_dump(mode="json")))
+        publish_plan_dependencies(store, snapshot)
         plan = compile_plan(
             snapshot,
             snapshot_ref=snapshot_ref,
@@ -119,6 +148,7 @@ def prepare_dry_experiment(
             concurrency=1,
         )
         plan_ref = str(store.publish_json(plan.model_dump(mode="json")))
+        reference_closure(store, (plan_ref,))
         if len(plan.cells) != 48 or len(plan.evaluations) != 96:
             raise ValueError("unexpected DRY experiment grid")
         return DryExperimentPrepared(snapshot_ref, plan_ref, len(plan.cells), len(plan.evaluations))
@@ -149,33 +179,43 @@ def _report_config(
 
 
 def _validate_experiment_shape(
-    store: ObjectStore, snapshot: StudySnapshot, plan: ExecutionPlan
+    store: ObjectStore,
+    snapshot: StudySnapshot,
+    plan: ExecutionPlan,
+    *,
+    tasks: Sequence[CodingTask] = EXPERIMENT_TASKS,
+    repository_variants: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
+    expected_subjects: int = 12,
+    expected_cells: int = 48,
+    expected_evaluations: int = 96,
 ) -> None:
-    tasks = {task.id: task for task in EXPERIMENT_TASKS}
-    if len(tasks) != 12 or {subject.id for subject in snapshot.subjects} != set(tasks):
-        raise ValueError("DRY experiment subject population changed")
+    tasks_by_id = {task.id: task for task in tasks}
+    if len(tasks_by_id) != expected_subjects or {
+        subject.id for subject in snapshot.subjects
+    } != set(tasks_by_id):
+        raise ValueError("consistency experiment subject population changed")
     if {arm.id for arm in snapshot.arms} != {"clean", "inconsistent"}:
-        raise ValueError("DRY experiment arms changed")
+        raise ValueError("consistency experiment arms changed")
     if {
         arm.conditions.get("assay_execution_schedule") for arm in snapshot.arms
     } != {"subject-counterbalanced-v1"}:
-        raise ValueError("DRY experiment execution schedule changed")
+        raise ValueError("consistency experiment execution schedule changed")
     if any(item.repeats != 1 for item in snapshot.evaluators):
-        raise ValueError("DRY experiment evaluator repeats changed")
+        raise ValueError("consistency experiment evaluator repeats changed")
     if (
         plan.concurrency != 1
         or plan.worker_repeats != 2
-        or len(plan.cells) != 48
-        or len(plan.evaluations) != 96
+        or len(plan.cells) != expected_cells
+        or len(plan.evaluations) != expected_evaluations
     ):
-        raise ValueError("DRY experiment execution grid changed")
+        raise ValueError("consistency experiment execution grid changed")
 
     subjects = {subject.id: subject for subject in snapshot.subjects}
     realizations = {
         (realization.subject_id, realization.arm_id): realization
         for realization in snapshot.realizations
     }
-    for task in EXPERIMENT_TASKS:
+    for task in tasks:
         task_value = task.model_dump(
             mode="json", exclude={"reused_source", "duplicated_source"}
         )
@@ -187,35 +227,36 @@ def _validate_experiment_shape(
             or subject.digest != subject_ref
             or subject.payload_ref != subject_ref
         ):
-            raise ValueError("DRY experiment subject declaration changed")
-        for arm_id, example in (
-            ("clean", task.reused_source),
-            ("inconsistent", task.duplicated_source),
-        ):
-            repository = task.helper_source + "\n" + example.replace(
-                "implement", "existing_feature"
-            )
+            raise ValueError("consistency experiment subject declaration changed")
+        for arm_id in ("clean", "inconsistent"):
+            repository = _repository_for(task, arm_id, repository_variants)
             expected = {
                 "task": task_value,
-                "repository": {"module.py": repository},
+                "repository": repository,
                 "base_subject_ref": subject_ref,
             }
             realization = realizations[(task.id, arm_id)]
             expected_ref = digest_bytes(canonical_json(expected))
             if realization.digest != expected_ref or realization.artifact_ref != expected_ref:
-                raise ValueError("DRY experiment realization declaration changed")
+                raise ValueError("consistency experiment realization declaration changed")
             stored_value = json.loads(store.read_bytes(expected_ref))
             if canonical_json(stored_value) != canonical_json(expected):
-                raise ValueError("DRY experiment realization content changed")
+                raise ValueError("consistency experiment realization content changed")
 
 
-async def run_dry_experiment(
+async def run_consistency_experiment(
     store: ObjectStore,
     *,
     plan_ref: str,
     authorization: str,
     factory: ClientFactory,
     runner: DockerPythonRunner,
+    tasks: Sequence[CodingTask],
+    repository_variants: Mapping[str, Mapping[str, Mapping[str, str]]] | None,
+    profile_validator: Callable[[ClientFactory, PilotSettings], None],
+    expected_subjects: int,
+    expected_cells: int,
+    expected_evaluations: int,
     allow_paid: bool = False,
     export_destination: Path | None = None,
 ) -> DryExperimentSucceeded | DryExperimentFailed:
@@ -253,11 +294,20 @@ async def run_dry_experiment(
         reference_closure(store, (plan_ref,))
         if {item.id for item in snapshot.evaluators} != {"abstraction", "correctness"}:
             raise ValueError("DRY experiment evaluator set changed")
-        _validate_experiment_shape(store, snapshot, plan)
+        _validate_experiment_shape(
+            store,
+            snapshot,
+            plan,
+            tasks=tasks,
+            repository_variants=repository_variants,
+            expected_subjects=expected_subjects,
+            expected_cells=expected_cells,
+            expected_evaluations=expected_evaluations,
+        )
         settings = PilotSettings.model_validate(snapshot.arms[0].worker["settings"])
-        _validate_haiku_profile(factory, settings)
+        profile_validator(factory, settings)
         if settings.mode == "paid" and not allow_paid:
-            raise ValueError("paid DRY experiment requires explicit allow_paid=True")
+            raise ValueError("paid consistency experiment requires explicit allow_paid=True")
         worker = ConsistencyWorker(factory, settings, allow_paid=allow_paid)
         structural = StructuralEvaluator()
         correctness = FunctionalCorrectnessEvaluator(runner)
@@ -281,13 +331,10 @@ async def run_dry_experiment(
             if isinstance(rendered, WorkerFailure):
                 return DryExperimentFailed(rendered.error_type, rendered.message)
         sandbox_check = await runner.run(
-            task=EXPERIMENT_TASKS[0],
-            repository_source=(
-                EXPERIMENT_TASKS[0].helper_source
-                + "\n"
-                + EXPERIMENT_TASKS[0].reused_source.replace("implement", "existing_feature")
-            ),
-            source=EXPERIMENT_TASKS[0].reused_source,
+            task=tasks[0],
+            repository=_repository_for(tasks[0], "clean", repository_variants),
+            target_path=tasks[0].target_path,
+            source=tasks[0].reused_source,
         )
         if isinstance(sandbox_check, SandboxFailure):
             return DryExperimentFailed(sandbox_check.error_type, sandbox_check.message)
@@ -363,3 +410,31 @@ async def run_dry_experiment(
             abstraction_ref,
             correctness_ref,
         )
+
+
+async def run_dry_experiment(
+    store: ObjectStore,
+    *,
+    plan_ref: str,
+    authorization: str,
+    factory: ClientFactory,
+    runner: DockerPythonRunner,
+    allow_paid: bool = False,
+    export_destination: Path | None = None,
+) -> DryExperimentSucceeded | DryExperimentFailed:
+    """Execute one independently approved 12-subject DRY plan."""
+    return await run_consistency_experiment(
+        store,
+        plan_ref=plan_ref,
+        authorization=authorization,
+        factory=factory,
+        runner=runner,
+        tasks=EXPERIMENT_TASKS,
+        repository_variants=None,
+        profile_validator=_validate_haiku_profile,
+        expected_subjects=12,
+        expected_cells=48,
+        expected_evaluations=96,
+        allow_paid=allow_paid,
+        export_destination=export_destination,
+    )

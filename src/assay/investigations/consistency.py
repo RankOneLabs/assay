@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Mapping, Sequence
+from pathlib import PurePosixPath
 from typing import Any, Literal, Protocol
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from assay.execution import EvaluationFailed, EvaluationResult, EvaluationSuccess, Evaluator
 from assay.models import (
@@ -23,6 +24,7 @@ from assay.models import (
     Subject,
     WireModel,
 )
+from assay.repository import validate_repository
 from assay.store import ObjectStore
 
 CATEGORIES = ("duplicated", "mixed", "reused")
@@ -41,6 +43,7 @@ class CodingTask(WireModel):
     helper: str
     primitives: tuple[str, ...] = Field(min_length=1)
     helper_source: str
+    target_path: str = "module.py"
     test_cases: tuple[FunctionalCase, ...] = ()
     reused_source: str = ""
     duplicated_source: str = ""
@@ -51,6 +54,28 @@ class CodingTask(WireModel):
         if isinstance(value, Mapping) and "primitive" in value and "primitives" not in value:
             value = dict(value)
             value["primitives"] = (value.pop("primitive"),)
+        return value
+
+    @field_validator("target_path")
+    @classmethod
+    def safe_target_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        module_parts = list(path.with_suffix("").parts)
+        if module_parts and module_parts[0] == "src":
+            module_parts.pop(0)
+        if module_parts and module_parts[-1] == "__init__":
+            module_parts.pop()
+        if (
+            not value
+            or "\\" in value
+            or path.is_absolute()
+            or not path.parts
+            or any(part in {"", ".", ".."} for part in value.split("/"))
+            or path.suffix != ".py"
+            or not module_parts
+            or any(not part.isidentifier() for part in module_parts)
+        ):
+            raise ValueError("target_path must be a relative Python file")
         return value
 
 
@@ -484,8 +509,16 @@ def materialize_consistency(
     evaluator_repeats: int = 2,
     correctness_evaluator: Evaluator | None = None,
     execution_schedule: str | None = None,
+    repository_variants: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
 ) -> StudySnapshot:
     """Freeze local task/repository inputs and supplied PAA contracts without providers."""
+    if repository_variants is not None:
+        task_ids = {task.id for task in tasks}
+        if set(repository_variants) != task_ids or any(
+            set(repository_variants[task_id]) != {"clean", "inconsistent"}
+            for task_id in task_ids
+        ):
+            raise ValueError("repository variants must exactly cover every task and arm")
     basis_ref = str(
         store.publish_json(
             {
@@ -615,15 +648,29 @@ def materialize_consistency(
             )
         )
         for arm in arms:
-            example = task.reused_source if arm.id == "clean" else task.duplicated_source
-            repository = (
-                task.helper_source + "\n" + example.replace("implement", "existing_feature")
-            )
+            if repository_variants is None:
+                example = task.reused_source if arm.id == "clean" else task.duplicated_source
+                repository = {
+                    task.target_path: (
+                        task.helper_source
+                        + "\n"
+                        + example.replace("implement", "existing_feature")
+                    )
+                }
+            else:
+                try:
+                    repository = validate_repository(repository_variants[task.id][arm.id])
+                except KeyError as error:
+                    raise ValueError(
+                        f"missing {arm.id} repository for task {task.id}"
+                    ) from error
+                if task.target_path not in repository:
+                    raise ValueError(f"target file missing for task {task.id}")
             artifact_ref = str(
                 store.publish_json(
                     {
                         "task": task_value,
-                        "repository": {"module.py": repository},
+                        "repository": repository,
                         "base_subject_ref": subject_ref,
                     }
                 )

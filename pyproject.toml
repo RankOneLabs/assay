@@ -3,7 +3,7 @@ name = "assay"
 version = "0.1.0"
 description = "Reproducible paired experiments for agent systems"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
   "jig[openrouter] @ git+https://github.com/RankOneLabs/jig.git@5932f7237a369fe705512915ef4033da0ca27c74",
   "httpx>=0.27",
@@ -43,11 +43,11 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 strict = true

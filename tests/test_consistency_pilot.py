@@ -169,6 +169,8 @@ def test_rendering_is_deterministic_and_does_not_mutate_input() -> None:
     other = dict(reversed(list(value.items())))
     assert render_input(value, 10_000) == render_input(other, 10_000)
     assert value == original
+    configuration = ConsistencyWorker(FakeFactory(), PilotSettings()).configuration("clean")
+    assert configuration["rendering"] == "instruction-and-repository-map-canonical-json-v2"
 
 
 @pytest.mark.parametrize(

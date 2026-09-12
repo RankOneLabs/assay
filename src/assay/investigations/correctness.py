@@ -7,6 +7,7 @@ import contextlib
 import dataclasses
 import json
 import uuid
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import Field
@@ -15,27 +16,84 @@ from assay.canonical import canonical_json, digest_bytes
 from assay.execution import EvaluationFailed, EvaluationResult, EvaluationSuccess
 from assay.investigations.consistency import CodingTask, parse_candidate_source
 from assay.models import EvaluationCoordinate, WireModel
+from assay.repository import validate_repository
 
 CORRECTNESS_CATEGORIES = ("incorrect", "correct")
 PYTHON_IMAGE = "python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"
+TMPFS_SIZE_BYTES = 1_048_576
+REPOSITORY_STORAGE_BUDGET_BYTES = TMPFS_SIZE_BYTES * 3 // 4
+TMPFS_BLOCK_BYTES = 4_096
 
-_CANDIDATE_HARNESS = r"""import json
+
+def _repository_case_storage_bytes(
+    repository: Mapping[str, str], target_path: str, source: str
+) -> int:
+    """Conservatively estimate tmpfs data pages and directory blocks for one case."""
+    directories = {"."}
+    allocated = 0
+    for raw_path, content in repository.items():
+        parts = raw_path.split("/")
+        directories.update("/".join(parts[:index]) for index in range(1, len(parts)))
+        if raw_path == target_path:
+            content = content + "\n" + source
+        size = len(content.encode("utf-8"))
+        allocated += max(TMPFS_BLOCK_BYTES, -(-size // TMPFS_BLOCK_BYTES) * TMPFS_BLOCK_BYTES)
+    return allocated + len(directories) * TMPFS_BLOCK_BYTES
+
+_CANDIDATE_HARNESS = r"""import importlib
+import json
+from pathlib import Path, PurePosixPath
+import shutil
 import sys
+import tempfile
 
 dumps = json.dumps
 loads = json.loads
 payload = loads(sys.stdin.read())
+root = None
 try:
-    namespace = {"__name__": "candidate"}
-    candidate = payload["repository_source"] + "\n" + payload["source"]
-    exec(compile(candidate, "<candidate>", "exec"), namespace)
-    implementation = namespace.get("implement")
+    root = Path(tempfile.mkdtemp(prefix="assay-repository-"))
+    repository = payload["repository"]
+    target_path = payload["target_path"]
+    for raw_path, content in sorted(repository.items()):
+        relative = PurePosixPath(raw_path)
+        if (relative.is_absolute() or not relative.parts
+                or any(part in {"", ".", ".."} for part in relative.parts)):
+            raise ValueError("unsafe repository path")
+        destination = root.joinpath(*relative.parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
+    target = root.joinpath(*PurePosixPath(target_path).parts)
+    target.write_text(repository[target_path] + "\n" + payload["source"], encoding="utf-8")
+    source_root = root / "src"
+    sys.path[:0] = [str(source_root), str(root)]
+    module_parts = list(PurePosixPath(target_path).with_suffix("").parts)
+    if module_parts and module_parts[0] == "src":
+        module_parts.pop(0)
+    if module_parts and module_parts[-1] == "__init__":
+        module_parts.pop()
+    module_name = ".".join(module_parts) or "candidate"
+    importlib.invalidate_caches()
+    module_prefixes = tuple(
+        ".".join(module_parts[:index]) for index in range(1, len(module_parts) + 1)
+    )
+    for cached_name in tuple(sys.modules):
+        if any(
+            cached_name == prefix or cached_name.startswith(prefix + ".")
+            for prefix in module_prefixes
+        ):
+            sys.modules.pop(cached_name, None)
+    module = importlib.import_module(module_name)
+    implementation = getattr(module, "implement", None)
     if not callable(implementation):
         raise TypeError("implement is not callable")
     actual = implementation(payload["input"])
     result = {"ok": True, "actual": actual}
 except BaseException as error:
     result = {"ok": False, "kind": type(error).__name__}
+finally:
+    if root is not None:
+        shutil.rmtree(root, ignore_errors=True)
 sys.stdout.write(dumps(result, allow_nan=False, ensure_ascii=False,
                        sort_keys=True, separators=(",", ":")))
 """
@@ -58,7 +116,8 @@ failures = []
 for index, case in enumerate(payload["cases"]):
     try:
         child_payload = dumps({
-            "repository_source": payload["repository_source"],
+            "repository": payload["repository"],
+            "target_path": payload["target_path"],
             "source": payload["source"],
             "input": case["input"],
         }, allow_nan=False, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -170,7 +229,7 @@ class DockerPythonRunner:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "docker-python-functional",
-            "version": "2",
+            "version": "3",
             "settings": self.settings.model_dump(mode="json"),
             "harness_sha256": digest_bytes(self._harness.encode("utf-8")),
             "network": "none",
@@ -182,6 +241,8 @@ class DockerPythonRunner:
             "pull": "never",
             "user": "65534:65534",
             "tmpfs": "/tmp:rw,noexec,nosuid,nodev,size=1m",
+            "repository_storage_budget_bytes": REPOSITORY_STORAGE_BUDGET_BYTES,
+            "repository_storage_estimator": "tmpfs-pages-and-directories-v1",
             "ulimits": {"core": "0:0", "fsize": "1048576:1048576", "nofile": "64:64"},
         }
 
@@ -296,7 +357,12 @@ class DockerPythonRunner:
         return closing.result()
 
     async def run(
-        self, *, task: CodingTask, repository_source: str, source: str
+        self,
+        *,
+        task: CodingTask,
+        repository: Mapping[str, str],
+        target_path: str,
+        source: str,
     ) -> SandboxResult | SandboxFailure:
         try:
             parse_candidate_source(source, helper=task.helper)
@@ -304,12 +370,24 @@ class DockerPythonRunner:
             return SandboxFailure("InvalidOutput", str(error))
         if not task.test_cases:
             return SandboxFailure("InvalidInput", "correctness evaluation requires test cases")
+        try:
+            validated_repository = validate_repository(repository)
+            if target_path != task.target_path or target_path not in validated_repository:
+                raise ValueError("target file does not match the governed task")
+            per_case_storage = _repository_case_storage_bytes(
+                validated_repository, target_path, source
+            )
+            if per_case_storage * len(task.test_cases) > REPOSITORY_STORAGE_BUDGET_BYTES:
+                raise ValueError("repository cases exceed the sandbox storage budget")
+        except ValueError as error:
+            return SandboxFailure("InvalidInput", str(error))
         failure = await self._check_runtime()
         if failure is not None:
             return failure
         payload = canonical_json(
             {
-                "repository_source": repository_source,
+                "repository": validated_repository,
+                "target_path": target_path,
                 "source": source,
                 "cases": [case.model_dump(mode="json") for case in task.test_cases],
             }
@@ -465,7 +543,7 @@ class FunctionalCorrectnessEvaluator:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "consistency-functional-correctness",
-            "version": "2",
+            "version": "3",
             "categories": list(CORRECTNESS_CATEGORIES),
             "runner": self.runner.configuration(),
             "comparison": "canonical-json-output-equality",
@@ -478,12 +556,9 @@ class FunctionalCorrectnessEvaluator:
         del coordinate
         try:
             task = CodingTask.model_validate(input_value["task"])
-            repository = input_value["repository"]
-            if not isinstance(repository, dict) or set(repository) != {"module.py"}:
-                raise ValueError("expected one repository module")
-            repository_source = repository["module.py"]
-            if not isinstance(repository_source, str):
-                raise ValueError("repository source must be a string")
+            repository = validate_repository(input_value["repository"])
+            if task.target_path not in repository:
+                raise ValueError("governed target file is missing")
             source = output["source"]
             if not isinstance(source, str):
                 raise ValueError("worker output source must be a string")
@@ -493,7 +568,10 @@ class FunctionalCorrectnessEvaluator:
         except (KeyError, TypeError, ValueError, SyntaxError) as error:
             return EvaluationFailed("InvalidOutput", str(error))
         result = await self.runner.run(
-            task=task, repository_source=repository_source, source=source
+            task=task,
+            repository=repository,
+            target_path=task.target_path,
+            source=source,
         )
         if isinstance(result, SandboxFailure):
             return EvaluationFailed(result.error_type, result.message)

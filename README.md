@@ -10,7 +10,7 @@ in the intentionally untracked `comms/` directory.
 
 ## Install and check
 
-Python 3.12+, Git, and uv 0.10.2 are required. Install the tested uv version with
+Python 3.13+, Git, and uv 0.10.2 are required. Install the tested uv version with
 `python -m pip install "uv==0.10.2"` before running the commands below. CI and
 `tool.uv.required-version` enforce the same version. Jig and the development PAA schema corpus are
 pinned to immutable upstream commits over public HTTPS; sibling checkouts and
@@ -155,3 +155,8 @@ finite-case correctness reports. Generated code is evaluated only inside a
 digest-pinned, resource-bounded Docker container with no network or host mounts.
 The live experiment still requires review, exact-plan approval, and an explicit
 paid-run decision.
+
+The [realistic repository pilot](docs/realistic-pilot.md) extends the same
+governed path to deterministic 1,000–3,000-line multi-file repositories. Its
+four-subject qualification grid validates repository navigation and sandboxed
+package execution before a new confirmatory study is designed.
