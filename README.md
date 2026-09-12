@@ -157,6 +157,7 @@ The live experiment still requires review, exact-plan approval, and an explicit
 paid-run decision.
 
 The [realistic repository pilot](docs/realistic-pilot.md) extends the same
-governed path to deterministic 1,000–3,000-line multi-file repositories. Its
-four-subject qualification grid validates repository navigation and sandboxed
-package execution before a new confirmatory study is designed.
+governed path to deterministic 1,225-line multi-file repositories. A four-call
+GPT-OSS smoke gate checks the complete operational path before the four-subject
+Haiku qualification grid validates repository navigation and sandboxed package
+execution ahead of a new confirmatory study.

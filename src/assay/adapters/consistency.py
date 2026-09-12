@@ -38,6 +38,9 @@ from assay.repository import validate_repository
 
 SYSTEM_PROMPT = (
     "Complete the coding task using the supplied repository as context. "
+    "Your submitted source will be appended verbatim to the target file named in the task. "
+    "Names already defined in that file are in scope: call them directly, and do not import "
+    "the target module or names from it. "
     "Return only any necessary imports and the new implement function as source. "
     "The function must have no docstring and exactly one return statement; do not include "
     "the existing repository or an explanation. Submit the structured source output."

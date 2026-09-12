@@ -87,6 +87,18 @@ QWEN_NOVITA = OpenRouterSettings(
 )
 
 
+# Catalogue checked 2026-09-11. CoreWeave advertises required/function tool
+# choice for this fixed route; the governed request still requires ZDR and
+# rejects fallback providers.
+GPT_OSS_120B_COREWEAVE = OpenRouterSettings(
+    model="openai/gpt-oss-120b",
+    provider="coreweave/fp4",
+    provider_name="CoreWeave",
+    max_prompt_price=0.03,
+    max_completion_price=0.17,
+)
+
+
 # Catalogue checked 2026-09-11. The fixed model slug avoids the moving
 # `~anthropic/claude-haiku-latest` alias; this remains a remote service boundary.
 HAIKU_BEDROCK = OpenRouterSettings(
