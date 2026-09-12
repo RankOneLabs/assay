@@ -5,11 +5,11 @@ from __future__ import annotations
 import ast
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Literal
 
 from assay.investigations.consistency import CodingTask, FunctionalCase
+from assay.repository import validate_repository
 
 ArmId = Literal["clean", "inconsistent"]
 
@@ -436,7 +436,7 @@ def _build_repository(domain: _Domain, *, clean: bool) -> dict[str, str]:
             "[project]",
             f'name = "{domain.package.replace("_", "-")}"',
             'version = "0.1.0"',
-            'requires-python = ">=3.12"',
+            'requires-python = ">=3.13"',
             "",
             "[tool.pytest.ini_options]",
             'testpaths = ["tests"]',
@@ -572,19 +572,12 @@ def repository_lines(repository: Mapping[str, str]) -> int:
 
 def validate_repository_fixture(fixture: RepositoryFixture) -> None:
     """Fail closed if generation drifts outside the preregisterable fixture boundary."""
-    clean = dict(fixture.clean_repository)
-    inconsistent = dict(fixture.inconsistent_repository)
+    clean = validate_repository(fixture.clean_repository)
+    inconsistent = validate_repository(fixture.inconsistent_repository)
     if clean.keys() != inconsistent.keys() or fixture.target_path not in clean:
         raise ValueError("fixture arms must have identical trees and a shared target")
     for path, source in clean.items():
-        parsed = PurePosixPath(path)
-        if (
-            parsed.is_absolute()
-            or not parsed.parts
-            or any(part in {"", ".", ".."} for part in path.split("/"))
-        ):
-            raise ValueError(f"unsafe repository path: {path}")
-        if not isinstance(source, str) or not source:
+        if not source or not inconsistent[path]:
             raise ValueError(f"repository file must be nonempty text: {path}")
         if path.endswith(".py"):
             ast.parse(source, filename=path)
@@ -594,8 +587,8 @@ def validate_repository_fixture(fixture: RepositoryFixture) -> None:
         raise ValueError("treatment must be confined to the target module")
     for repository in (clean, inconsistent):
         lines = repository_lines(repository)
-        if not 1_000 <= lines <= 3_000:
-            raise ValueError(f"repository must contain 1,000-3,000 lines, got {lines}")
+        if lines != 1_225:
+            raise ValueError(f"repository must contain exactly 1,225 lines, got {lines}")
         if len(repository) < 20:
             raise ValueError("repository must contain at least twenty files")
     if fixture.task.helper not in clean[fixture.target_path]:

@@ -390,7 +390,7 @@ class ConsistencyWorker:
             "version": "1",
             "provider": provider,
             "settings": self.settings.model_dump(mode="json"),
-            "rendering": "instruction-and-module-canonical-json-v1",
+            "rendering": "instruction-and-repository-map-canonical-json-v2",
             "extraction": "parsed-source-only-v1",
             "output_schema": SourceOutput.model_json_schema(),
             "runtime": {

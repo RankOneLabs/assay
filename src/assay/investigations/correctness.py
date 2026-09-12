@@ -20,16 +20,20 @@ from assay.repository import validate_repository
 
 CORRECTNESS_CATEGORIES = ("incorrect", "correct")
 PYTHON_IMAGE = "python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"
+TMPFS_SIZE_BYTES = 1_048_576
+REPOSITORY_STORAGE_BUDGET_BYTES = TMPFS_SIZE_BYTES * 3 // 4
 
-_CANDIDATE_HARNESS = r"""import importlib.util
+_CANDIDATE_HARNESS = r"""import importlib
 import json
 from pathlib import Path, PurePosixPath
+import shutil
 import sys
 import tempfile
 
 dumps = json.dumps
 loads = json.loads
 payload = loads(sys.stdin.read())
+root = None
 try:
     root = Path(tempfile.mkdtemp(prefix="assay-repository-"))
     repository = payload["repository"]
@@ -52,12 +56,8 @@ try:
     if module_parts and module_parts[-1] == "__init__":
         module_parts.pop()
     module_name = ".".join(module_parts) or "candidate"
-    spec = importlib.util.spec_from_file_location(module_name, target)
-    if spec is None or spec.loader is None:
-        raise ImportError("target module cannot be loaded")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    importlib.invalidate_caches()
+    module = importlib.import_module(module_name)
     implementation = getattr(module, "implement", None)
     if not callable(implementation):
         raise TypeError("implement is not callable")
@@ -65,6 +65,9 @@ try:
     result = {"ok": True, "actual": actual}
 except BaseException as error:
     result = {"ok": False, "kind": type(error).__name__}
+finally:
+    if root is not None:
+        shutil.rmtree(root, ignore_errors=True)
 sys.stdout.write(dumps(result, allow_nan=False, ensure_ascii=False,
                        sort_keys=True, separators=(",", ":")))
 """
@@ -212,6 +215,7 @@ class DockerPythonRunner:
             "pull": "never",
             "user": "65534:65534",
             "tmpfs": "/tmp:rw,noexec,nosuid,nodev,size=1m",
+            "repository_storage_budget_bytes": REPOSITORY_STORAGE_BUDGET_BYTES,
             "ulimits": {"core": "0:0", "fsize": "1048576:1048576", "nofile": "64:64"},
         }
 
@@ -343,6 +347,11 @@ class DockerPythonRunner:
             validated_repository = validate_repository(repository)
             if target_path != task.target_path or target_path not in validated_repository:
                 raise ValueError("target file does not match the governed task")
+            per_case_bytes = sum(
+                len(content.encode("utf-8")) for content in validated_repository.values()
+            ) + len(source.encode("utf-8")) + 1
+            if per_case_bytes * len(task.test_cases) > REPOSITORY_STORAGE_BUDGET_BYTES:
+                raise ValueError("repository cases exceed the sandbox storage budget")
         except ValueError as error:
             return SandboxFailure("InvalidInput", str(error))
         failure = await self._check_runtime()

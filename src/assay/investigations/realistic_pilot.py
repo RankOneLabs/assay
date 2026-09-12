@@ -31,7 +31,7 @@ from assay.verify import reference_closure, verify_snapshot
 
 
 def realistic_haiku_settings() -> PilotSettings:
-    """Sixteen one-call cells with room for the generated 1,219-line repositories."""
+    """Sixteen one-call cells with room for the generated 1,225-line repositories."""
     return PilotSettings(
         mode="paid",
         max_input_bytes=64_000,

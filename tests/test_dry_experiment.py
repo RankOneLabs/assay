@@ -298,6 +298,7 @@ def test_sandbox_configuration_binds_isolation_and_runtime() -> None:
     assert configuration["no_new_privileges"] is True
     assert configuration["seccomp"] == "builtin"
     assert configuration["pull"] == "never"
+    assert configuration["repository_storage_budget_bytes"] == 786_432
     assert configuration["settings"] == {
         "image": ("python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"),
         "platform": "linux/amd64",

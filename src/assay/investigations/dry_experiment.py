@@ -307,7 +307,7 @@ async def run_consistency_experiment(
         settings = PilotSettings.model_validate(snapshot.arms[0].worker["settings"])
         profile_validator(factory, settings)
         if settings.mode == "paid" and not allow_paid:
-            raise ValueError("paid DRY experiment requires explicit allow_paid=True")
+            raise ValueError("paid consistency experiment requires explicit allow_paid=True")
         worker = ConsistencyWorker(factory, settings, allow_paid=allow_paid)
         structural = StructuralEvaluator()
         correctness = FunctionalCorrectnessEvaluator(runner)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import PurePosixPath
 from typing import Any
+from unicodedata import category
 
 
 def validate_repository(
@@ -31,10 +32,22 @@ def validate_repository(
             or path.is_absolute()
             or not path.parts
             or any(part in {"", ".", ".."} for part in raw_parts)
+            or any(category(character).startswith("C") for character in raw_path)
+            or len(raw_path.encode("utf-8")) > 4_096
+            or any(len(part.encode("utf-8")) > 255 for part in raw_parts)
         ):
             raise ValueError(f"unsafe repository path: {raw_path}")
-        total += len(source.encode("utf-8"))
+        try:
+            source_size = len(source.encode("utf-8"))
+        except UnicodeEncodeError as error:
+            raise ValueError(f"repository source is not valid UTF-8 text: {raw_path}") from error
+        total += source_size
         if total > max_total_bytes:
             raise ValueError("repository exceeds the byte limit")
         repository[raw_path] = source
+    paths = set(repository)
+    for raw_path in paths:
+        parts = raw_path.split("/")
+        if any("/".join(parts[:index]) in paths for index in range(1, len(parts))):
+            raise ValueError("repository path collides with a directory")
     return dict(sorted(repository.items()))

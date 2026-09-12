@@ -60,6 +60,11 @@ class CodingTask(WireModel):
     @classmethod
     def safe_target_path(cls, value: str) -> str:
         path = PurePosixPath(value)
+        module_parts = list(path.with_suffix("").parts)
+        if module_parts and module_parts[0] == "src":
+            module_parts.pop(0)
+        if module_parts and module_parts[-1] == "__init__":
+            module_parts.pop()
         if (
             not value
             or "\\" in value
@@ -67,6 +72,8 @@ class CodingTask(WireModel):
             or not path.parts
             or any(part in {"", ".", ".."} for part in value.split("/"))
             or path.suffix != ".py"
+            or not module_parts
+            or any(not part.isidentifier() for part in module_parts)
         ):
             raise ValueError("target_path must be a relative Python file")
         return value

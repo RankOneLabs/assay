@@ -13,8 +13,12 @@ from jig.core.types import CompletionParams, LLMResponse, ToolCall, Usage
 from assay.adapters.consistency import DescribedClient, render_input
 from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
 from assay.execution import WorkerSuccess
-from assay.investigations.consistency import StructuralEvaluator, materialize_consistency
-from assay.investigations.correctness import DockerPythonRunner, SandboxResult
+from assay.investigations.consistency import (
+    CodingTask,
+    StructuralEvaluator,
+    materialize_consistency,
+)
+from assay.investigations.correctness import DockerPythonRunner, SandboxFailure, SandboxResult
 from assay.investigations.dry_experiment import DryExperimentPrepared, DryExperimentSucceeded
 from assay.investigations.realistic_fixtures import (
     REALISTIC_PILOT_FIXTURES,
@@ -107,7 +111,7 @@ def test_realistic_fixtures_are_large_valid_and_treatment_isolated() -> None:
         inconsistent = fixture.inconsistent_repository
         assert clean.keys() == inconsistent.keys()
         assert len(clean) == 31
-        assert 1_000 <= repository_lines(clean) <= 3_000
+        assert repository_lines(clean) == 1_225
         assert repository_lines(clean) == repository_lines(inconsistent)
         assert [path for path in clean if clean[path] != inconsistent[path]] == [
             fixture.target_path
@@ -204,10 +208,33 @@ async def test_realistic_pilot_prepares_and_runs_full_offline_acceptance(
     assert comparison["regressed"] == 0
 
 
-@pytest.mark.parametrize("path", ["../secret.py", "/absolute.py", "a\\b.py", "a/./b.py"])
+@pytest.mark.parametrize(
+    "path",
+    ["../secret.py", "/absolute.py", "a\\b.py", "a/./b.py", "a/\x00.py", "a/line\nb.py"],
+)
 def test_repository_validation_rejects_unsafe_paths(path: str) -> None:
     with pytest.raises(ValueError, match="unsafe repository path"):
         validate_repository({path: "pass\n"})
+
+
+def test_repository_validation_rejects_file_directory_collisions() -> None:
+    with pytest.raises(ValueError, match="collides with a directory"):
+        validate_repository({"pkg": "data", "pkg/module.py": "pass\n"})
+
+
+@pytest.mark.asyncio
+async def test_sandbox_rejects_repository_cases_over_tmpfs_budget() -> None:
+    fixture = REALISTIC_PILOT_FIXTURES[0]
+    repository = {fixture.target_path: fixture.task.helper_source + "#" * 300_000}
+    result = await DockerPythonRunner().run(
+        task=fixture.task,
+        repository=repository,
+        target_path=fixture.target_path,
+        source=fixture.task.reused_source,
+    )
+    assert result == SandboxFailure(
+        "InvalidInput", "repository cases exceed the sandbox storage budget"
+    )
 
 
 @pytest.mark.asyncio
@@ -239,11 +266,20 @@ async def test_realistic_target_can_import_from_ephemeral_package() -> None:
     fixture = REALISTIC_PILOT_FIXTURES[0]
     target_source = (
         "from .validation.catalog import validate_name\n\n"
+        "PACKAGE_INITIALIZED = False\n\n"
         "def normalize_sku(value):\n"
+        "    if not PACKAGE_INITIALIZED:\n"
+        "        return \"package-not-initialized\"\n"
         "    return validate_name(value).upper() if value.strip() else \"\"\n"
     )
     repository = dict(fixture.clean_repository)
     repository[fixture.target_path] = target_source
+    package_init = "src/marketplace/__init__.py"
+    repository[package_init] = (
+        repository[package_init]
+        + "\nfrom . import normalization\n"
+        + "normalization.PACKAGE_INITIALIZED = True\n"
+    )
     task = fixture.task.model_copy(update={"helper_source": target_source})
     result = await DockerPythonRunner().run(
         task=task,
@@ -253,3 +289,54 @@ async def test_realistic_target_can_import_from_ephemeral_package() -> None:
     )
     assert isinstance(result, SandboxResult), result
     assert result.passed == result.total == len(task.test_cases)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not RUN_DOCKER_TESTS, reason="requires explicitly prepared pinned Docker runtime"
+)
+async def test_realistic_package_init_can_be_the_target() -> None:
+    fixture = REALISTIC_PILOT_FIXTURES[0]
+    target_path = "src/marketplace/__init__.py"
+    target_source = "def normalize_sku(value):\n    return value.strip().upper()\n"
+    repository = dict(fixture.clean_repository)
+    repository[target_path] = target_source
+    task = fixture.task.model_copy(
+        update={"target_path": target_path, "helper_source": target_source}
+    )
+    result = await DockerPythonRunner().run(
+        task=task,
+        repository=repository,
+        target_path=target_path,
+        source=task.reused_source,
+    )
+    assert isinstance(result, SandboxResult), result
+    assert result.passed == result.total == len(task.test_cases)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not RUN_DOCKER_TESTS, reason="requires explicitly prepared pinned Docker runtime"
+)
+async def test_sandbox_removes_repository_between_cases() -> None:
+    fixture = REALISTIC_PILOT_FIXTURES[0]
+    task_value = fixture.task.model_dump(mode="json")
+    task_value["test_cases"] = [
+        {"input": None, "expected": 1},
+        {"input": None, "expected": 1},
+        {"input": None, "expected": 1},
+    ]
+    task = CodingTask.model_validate(task_value)
+    source = (
+        "from pathlib import Path\n"
+        "def implement(value):\n"
+        "    return len(tuple(Path('/tmp').glob('assay-repository-*')))\n"
+    )
+    result = await DockerPythonRunner().run(
+        task=task,
+        repository=fixture.clean_repository,
+        target_path=fixture.target_path,
+        source=source,
+    )
+    assert isinstance(result, SandboxResult), result
+    assert result.passed == result.total == 3
