@@ -186,13 +186,48 @@ def test_realistic_prompt_explains_same_module_append_boundary() -> None:
     assert "appended verbatim to the target file" in SYSTEM_PROMPT
     assert "Names already defined in that file are in scope" in SYSTEM_PROMPT
     fixture = REALISTIC_PILOT_FIXTURES[0]
-    parse_candidate_source(fixture.task.reused_source, helper=fixture.task.helper)
+    parse_candidate_source(
+        fixture.task.reused_source,
+        helper=fixture.task.helper,
+        target_path=fixture.task.target_path,
+    )
     with pytest.raises(ValueError, match="imports must not replace the repository helper"):
         parse_candidate_source(
             "from .normalization import normalize_sku\n\n"
             "def implement(value):\n"
             "    return normalize_sku(value)\n",
             helper=fixture.task.helper,
+            target_path=fixture.task.target_path,
+        )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "from . import normalization as target\n\n"
+            "def implement(value):\n"
+            "    return target.normalize_sku(value)\n"
+        ),
+        (
+            "from .normalization import normalize_sku as unused\n\n"
+            "def implement(value):\n"
+            "    return normalize_sku(value)\n"
+        ),
+        (
+            "import marketplace.normalization as target\n\n"
+            "def implement(value):\n"
+            "    return target.normalize_sku(value)\n"
+        ),
+    ],
+)
+def test_realistic_source_rejects_target_module_imports(source: str) -> None:
+    fixture = REALISTIC_PILOT_FIXTURES[0]
+    with pytest.raises(ValueError, match="imports from the target module are not allowed"):
+        parse_candidate_source(
+            source,
+            helper=fixture.task.helper,
+            target_path=fixture.task.target_path,
         )
 
 
@@ -288,9 +323,19 @@ async def test_realistic_gpt_oss_smoke_prepares_and_runs_full_offline_acceptance
     assert not factory.calls
     snapshot = json.loads(store.read_bytes(prepared.snapshot_ref))
     assert [subject["id"] for subject in snapshot["subjects"]] == ["commerce-sku"]
-    assert {
-        arm["worker"]["provider"]["settings"]["model"] for arm in snapshot["arms"]
-    } == {GPT_OSS_120B_COREWEAVE.model}
+    provider_profiles = {
+        (
+            arm["worker"]["provider"]["settings"]["model"],
+            arm["worker"]["provider"]["settings"]["provider"],
+            arm["worker"]["provider"]["settings"]["provider_name"],
+            arm["worker"]["provider"]["settings"]["max_prompt_price"],
+            arm["worker"]["provider"]["settings"]["max_completion_price"],
+        )
+        for arm in snapshot["arms"]
+    }
+    assert provider_profiles == {
+        ("openai/gpt-oss-120b", "coreweave/fp4", "CoreWeave", 0.03, 0.17)
+    }
     plan = json.loads(store.read_bytes(prepared.plan_ref))
     assert plan["cost_estimate"] == {
         "amount": 0.02,

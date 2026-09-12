@@ -365,7 +365,7 @@ class DockerPythonRunner:
         source: str,
     ) -> SandboxResult | SandboxFailure:
         try:
-            parse_candidate_source(source, helper=task.helper)
+            parse_candidate_source(source, helper=task.helper, target_path=task.target_path)
         except (SyntaxError, ValueError) as error:
             return SandboxFailure("InvalidOutput", str(error))
         if not task.test_cases:
@@ -562,7 +562,7 @@ class FunctionalCorrectnessEvaluator:
             source = output["source"]
             if not isinstance(source, str):
                 raise ValueError("worker output source must be a string")
-            parse_candidate_source(source, helper=task.helper)
+            parse_candidate_source(source, helper=task.helper, target_path=task.target_path)
             if not task.test_cases:
                 raise ValueError("correctness evaluation requires test cases")
         except (KeyError, TypeError, ValueError, SyntaxError) as error:

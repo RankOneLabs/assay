@@ -36,8 +36,9 @@ Before the Haiku qualification pilot, `prepare_realistic_smoke` freezes a
 smaller operational check using the `commerce-sku` repository and GPT-OSS 120B
 through the pinned CoreWeave fp4 route. Both arms run twice, so
 the smoke plan contains four provider calls and eight local evaluations. Its
-hard spending ceiling is $0.02: $0.005 per request under the declared
-$0.03/$0.17 per-million input/output token caps.
+conservative admission ceiling is $0.02: $0.005 per request under the declared
+$0.03/$0.17 per-million input/output token caps. This pre-call bound stops new
+requests once exhausted, but it cannot cap a remote provider's final charge.
 
 This smoke result is not evidence about the treatment. It checks provider
 routing and identity, large-context rendering, repeated calls, sandboxed

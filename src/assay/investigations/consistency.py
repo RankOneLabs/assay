@@ -293,7 +293,9 @@ class AmbiguityJudge(Protocol):
     async def judge(self, *, task: CodingTask, source: str) -> EvaluationResult: ...
 
 
-def parse_candidate_source(source: str, *, helper: str) -> tuple[ast.Module, ast.FunctionDef]:
+def parse_candidate_source(
+    source: str, *, helper: str, target_path: str
+) -> tuple[ast.Module, ast.FunctionDef]:
     """Accept only imports and one inertly declared implement function."""
     tree = ast.parse(source)
     body = list(tree.body)
@@ -334,6 +336,32 @@ def parse_candidate_source(source: str, *, helper: str) -> tuple[ast.Module, ast
             bound_names.add(alias.asname or alias.name.split(".", 1)[0])
     if bound_names & {helper, "implement"}:
         raise ValueError("imports must not replace the repository helper or implement")
+    target = PurePosixPath(target_path)
+    target_parts = list(target.with_suffix("").parts)
+    if target_parts and target_parts[0] == "src":
+        target_parts.pop(0)
+    target_is_package = bool(target_parts and target_parts[-1] == "__init__")
+    if target_is_package:
+        target_parts.pop()
+    target_module = ".".join(target_parts)
+    package_parts = target_parts if target_is_package else target_parts[:-1]
+    for statement in imports:
+        if isinstance(statement, ast.Import):
+            imports_target = any(alias.name == target_module for alias in statement.names)
+        else:
+            if statement.level:
+                retained = len(package_parts) - (statement.level - 1)
+                base_parts = package_parts[: max(0, retained)]
+                if statement.module:
+                    base_parts.extend(statement.module.split("."))
+                imported_module = ".".join(base_parts)
+            else:
+                imported_module = statement.module or ""
+            imports_target = imported_module == target_module or any(
+                f"{imported_module}.{alias.name}" == target_module for alias in statement.names
+            )
+        if imports_target:
+            raise ValueError("imports from the target module are not allowed")
     return tree, function
 
 
@@ -391,7 +419,9 @@ class StructuralEvaluator:
             source = output["source"]
             if not isinstance(source, str):
                 raise ValueError("worker output source must be a string")
-            tree, function = parse_candidate_source(source, helper=task.helper)
+            tree, function = parse_candidate_source(
+                source, helper=task.helper, target_path=task.target_path
+            )
         except (KeyError, TypeError, ValueError, SyntaxError) as error:
             return EvaluationFailed("InvalidOutput", str(error))
         # Limit automatic classification to straight-line return expressions.
