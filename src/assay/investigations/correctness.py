@@ -7,6 +7,7 @@ import contextlib
 import dataclasses
 import json
 import uuid
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import Field
@@ -15,21 +16,49 @@ from assay.canonical import canonical_json, digest_bytes
 from assay.execution import EvaluationFailed, EvaluationResult, EvaluationSuccess
 from assay.investigations.consistency import CodingTask, parse_candidate_source
 from assay.models import EvaluationCoordinate, WireModel
+from assay.repository import validate_repository
 
 CORRECTNESS_CATEGORIES = ("incorrect", "correct")
 PYTHON_IMAGE = "python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"
 
-_CANDIDATE_HARNESS = r"""import json
+_CANDIDATE_HARNESS = r"""import importlib.util
+import json
+from pathlib import Path, PurePosixPath
 import sys
+import tempfile
 
 dumps = json.dumps
 loads = json.loads
 payload = loads(sys.stdin.read())
 try:
-    namespace = {"__name__": "candidate"}
-    candidate = payload["repository_source"] + "\n" + payload["source"]
-    exec(compile(candidate, "<candidate>", "exec"), namespace)
-    implementation = namespace.get("implement")
+    root = Path(tempfile.mkdtemp(prefix="assay-repository-"))
+    repository = payload["repository"]
+    target_path = payload["target_path"]
+    for raw_path, content in sorted(repository.items()):
+        relative = PurePosixPath(raw_path)
+        if (relative.is_absolute() or not relative.parts
+                or any(part in {"", ".", ".."} for part in relative.parts)):
+            raise ValueError("unsafe repository path")
+        destination = root.joinpath(*relative.parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
+    target = root.joinpath(*PurePosixPath(target_path).parts)
+    target.write_text(repository[target_path] + "\n" + payload["source"], encoding="utf-8")
+    source_root = root / "src"
+    sys.path[:0] = [str(source_root), str(root)]
+    module_parts = list(PurePosixPath(target_path).with_suffix("").parts)
+    if module_parts and module_parts[0] == "src":
+        module_parts.pop(0)
+    if module_parts and module_parts[-1] == "__init__":
+        module_parts.pop()
+    module_name = ".".join(module_parts) or "candidate"
+    spec = importlib.util.spec_from_file_location(module_name, target)
+    if spec is None or spec.loader is None:
+        raise ImportError("target module cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    implementation = getattr(module, "implement", None)
     if not callable(implementation):
         raise TypeError("implement is not callable")
     actual = implementation(payload["input"])
@@ -58,7 +87,8 @@ failures = []
 for index, case in enumerate(payload["cases"]):
     try:
         child_payload = dumps({
-            "repository_source": payload["repository_source"],
+            "repository": payload["repository"],
+            "target_path": payload["target_path"],
             "source": payload["source"],
             "input": case["input"],
         }, allow_nan=False, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -170,7 +200,7 @@ class DockerPythonRunner:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "docker-python-functional",
-            "version": "2",
+            "version": "3",
             "settings": self.settings.model_dump(mode="json"),
             "harness_sha256": digest_bytes(self._harness.encode("utf-8")),
             "network": "none",
@@ -296,7 +326,12 @@ class DockerPythonRunner:
         return closing.result()
 
     async def run(
-        self, *, task: CodingTask, repository_source: str, source: str
+        self,
+        *,
+        task: CodingTask,
+        repository: Mapping[str, str],
+        target_path: str,
+        source: str,
     ) -> SandboxResult | SandboxFailure:
         try:
             parse_candidate_source(source, helper=task.helper)
@@ -304,12 +339,19 @@ class DockerPythonRunner:
             return SandboxFailure("InvalidOutput", str(error))
         if not task.test_cases:
             return SandboxFailure("InvalidInput", "correctness evaluation requires test cases")
+        try:
+            validated_repository = validate_repository(repository)
+            if target_path != task.target_path or target_path not in validated_repository:
+                raise ValueError("target file does not match the governed task")
+        except ValueError as error:
+            return SandboxFailure("InvalidInput", str(error))
         failure = await self._check_runtime()
         if failure is not None:
             return failure
         payload = canonical_json(
             {
-                "repository_source": repository_source,
+                "repository": validated_repository,
+                "target_path": target_path,
                 "source": source,
                 "cases": [case.model_dump(mode="json") for case in task.test_cases],
             }
@@ -465,7 +507,7 @@ class FunctionalCorrectnessEvaluator:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "consistency-functional-correctness",
-            "version": "2",
+            "version": "3",
             "categories": list(CORRECTNESS_CATEGORIES),
             "runner": self.runner.configuration(),
             "comparison": "canonical-json-output-equality",
@@ -478,12 +520,9 @@ class FunctionalCorrectnessEvaluator:
         del coordinate
         try:
             task = CodingTask.model_validate(input_value["task"])
-            repository = input_value["repository"]
-            if not isinstance(repository, dict) or set(repository) != {"module.py"}:
-                raise ValueError("expected one repository module")
-            repository_source = repository["module.py"]
-            if not isinstance(repository_source, str):
-                raise ValueError("repository source must be a string")
+            repository = validate_repository(input_value["repository"])
+            if task.target_path not in repository:
+                raise ValueError("governed target file is missing")
             source = output["source"]
             if not isinstance(source, str):
                 raise ValueError("worker output source must be a string")
@@ -493,7 +532,10 @@ class FunctionalCorrectnessEvaluator:
         except (KeyError, TypeError, ValueError, SyntaxError) as error:
             return EvaluationFailed("InvalidOutput", str(error))
         result = await self.runner.run(
-            task=task, repository_source=repository_source, source=source
+            task=task,
+            repository=repository,
+            target_path=task.target_path,
+            source=source,
         )
         if isinstance(result, SandboxFailure):
             return EvaluationFailed(result.error_type, result.message)

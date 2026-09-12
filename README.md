@@ -155,3 +155,8 @@ finite-case correctness reports. Generated code is evaluated only inside a
 digest-pinned, resource-bounded Docker container with no network or host mounts.
 The live experiment still requires review, exact-plan approval, and an explicit
 paid-run decision.
+
+The [realistic repository pilot](docs/realistic-pilot.md) extends the same
+governed path to deterministic 1,000–3,000-line multi-file repositories. Its
+four-subject qualification grid validates repository navigation and sandboxed
+package execution before a new confirmatory study is designed.
