@@ -128,7 +128,12 @@ function renderGrid(root: HTMLElement, run: RunDetail): void {
   for (const subject of run.subjects) {
     const row = element("tr");
     const subjectHead = element("th");
-    subjectHead.append(localLink(subject.label, pairFragment(run.summary.run_key, subject.id)));
+    if (run.arms.length >= 2) {
+      subjectHead.append(localLink(
+        subject.label,
+        pairFragment(run.summary.run_key, subject.id, run.arms[0]!.id, run.arms[1]!.id),
+      ));
+    } else appendText(subjectHead, subject.label);
     row.append(subjectHead);
     for (const arm of run.arms) for (let repeat = 0; repeat < repeats; repeat += 1) {
       const cell = run.cells.find((candidate) => candidate.subject_id === subject.id && candidate.arm_id === arm.id && candidate.worker_repeat === repeat);
@@ -313,7 +318,9 @@ async function renderRoute(root: HTMLElement, source: DataSource, route: Route):
     else if (route.kind === "run") renderGrid(root, await source.run(route.runKey));
     else if (route.kind === "cell") renderCell(root, await source.cell(route.runKey, route.cellId), route.runKey);
     else if (route.kind === "pair") {
-      const pair = await source.pair(route.runKey, route.subjectId);
+      const pair = await source.pair(
+        route.runKey, route.subjectId, route.reference, route.candidate,
+      );
       let run: RunDetail | null = null;
       if (!pair.reference_cells.length || !pair.candidate_cells.length) {
         try { run = await source.run(route.runKey); } catch { /* Keep the pair readable when its run metadata is unavailable. */ }
@@ -339,11 +346,11 @@ async function renderRoute(root: HTMLElement, source: DataSource, route: Route):
   }
 }
 
-export function start(doc: Document = document): void {
+export function start(doc: Document = document, suppliedSource?: DataSource): void {
   const root = doc.querySelector<HTMLElement>("#app");
   if (!root) throw new Error("Missing #app root");
   let source: DataSource;
-  try { source = dataSourceFromDocument(doc); }
+  try { source = suppliedSource ?? dataSourceFromDocument(doc); }
   catch (error) { statePage(root, "error", error instanceof Error ? error.message : String(error)); return; }
   let generation = 0;
   const navigate = async () => {
@@ -356,5 +363,3 @@ export function start(doc: Document = document): void {
   window.addEventListener("hashchange", () => void navigate());
   void navigate();
 }
-
-if (typeof document !== "undefined") start();

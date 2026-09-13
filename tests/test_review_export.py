@@ -14,7 +14,13 @@ from review_fixture import HOSTILE_STRINGS, ReviewFixture, materialize_review_fi
 
 from assay.review import export as review_export
 from assay.review import read as review_read
-from assay.review.export import ExportError, build_export_data, export_review
+from assay.review.export import (
+    ExportError,
+    build_export_data,
+    compute_export_budget,
+    export_review,
+)
+from assay.review.model import JSONValue, canonical_view_json
 from assay.store import ObjectStore
 
 
@@ -73,6 +79,30 @@ def test_manifest_export_is_deterministic_self_contained_and_bundle_equivalent(
     assert "</ScRiPt>" not in html
     assert "\u2028" not in html and "\u2029" not in html
 
+    views = data["views"]
+    assert isinstance(views, dict)
+    for cell_id, outcome_ref in fixture.result.manifest.execution_records.items():
+        outcome = json.loads(fixture.bundle.read_bytes(outcome_ref))
+        cell_key = (
+            f"/api/runs/{quote(fixture.manifest_ref, safe='')}"
+            f"/cells/{quote(cell_id, safe='')}"
+        )
+        cell = views[cell_key]
+        assert isinstance(cell, dict)
+        assert cell["started_at"] == outcome["started_at"]
+        assert cell["completed_at"] == outcome["completed_at"]
+
+
+def test_budget_counts_raw_base64_and_canonical_view_bytes() -> None:
+    closure = {"first": b"abc", "second": b"12345"}
+    views: dict[str, JSONValue] = {"/api/store": {"label": "evidence"}}
+
+    budget = compute_export_budget(closure, views)
+
+    raw_bytes = 3 + 5
+    base64_bytes = 4 + 8
+    assert budget == raw_bytes + base64_bytes + len(canonical_view_json(views))
+
 
 def test_pairs_use_ordered_api_paths_and_reference_cell_views(
     fixture: ReviewFixture,
@@ -93,6 +123,17 @@ def test_pairs_use_ordered_api_paths_and_reference_cell_views(
                 isinstance(cell_key, str) and cell_key in data.views
                 for cell_key in cell_keys
             )
+
+
+def test_report_study_with_other_arm_names_has_explicit_pair_routes(
+    fixture: ReviewFixture,
+) -> None:
+    report_ref = fixture.studies.report_refs["scalar"]
+    data = build_export_data(fixture.studies.report_bundles["scalar"], report_ref)
+    pair_keys = [key for key in data.views if "/pairs/" in key]
+
+    assert any("?reference=reference&candidate=candidate" in key for key in pair_keys)
+    assert any("?reference=candidate&candidate=reference" in key for key in pair_keys)
 
 
 def test_report_export_contains_only_selected_report_and_all_pinned_runs(

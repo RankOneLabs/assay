@@ -73,7 +73,7 @@ test("committed bundle renders every view and safe keyboard links", async () => 
   await page.locator(".cell-grid .status-succeeded").focus(); await page.keyboard.press("Enter");
   await page.getByText(hostile, { exact: true }).first().waitFor({ state: "visible" });
 
-  await page.goto(`${origin}/#/runs/${encodeURIComponent(runKey)}/pairs/success`);
+  await page.goto(`${origin}/#/runs/${encodeURIComponent(runKey)}/pairs/success?reference=reference&candidate=candidate`);
   await page.locator("h2").nth(1).waitFor({ state: "visible" });
   expect(await page.locator("h2").nth(1).textContent()).toBe("Treatment diff");
   await page.getByText("Reference excluded by the persisted study.").waitFor({ state: "visible" });
@@ -111,9 +111,9 @@ for (const cellId of ["fail", "missing"]) {
 }
 
 test("empty pair sides distinguish exclusions from missing cells", async () => {
-  await page.goto(`${origin}/#/runs/${encodeURIComponent(runKey)}/pairs/success`);
+  await page.goto(`${origin}/#/runs/${encodeURIComponent(runKey)}/pairs/success?reference=reference&candidate=candidate`);
   expect(await textOf(".pair-side .unavailable-inline")).toBe("Excluded: Outside study population");
-  await page.goto(`${origin}/#/runs/${encodeURIComponent(runKey)}/pairs/missing`);
+  await page.goto(`${origin}/#/runs/${encodeURIComponent(runKey)}/pairs/missing?reference=reference&candidate=candidate`);
   await page.waitForFunction(() => document.querySelector(".pair-side .unavailable-inline")?.textContent?.startsWith("Missing:"));
   expect(await textOf(".pair-side .unavailable-inline")).toBe("Missing: no cell was recorded for this side.");
 });

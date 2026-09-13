@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseRoute, cellFragment, reportFragment } from "../../src/routes";
+import { parseRoute, cellFragment, pairFragment, reportFragment } from "../../src/routes";
 
 describe("fragment routes", () => {
   test("keeps a loose full run key before a cell id", () => {
@@ -9,6 +9,9 @@ describe("fragment routes", () => {
 
   test("round trips generated document-local links", () => {
     expect(parseRoute(cellFragment("one/two", "a:b"))).toEqual({ kind: "cell", runKey: "one/two", cellId: "a:b" });
+    expect(parseRoute(pairFragment("one/two", "subject", "baseline", "treatment"))).toEqual({
+      kind: "pair", runKey: "one/two", subjectId: "subject", reference: "baseline", candidate: "treatment",
+    });
     expect(parseRoute(reportFragment("sha256:abc"))).toEqual({ kind: "report", reportRef: "sha256:abc" });
   });
 

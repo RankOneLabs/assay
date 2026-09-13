@@ -179,13 +179,13 @@ def _root_index(
         )
     runs = tuple(
         sorted(
-            (review_index._manifest_run(item, by_ref, store) for item in manifests),
+            (review_index.manifest_run(item, by_ref, store) for item in manifests),
             key=lambda run: run.run_key,
         )
     )
     summaries = tuple(
         sorted(
-            (review_index._report_summary(item, by_ref) for item in reports),
+            (review_index.report_summary(item, by_ref) for item in reports),
             key=lambda report: report.report_ref,
         )
     )
@@ -271,7 +271,7 @@ def _assemble_views(
 def build_export_data(store: ObjectStore, root_ref: str) -> ExportData:
     """Build the complete export model from one verified reference closure."""
     session = verification_session(store)
-    closure, failures = review_read._closure(session, root_ref)
+    closure, failures = review_read.closure(session, root_ref)
     if failures:
         failure = sorted(failures, key=lambda item: (item.code, item.message))[0]
         match = re.search(r"sha256:[0-9a-f]{64}", failure.message)
@@ -295,7 +295,7 @@ def build_export_data(store: ObjectStore, root_ref: str) -> ExportData:
     for ref, raw in sorted(raw_by_ref.items()):
         downloadable = len(raw) <= MAX_DOWNLOAD_BYTES
         objects[ref] = EmbeddedObject(
-            review_read._preview(session, ref),
+            review_read.preview(session, ref),
             base64.b64encode(raw).decode("ascii") if downloadable else None,
             None
             if downloadable
@@ -320,54 +320,9 @@ def _trusted_asset(path: Path, closing_tag: str) -> str:
     return text
 
 
-def _offline_javascript(source: str) -> str:
-    replacements = {
-        "async run(N){return this.view([`#/runs/${H(N)}`,`/runs/${H(N)}`,": (
-            "async run(N){return this.view([`/api/runs/${H(N)}`,"
-            "`#/runs/${H(N)}`,`/runs/${H(N)}`,"
-        ),
-        "async cell(N,$){return this.view([`#/runs/${H(N)}/cells/${H($)}`,": (
-            "async cell(N,$){return this.view([`/api/runs/${H(N)}/cells/${H($)}`,"
-            "`#/runs/${H(N)}/cells/${H($)}`,"
-        ),
-        "async report(N){return this.view([`#/reports/${H(N)}`,`/reports/${H(N)}`,": (
-            "async report(N){return this.view([`/api/reports/${H(N)}`,"
-            "`#/reports/${H(N)}`,`/reports/${H(N)}`,"
-        ),
-        'this.data.views["#/ambiguities"]??this.data.views["/ambiguities"]': (
-            'this.data.views["/api/ambiguities"]??'
-            'this.data.views["#/ambiguities"]??this.data.views["/ambiguities"]'
-        ),
-    }
-    for original, replacement in replacements.items():
-        if source.count(original) != 1:
-            raise ExportError("unsafe_frontend", "frontend route adapter is incompatible")
-        source = source.replace(original, replacement)
-
-    original_pair = (
-        "async pair(N,$){return this.view([`#/runs/${H(N)}/pairs/${H($)}`,"
-        "`/runs/${H(N)}/pairs/${H($)}`,`pair:${N}:${$}`])}"
-    )
-    offline_pair = (
-        "async pair(N,$){let M=`/api/runs/${H(N)}/pairs/${H($)}`,"
-        "O=Object.keys(this.data.views).filter(q=>q.startsWith(M+\"?\")),"
-        "q=O.find(X=>{let Q=this.data.views[X];return "
-        "[\"reference\",\"clean\"].includes(Q.reference_arm)&&"
-        "[\"candidate\",\"inconsistent\"].includes(Q.candidate_arm)})??O[0],"
-        "X=this.view([...(q?[q]:[]),`#/runs/${H(N)}/pairs/${H($)}`,"
-        "`/runs/${H(N)}/pairs/${H($)}`,`pair:${N}:${$}`]);"
-        "for(let Q of[\"reference_cells\",\"candidate_cells\"])"
-        "X[Q]=X[Q].map(Z=>typeof Z===\"string\"?"
-        "h(this.data.views[Z],`inline cell ${Z}`):Z);return X}"
-    )
-    if source.count(original_pair) != 1:
-        raise ExportError("unsafe_frontend", "frontend pair adapter is incompatible")
-    return source.replace(original_pair, offline_pair)
-
-
 def _document(data: ExportData) -> bytes:
     css = _trusted_asset(_STATIC / "app.css", "style")
-    javascript = _offline_javascript(_trusted_asset(_STATIC / "app.js", "script"))
+    javascript = _trusted_asset(_STATIC / "offline.js", "script")
     encoded = canonical_view_json(data).decode("utf-8")
     payload = escape_html_boundary(encoded)
     html = f"""<!doctype html>

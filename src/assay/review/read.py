@@ -119,7 +119,8 @@ def _model(
         return None, (issue,)
 
 
-def _preview(session: ObjectStore, ref: str) -> ObjectPreview:
+def preview(session: ObjectStore, ref: str) -> ObjectPreview:
+    """Return the bounded review preview for one verified object."""
     try:
         raw = session.read_bytes(ref)
     except (OSError, ObjectIntegrityError, ValueError) as error:
@@ -153,10 +154,13 @@ def _preview(session: ObjectStore, ref: str) -> ObjectPreview:
 def _input(session: ObjectStore, ref: str | None) -> InputView:
     if ref is None:
         return InputView("unavailable", None, None, None)
-    preview = _preview(session, ref)
-    if preview.kind == "unavailable" or preview.truncated:
+    object_preview = preview(session, ref)
+    if object_preview.kind == "unavailable" or object_preview.truncated:
         return InputView(
-            "unavailable" if preview.kind == "unavailable" else "generic", None, None, preview
+            "unavailable" if object_preview.kind == "unavailable" else "generic",
+            None,
+            None,
+            object_preview,
         )
     value, _ = _safe_json(session, ref)
     if (
@@ -175,23 +179,23 @@ def _input(session: ObjectStore, ref: str | None) -> InputView:
             "consistency",
             instruction if isinstance(instruction, str) else None,
             cast(dict[str, str] | None, files),
-            preview,
+            object_preview,
         )
-    return InputView("generic", None, None, preview)
+    return InputView("generic", None, None, object_preview)
 
 
 def _source(session: ObjectStore, ref: str | None) -> tuple[str | None, ObjectPreview | None]:
     if ref is None:
         return None, None
-    preview = _preview(session, ref)
-    if preview.truncated or preview.kind == "unavailable":
-        return None, preview
+    object_preview = preview(session, ref)
+    if object_preview.truncated or object_preview.kind == "unavailable":
+        return None, object_preview
     value, _ = _safe_json(session, ref)
     if isinstance(value, str):
-        return value, preview
+        return value, object_preview
     if isinstance(value, dict) and isinstance(value.get("source"), str):
-        return value["source"], preview
-    return None, preview
+        return value["source"], object_preview
+    return None, object_preview
 
 
 def _empty_cost(*issues: ReadIssue, partial: bool = True) -> CostView:
@@ -822,7 +826,7 @@ class ReviewReader:
         )
         output_text, output_preview = _source(self.store, outcome.output_ref if outcome else None)
         trace_preview = (
-            _preview(self.store, outcome.trace_ref) if outcome and outcome.trace_ref else None
+            preview(self.store, outcome.trace_ref) if outcome and outcome.trace_ref else None
         )
         recorded_prompt = None
         if outcome and outcome.trace_ref and trace_preview and not trace_preview.truncated:
@@ -1235,7 +1239,7 @@ def verify(
             issues[0].message if issues else "root is not an object",
         )
         return VerificationResult(scope, root_ref, "failed", (), (failure,), None)
-    closure, closure_failures = _closure(session, root_ref)
+    closure_refs, closure_failures = closure(session, root_ref)
     if closure_failures:
         return VerificationResult(scope, root_ref, "failed", (), tuple(closure_failures), None)
     if value.get("record_schema") != "assay-report/0.1.0":
@@ -1300,7 +1304,7 @@ def verify(
             for p in session.objects.iterdir()
             if p.is_file() and re.fullmatch(r"[0-9a-f]{64}", p.name)
         }
-        if actual != closure:
+        if actual != closure_refs:
             closure_failures.append(
                 ViewVerificationFailure(
                     "bundle_closure", "bundle object set differs from the reachable closure"
@@ -1325,7 +1329,10 @@ def verify(
     )
 
 
-def _closure(session: ObjectStore, root_ref: str) -> tuple[set[str], list[ViewVerificationFailure]]:
+def closure(
+    session: ObjectStore, root_ref: str
+) -> tuple[set[str], list[ViewVerificationFailure]]:
+    """Walk a root closure and return stable reference-attributed failures."""
     pending: list[tuple[str, str, str | None]] = [(root_ref, "auto", None)]
     seen: set[tuple[str, str]] = set()
     refs: set[str] = set()

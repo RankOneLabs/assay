@@ -3,7 +3,7 @@ export type Route =
   | { kind: "ambiguities" }
   | { kind: "run"; runKey: string }
   | { kind: "cell"; runKey: string; cellId: string }
-  | { kind: "pair"; runKey: string; subjectId: string }
+  | { kind: "pair"; runKey: string; subjectId: string; reference: string; candidate: string }
   | { kind: "report"; reportRef: string }
   | { kind: "unavailable"; path: string };
 
@@ -29,8 +29,15 @@ export function parseRoute(hash: string): Route {
       if (runKey && cellId) return { kind: "cell", runKey, cellId };
     } else if (pairAt > 0) {
       const runKey = decode(rest.slice(0, pairAt));
-      const subjectId = decode(rest.slice(pairAt + 7));
-      if (runKey && subjectId) return { kind: "pair", runKey, subjectId };
+      const pairRoute = rest.slice(pairAt + 7);
+      const queryAt = pairRoute.indexOf("?");
+      const subjectId = decode(queryAt < 0 ? pairRoute : pairRoute.slice(0, queryAt));
+      const query = new URLSearchParams(queryAt < 0 ? "" : pairRoute.slice(queryAt + 1));
+      const reference = query.get("reference");
+      const candidate = query.get("candidate");
+      if (runKey && subjectId && reference && candidate) {
+        return { kind: "pair", runKey, subjectId, reference, candidate };
+      }
     } else {
       const runKey = decode(rest);
       if (runKey) return { kind: "run", runKey };
@@ -42,5 +49,6 @@ export function parseRoute(hash: string): Route {
 const encoded = (value: string) => encodeURIComponent(value);
 export const runFragment = (runKey: string) => `#/runs/${encoded(runKey)}`;
 export const cellFragment = (runKey: string, cellId: string) => `${runFragment(runKey)}/cells/${encoded(cellId)}`;
-export const pairFragment = (runKey: string, subjectId: string) => `${runFragment(runKey)}/pairs/${encoded(subjectId)}`;
+export const pairFragment = (runKey: string, subjectId: string, reference: string, candidate: string) =>
+  `${runFragment(runKey)}/pairs/${encoded(subjectId)}?reference=${encoded(reference)}&candidate=${encoded(candidate)}`;
 export const reportFragment = (reportRef: string) => `#/reports/${encoded(reportRef)}`;
