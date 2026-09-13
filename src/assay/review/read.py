@@ -756,7 +756,14 @@ class ReviewReader:
                 for x in plan.exclusions
             )
         )
-        issues = tuple((*context_issues, *(i for c in cells for i in c.issues), *cost.issues))
+        issues = tuple(
+            (
+                *context_issues,
+                *(i for c in cells for i in c.issues),
+                *(i for evaluation in eval_views for i in evaluation.issues),
+                *cost.issues,
+            )
+        )
         return RunSummary(
             run.run_key,
             run.run_id,
@@ -1346,12 +1353,3 @@ def _closure(session: ObjectStore, root_ref: str) -> tuple[set[str], list[ViewVe
                 )
             )
     return refs, failures
-
-
-verify_root = verify
-verification_dispatch = verify
-Reader = ReviewReader
-read_run_detail = read_run
-read_cell_detail = read_cell
-read_pair_detail = read_pair
-read_report_detail = read_report

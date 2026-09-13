@@ -47,3 +47,27 @@ def test_all_persisted_metric_shapes_remain_available(fixture: ReviewFixture) ->
         "classification",
     }
     assert all(detail.comparisons for detail in details.values())
+
+
+def test_descriptive_only_and_null_statistics_are_preserved(
+    fixture: ReviewFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*args: object, **kwargs: object) -> object:
+        raise AssertionError("display must not compute statistics")
+
+    monkeypatch.setattr("assay.review.read.build_report", forbidden)
+    ref = fixture.studies.report_refs["scalar"]
+    persisted = json.loads(fixture.store.read_bytes(ref))
+    comparison = persisted["comparisons"][0]
+    assert comparison["decision"] == "descriptive_only"
+    assert comparison["confidence_interval"] is None
+    assert comparison["p_value"] is None
+    detail = ReviewReader(fixture.store, build_index(fixture.store)).report(ref)
+    assert detail.comparisons[0].values == comparison
+    assert detail.comparisons[0].values["confidence_interval"] is None
+    assert detail.comparisons[0].values["p_value"] is None
+    assert detail.comparisons[0].values["interval_adjustment"] == comparison["interval_adjustment"]
+    assert detail.report["profile"] == persisted["profile"]
+    assert persisted["profile"]["min_subjects"] == 10
+    assert detail.report == persisted
