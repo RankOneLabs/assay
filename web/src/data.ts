@@ -9,7 +9,7 @@ export interface DataSource {
   store(): Promise<StoreSummary>;
   run(runKey: string): Promise<RunDetail>;
   cell(runKey: string, cellId: string): Promise<CellDetail>;
-  pair(runKey: string, subjectId: string): Promise<PairView>;
+  pair(runKey: string, subjectId: string, reference: string, candidate: string): Promise<PairView>;
   report(reportRef: string): Promise<ReportDetail>;
   ambiguities(): Promise<Ambiguity[]>;
   recompute(reportRef: string): Promise<RecomputeResult>;
@@ -46,8 +46,9 @@ export class InlineDataSource implements DataSource {
       `cell:${runKey}:${cellId}`,
     ]);
   }
-  async pair(runKey: string, subjectId: string): Promise<PairView> {
+  async pair(runKey: string, subjectId: string, reference: string, candidate: string): Promise<PairView> {
     return this.view([
+      `/api/runs/${encoded(runKey)}/pairs/${encoded(subjectId)}?reference=${encoded(reference)}&candidate=${encoded(candidate)}`,
       `#/runs/${encoded(runKey)}/pairs/${encoded(subjectId)}`,
       `/runs/${encoded(runKey)}/pairs/${encoded(subjectId)}`,
       `pair:${runKey}:${subjectId}`,
@@ -85,8 +86,10 @@ export class HttpDataSource implements DataSource {
   cell(runKey: string, cellId: string): Promise<CellDetail> {
     return this.request(`/api/runs/${encoded(runKey)}/cells/${encoded(cellId)}`);
   }
-  pair(runKey: string, subjectId: string): Promise<PairView> {
-    return this.request(`/api/runs/${encoded(runKey)}/pairs/${encoded(subjectId)}`);
+  pair(runKey: string, subjectId: string, reference: string, candidate: string): Promise<PairView> {
+    return this.request(
+      `/api/runs/${encoded(runKey)}/pairs/${encoded(subjectId)}?reference=${encoded(reference)}&candidate=${encoded(candidate)}`,
+    );
   }
   report(reportRef: string): Promise<ReportDetail> { return this.request(`/api/reports/${encoded(reportRef)}`); }
   async ambiguities(): Promise<Ambiguity[]> {
@@ -111,11 +114,11 @@ export class HttpDataSource implements DataSource {
  * The browser parses HTML before this function runs; client-side validation
  * cannot repair an unsafe embedding. Chromium tests exercise the full parser.
  */
-export function dataSourceFromDocument(doc: Document = document): DataSource {
+export function exportDataFromDocument(doc: Document = document): ExportData | null {
   const node = doc.querySelector<HTMLScriptElement>(
     'script[type="application/json"][data-assay-review], script#assay-review-data[type="application/json"]',
   );
-  if (!node) return new HttpDataSource();
+  if (!node) return null;
   let parsed: unknown;
   try { parsed = JSON.parse(node.textContent ?? ""); } catch (error) {
     throw new Error(`Malformed inline review data: ${error instanceof Error ? error.message : String(error)}`);
@@ -124,5 +127,10 @@ export function dataSourceFromDocument(doc: Document = document): DataSource {
   if (data.schema_version !== "assay-review-export/0.1.0" || !data.store || !data.views) {
     throw new Error("Malformed inline review data: unsupported schema or missing store/views");
   }
-  return new InlineDataSource(data as unknown as ExportData);
+  return data as unknown as ExportData;
+}
+
+export function dataSourceFromDocument(doc: Document = document): DataSource {
+  const data = exportDataFromDocument(doc);
+  return data === null ? new HttpDataSource() : new InlineDataSource(data);
 }

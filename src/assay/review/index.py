@@ -694,11 +694,12 @@ def _run_summary(
     )
 
 
-def _manifest_run(
+def manifest_run(
     item: IndexedManifest,
     by_ref: dict[str, IndexedObject],
     store: ObjectStore,
 ) -> IndexedRun:
+    """Assemble one indexed manifest run from already classified closure objects."""
     manifest = item.value
     plan, snapshot, context_issues = _context(manifest.plan_ref, by_ref)
     execution: dict[str, tuple[str, ...]] = {
@@ -870,7 +871,8 @@ def _loose_run(
     )
 
 
-def _report_summary(item: IndexedReport, by_ref: dict[str, IndexedObject]) -> ReportSummary:
+def report_summary(item: IndexedReport, by_ref: dict[str, IndexedObject]) -> ReportSummary:
+    """Assemble one report summary from already classified closure objects."""
     config_ref = item.value["config_ref"]
     assert isinstance(config_ref, str)
     config_item = by_ref.get(config_ref)
@@ -1326,7 +1328,7 @@ def build_index(
         store, terminal, operating, all_terminal_refs
     )
     issues.extend(accounting_issues)
-    runs = [*(_manifest_run(item, by_ref, store) for item in manifests)]
+    runs = [*(manifest_run(item, by_ref, store) for item in manifests)]
     runs.extend(
         _loose_run(
             key_value, records, loose_operating.get(key_value, []), by_ref, store, closure_issues
@@ -1335,7 +1337,7 @@ def build_index(
     )
     reports = tuple(
         sorted(
-            (_report_summary(item, by_ref) for item in objects if isinstance(item, IndexedReport)),
+            (report_summary(item, by_ref) for item in objects if isinstance(item, IndexedReport)),
             key=lambda report: report.report_ref,
         )
     )
