@@ -68,7 +68,7 @@ jobs:
       - working-directory: web
         run: bun run typecheck
       - working-directory: web
-        run: bun test
+        run: bun run test
       - working-directory: web
         run: bunx playwright install --with-deps chromium
       - working-directory: web

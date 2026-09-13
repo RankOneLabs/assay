@@ -37,15 +37,18 @@ const handleRequest = async (request: Request): Promise<Response> => {
   if (url.pathname === "/api/store") return json(store);
   if (url.pathname === "/api/ambiguities") return json(ambiguity);
   if (url.pathname.includes("/recompute")) { recomputes += 1; await Bun.sleep(120); return json({ status: "matched", matched: true, stored_digest: "sha256:report", recomputed_digest: "sha256:report", reason: null }); }
+  if (url.pathname.endsWith("/pairs/missing")) return json({ ...pair, subject_id: "missing" });
   if (url.pathname.includes("/pairs/")) return json(pair);
+  if (url.pathname.endsWith("/cells/fail")) return json({ ...cellDetail, summary: cells[3], evaluations: [] });
+  if (url.pathname.endsWith("/cells/missing")) return json({ ...cellDetail, summary: cells[4], evaluations: [] });
   if (url.pathname.includes("/cells/")) return json(cellDetail);
   if (url.pathname.startsWith("/api/reports/")) return json(report);
-  if (url.pathname.startsWith("/api/runs/")) return json(run);
+  if (url.pathname.startsWith("/api/runs/")) return json({ ...run, summary: { ...run.summary, exclusions: [{ subject_id: "success", arm_id: "reference", classification: "excluded", reason: "Outside study population", manifest_ref: null }] } });
   return new Response("absent", { status: 404 });
 };
 
 beforeAll(async () => {
-  browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? "/usr/bin/google-chrome", headless: true });
+  browser = await chromium.launch({ ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}), headless: true });
   page = await browser.newPage();
   await page.route("**/*", async (route) => {
     const response = await handleRequest(new Request(route.request().url(), { method: route.request().method() }));
@@ -93,3 +96,24 @@ test("unknown fragments have a local unavailable state", async () => {
   await page.goto(`${origin}/#/unknown`);
   await page.locator(".state-unavailable").waitFor({ state: "visible" });
 }, 10_000);
+
+for (const cellId of ["fail", "missing"]) {
+  test(`${cellId} cell without evaluations links back to its run`, async () => {
+    await page.goto(`${origin}/#/runs/${encodeURIComponent(runKey)}/cells/${cellId}`);
+    await page.getByText("No evaluations recorded.").waitFor();
+    const back = page.getByRole("link", { name: "Back to cell grid" });
+    expect(await back.getAttribute("href")).toBe(`#/runs/${encodeURIComponent(runKey)}`);
+    await back.focus();
+    await page.keyboard.press("Enter");
+    await page.locator(".cell-grid").waitFor();
+    expect(await page.locator(".state-unavailable").count()).toBe(0);
+  });
+}
+
+test("empty pair sides distinguish exclusions from missing cells", async () => {
+  await page.goto(`${origin}/#/runs/${encodeURIComponent(runKey)}/pairs/success`);
+  expect(await textOf(".pair-side .unavailable-inline")).toBe("Excluded: Outside study population");
+  await page.goto(`${origin}/#/runs/${encodeURIComponent(runKey)}/pairs/missing`);
+  await page.waitForFunction(() => document.querySelector(".pair-side .unavailable-inline")?.textContent?.startsWith("Missing:"));
+  expect(await textOf(".pair-side .unavailable-inline")).toBe("Missing: no cell was recorded for this side.");
+});

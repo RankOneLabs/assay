@@ -163,9 +163,9 @@ function previewBlock(title: string, ref: string | null, text: string | null, re
   return panel;
 }
 
-function renderCell(root: HTMLElement, cell: CellDetail): void {
+function renderCell(root: HTMLElement, cell: CellDetail, runKey: string): void {
   clearAndTitle(root, STATE_LABEL[gridState(cell.summary)], cell.summary.cell_id);
-  const back = localLink("Back to cell grid", runFragment(cell.evaluations[0]?.run_key ?? ""));
+  const back = localLink("Back to cell grid", runFragment(runKey));
   back.className = "back-link"; root.append(back);
   const input = section("Realization input");
   if (cell.input_preview.instruction) input.append(element("p", { text: cell.input_preview.instruction }));
@@ -203,10 +203,10 @@ function diffPanel(title: string, diff: DiffView): HTMLElement {
   return panel;
 }
 
-function sideAvailability(pair: PairView, cells: CellDetail[], label: string): HTMLElement {
+function sideAvailability(cells: CellDetail[], label: string, emptyReason: string): HTMLElement {
   const block = element("div", { className: "pair-side" });
   block.append(element("h3", { text: label }));
-  if (!cells.length) block.append(element("p", { className: "unavailable-inline", text: "Missing or excluded: no cell is available for this side." }));
+  if (!cells.length) block.append(element("p", { className: "unavailable-inline", text: emptyReason }));
   else for (const cell of cells) {
     const state = gridState(cell.summary);
     block.append(element("p", { className: `badge status-${state}`, text: `Repeat ${cell.summary.worker_repeat + 1}: ${STATE_LABEL[state]}` }));
@@ -215,12 +215,17 @@ function sideAvailability(pair: PairView, cells: CellDetail[], label: string): H
   return block;
 }
 
-function renderPair(root: HTMLElement, pair: PairView): void {
+function renderPair(root: HTMLElement, pair: PairView, run: RunDetail | null): void {
   clearAndTitle(root, "Paired subject", pair.subject_label ?? pair.subject_id);
   root.append(localLink("Back to cell grid", runFragment(pair.run_key)));
   const availability = section("Pair availability");
   const sides = element("div", { className: "diff-sides" });
-  sides.append(sideAvailability(pair, pair.reference_cells, pair.reference_arm), sideAvailability(pair, pair.candidate_cells, pair.candidate_arm));
+  const emptyReason = (arm: string): string => {
+    if (!run) return "Unavailable: run metadata is unavailable, so the reason cannot be determined.";
+    const exclusion = run.summary.exclusions.find((value) => value.subject_id === pair.subject_id && value.arm_id === arm);
+    return exclusion ? `Excluded: ${exclusion.reason}` : "Missing: no cell was recorded for this side.";
+  };
+  sides.append(sideAvailability(pair.reference_cells, pair.reference_arm, emptyReason(pair.reference_arm)), sideAvailability(pair.candidate_cells, pair.candidate_arm, emptyReason(pair.candidate_arm)));
   availability.append(sides); root.append(availability);
   root.append(diffPanel("Treatment diff", pair.treatment_diff));
   if (!pair.output_diffs.length) root.append(element("section", { className: "state panel state-empty", text: "No output diffs are available." }));
@@ -300,8 +305,15 @@ async function renderRoute(root: HTMLElement, source: DataSource, route: Route):
   try {
     if (route.kind === "browser") renderBrowser(root, await source.store());
     else if (route.kind === "run") renderGrid(root, await source.run(route.runKey));
-    else if (route.kind === "cell") renderCell(root, await source.cell(route.runKey, route.cellId));
-    else if (route.kind === "pair") renderPair(root, await source.pair(route.runKey, route.subjectId));
+    else if (route.kind === "cell") renderCell(root, await source.cell(route.runKey, route.cellId), route.runKey);
+    else if (route.kind === "pair") {
+      const pair = await source.pair(route.runKey, route.subjectId);
+      let run: RunDetail | null = null;
+      if (!pair.reference_cells.length || !pair.candidate_cells.length) {
+        try { run = await source.run(route.runKey); } catch { /* Keep the pair readable when its run metadata is unavailable. */ }
+      }
+      renderPair(root, pair, run);
+    }
     else if (route.kind === "report") renderReport(root, await source.report(route.reportRef), source);
     else {
       const values = await source.ambiguities();
