@@ -227,8 +227,10 @@ def classify_object(ref: ObjectRef | str, raw_bytes: bytes) -> IndexedObject | R
     if record_schema == "assay-report/0.1.0":
         config_ref = value.get("config_ref")
         manifest_refs = value.get("manifest_refs")
-        if not isinstance(config_ref, str) or not isinstance(manifest_refs, list) or any(
-            not isinstance(item, str) for item in manifest_refs
+        if (
+            not isinstance(config_ref, str)
+            or not isinstance(manifest_refs, list)
+            or any(not isinstance(item, str) for item in manifest_refs)
         ):
             return _issue(ref_text, "malformed report discriminator fields")
         try:
@@ -268,7 +270,9 @@ def _empty_cost(issues: tuple[ReadIssue, ...] = ()) -> CostView:
     return CostView("unavailable", {}, {}, {}, 0, None, None, bool(issues), issues)
 
 
-def _cost(operating_refs: Sequence[str], by_ref: dict[str, IndexedObject]) -> CostView:
+def _cost(
+    operating_refs: Sequence[str], by_ref: dict[str, IndexedObject], store: ObjectStore
+) -> CostView:
     counts: dict[str, int] = {}
     amounts: dict[str, float] = {}
     attempts = 0
@@ -281,7 +285,30 @@ def _cost(operating_refs: Sequence[str], by_ref: dict[str, IndexedObject]) -> Co
             )
             continue
         price = item.value.get("price")
-        coverage = "unavailable"
+        try:
+            sources = item.value.get("source_references")
+            if not isinstance(sources, list):
+                raise ValueError("invalid accounting sources")
+            details = [
+                json.loads(store.read_bytes(source))
+                for source in sources
+                if isinstance(source, str)
+            ]
+            provenance = [
+                detail
+                for detail in details
+                if isinstance(detail, dict) and "coverage" in detail and "attempt" in detail
+            ]
+            if len(provenance) != 1:
+                raise ValueError("accounting requires unique coverage provenance")
+            coverage = provenance[0]["coverage"]
+            if coverage not in ("measured", "estimated", "mixed", "unavailable"):
+                raise ValueError("invalid accounting coverage")
+            if (price is None) != (coverage == "unavailable"):
+                raise ValueError("accounting price and coverage disagree")
+        except Exception as error:
+            issues.append(ReadIssue("invalid_accounting", str(error), ref, None))
+            continue
         if isinstance(price, dict):
             amount = price.get("amount")
             currency = price.get("currency")
@@ -294,7 +321,6 @@ def _cost(operating_refs: Sequence[str], by_ref: dict[str, IndexedObject]) -> Co
                     ReadIssue("invalid_accounting", "invalid accounting price", ref, None)
                 )
                 continue
-            coverage = "measured"
             amounts[currency] = amounts.get(currency, 0.0) + float(amount)
         elif price is not None:
             issues.append(ReadIssue("invalid_accounting", "invalid accounting price", ref, None))
@@ -309,7 +335,7 @@ def _cost(operating_refs: Sequence[str], by_ref: dict[str, IndexedObject]) -> Co
         coverage_value = "mixed"
     else:
         only = next(iter(observed))
-        coverage_value = "measured" if only == "measured" else "unavailable"
+        coverage_value = cast(Literal["measured", "estimated", "unavailable", "mixed"], only)
     return CostView(
         coverage_value,
         counts,
@@ -400,6 +426,7 @@ def _context(
 
 def _run_summary(
     *,
+    store: ObjectStore,
     run_key: str,
     run_id: str,
     manifest_ref: str | None,
@@ -460,13 +487,17 @@ def _run_summary(
         cells_total=len(plan.cells) if plan is not None else None,
         cells_succeeded=execution_succeeded,
         cells_failed=execution_failed,
-        cells_missing=(len(plan.cells) - len(execution)) if plan is not None else None,
+        cells_missing=len({cell.id for cell in plan.cells} - execution.keys())
+        if plan is not None
+        else None,
         cells_invalid=len(good_execution) - execution_succeeded - execution_failed,
         cells_conflicted=conflicts_execution,
         evaluations_total=len(plan.evaluations) if plan is not None else None,
         evaluations_succeeded=evaluation_succeeded,
         evaluations_failed=evaluation_failed,
-        evaluations_missing=(len(plan.evaluations) - len(evaluation)) if plan is not None else None,
+        evaluations_missing=len({item.id for item in plan.evaluations} - evaluation.keys())
+        if plan is not None
+        else None,
         evaluations_invalid=len(good_evaluation) - evaluation_succeeded - evaluation_failed,
         evaluations_conflicted=conflicts_evaluation,
         exclusions=(
@@ -483,7 +514,7 @@ def _run_summary(
             if plan is not None
             else ()
         ),
-        cost=_cost(operating_refs, by_ref),
+        cost=_cost(operating_refs, by_ref, store),
         issues=issues,
     )
 
@@ -517,6 +548,7 @@ def _manifest_run(
     )
     run_issues = (*context_issues, *validation_issues)
     summary = _run_summary(
+        store=store,
         run_key=item.ref,
         run_id=manifest.run_id,
         manifest_ref=item.ref,
@@ -599,6 +631,7 @@ def _loose_run(
     validation_issues = _validate_paa_records(records, operating, plan, snapshot, store)
     issues = (*context_issues, *validation_issues)
     summary = _run_summary(
+        store=store,
         run_key=run_key,
         run_id=run_id,
         manifest_ref=None,
@@ -634,8 +667,19 @@ def _report_summary(item: IndexedReport, by_ref: dict[str, IndexedObject]) -> Re
     config_item = by_ref.get(config_ref)
     if not isinstance(config_item, IndexedReportConfig):
         issue = _issue(config_ref, "report configuration is unavailable", code="missing_config")
-        return ReportSummary(item.ref, config_ref, "scalar", "", None, None, None, False,
-                             "report configuration is unavailable", (), (issue,))
+        return ReportSummary(
+            item.ref,
+            config_ref,
+            "scalar",
+            "",
+            None,
+            None,
+            None,
+            False,
+            "report configuration is unavailable",
+            (),
+            (issue,),
+        )
     config = config_item.value
     return ReportSummary(
         item.ref,
@@ -731,9 +775,11 @@ def _cached_object(value: object) -> IndexedObject | ReadIssue:
     return item
 
 
-def _read_cache(root: Path, key: dict[str, int]) -> list[IndexedObject | ReadIssue] | None:
+def _read_cache(
+    store: ObjectStore, key: dict[str, int], max_objects: int, max_bytes: int
+) -> list[IndexedObject | ReadIssue] | None:
     try:
-        value = json.loads((root / "review-index.json").read_bytes())
+        value = json.loads((store.root / "review-index.json").read_bytes())
         if (
             not isinstance(value, dict)
             or value.get("version") != CACHE_VERSION
@@ -741,8 +787,31 @@ def _read_cache(root: Path, key: dict[str, int]) -> list[IndexedObject | ReadIss
             or not isinstance(value.get("objects"), list)
         ):
             return None
-        return [_cached_object(item) for item in value["objects"]]
-    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        cached = [_cached_object(item) for item in value["objects"]]
+        if len(cached) > max_objects:
+            return None
+        # A cache is only a hint: check membership and every source binding
+        # before its values can affect summaries or grouping. Revisit issues
+        # through the scanner so repaired objects are rediscovered too.
+        if any(isinstance(item, ReadIssue) for item in cached):
+            return None
+        refs = {item.ref for item in cached}
+        with os.scandir(store.objects) as entries:
+            namespace = {
+                "sha256:" + entry.name for entry in entries if entry.is_file(follow_symlinks=False)
+            }
+        if len(refs) != len(cached) or refs != namespace or len(refs) != key["count"]:
+            return None
+        total_bytes = 0
+        for item in cached:
+            assert not isinstance(item, ReadIssue)
+            total_bytes += (store.objects / item.ref.removeprefix("sha256:")).stat().st_size
+            if total_bytes > max_bytes:
+                return None
+            if classify_object(item.ref, store.read_bytes(item.ref)) != item:
+                return None
+        return cached
+    except Exception:
         return None
 
 
@@ -756,7 +825,8 @@ def _write_cache(
     }
     temporary: str | None = None
     try:
-        root.mkdir(parents=True, exist_ok=True)
+        if not root.is_dir():
+            return None
         fd, temporary = tempfile.mkstemp(prefix=".review-index-", suffix=".tmp", dir=root)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
@@ -837,9 +907,7 @@ def _reachable_roots(
     issues: list[ReadIssue] = []
     by_ref = {item.ref: item for item in objects}
     pending = [
-        (item.ref, "auto")
-        for item in objects
-        if isinstance(item, IndexedManifest | IndexedReport)
+        (item.ref, "auto") for item in objects if isinstance(item, IndexedManifest | IndexedReport)
     ]
     seen: set[tuple[str, str]] = set()
     while pending:
@@ -971,7 +1039,7 @@ def build_index(
 ) -> ReviewIndex:
     """Discover and group store objects, using a dispensable sibling cache."""
     key, key_issues = _cache_key(store.objects)
-    cached = None if refresh or key is None else _read_cache(store.root, key)
+    cached = None if refresh or key is None else _read_cache(store, key, max_objects, max_bytes)
     incomplete = False
     cache_issue: ReadIssue | None = None
     if key is None:

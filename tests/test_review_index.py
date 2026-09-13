@@ -50,6 +50,76 @@ def test_unknown_non_json_and_non_object_json_are_opaque() -> None:
         assert isinstance(classify_object(ref, raw), IndexedOpaque)
 
 
+@pytest.mark.parametrize("damage", ["value", "omission", "duplicate", "source"])
+def test_warm_cache_cannot_hide_changed_values_or_objects(
+    review_fixture: ReviewFixture, damage: str
+) -> None:
+    store = review_fixture.store
+    cold = build_index(store)
+    cache_path = store.root / "review-index.json"
+    cache = json.loads(cache_path.read_bytes())
+    entry = next(item for item in cache["objects"] if item["ref"] == review_fixture.manifest_ref)
+    if damage == "value":
+        entry["value"]["run_id"] = "forged-cache-run"
+    elif damage == "omission":
+        cache["objects"].remove(entry)
+    elif damage == "duplicate":
+        cache["objects"].append(entry)
+    else:
+        path = store.objects / review_fixture.manifest_ref.removeprefix("sha256:")
+        stat = path.stat()
+        path.write_bytes(b"corrupt manifest")
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    cache_path.write_text(json.dumps(cache))
+
+    warm = build_index(store)
+    if damage == "source":
+        assert any(
+            issue.code == "object_read" and issue.ref == review_fixture.manifest_ref
+            for issue in warm.issues
+        )
+        assert all(run.manifest_ref != review_fixture.manifest_ref for run in warm.runs)
+    else:
+        assert warm == cold
+
+
+def test_extra_coordinates_do_not_reduce_missingness(review_fixture: ReviewFixture) -> None:
+    store = review_fixture.store
+    manifest = review_fixture.result.manifest.model_dump(mode="json")
+    plan = json.loads(store.read_bytes(manifest["plan_ref"]))
+    execution_ref = next(iter(manifest["execution_records"].values()))
+    evaluation_ref = next(iter(manifest["evaluation_records"].values()))
+    manifest["execution_records"] = {"extra:arm:w0": execution_ref}
+    manifest["evaluation_records"] = {"extra:arm:w0:judge:e0": evaluation_ref}
+    ref = str(store.publish_json(manifest))
+    run = next(run for run in build_index(store).runs if run.manifest_ref == ref)
+    assert run.summary.cells_missing == len(plan["cells"])
+    assert run.summary.evaluations_missing == len(plan["evaluations"])
+
+
+@pytest.mark.parametrize("coverage", ["measured", "estimated", "mixed"])
+def test_cost_uses_provenance_coverage(review_fixture: ReviewFixture, coverage: str) -> None:
+    store = review_fixture.store
+    manifest = review_fixture.result.manifest.model_dump(mode="json")
+    attempt, ref = next(iter(manifest["operating_records"].items()))
+    record = json.loads(store.read_bytes(ref))
+    for position, source in enumerate(record["source_references"]):
+        detail = json.loads(store.read_bytes(source))
+        if isinstance(detail, dict) and "coverage" in detail and "attempt" in detail:
+            detail["coverage"] = coverage
+            record["source_references"][position] = str(store.publish_json(detail))
+            break
+    else:
+        pytest.fail("fixture has no accounting provenance")
+    record["price"] = {"amount": 2, "currency": "USD", "basis": "fixture"}
+    manifest["operating_records"] = {attempt: str(store.publish_json(record))}
+    ref = str(store.publish_json(manifest))
+    run = next(run for run in build_index(store).runs if run.manifest_ref == ref)
+    assert run.summary.cost.coverage == coverage
+    assert run.summary.cost.coverage_counts == {coverage: 1}
+    assert run.summary.cost.amounts == {"USD": 2.0}
+
+
 def test_discriminator_reads_are_type_guarded_and_classification_never_raises() -> None:
     ref = "sha256:" + "0" * 64
     hostile = [
@@ -174,8 +244,12 @@ def test_loose_record_with_manifest_identity_preserves_manifest_membership(
     )
     coordinate, record_ref = next(iter(manifest.execution_records.items()))
     record = json.loads(store.read_bytes(record_ref))
-    record.update(status="failed", output_ref=None, error_type="LooseFailure",
-                  error_message="unclaimed terminal at the same coordinate")
+    record.update(
+        status="failed",
+        output_ref=None,
+        error_type="LooseFailure",
+        error_message="unclaimed terminal at the same coordinate",
+    )
     loose_ref = str(store.publish_json(record))
     assert loose_ref not in manifest.execution_records.values()
 
@@ -185,7 +259,8 @@ def test_loose_record_with_manifest_identity_preserves_manifest_membership(
     )
     assert manifested_after.execution_records == manifested_before.execution_records
     same_identity = [
-        run for run in after.runs
+        run
+        for run in after.runs
         if run.run_id == manifest.run_id and run.plan_ref == manifest.plan_ref
     ]
     assert len(same_identity) == 2
@@ -203,9 +278,7 @@ def test_bad_entries_report_issues_without_hiding_healthy_run(
     store = ObjectStore(destination)
     (store.objects / "invalid-name").write_bytes(b"bad")
     opaque = next(
-        item
-        for item in build_index(store, refresh=True).objects
-        if isinstance(item, IndexedOpaque)
+        item for item in build_index(store, refresh=True).objects if isinstance(item, IndexedOpaque)
     )
     (store.objects / opaque.ref.removeprefix("sha256:")).write_bytes(b"hash mismatch")
 
@@ -222,6 +295,7 @@ def test_empty_and_budget_limited_stores_return_results(tmp_path: Path) -> None:
     empty = build_index(ObjectStore(tmp_path / "missing"))
     assert empty.runs == ()
     assert empty.issues == ()
+    assert not (tmp_path / "missing").exists()
 
     store = ObjectStore(tmp_path / "limited")
     store.publish_json({"opaque": 1})
