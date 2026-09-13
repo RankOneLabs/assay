@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,7 +13,7 @@ from review_fixture import ReviewFixture, materialize_review_fixture
 from assay.review import index as review_index
 from assay.review.index import CACHE_VERSION, IndexedOpaque, build_index, classify_object
 from assay.review.model import ReadIssue
-from assay.store import ObjectStore
+from assay.store import ObjectRef, ObjectStore
 from assay.verify import verify_bundle
 
 
@@ -138,6 +140,194 @@ def test_malformed_recognized_wire_object_is_an_issue() -> None:
     result = classify_object(ref, b'{"schema_version":"assay-run-manifest/0.1.0"}')
     assert isinstance(result, ReadIssue)
     assert result.code == "malformed_object"
+
+
+def test_deeply_nested_json_cannot_escape_classifier() -> None:
+    raw = b"[" * (sys.getrecursionlimit() * 2) + b"0" + b"]" * (sys.getrecursionlimit() * 2)
+    assert isinstance(classify_object("sha256:" + "0" * 64, raw), ReadIssue | IndexedOpaque)
+
+
+def test_index_imports_without_dev_or_server_dependencies() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            'import sys; sys.modules["paa_contracts"] = None; '
+            'sys.modules["fastapi"] = None; import assay.review.index',
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_schema_invalid_loose_evidence_is_not_a_success(review_fixture: ReviewFixture) -> None:
+    store = review_fixture.store
+    evidence = next(
+        json.loads(store.read_bytes(ref))
+        for ref in review_fixture.result.manifest.evaluation_records.values()
+        if json.loads(store.read_bytes(ref)).get("record_schema")
+    )
+    evidence["payload"]["run_id"] = "loose-invalid"
+    evidence["record_id"] = 123
+    ref = str(store.publish_json(evidence))
+    run = next(run for run in build_index(store).runs if run.run_id == "loose-invalid")
+    assert run.candidate_only
+    assert run.summary.evaluations_succeeded == 0
+    assert run.summary.evaluations_invalid == 1
+    assert any(
+        issue.code == "record_schema_validation" and issue.ref == ref for issue in run.issues
+    )
+    assert any(issue.code == "candidate_only" for issue in run.issues)
+
+
+def test_corrupt_pinned_schema_does_not_hide_manifest(review_fixture: ReviewFixture) -> None:
+    store = review_fixture.store
+    ref = review_fixture.snapshot.evidence_schema_ref
+    (store.objects / ref.removeprefix("sha256:")).write_bytes(b"corrupt schema")
+    index = build_index(store)
+    run = next(run for run in index.runs if run.manifest_ref == review_fixture.manifest_ref)
+    assert run.summary.evaluations_succeeded == 0
+    assert run.summary.cost.amounts == {}
+    assert any(issue.code == "object_read" and issue.ref == ref for issue in index.issues)
+
+
+def test_explicit_edges_through_opaque_output_suppress_spoofed_loose_run(
+    review_fixture: ReviewFixture,
+) -> None:
+    store = review_fixture.store
+    manifest = review_fixture.result.manifest.model_dump(mode="json")
+    coordinate, terminal_ref = next(iter(manifest["execution_records"].items()))
+    terminal = json.loads(store.read_bytes(terminal_ref))
+    spoof = dict(terminal, run_id="nested-model-spoof")
+    spoof_ref = str(store.publish_json(spoof))
+    opaque_ref = str(store.publish_json({"assay_object_refs": [spoof_ref]}))
+    terminal.update(status="succeeded", output_ref=opaque_ref, error_type=None, error_message=None)
+    manifest["execution_records"][coordinate] = str(store.publish_json(terminal))
+    store.publish_json(manifest)
+    index = build_index(store)
+    assert all(run.run_id != "nested-model-spoof" for run in index.runs)
+
+
+def test_stale_report_cannot_claim_recomputable(review_fixture: ReviewFixture) -> None:
+    report = next(
+        report
+        for report in build_index(review_fixture.store).reports
+        if report.report_ref == review_fixture.studies.stale_report_ref
+    )
+    assert not report.recomputable
+    assert report.recompute_disabled_reason == "unsupported report engine version"
+
+
+def test_indexing_bundle_preserves_verification(review_fixture: ReviewFixture) -> None:
+    store = review_fixture.bundle
+    before = set(store.objects.iterdir())
+    build_index(store)
+    build_index(store, refresh=True)
+    assert set(store.objects.iterdir()) == before
+    assert verify_bundle(store, review_fixture.manifest_ref) == ()
+
+
+def test_loose_accounting_requires_unique_schema_valid_attribution(
+    review_fixture: ReviewFixture,
+    tmp_path: Path,
+) -> None:
+    store = ObjectStore(tmp_path / "loose-accounting")
+    shutil.copytree(review_fixture.bundle.root, store.root)
+    (store.objects / review_fixture.manifest_ref.removeprefix("sha256:")).unlink()
+    manifest = review_fixture.result.manifest
+    attempt, original_ref = next(iter(manifest.operating_records.items()))
+    record = json.loads(store.read_bytes(original_ref))
+    for position, source in enumerate(record["source_references"]):
+        detail = json.loads(store.read_bytes(source))
+        if isinstance(detail, dict) and "coverage" in detail and "attempt" in detail:
+            detail["coverage"] = "estimated"
+            record["source_references"][position] = str(store.publish_json(detail))
+            break
+    record["price"] = {"amount": 2, "currency": "USD", "basis": "fixture"}
+    (store.objects / original_ref.removeprefix("sha256:")).unlink()
+    measured_ref = str(store.publish_json(record))
+
+    before = build_index(store)
+    assert len(before.runs) == 1
+    run = before.runs[0]
+    assert not run.candidate_only
+    assert measured_ref in run.operating_records
+    assert run.summary.cost.amounts == {"USD": 2.0}
+    assert run.summary.cost.unaccounted_attempts == 0
+
+    duplicate = dict(record, record_id="duplicate-attempt")
+    duplicate_ref = str(store.publish_json(duplicate))
+    run = build_index(store).runs[0]
+    assert run.summary.cost.amounts == {}
+    assert measured_ref not in run.operating_records
+    assert duplicate_ref not in run.operating_records
+    assert run.summary.cost.unaccounted_attempts == 1
+
+    (store.objects / duplicate_ref.removeprefix("sha256:")).unlink()
+    (store.objects / measured_ref.removeprefix("sha256:")).unlink()
+    record["price"]["amount"] = -1
+    invalid_ref = str(store.publish_json(record))
+    run = build_index(store).runs[0]
+    assert run.candidate_only
+    assert invalid_ref not in run.operating_records
+    assert run.summary.cost.amounts == {}
+    assert any(
+        issue.ref == invalid_ref and issue.code == "record_schema_validation"
+        for issue in run.issues
+    )
+
+
+def test_loose_cost_cannot_use_manifested_terminal_as_second_source(
+    review_fixture: ReviewFixture,
+) -> None:
+    store = review_fixture.store
+    manifest = review_fixture.result.manifest
+    coordinate, original_ref = next(iter(manifest.execution_records.items()))
+    outcome = json.loads(store.read_bytes(original_ref))
+    outcome["run_id"] = "loose-cost"
+    loose_ref = str(store.publish_json(outcome))
+    operating = json.loads(store.read_bytes(manifest.operating_records[f"worker:{coordinate}"]))
+    for position, source in enumerate(operating["source_references"]):
+        detail = json.loads(store.read_bytes(source))
+        if isinstance(detail, dict) and "coverage" in detail and "attempt" in detail:
+            detail.update(run_id="loose-cost", coverage="estimated")
+            operating["source_references"][position] = str(store.publish_json(detail))
+    operating["source_references"].append(loose_ref)
+    operating["price"] = {"amount": 100, "currency": "USD", "basis": "fixture"}
+    ref = str(store.publish_json(operating))
+    index = build_index(store)
+    run = next(run for run in index.runs if run.run_id == "loose-cost")
+    assert run.operating_records == ()
+    assert run.summary.cost.amounts == {}
+    assert any(issue.ref == ref and issue.code == "orphan_accounting" for issue in index.issues)
+
+
+def test_total_read_budget_covers_grouping_and_schema_reads(review_fixture: ReviewFixture) -> None:
+    class CountedStore(ObjectStore):
+        def __init__(self, root: Path) -> None:
+            super().__init__(root)
+            self.total = 0
+            self.reads: list[str] = []
+
+        def read_bytes(self, ref: str | ObjectRef) -> bytes:
+            self.total += (self.objects / str(ref).removeprefix("sha256:")).stat().st_size
+            self.reads.append(str(ref))
+            return super().read_bytes(ref)
+
+    store = CountedStore(review_fixture.store.root)
+    total_size = sum(path.stat().st_size for path in store.objects.iterdir())
+    complete = build_index(store, max_bytes=total_size)
+    assert not complete.scan_incomplete
+    assert store.total == total_size
+    assert len(store.reads) == len(set(store.reads))
+    store.total = 0
+    store.reads.clear()
+    partial = build_index(store, max_bytes=total_size // 2)
+    assert partial.scan_incomplete
+    assert store.total <= total_size // 2
+    assert any(issue.code == "scan_incomplete" for issue in partial.issues)
 
 
 def test_fixture_index_groups_manifest_and_reports(review_fixture: ReviewFixture) -> None:

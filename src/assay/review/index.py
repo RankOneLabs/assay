@@ -8,17 +8,21 @@ turns an observed discriminator into producer attestation or a closure edge.
 from __future__ import annotations
 
 import json
+import math
 import os
+import stat
 import tempfile
 from collections.abc import Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
+from assay._version import __version__
 from assay.models import (
+    EvaluationCoordinate,
     EvaluationFailure,
     ExecutionOutcome,
     ExecutionPlan,
@@ -115,6 +119,53 @@ class IndexedOpaque:
     ref: str
 
 
+class _ScanLimit(OSError):
+    pass
+
+
+class _DiscoveryStore(ObjectStore):
+    """Verified bytes live for one discovery call, within its total read budget."""
+
+    def __init__(self, source: ObjectStore, objects: int | None, size: int | None) -> None:
+        super().__init__(source.root)
+        self.source = source
+        self.max_objects = objects
+        self.max_bytes = size
+        self.bytes_read = 0
+        self.attempted: set[str] = set()
+        self.raw: dict[str, bytes] = {}
+        self.failures: dict[str, Exception] = {}
+        self.incomplete = False
+
+    def read_bytes(self, ref: ObjectRef | str) -> bytes:
+        key = str(ObjectRef(str(ref)))
+        if key in self.raw:
+            return self.raw[key]
+        if key in self.failures:
+            raise self.failures[key]
+        if self.max_objects is not None and len(self.attempted) >= self.max_objects:
+            self.incomplete = True
+            raise _ScanLimit("discovery object budget exhausted")
+        self.attempted.add(key)
+        path = self.objects / key.removeprefix("sha256:")
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("object entry is not a regular file")
+        size = metadata.st_size
+        if self.max_bytes is not None and self.bytes_read + size > self.max_bytes:
+            self.incomplete = True
+            raise _ScanLimit("discovery byte budget exhausted")
+        # Failed integrity reads consume budget too.
+        self.bytes_read += size
+        try:
+            raw = self.source.read_bytes(ref)
+        except Exception as error:
+            self.failures[key] = error
+            raise
+        self.raw[key] = raw
+        return raw
+
+
 @dataclass(frozen=True, slots=True)
 class IndexedRun:
     run_key: str
@@ -205,6 +256,13 @@ def _parse_wire(ref: str, schema: str, value: dict[str, Any]) -> IndexedObject |
 
 def classify_object(ref: ObjectRef | str, raw_bytes: bytes) -> IndexedObject | ReadIssue:
     """Classify verified bytes without consulting other objects; never raise."""
+    try:
+        return _classify_object(ref, raw_bytes)
+    except Exception as error:
+        return _issue(str(ref), f"cannot classify object: {error}")
+
+
+def _classify_object(ref: ObjectRef | str, raw_bytes: bytes) -> IndexedObject | ReadIssue:
     ref_text = str(ref)
     try:
         ObjectRef(ref_text)
@@ -266,17 +324,19 @@ def classify_object(ref: ObjectRef | str, raw_bytes: bytes) -> IndexedObject | R
     return IndexedOpaque("opaque", ref_text)
 
 
-def _empty_cost(issues: tuple[ReadIssue, ...] = ()) -> CostView:
-    return CostView("unavailable", {}, {}, {}, 0, None, None, bool(issues), issues)
-
-
 def _cost(
-    operating_refs: Sequence[str], by_ref: dict[str, IndexedObject], store: ObjectStore
+    operating_refs: Sequence[str],
+    by_ref: dict[str, IndexedObject],
+    store: ObjectStore,
+    run_id: str,
+    terminal_refs: dict[str, str],
 ) -> CostView:
     counts: dict[str, int] = {}
     amounts: dict[str, float] = {}
     attempts = 0
     issues: list[ReadIssue] = []
+    claims: dict[str, list[tuple[str, str, str | None, float]]] = {}
+    groups: JSONObject = {}
     for ref in operating_refs:
         item = by_ref.get(ref)
         if not isinstance(item, IndexedOperating):
@@ -302,31 +362,71 @@ def _cost(
             if len(provenance) != 1:
                 raise ValueError("accounting requires unique coverage provenance")
             coverage = provenance[0]["coverage"]
+            attempt = provenance[0]["attempt"]
+            if not isinstance(attempt, str) or attempt not in terminal_refs:
+                raise ValueError("accounting does not name an unambiguous terminal attempt")
+            if provenance[0].get("run_id") != run_id:
+                raise ValueError("accounting provenance belongs to another run")
+            named_terminals = set(sources) & set(terminal_refs.values())
+            if named_terminals != {terminal_refs[attempt]}:
+                raise ValueError("accounting requires exactly one terminal source")
             if coverage not in ("measured", "estimated", "mixed", "unavailable"):
                 raise ValueError("invalid accounting coverage")
             if (price is None) != (coverage == "unavailable"):
                 raise ValueError("accounting price and coverage disagree")
+            amount = 0.0
+            currency: str | None = None
+            if price is not None:
+                if not isinstance(price, dict):
+                    raise ValueError("invalid accounting price")
+                raw_amount = price.get("amount")
+                raw_currency = price.get("currency")
+                if (
+                    not isinstance(raw_amount, int | float)
+                    or isinstance(raw_amount, bool)
+                    or not isinstance(raw_currency, str)
+                    or not raw_currency
+                ):
+                    raise ValueError("invalid accounting price")
+                amount = float(raw_amount)
+                currency = raw_currency
+                if not math.isfinite(amount) or amount < 0:
+                    raise ValueError("invalid accounting price")
+            claims.setdefault(attempt, []).append((ref, coverage, currency, amount))
         except Exception as error:
             issues.append(ReadIssue("invalid_accounting", str(error), ref, None))
+    accounted: set[str] = set()
+    for attempt, candidates in claims.items():
+        if len(candidates) != 1:
+            issues.extend(
+                ReadIssue("duplicate_accounting", "multiple claims for one attempt", ref, attempt)
+                for ref, *_ in candidates
+            )
             continue
-        if isinstance(price, dict):
-            amount = price.get("amount")
-            currency = price.get("currency")
-            if (
-                not isinstance(amount, int | float)
-                or isinstance(amount, bool)
-                or not isinstance(currency, str)
-            ):
-                issues.append(
-                    ReadIssue("invalid_accounting", "invalid accounting price", ref, None)
-                )
+        ref, coverage, currency, amount = candidates[0]
+        if currency is not None:
+            total = amounts.get(currency, 0.0) + amount
+            if not math.isfinite(total):
+                issues.append(ReadIssue("invalid_accounting", "cost total overflows", ref, attempt))
                 continue
-            amounts[currency] = amounts.get(currency, 0.0) + float(amount)
-        elif price is not None:
-            issues.append(ReadIssue("invalid_accounting", "invalid accounting price", ref, None))
-            continue
+            amounts[currency] = total
+        parts = attempt.split(":")
+        group_key = f"{parts[0]}:{parts[2]}"
+        group = groups.setdefault(group_key, {"coverage_counts": {}, "amounts": {}})
+        assert isinstance(group, dict)
+        group_counts = cast(dict[str, int], group["coverage_counts"])
+        group_amounts = cast(dict[str, float], group["amounts"])
+        group_counts[coverage] = group_counts.get(coverage, 0) + 1
+        if currency is not None:
+            group_amounts[currency] = group_amounts.get(currency, 0.0) + amount
         counts[coverage] = counts.get(coverage, 0) + 1
         attempts += 1
+        accounted.add(attempt)
+    issues.extend(
+        ReadIssue("missing_accounting", "terminal has no attributable accounting", ref, attempt)
+        for attempt, ref in terminal_refs.items()
+        if attempt not in accounted
+    )
     observed = set(counts)
     coverage_value: Literal["measured", "estimated", "unavailable", "mixed"]
     if not observed:
@@ -336,15 +436,16 @@ def _cost(
     else:
         only = next(iter(observed))
         coverage_value = cast(Literal["measured", "estimated", "unavailable", "mixed"], only)
+    missing = len(terminal_refs) - attempts
     return CostView(
         coverage_value,
         counts,
         amounts,
-        {},
+        groups,
         attempts,
-        None,
-        None,
-        bool(issues),
+        len(terminal_refs),
+        missing,
+        bool(issues) or missing > 0,
         tuple(issues),
     )
 
@@ -369,7 +470,13 @@ def _coordinate(item: IndexedObject) -> tuple[str, str] | None:
             or evaluator_repeat < 0
         ):
             return None
-        return ("evaluation", f"{cell_id}:{evaluator_id}:e{evaluator_repeat}")
+        try:
+            coordinate = EvaluationCoordinate(
+                cell_id=cell_id, evaluator_id=evaluator_id, evaluator_repeat=evaluator_repeat
+            )
+        except ValueError:
+            return None
+        return ("evaluation", coordinate.id)
     return None
 
 
@@ -440,12 +547,80 @@ def _run_summary(
     by_ref: dict[str, IndexedObject],
     issues: tuple[ReadIssue, ...],
 ) -> RunSummary:
+    local_issues = list(issues)
+    for role, mapping in (("execution", execution), ("evaluation", evaluation)):
+        planned = (
+            None
+            if plan is None
+            else {item.id for item in (plan.cells if role == "execution" else plan.evaluations)}
+        )
+        for coordinate, refs in mapping.items():
+            if len(refs) > 1:
+                local_issues.append(
+                    ReadIssue(
+                        "conflicted", "multiple terminal records at coordinate", None, coordinate
+                    )
+                )
+            for ref in refs:
+                item = by_ref.get(ref)
+                if (
+                    item is None
+                    or _coordinate(item) != (role, coordinate)
+                    or _record_run(item) != (run_id, plan_ref)
+                    or (planned is not None and coordinate not in planned)
+                ):
+                    local_issues.append(
+                        ReadIssue(
+                            "record_context",
+                            "terminal differs from run coordinate",
+                            ref,
+                            coordinate,
+                        )
+                    )
+    issues = tuple(local_issues)
+    invalid_refs = {issue.ref for issue in issues if issue.ref is not None}
+    unknown_context = (
+        plan is None
+        or snapshot is None
+        or any(issue.code == "candidate_only" and issue.ref is None for issue in issues)
+    )
     good_execution = [refs[0] for refs in execution.values() if len(refs) == 1]
     good_evaluation = [refs[0] for refs in evaluation.values() if len(refs) == 1]
     conflicts_execution = sum(len(refs) > 1 for refs in execution.values())
     conflicts_evaluation = sum(len(refs) > 1 for refs in evaluation.values())
-    execution_values = [by_ref.get(ref) for ref in good_execution]
-    evaluation_values = [by_ref.get(ref) for ref in good_evaluation]
+    execution_values = [
+        by_ref.get(ref) if ref not in invalid_refs else None for ref in good_execution
+    ]
+    evaluation_values = [
+        by_ref.get(ref) if ref not in invalid_refs else None for ref in good_evaluation
+    ]
+    if unknown_context:
+        evaluation_values = [
+            None if isinstance(item, IndexedEvidence) else item for item in evaluation_values
+        ]
+    terminal_refs = {
+        f"{role}:{coordinate}": refs[0]
+        for role, mapping in (("worker", execution), ("evaluator", evaluation))
+        for coordinate, refs in mapping.items()
+        if len(refs) == 1
+        and refs[0] not in invalid_refs
+        and not (
+            isinstance((item := by_ref.get(refs[0])), IndexedEvaluationFailure)
+            and item.value.error_type == "ExecutionUnavailable"
+            and any(
+                isinstance((outcome := by_ref.get(cell_ref)), IndexedExecution)
+                and outcome.value.status == "failed"
+                for cell_ref in execution.get(item.value.coordinate.cell_id, ())
+            )
+        )
+    }
+    cost = _cost(
+        () if unknown_context else tuple(ref for ref in operating_refs if ref not in invalid_refs),
+        by_ref,
+        store,
+        run_id,
+        terminal_refs,
+    )
     execution_succeeded = sum(
         isinstance(item, IndexedExecution) and item.value.status == "succeeded"
         for item in execution_values
@@ -514,8 +689,8 @@ def _run_summary(
             if plan is not None
             else ()
         ),
-        cost=_cost(operating_refs, by_ref, store),
-        issues=issues,
+        cost=cost,
+        issues=(*issues, *cost.issues),
     )
 
 
@@ -574,7 +749,7 @@ def _manifest_run(
         (),
         False,
         summary,
-        run_issues,
+        summary.issues,
     )
 
 
@@ -590,7 +765,7 @@ def _validate_paa_records(
         return ()
     try:
         validators = schema_validators(store, snapshot)
-    except (OSError, ValueError) as error:
+    except Exception as error:
         return (ReadIssue("candidate_only", f"cannot validate loose records: {error}", None, None),)
     declarations = {item.id: item for item in snapshot.evaluators}
     for item in (*records, *operating):
@@ -623,6 +798,7 @@ def _loose_run(
     operating: list[IndexedOperating],
     by_ref: dict[str, IndexedObject],
     store: ObjectStore,
+    discovery_issues: tuple[ReadIssue, ...] = (),
 ) -> IndexedRun:
     run_id, plan_ref = key
     run_key = f"unmanifested:{run_id}:{plan_ref}"
@@ -630,6 +806,18 @@ def _loose_run(
     plan, snapshot, context_issues = _context(plan_ref, by_ref)
     validation_issues = _validate_paa_records(records, operating, plan, snapshot, store)
     issues = (*context_issues, *validation_issues)
+    if discovery_issues:
+        issues = (
+            *issues,
+            ReadIssue("candidate_only", "root closure could not be fully inspected", None, None),
+        )
+    if issues:
+        issues = (
+            *issues,
+            ReadIssue(
+                "candidate_only", "loose run has unavailable or invalid context", plan_ref, None
+            ),
+        )
     summary = _run_summary(
         store=store,
         run_key=run_key,
@@ -645,6 +833,27 @@ def _loose_run(
         by_ref=by_ref,
         issues=issues,
     )
+    candidate_only = bool(context_issues or validation_issues or discovery_issues) or any(
+        issue.code == "record_context" for issue in summary.issues
+    )
+    if candidate_only and not any(issue.code == "candidate_only" for issue in summary.issues):
+        summary = replace(
+            summary,
+            issues=(
+                *summary.issues,
+                ReadIssue(
+                    "candidate_only", "loose terminal context is inconsistent", plan_ref, None
+                ),
+            ),
+        )
+    invalid_refs = {issue.ref for issue in (*validation_issues, *summary.cost.issues)}
+    attached = (
+        ()
+        if context_issues
+        or discovery_issues
+        or any(issue.code == "candidate_only" and issue.ref is None for issue in validation_issues)
+        else tuple(sorted(item.ref for item in operating if item.ref not in invalid_refs))
+    )
     return IndexedRun(
         run_key,
         run_id,
@@ -653,11 +862,11 @@ def _loose_run(
         "unmanifested",
         execution,
         evaluation,
-        tuple(sorted(item.ref for item in operating)),
+        attached,
         conflicts,
-        bool(context_issues or validation_issues),
+        candidate_only,
         summary,
-        issues,
+        summary.issues,
     )
 
 
@@ -689,8 +898,8 @@ def _report_summary(item: IndexedReport, by_ref: dict[str, IndexedObject]) -> Re
         config.reference_arm,
         config.candidates,
         config.engine_version,
-        True,
-        None,
+        config.engine_version == __version__,
+        None if config.engine_version == __version__ else "unsupported report engine version",
         config.manifest_refs,
         (),
     )
@@ -699,6 +908,7 @@ def _report_summary(item: IndexedReport, by_ref: dict[str, IndexedObject]) -> Re
 def _cache_key(objects: Path) -> tuple[dict[str, int] | None, tuple[ReadIssue, ...]]:
     count = 0
     newest = 0
+    issues: list[ReadIssue] = []
     try:
         with os.scandir(objects) as entries:
             for entry in entries:
@@ -706,12 +916,14 @@ def _cache_key(objects: Path) -> tuple[dict[str, int] | None, tuple[ReadIssue, .
                 try:
                     newest = max(newest, entry.stat(follow_symlinks=False).st_mtime_ns)
                 except OSError as error:
-                    return None, (ReadIssue("object_stat", str(error), None, None),)
+                    issues.append(
+                        ReadIssue("object_stat", str(error), "sha256:" + entry.name, None)
+                    )
     except FileNotFoundError:
         return {"count": 0, "newest_mtime_ns": 0}, ()
     except OSError as error:
         return None, (ReadIssue("root_unreadable", str(error), None, None),)
-    return {"count": count, "newest_mtime_ns": newest}, ()
+    return {"count": count, "newest_mtime_ns": newest}, tuple(issues)
 
 
 def _cache_object(item: IndexedObject | ReadIssue) -> JSONObject:
@@ -779,9 +991,15 @@ def _read_cache(
     store: ObjectStore, key: dict[str, int], max_objects: int, max_bytes: int
 ) -> list[IndexedObject | ReadIssue] | None:
     try:
-        value = json.loads((store.root / "review-index.json").read_bytes())
+        limit = max(0, max_bytes) * 2 + max(0, max_objects) * 1024
+        with (store.root / "review-index.json").open("rb") as stream:
+            raw_cache = stream.read(limit + 1)
+        if len(raw_cache) > limit:
+            return None
+        value = json.loads(raw_cache)
         if (
             not isinstance(value, dict)
+            or type(value.get("version")) is not int
             or value.get("version") != CACHE_VERSION
             or value.get("key") != key
             or not isinstance(value.get("objects"), list)
@@ -834,7 +1052,7 @@ def _write_cache(
             os.fsync(stream.fileno())
         os.replace(temporary, root / "review-index.json")
         temporary = None
-    except OSError:
+    except (OSError, ValueError, RecursionError):
         # Read-only stores remain fully browseable; caching is optional.
         return ReadIssue(
             "cache_write",
@@ -886,6 +1104,9 @@ def _scan(
             raw = store.read_bytes(ref)
             total_bytes += len(raw)
             items.append(classify_object(ref, raw))
+        except _ScanLimit:
+            incomplete = True
+            break
         except Exception as error:
             items.append(ReadIssue("object_read", str(error), ref, None))
     if incomplete:
@@ -902,10 +1123,10 @@ def _scan(
 
 def _reachable_roots(
     objects: tuple[IndexedObject, ...],
+    store: ObjectStore,
 ) -> tuple[set[str], tuple[ReadIssue, ...]]:
     reachable: set[str] = set()
     issues: list[ReadIssue] = []
-    by_ref = {item.ref: item for item in objects}
     pending = [
         (item.ref, "auto") for item in objects if isinstance(item, IndexedManifest | IndexedReport)
     ]
@@ -915,23 +1136,14 @@ def _reachable_roots(
         if (ref, role) in seen:
             continue
         seen.add((ref, role))
-        reachable.add(ref)
-        item = by_ref.get(ref)
-        if item is None or isinstance(item, IndexedOpaque):
-            continue
-        if isinstance(
-            item,
-            IndexedManifest
-            | IndexedPlan
-            | IndexedSnapshot
-            | IndexedExecution
-            | IndexedEvaluationFailure
-            | IndexedReportConfig,
-        ):
-            value: object = item.value.model_dump(mode="json")
-        else:
-            value = item.value
+        if role == "data":
+            reachable.add(ref)
         try:
+            raw = store.read_bytes(ref)
+            try:
+                value = json.loads(raw)
+            except (ValueError, UnicodeDecodeError):
+                continue
             pending.extend(object_edges(value, role))
         except Exception as error:
             issues.append(ReadIssue("closure_read", str(error), ref, None))
@@ -942,6 +1154,7 @@ def _attach_loose_operating(
     store: ObjectStore,
     records: Sequence[IndexedObject],
     operating: list[IndexedOperating],
+    all_terminal_refs: set[str],
 ) -> tuple[dict[tuple[str, str], list[IndexedOperating]], tuple[ReadIssue, ...]]:
     terminal_by_ref = {item.ref: item for item in records}
     claims: dict[str, list[IndexedOperating]] = {}
@@ -949,8 +1162,8 @@ def _attach_loose_operating(
     for item in operating:
         sources = item.value.get("source_references")
         assert isinstance(sources, list)
-        terminal_sources = [source for source in sources if source in terminal_by_ref]
-        if len(terminal_sources) != 1:
+        terminal_sources = [source for source in sources if source in all_terminal_refs]
+        if len(terminal_sources) != 1 or terminal_sources[0] not in terminal_by_ref:
             issues.append(
                 ReadIssue(
                     "orphan_accounting",
@@ -987,8 +1200,10 @@ def _attach_loose_operating(
                 continue
             try:
                 candidate = json.loads(store.read_bytes(source))
-            except Exception:
-                continue
+            except Exception as error:
+                issues.append(ReadIssue("orphan_accounting", str(error), item.ref, coordinate[1]))
+                provenance = []
+                break
             if isinstance(candidate, dict) and "run_id" in candidate and "attempt" in candidate:
                 provenance.append(candidate)
         expected_attempt = f"worker:{coordinate[1]}"
@@ -1017,7 +1232,7 @@ def _attach_loose_operating(
         for source, claimants in claims.items()
         if any(claim.ref == item for claim in claimants)
     }
-    for terminal_ref in terminal_by_ref.keys() - attached_terminals:
+    for terminal_ref in sorted(terminal_by_ref.keys() - attached_terminals):
         coordinate = _coordinate(terminal_by_ref[terminal_ref])
         issues.append(
             ReadIssue(
@@ -1038,6 +1253,7 @@ def build_index(
     max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> ReviewIndex:
     """Discover and group store objects, using a dispensable sibling cache."""
+    store = _DiscoveryStore(store, None if refresh else max_objects, None if refresh else max_bytes)
     key, key_issues = _cache_key(store.objects)
     cached = None if refresh or key is None else _read_cache(store, key, max_objects, max_bytes)
     incomplete = False
@@ -1052,16 +1268,12 @@ def build_index(
             max_objects=limits[0],
             max_bytes=limits[1],
         )
-        if scanned_key is not None and not incomplete:
-            cache_issue = _write_cache(store.root, scanned_key, items)
     else:
         items = cached
     objects = tuple(item for item in items if not isinstance(item, ReadIssue))
     issues = [*key_issues, *(item for item in items if isinstance(item, ReadIssue))]
-    if cache_issue is not None:
-        issues.append(cache_issue)
     by_ref = {item.ref: item for item in objects}
-    reachable, closure_issues = _reachable_roots(objects)
+    reachable, closure_issues = _reachable_roots(objects, store)
     issues.extend(closure_issues)
 
     manifests = [item for item in objects if isinstance(item, IndexedManifest)]
@@ -1080,6 +1292,8 @@ def build_index(
         if isinstance(item, IndexedExecution | IndexedEvaluationFailure | IndexedEvidence)
         and item.ref not in claimed
         and item.ref not in reachable
+        and not incomplete
+        and not store.incomplete
     ]
     loose: dict[tuple[str, str], list[IndexedObject]] = {}
     for item in terminal:
@@ -1103,11 +1317,20 @@ def build_index(
         and item.ref not in claimed
         and item.ref not in reachable
     ]
-    loose_operating, accounting_issues = _attach_loose_operating(store, terminal, operating)
+    all_terminal_refs = {
+        item.ref
+        for item in objects
+        if isinstance(item, IndexedExecution | IndexedEvaluationFailure | IndexedEvidence)
+    }
+    loose_operating, accounting_issues = _attach_loose_operating(
+        store, terminal, operating, all_terminal_refs
+    )
     issues.extend(accounting_issues)
     runs = [*(_manifest_run(item, by_ref, store) for item in manifests)]
     runs.extend(
-        _loose_run(key_value, records, loose_operating.get(key_value, []), by_ref, store)
+        _loose_run(
+            key_value, records, loose_operating.get(key_value, []), by_ref, store, closure_issues
+        )
         for key_value, records in loose.items()
     )
     reports = tuple(
@@ -1116,12 +1339,29 @@ def build_index(
             key=lambda report: report.report_ref,
         )
     )
+    incomplete = incomplete or store.incomplete
+    if incomplete and not any(issue.code == "scan_incomplete" for issue in issues):
+        issues.append(ReadIssue("scan_incomplete", "discovery read budget exhausted", None, None))
+    if cached is None and key is not None and not incomplete:
+        cache_issue = _write_cache(store.root, key, items)
+        if cache_issue is not None:
+            issues.append(cache_issue)
     return ReviewIndex(
         str(store.root),
         tuple(sorted(objects, key=lambda item: item.ref)),
         tuple(sorted(runs, key=lambda run: run.run_key)),
         reports,
-        tuple(issues),
+        tuple(
+            sorted(
+                set(issues),
+                key=lambda issue: (
+                    issue.code,
+                    issue.ref or "",
+                    issue.coordinate_id or "",
+                    issue.message,
+                ),
+            )
+        ),
         incomplete,
     )
 
