@@ -3,7 +3,6 @@ from __future__ import annotations
 import builtins
 import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
@@ -93,19 +92,14 @@ def test_review_serve_enforces_remote_opt_in_and_uses_cli_default_port(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    calls: list[list[str]] = []
+    pytest.importorskip("fastapi")
+    uvicorn = pytest.importorskip("uvicorn")
+    calls: list[tuple[str, int]] = []
 
-    def serve(arguments: list[str] | None = None) -> int:
-        assert arguments is not None
-        calls.append(arguments)
-        if "--allow-remote" not in arguments:
-            raise SystemExit(2)
-        print("WARNING: review server is exposed remotely without authentication", file=sys.stderr)
-        return 0
+    def run(app: object, *, host: str, port: int) -> None:
+        calls.append((host, port))
 
-    server = ModuleType("assay.review.server")
-    server.main = serve  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "assay.review.server", server)
+    monkeypatch.setattr(uvicorn, "run", run)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -114,7 +108,11 @@ def test_review_serve_enforces_remote_opt_in_and_uses_cli_default_port(
     with pytest.raises(SystemExit) as stopped:
         main()
     assert stopped.value.code == 2
-    capsys.readouterr()
+    error = capsys.readouterr().err
+    assert "usage: assay review serve" in error
+    assert "python -m assay.review.server" not in error
+    assert "requires --allow-remote" in error
+    assert not calls
 
     monkeypatch.setattr(
         sys,
@@ -130,15 +128,33 @@ def test_review_serve_enforces_remote_opt_in_and_uses_cli_default_port(
         ],
     )
     assert main() == 0
-    assert calls == [
-        [str(tmp_path / "store"), "--host", "192.0.2.10", "--port", "8765"],
-        [
-            str(tmp_path / "store"),
-            "--host",
-            "192.0.2.10",
-            "--port",
-            "8765",
-            "--allow-remote",
-        ],
-    ]
+    assert calls == [("192.0.2.10", 8765)]
     assert "exposed remotely without authentication" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", ["serve", "export"])
+def test_runtime_import_errors_are_not_dependency_errors(
+    command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    error = ImportError("runtime import failed", name="fastapi")
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise error
+
+    arguments = ["assay", "review", command, str(tmp_path / "store")]
+    if command == "serve":
+        pytest.importorskip("fastapi")
+        uvicorn = pytest.importorskip("uvicorn")
+        monkeypatch.setattr(uvicorn, "run", fail)
+    else:
+        monkeypatch.setattr(review_export, "export_review", fail)
+        arguments.extend(["sha256:root", str(tmp_path / "out.html")])
+    monkeypatch.setattr(sys, "argv", arguments)
+
+    with pytest.raises(ImportError) as caught:
+        main()
+    assert caught.value is error
+    output = capsys.readouterr()
+    assert "review_" not in output.out + output.err
+    assert "assay[review]" not in output.out + output.err

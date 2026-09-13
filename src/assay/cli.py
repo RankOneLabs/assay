@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
+from importlib import import_module
 from typing import cast
 
 from assay.store import ObjectIntegrityError, ObjectStore
@@ -41,22 +42,29 @@ def _review_import_failed(command: str, error: ImportError) -> int:
 def _handle_review_serve(args: argparse.Namespace) -> int:
     try:
         from assay.review.server import main as serve_review
+        from assay.review.server import validate_bind_host
 
-        arguments = [args.store, "--host", args.host, "--port", str(args.port)]
-        if args.allow_remote:
-            arguments.append("--allow-remote")
-        return serve_review(arguments)
+        import_module("uvicorn")
     except ImportError as error:
         return _review_import_failed("serve", error)
+    try:
+        validate_bind_host(args.host, allow_remote=args.allow_remote)
+    except ValueError as error:
+        args.parser.error(str(error))
+    arguments = [args.store, "--host", args.host, "--port", str(args.port)]
+    if args.allow_remote:
+        arguments.append("--allow-remote")
+    return serve_review(arguments)
 
 
 def _handle_review_export(args: argparse.Namespace) -> int:
     try:
         from assay.review.export import export_review
 
-        export_review(ObjectStore(args.store), args.root_ref, args.output)
     except ImportError as error:
         return _review_import_failed("export", error)
+    try:
+        export_review(ObjectStore(args.store), args.root_ref, args.output)
     except (OSError, ValueError, ObjectIntegrityError) as error:
         print(f"review_export_failed: {error}")
         return 1
@@ -82,7 +90,7 @@ def main() -> int:
     review_serve.add_argument("--port", type=int, default=8765)
     review_serve.add_argument("--host", default="127.0.0.1")
     review_serve.add_argument("--allow-remote", action="store_true")
-    review_serve.set_defaults(handler=_handle_review_serve)
+    review_serve.set_defaults(handler=_handle_review_serve, parser=review_serve)
     review_export = review_commands.add_parser("export")
     review_export.add_argument("store")
     review_export.add_argument("root_ref")
