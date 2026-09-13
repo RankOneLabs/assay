@@ -782,12 +782,10 @@ def _write_cache(
 def _scan(
     store: ObjectStore,
     *,
+    key: dict[str, int],
     max_objects: int | None,
     max_bytes: int | None,
 ) -> tuple[list[IndexedObject | ReadIssue], bool, dict[str, int] | None]:
-    key, key_issues = _cache_key(store.objects)
-    if key is None:
-        return list(key_issues), False, None
     items: list[IndexedObject | ReadIssue] = []
     total_bytes = 0
     incomplete = False
@@ -976,10 +974,13 @@ def build_index(
     cached = None if refresh or key is None else _read_cache(store.root, key)
     incomplete = False
     cache_issue: ReadIssue | None = None
-    if cached is None:
+    if key is None:
+        items: list[IndexedObject | ReadIssue] = []
+    elif cached is None:
         limits = (None, None) if refresh else (max_objects, max_bytes)
         items, incomplete, scanned_key = _scan(
             store,
+            key=key,
             max_objects=limits[0],
             max_bytes=limits[1],
         )

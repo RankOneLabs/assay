@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from review_fixture import ReviewFixture, materialize_review_fixture
 
+from assay.review import index as review_index
 from assay.review.index import CACHE_VERSION, IndexedOpaque, build_index, classify_object
 from assay.review.model import ReadIssue
 from assay.store import ObjectStore
@@ -147,6 +148,53 @@ def test_cache_is_disposable_and_stays_outside_object_namespace(
     assert verify_bundle(review_fixture.bundle, review_fixture.manifest_ref) == ()
 
 
+def test_warm_cache_hit_preserves_discovered_values(
+    review_fixture: ReviewFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = review_fixture.store.root / "review-index.json"
+    assert not cache.exists()
+    cold = build_index(review_fixture.store)
+    assert cache.is_file()
+
+    def unexpected_scan(*args: object, **kwargs: object) -> None:
+        pytest.fail("warm cache hit must not rescan")
+
+    monkeypatch.setattr(review_index, "_scan", unexpected_scan)
+    assert build_index(review_fixture.store) == cold
+
+
+def test_loose_record_with_manifest_identity_preserves_manifest_membership(
+    review_fixture: ReviewFixture,
+) -> None:
+    store = review_fixture.store
+    manifest = review_fixture.result.manifest
+    before = build_index(store)
+    manifested_before = next(
+        run for run in before.runs if run.manifest_ref == review_fixture.manifest_ref
+    )
+    coordinate, record_ref = next(iter(manifest.execution_records.items()))
+    record = json.loads(store.read_bytes(record_ref))
+    record.update(status="failed", output_ref=None, error_type="LooseFailure",
+                  error_message="unclaimed terminal at the same coordinate")
+    loose_ref = str(store.publish_json(record))
+    assert loose_ref not in manifest.execution_records.values()
+
+    after = build_index(store)
+    manifested_after = next(
+        run for run in after.runs if run.manifest_ref == review_fixture.manifest_ref
+    )
+    assert manifested_after.execution_records == manifested_before.execution_records
+    same_identity = [
+        run for run in after.runs
+        if run.run_id == manifest.run_id and run.plan_ref == manifest.plan_ref
+    ]
+    assert len(same_identity) == 2
+    loose = next(run for run in same_identity if run.manifest_ref is None)
+    assert loose.status == "unmanifested"
+    assert loose.run_key == f"unmanifested:{manifest.run_id}:{manifest.plan_ref}"
+    assert loose.execution_records == {coordinate: (loose_ref,)}
+
+
 def test_bad_entries_report_issues_without_hiding_healthy_run(
     review_fixture: ReviewFixture, tmp_path: Path
 ) -> None:
@@ -186,17 +234,38 @@ def test_empty_and_budget_limited_stores_return_results(tmp_path: Path) -> None:
 
 
 def test_non_writable_cache_is_diagnostic_but_does_not_hide_runs(
-    review_fixture: ReviewFixture, monkeypatch: pytest.MonkeyPatch
+    review_fixture: ReviewFixture,
 ) -> None:
-    def deny_replace(source: object, destination: object) -> None:
-        del source, destination
-        raise PermissionError("read-only root")
-
-    monkeypatch.setattr(os, "replace", deny_replace)
-    index = build_index(review_fixture.store, refresh=True)
+    root = review_fixture.store.root
+    original_mode = root.stat().st_mode
+    try:
+        root.chmod(0o555)
+        if os.access(root, os.W_OK):
+            pytest.skip("process can bypass directory write permissions")
+        index = build_index(review_fixture.store, refresh=True)
+        assert not (root / "review-index.json").exists()
+    finally:
+        root.chmod(original_mode)
 
     assert any(run.manifest_ref == review_fixture.manifest_ref for run in index.runs)
     assert any(issue.code == "cache_write" for issue in index.issues)
+
+
+def test_unreadable_object_directory_reports_one_issue(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / "unreadable")
+    store.publish_json({"opaque": True})
+    original_mode = store.objects.stat().st_mode
+    try:
+        store.objects.chmod(0o000)
+        if os.access(store.objects, os.R_OK):
+            pytest.skip("process can bypass directory read permissions")
+        index = build_index(store)
+    finally:
+        store.objects.chmod(original_mode)
+
+    assert index.objects == ()
+    assert index.runs == ()
+    assert [issue.code for issue in index.issues] == ["root_unreadable"]
 
 
 def test_manifest_reachable_model_output_cannot_create_loose_run(
