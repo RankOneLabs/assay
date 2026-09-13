@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
+import type { CellDetail } from "../../src/types";
 
 const STATIC = new URL("../../../src/assay/review/static/", import.meta.url);
 const hostile = "</script><script>window.pwned=true</script>";
@@ -8,6 +12,13 @@ let browser: Browser;
 let page: Page;
 let recomputes = 0;
 const origin = "http://assay.test";
+let exportDirectory: string;
+let exported: {
+  hostileStrings: string[];
+  hostileText: string;
+  manifest: string;
+  report: string;
+};
 
 const issue = { code: "partial", message: "one value is unavailable", ref: null, coordinate_id: null };
 const cost = { coverage: "mixed", coverage_counts: { measured: 3, unavailable: 1 }, amounts: { USD: 1.25 }, by_stage_arm: {}, attempts: 4, expected_attempts: 5, unaccounted_attempts: 1, partial: true, issues: [issue] };
@@ -49,13 +60,55 @@ const handleRequest = async (request: Request): Promise<Response> => {
 
 beforeAll(async () => {
   browser = await chromium.launch({ ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}), headless: true });
+  exportDirectory = await mkdtemp(join(tmpdir(), "assay-review-browser-"));
+  const repository = resolve(import.meta.dir, "../../..");
+  const program = `
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+repository = Path(sys.argv[2])
+sys.path.insert(0, str(repository / "tests"))
+from review_fixture import HOSTILE_STRINGS, HOSTILE_TEXT, materialize_review_fixture
+from assay.review.export import export_review
+
+async def main():
+    fixture = await materialize_review_fixture(root / "fixture")
+    report_ref = fixture.studies.report_refs["scalar"]
+    export_review(fixture.bundle, fixture.manifest_ref, root / "manifest.html")
+    export_review(fixture.studies.report_bundles["scalar"], report_ref, root / "report.html")
+    print(json.dumps({
+        "hostileStrings": HOSTILE_STRINGS,
+        "hostileText": HOSTILE_TEXT,
+        "manifest": fixture.manifest_ref,
+        "report": report_ref,
+    }))
+
+asyncio.run(main())
+`;
+  const fixtureProcess = Bun.spawn(
+    ["uv", "run", "python", "-c", program, exportDirectory, repository],
+    { cwd: repository, stdout: "pipe", stderr: "pipe" },
+  );
+  const [fixtureOutput, fixtureError, fixtureExit] = await Promise.all([
+    new Response(fixtureProcess.stdout).text(),
+    new Response(fixtureProcess.stderr).text(),
+    fixtureProcess.exited,
+  ]);
+  if (fixtureExit !== 0) throw new Error(`fixture export failed: ${fixtureError}`);
+  exported = JSON.parse(fixtureOutput.trim()) as typeof exported;
   page = await browser.newPage();
   await page.route("**/*", async (route) => {
     const response = await handleRequest(new Request(route.request().url(), { method: route.request().method() }));
     await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: Buffer.from(await response.arrayBuffer()) });
   });
+}, 30_000);
+afterAll(async () => {
+  if (browser) await browser.close();
+  if (exportDirectory) await rm(exportDirectory, { recursive: true, force: true });
 });
-afterAll(async () => { if (browser) await browser.close(); });
 
 async function textOf(selector: string): Promise<string | null> {
   const locator = page.locator(selector);
@@ -118,39 +171,131 @@ test("empty pair sides distinguish exclusions from missing cells", async () => {
   expect(await textOf(".pair-side .unavailable-inline")).toBe("Missing: no cell was recorded for this side.");
 });
 
-test("inline exports preserve hostile text and distinguish absent excluded grid cells", async () => {
+// Traces, recorded prompts, and object downloads are export payload guarantees;
+// the current cell UI has no trace/prompt panels or download controls. Diagnostics
+// shared with the worker error must still appear in that cell's rendered document.
+test("file export navigates offline and preserves trace and download payloads", async () => {
   const inlinePage = await browser.newPage();
-  const requests: string[] = [];
-  await inlinePage.route("**/*", async (route) => { requests.push(route.request().url()); await route.abort(); });
+  const networkRequests: string[] = [];
+  inlinePage.on("request", (request) => {
+    if (/^https?:/i.test(request.url())) networkRequests.push(request.url());
+  });
+  await inlinePage.route(/^https?:\/\//i, async (route) => { await route.abort(); });
   try {
-    const hostileLabel = `${hostile}</ScRiPt><ScRiPt>window.mixedCase=true</sCrIpT><!-- & <strong>literal</strong>`;
-    const inlineRun = {
-      ...run,
-      summary: { ...run.summary, run_id: hostileLabel, exclusions: [{ subject_id: "success", arm_id: "candidate", classification: "excluded", reason: hostileLabel, manifest_ref: null }] },
-      cells: run.cells.filter((cell) => cell.cell_id !== "ok" && cell.cell_id !== "missing"),
-    };
-    const payload = {
-      schema_version: "assay-review-export/0.1.0", root_ref: "sha256:root",
-      store: { ...store, runs: [inlineRun.summary] },
-      views: { [`#/runs/${encodeURIComponent(runKey)}`]: inlineRun }, objects: {}, capabilities: {},
-    };
-    // Producer-side escaping required by dataSourceFromDocument's contract.
-    const serialized = JSON.stringify(payload).replaceAll("<", "\\u003c");
-    const shell = await Bun.file(new URL("index.html", STATIC)).text();
-    const bundle = await Bun.file(new URL("app.js", STATIC)).text();
-    const html = shell.replace('<link rel="stylesheet" href="app.css">', "").replace(
-      '<script type="module" src="app.js"></script>',
-      () => `<script id="assay-review-data" type="application/json">${serialized}</script><script type="module">${bundle}</script>`,
-    );
-    await inlinePage.setContent(html);
-    await inlinePage.locator(".summary-card a").click();
+    await inlinePage.goto(new URL(`file://${join(exportDirectory, "manifest.html")}`).href);
+    await inlinePage.locator(".summary-card a").first().click();
     await inlinePage.locator(".cell-grid").waitFor();
-    expect(await inlinePage.locator("h1").textContent()).toBe(hostileLabel);
-    expect(await inlinePage.locator(".status-excluded").textContent()).toBe(`Excluded${hostileLabel}`);
-    expect(await inlinePage.locator(".cell-grid .status-missing").textContent()).toBe("Missing");
+    const gridUrl = inlinePage.url();
+    const renderedText = [await inlinePage.locator("body").innerText()];
+    const cellLinks = await inlinePage.locator(".cell-grid a.cell-state").evaluateAll((links) =>
+      links.map((link) => (link as HTMLAnchorElement).href),
+    );
+    expect(cellLinks.length).toBeGreaterThan(0);
+    for (const target of cellLinks) {
+      await inlinePage.goto(target);
+      await inlinePage.locator(".back-link").waitFor();
+      renderedText.push(await inlinePage.locator("body").innerText());
+    }
+
+    await inlinePage.goto(gridUrl);
+    const pairKeys = await inlinePage.evaluate(() => {
+      const data = JSON.parse(document.querySelector("#assay-review-data")?.textContent ?? "null");
+      return Object.keys(data.views as Record<string, unknown>).filter((key) => key.includes("/pairs/"));
+    });
+    const documentUrl = new URL(gridUrl); documentUrl.hash = "";
+    const pairLinks = pairKeys.map((key) => `${documentUrl.href}#${key.replace(/^\/api/, "")}`);
+    expect(pairLinks.length).toBeGreaterThan(0);
+    for (const target of pairLinks) {
+      await inlinePage.goto(target);
+      await inlinePage.getByRole("heading", { name: "Pair availability" }).waitFor();
+      renderedText.push(await inlinePage.locator("body").innerText());
+    }
+
+    await inlinePage.goto(new URL(`file://${join(exportDirectory, "manifest.html")}#/ambiguities`).href);
+    const ambiguityLink = inlinePage.locator(".ambiguity-list a").first();
+    await ambiguityLink.waitFor();
+    await ambiguityLink.click();
+    await inlinePage.getByRole("link", { name: "Back to cell grid" }).waitFor();
+    renderedText.push(await inlinePage.locator("body").innerText());
+
+    const embedded = await inlinePage.evaluate(() => {
+      const data = JSON.parse(document.querySelector("#assay-review-data")?.textContent ?? "null");
+      return { capabilities: data.capabilities, objects: data.objects, views: data.views };
+    }) as {
+      capabilities: Record<string, boolean>;
+      objects: Record<string, { preview: { text: string | null }, download_base64: string | null }>;
+      views: Record<string, unknown>;
+    };
+    expect(embedded.capabilities).toEqual({ recompute: false, refresh: false, verify: false });
+    const downloads = Object.entries(embedded.objects).filter(([, object]) => object.download_base64 !== null);
+    expect(downloads.length).toBeGreaterThan(0);
+    for (const [ref, object] of downloads) {
+      const bytes = Buffer.from(object.download_base64!, "base64");
+      expect(`sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`).toBe(ref);
+    }
+    const strings = (value: unknown): string[] => {
+      if (typeof value === "string") return [value];
+      if (Array.isArray(value)) return value.flatMap(strings);
+      if (value && typeof value === "object") return Object.values(value).flatMap(strings);
+      return [];
+    };
+    const embeddedStrings = strings(embedded.views);
+    const displayedText = renderedText.join("\n");
+    expect(exported.hostileStrings.filter((value) => !embeddedStrings.some((text) => text.includes(value)))).toEqual([]);
+    expect(exported.hostileStrings.filter((value) => !displayedText.includes(value))).toEqual([]);
+    expect(embeddedStrings.some((text) => text.includes(exported.hostileText))).toBeTrue();
+    const tracedCells = Object.entries(embedded.views)
+      .filter(([key]) => key.includes("/cells/"))
+      .map(([key, value]) => [key, value as CellDetail] as const)
+      .filter(([, cell]) => cell.trace_preview != null);
+    expect(tracedCells.length).toBeGreaterThan(0);
+    for (const [key, cell] of tracedCells) {
+      expect(cell.trace_preview!.text).not.toBeNull();
+      const trace = JSON.parse(cell.trace_preview!.text!) as { diagnostics: string[] };
+      expect(trace.diagnostics).toEqual(exported.hostileStrings);
+      await inlinePage.goto(`${documentUrl.href}#${key.replace(/^\/api/, "")}`);
+      await inlinePage.waitForFunction((id) => document.querySelector("h1")?.textContent === id, cell.summary.cell_id);
+      const diagnostic = inlinePage.locator(".unavailable-inline").filter({ hasText: "review fixture failure:" });
+      expect(await diagnostic.textContent()).toBe(cell.summary.error_message);
+      for (const recorded of trace.diagnostics) {
+        expect((await diagnostic.textContent())!.includes(recorded)).toBeTrue();
+      }
+    }
+
+    await inlinePage.goto(gridUrl);
+    await inlinePage.locator("a.cell-state").first().click();
+    const cellUrl = inlinePage.url();
+    await inlinePage.goBack();
+    await inlinePage.locator(".cell-grid").waitFor();
+    await inlinePage.goForward();
+    await inlinePage.locator(".back-link").waitFor();
+    expect(inlinePage.url()).toBe(cellUrl);
+    await inlinePage.reload();
+    await inlinePage.locator(".back-link").waitFor();
+
+    await inlinePage.goto(new URL(`file://${join(exportDirectory, "report.html")}`).href);
+    const linkedRuns = inlinePage.locator(".summary-card a");
+    expect(await linkedRuns.count()).toBeGreaterThan(0);
+    for (const target of await linkedRuns.evaluateAll((links) => links.map((link) => (link as HTMLAnchorElement).href))) {
+      await inlinePage.goto(target);
+      await inlinePage.locator(".cell-grid").waitFor();
+    }
+    await inlinePage.goto(new URL(`file://${join(exportDirectory, "report.html")}`).href);
+    const reportLink = await inlinePage.locator(".link-list a").getAttribute("href");
+    expect(reportLink).toBe(`#/reports/${encodeURIComponent(exported.report)}`);
+    await inlinePage.goto(new URL(reportLink!, inlinePage.url()).href);
+    await inlinePage.waitForFunction((reportRef) => document.querySelector("h1")?.textContent === reportRef, exported.report);
+    expect(await inlinePage.locator("h1").textContent()).toBe(exported.report);
+    expect(await inlinePage.getByText("Requires the local Assay server", { exact: true }).count()).toBe(1);
+    expect(await inlinePage.getByRole("button").count()).toBe(0);
+
+    const externalAttributes = await inlinePage.locator("[href], [src]").evaluateAll((nodes) =>
+      nodes.flatMap((node) => [node.getAttribute("href"), node.getAttribute("src")].filter((value): value is string => value !== null)),
+    );
+    expect(externalAttributes.every((value) => value.startsWith("#"))).toBeTrue();
     expect(await inlinePage.evaluate(() => (window as unknown as Record<string, unknown>).pwned)).toBeUndefined();
     expect(await inlinePage.evaluate(() => (window as unknown as Record<string, unknown>).mixedCase)).toBeUndefined();
     expect(await inlinePage.locator("script").count()).toBe(2);
-    expect(requests).toEqual([]);
+    expect(networkRequests).toEqual([]);
   } finally { await inlinePage.close(); }
-});
+}, 30_000);
