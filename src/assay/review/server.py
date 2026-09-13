@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import codecs
+import hashlib
 import ipaddress
 import re
 import sys
@@ -122,12 +124,37 @@ def _root_exists_and_verifies(store: ObjectStore, ref: str) -> None:
         ) from None
 
 
-def _textual(data: bytes) -> bool:
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return all(character in "\t\n\r" or ord(character) >= 32 for character in text)
+def _read_verified_bounded(store: ObjectStore, ref: str) -> tuple[bytes, int, bool]:
+    """Hash an entire object while retaining only the response-sized prefix."""
+    path = store.objects / ref.removeprefix("sha256:")
+    digest = hashlib.sha256()
+    prefix = bytearray()
+    size = 0
+    textual = True
+    decoder = codecs.getincrementaldecoder("utf-8")("strict")
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+            if len(prefix) < OBJECT_LIMIT:
+                prefix.extend(chunk[: OBJECT_LIMIT - len(prefix)])
+            if textual:
+                try:
+                    decoded = decoder.decode(chunk)
+                except UnicodeDecodeError:
+                    textual = False
+                else:
+                    textual = all(
+                        character in "\t\n\r" or ord(character) >= 32 for character in decoded
+                    )
+        if textual:
+            try:
+                decoder.decode(b"", final=True)
+            except UnicodeDecodeError:
+                textual = False
+    if f"sha256:{digest.hexdigest()}" != ref:
+        raise ObjectIntegrityError(f"object bytes do not match {ref}")
+    return bytes(prefix), size, textual
 
 
 def create_app(
@@ -142,14 +169,18 @@ def create_app(
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store = object_store
     app.state.index = build_index(object_store)
-    allowed_hosts = {"localhost", "127.0.0.1", "::1", host.rstrip(".").lower()}
+    configured_host = host.rstrip(".").lower()
+    loopback_bind = _is_loopback_name(configured_host)
 
     @app.middleware("http")
     async def request_guard(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         request_host = _hostname(request.headers.get("host", ""))
-        if not (_is_loopback_name(request_host) or request_host in allowed_hosts):
+        host_allowed = (
+            _is_loopback_name(request_host) if loopback_bind else request_host == configured_host
+        )
+        if not host_allowed:
             return _error(400, "invalid_host", "request Host is not allowed")
         if request.method == "POST":
             origin = request.headers.get("origin")
@@ -183,7 +214,10 @@ def create_app(
     async def get_store(refresh: bool = False) -> Response:
         if refresh:
             app.state.index = build_index(object_store, refresh=True)
-        return json_response(ReviewReader(object_store, app.state.index).store_summary())
+        try:
+            return json_response(ReviewReader(object_store, app.state.index).store_summary())
+        except ReadError as error:
+            raise HTTPException(422, detail=("corrupt_root", str(error), None)) from None
 
     @app.get("/api/runs/{run_key}")
     async def get_run(run_key: str) -> Response:
@@ -253,9 +287,18 @@ def create_app(
             raise HTTPException(404, detail=("not_found", "run was not found", run_key))
         return json_response(ReviewReader(object_store, app.state.index).ambiguities(run_key))
 
+    @app.get("/api/ambiguities")
+    async def get_ambiguities() -> Response:
+        return json_response(ReviewReader(object_store, app.state.index).ambiguities())
+
     @app.get("/api/reports")
     async def get_reports() -> Response:
-        return json_response(ReviewReader(object_store, app.state.index).store_summary().reports)
+        try:
+            return json_response(
+                ReviewReader(object_store, app.state.index).store_summary().reports
+            )
+        except ReadError as error:
+            raise HTTPException(422, detail=("corrupt_root", str(error), None)) from None
 
     @app.get("/api/reports/{report_ref}")
     async def get_report(report_ref: str) -> Response:
@@ -303,7 +346,7 @@ def create_app(
     async def get_object(ref: str) -> Response:
         _validate_ref(ref)
         try:
-            data = object_store.read_bytes(ref)
+            data, size, textual = _read_verified_bounded(object_store, ref)
         except FileNotFoundError:
             raise HTTPException(404, detail=("not_found", "object was not found", ref)) from None
         except ObjectIntegrityError:
@@ -314,24 +357,25 @@ def create_app(
             raise HTTPException(
                 422, detail=("unreadable_object", "object is unreadable", ref)
             ) from None
-        textual = _textual(data)
         headers = {
             "X-Content-Type-Options": "nosniff",
-            "X-Assay-Object-Size": str(len(data)),
+            "X-Assay-Object-Size": str(size),
             "X-Assay-Truncated": "false",
         }
         if not textual:
             headers["Content-Disposition"] = (
                 f'attachment; filename="{ref.removeprefix("sha256:")}.bin"'
             )
-            if len(data) > OBJECT_LIMIT:
+            if size > OBJECT_LIMIT:
                 response = _error(
                     413, "object_too_large", "binary object exceeds the 8 MiB limit", ref
                 )
                 response.headers.update(headers)
                 return response
-        elif len(data) > OBJECT_LIMIT:
-            data = data[: OBJECT_LIMIT - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+        elif size > OBJECT_LIMIT:
+            prefix_limit = OBJECT_LIMIT - len(TRUNCATION_MARKER)
+            safe_prefix = data[:prefix_limit].decode("utf-8", "ignore").encode("utf-8")
+            data = safe_prefix + TRUNCATION_MARKER
             headers["X-Assay-Truncated"] = "true"
         return Response(content=data, media_type="text/plain", headers=headers)
 

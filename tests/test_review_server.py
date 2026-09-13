@@ -57,6 +57,7 @@ async def test_routes_are_views_over_the_reading_layer(fixture: ReviewFixture) -
                 params={"reference": "clean", "candidate": "inconsistent"},
             ),
             "ambiguous": await client.get(f"/api/runs/{fixture.manifest_ref}/ambiguous"),
+            "ambiguities": await client.get("/api/ambiguities"),
             "reports": await client.get("/api/reports"),
             "report": await client.get(f"/api/reports/{report_ref}"),
         }
@@ -70,6 +71,7 @@ async def test_routes_are_views_over_the_reading_layer(fixture: ReviewFixture) -
     assert responses["ambiguous"].content == canonical_view_json(
         reader.ambiguities(fixture.manifest_ref)
     )
+    assert responses["ambiguities"].content == canonical_view_json(reader.ambiguities())
     assert responses["reports"].content == canonical_view_json(reader.store_summary().reports)
     assert responses["report"].content == canonical_view_json(reader.report(report_ref))
 
@@ -153,6 +155,23 @@ async def test_partial_child_response_carries_issues(
     assert response.json()["summary"]["issues"][0]["code"] == "integrity_error"
 
 
+async def test_summary_routes_translate_newly_corrupt_root(
+    fixture: ReviewFixture, tmp_path: Path
+) -> None:
+    store = copy_store(fixture.store, tmp_path / "corrupt-summary")
+    app = create_app(store)
+    (store.objects / fixture.manifest_ref.removeprefix("sha256:")).write_bytes(b"damaged")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        store_response = await client.get("/api/store")
+        reports_response = await client.get("/api/reports")
+    for response in (store_response, reports_response):
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "corrupt_root"
+        assert response.json()["error"]["ref"] is None
+
+
 async def test_object_passthrough_is_bounded_and_never_renderable(tmp_path: Path) -> None:
     store = ObjectStore(tmp_path / "objects")
     text_ref = str(store.publish_bytes(b"<script>alert('no')</script>"))
@@ -177,6 +196,31 @@ async def test_object_passthrough_is_bounded_and_never_renderable(tmp_path: Path
     assert too_large.status_code == 413
     assert too_large.headers["x-content-type-options"] == "nosniff"
     assert malformed.status_code == 400
+
+
+async def test_object_read_is_memory_bounded_and_truncation_preserves_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ObjectStore(tmp_path / "bounded-objects")
+    prefix_limit = OBJECT_LIMIT - len(TRUNCATION_MARKER)
+    text_data = b"x" * (prefix_limit - 1) + "€".encode() + b"y" * len(TRUNCATION_MARKER)
+    text_ref = str(store.publish_bytes(text_data))
+    binary_ref = str(store.publish_bytes(b"\x00" + b"z" * OBJECT_LIMIT))
+    app = create_app(store)
+
+    def forbidden_read_bytes(_path: Path) -> bytes:
+        raise AssertionError("object endpoint materialized the whole file")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        text = await client.get(f"/api/objects/{text_ref}")
+        binary = await client.get(f"/api/objects/{binary_ref}")
+    assert text.status_code == 200
+    assert text.content.decode("utf-8").endswith(TRUNCATION_MARKER.decode())
+    assert len(text.content) <= OBJECT_LIMIT
+    assert binary.status_code == 413
 
 
 async def test_hash_mismatch_never_returns_object_bytes(tmp_path: Path) -> None:
@@ -216,6 +260,18 @@ async def test_host_and_origin_guards(fixture: ReviewFixture) -> None:
     validate_bind_host("192.0.2.10", allow_remote=True)
     with pytest.raises(ValueError, match="wildcard addresses"):
         validate_bind_host("0.0.0.0", allow_remote=True)
+
+
+async def test_remote_bind_requires_its_configured_host(tmp_path: Path) -> None:
+    app = create_app(ObjectStore(tmp_path / "remote"), host="review.example", allow_remote=True)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://review.example"
+    ) as client:
+        configured = await client.get("/api/store")
+        loopback = await client.get("/api/store", headers={"host": "localhost"})
+    assert configured.status_code == 200
+    assert loopback.status_code == 400
+    assert loopback.json()["error"]["code"] == "invalid_host"
 
 
 def test_main_warns_for_remote_host(
