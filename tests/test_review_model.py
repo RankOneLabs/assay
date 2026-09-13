@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from dataclasses import FrozenInstanceError, is_dataclass
 
 import pytest
@@ -116,3 +118,25 @@ def test_unicode_and_nested_issue_are_preserved() -> None:
         '{"code":"unsafe","coordinate_id":null,"message":"<&>\u2028\u2029",'
         '"ref":null}'
     ).encode()
+
+
+@pytest.mark.parametrize("value", [object(), {1: "invalid key"}])
+def test_projection_errors_use_the_canonical_error_type(value: object) -> None:
+    with pytest.raises(CanonicalizationError):
+        to_json_value({"nested": [value]})
+    with pytest.raises(CanonicalizationError):
+        canonical_view_json({"nested": [value]})
+
+
+def test_model_imports_without_fastapi() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            'import sys; sys.modules["fastapi"] = None; import assay.review.model',
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

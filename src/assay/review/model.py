@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields, is_dataclass
 from typing import Literal
 
-from assay.canonical import canonical_json
+from assay.canonical import CanonicalizationError, canonical_json
 
 type JSONValue = None | bool | int | float | str | list[JSONValue] | JSONObject
 type JSONObject = dict[str, JSONValue]
@@ -37,10 +37,10 @@ def to_json_value(value: object) -> JSONValue:
         result: JSONObject = {}
         for key, item in value.items():
             if not isinstance(key, str):
-                raise TypeError("view model dictionaries must have string keys")
+                raise CanonicalizationError("view model dictionaries must have string keys")
             result[key] = to_json_value(item)
         return result
-    raise TypeError(f"unsupported view model value: {type(value).__name__}")
+    raise CanonicalizationError(f"unsupported view model value: {type(value).__name__}")
 
 
 def canonical_view_json(value: object) -> bytes:
