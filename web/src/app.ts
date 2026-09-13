@@ -49,7 +49,7 @@ function issuesBlock(issues: Issue[]): HTMLElement | null {
   const list = element("ul");
   for (const issue of issues) {
     const item = element("li");
-    item.append(element("strong", { text: issue.code }), document.createTextNode(": "));
+    item.append(element("strong", { text: issue.code }), element("span", { text: ": " }));
     appendText(item, issue.message);
     if (issue.ref) item.append(element("code", { text: issue.ref }));
     list.append(item);
