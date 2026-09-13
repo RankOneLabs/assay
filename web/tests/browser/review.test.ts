@@ -117,3 +117,40 @@ test("empty pair sides distinguish exclusions from missing cells", async () => {
   await page.waitForFunction(() => document.querySelector(".pair-side .unavailable-inline")?.textContent?.startsWith("Missing:"));
   expect(await textOf(".pair-side .unavailable-inline")).toBe("Missing: no cell was recorded for this side.");
 });
+
+test("inline exports preserve hostile text and distinguish absent excluded grid cells", async () => {
+  const inlinePage = await browser.newPage();
+  const requests: string[] = [];
+  await inlinePage.route("**/*", async (route) => { requests.push(route.request().url()); await route.abort(); });
+  try {
+    const hostileLabel = `${hostile}</ScRiPt><ScRiPt>window.mixedCase=true</sCrIpT><!-- & <strong>literal</strong>`;
+    const inlineRun = {
+      ...run,
+      summary: { ...run.summary, run_id: hostileLabel, exclusions: [{ subject_id: "success", arm_id: "candidate", classification: "excluded", reason: hostileLabel, manifest_ref: null }] },
+      cells: run.cells.filter((cell) => cell.cell_id !== "ok" && cell.cell_id !== "missing"),
+    };
+    const payload = {
+      schema_version: "assay-review-export/0.1.0", root_ref: "sha256:root",
+      store: { ...store, runs: [inlineRun.summary] },
+      views: { [`#/runs/${encodeURIComponent(runKey)}`]: inlineRun }, objects: {}, capabilities: {},
+    };
+    // Producer-side escaping required by dataSourceFromDocument's contract.
+    const serialized = JSON.stringify(payload).replaceAll("<", "\\u003c");
+    const shell = await Bun.file(new URL("index.html", STATIC)).text();
+    const bundle = await Bun.file(new URL("app.js", STATIC)).text();
+    const html = shell.replace('<link rel="stylesheet" href="app.css">', "").replace(
+      '<script type="module" src="app.js"></script>',
+      () => `<script id="assay-review-data" type="application/json">${serialized}</script><script type="module">${bundle}</script>`,
+    );
+    await inlinePage.setContent(html);
+    await inlinePage.locator(".summary-card a").click();
+    await inlinePage.locator(".cell-grid").waitFor();
+    expect(await inlinePage.locator("h1").textContent()).toBe(hostileLabel);
+    expect(await inlinePage.locator(".status-excluded").textContent()).toBe(`Excluded${hostileLabel}`);
+    expect(await inlinePage.locator(".cell-grid .status-missing").textContent()).toBe("Missing");
+    expect(await inlinePage.evaluate(() => (window as unknown as Record<string, unknown>).pwned)).toBeUndefined();
+    expect(await inlinePage.evaluate(() => (window as unknown as Record<string, unknown>).mixedCase)).toBeUndefined();
+    expect(await inlinePage.locator("script").count()).toBe(2);
+    expect(requests).toEqual([]);
+  } finally { await inlinePage.close(); }
+});

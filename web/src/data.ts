@@ -102,6 +102,15 @@ export class HttpDataSource implements DataSource {
   }
 }
 
+/**
+ * Inline export contract: the producer MUST replace every literal `<` in the
+ * serialized JSON with the JSON escape `\u003c` before inserting it into
+ * the application/json script element. This includes mixed-case script endings
+ * and HTML comment openers. Do not HTML-entity-escape the JSON: script text is
+ * raw text, so entities would change the data. Insert the data before app.js.
+ * The browser parses HTML before this function runs; client-side validation
+ * cannot repair an unsafe embedding. Chromium tests exercise the full parser.
+ */
 export function dataSourceFromDocument(doc: Document = document): DataSource {
   const node = doc.querySelector<HTMLScriptElement>(
     'script[type="application/json"][data-assay-review], script#assay-review-data[type="application/json"]',

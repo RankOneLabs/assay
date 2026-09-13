@@ -133,7 +133,13 @@ function renderGrid(root: HTMLElement, run: RunDetail): void {
     for (const arm of run.arms) for (let repeat = 0; repeat < repeats; repeat += 1) {
       const cell = run.cells.find((candidate) => candidate.subject_id === subject.id && candidate.arm_id === arm.id && candidate.worker_repeat === repeat);
       const td = element("td");
-      if (!cell) td.append(element("span", { className: "cell-state status-missing", text: "Missing" }));
+      if (!cell) {
+        const exclusion = run.summary.exclusions.find((value) => value.subject_id === subject.id && value.arm_id === arm.id);
+        const state = exclusion ? "excluded" : "missing";
+        const label = element("span", { className: `cell-state status-${state}`, text: STATE_LABEL[state] });
+        if (exclusion) label.append(element("small", { text: exclusion.reason }));
+        td.append(label);
+      }
       else {
         const state = gridState(cell);
         const link = localLink(STATE_LABEL[state], cellFragment(run.summary.run_key, cell.cell_id));
