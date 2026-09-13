@@ -128,7 +128,8 @@ def _damaged_bundle_variants(
         destination = root / name
         shutil.copytree(bundle.root, destination)
         variant = ObjectStore(destination)
-        variant._path(target_ref).write_bytes(("damaged-" + name).encode())
+        object_path = variant.objects / target_ref.removeprefix("sha256:")
+        object_path.write_bytes(("damaged-" + name).encode())
         damaged[name] = variant
     return damaged
 
