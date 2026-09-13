@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Literal
 
@@ -122,10 +123,14 @@ async def test_verification_scopes_reports_and_post_only_actions(
 
 def test_review_layer_has_no_execution_or_report_persistence_calls() -> None:
     violations: list[str] = []
-    for base in (ROOT / "src" / "assay" / "review", ROOT / "web"):
-        for path in sorted(candidate for candidate in base.rglob("*") if candidate.is_file()):
-            text = path.read_text(encoding="utf-8", errors="replace")
-            for forbidden in FORBIDDEN_REVIEW_CALLS:
-                if forbidden in text:
-                    violations.append(f"{path.relative_to(ROOT)}: {forbidden}")
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", "src/assay/review/", "web/"],
+        cwd=ROOT, capture_output=True, check=True, text=True,
+    ).stdout.split("\0")
+    assert any(tracked), "review invariant must inspect tracked files"
+    for relative in filter(None, tracked):
+        text = (ROOT / relative).read_text(encoding="utf-8", errors="replace")
+        for forbidden in FORBIDDEN_REVIEW_CALLS:
+            if forbidden in text:
+                violations.append(f"{relative}: {forbidden}")
     assert violations == []

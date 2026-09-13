@@ -39,7 +39,7 @@ def _run(
     )
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 async def installed_wheel(tmp_path_factory: pytest.TempPathFactory) -> InstalledWheel:
     root = tmp_path_factory.mktemp("review-wheel")
     fixture = await materialize_review_fixture(root / "fixture")
@@ -68,7 +68,9 @@ async def installed_wheel(tmp_path_factory: pytest.TempPathFactory) -> Installed
     install_env = {**os.environ, "UV_OFFLINE": "1"}
     result = _run([uv, "pip", "install", "--python", python, wheel], cwd=root, env=install_env)
     assert result.returncode == 0, result.stdout + result.stderr
-    return InstalledWheel(fixture, python, assay, wheel, root / "outside")
+    outside = root / "outside"
+    outside.mkdir()
+    return InstalledWheel(fixture, python, assay, wheel, outside)
 
 
 def _module_name(path: Path) -> str:
@@ -176,7 +178,6 @@ def _installed_environment() -> dict[str, str]:
 def test_core_wheel_discovers_and_exports_outside_checkout_without_server_extra(
     installed_wheel: InstalledWheel,
 ) -> None:
-    installed_wheel.outside.mkdir()
     destination = installed_wheel.outside / "review.html"
     program = """
 import sys

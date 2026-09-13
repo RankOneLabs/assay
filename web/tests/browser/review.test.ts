@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
+import type { CellDetail } from "../../src/types";
 
 const STATIC = new URL("../../../src/assay/review/static/", import.meta.url);
 const hostile = "</script><script>window.pwned=true</script>";
@@ -170,7 +171,10 @@ test("empty pair sides distinguish exclusions from missing cells", async () => {
   expect(await textOf(".pair-side .unavailable-inline")).toBe("Missing: no cell was recorded for this side.");
 });
 
-test("file export completes its offline navigation circuit without network requests", async () => {
+// Traces, recorded prompts, and object downloads are export payload guarantees;
+// the current cell UI has no trace/prompt panels or download controls. Diagnostics
+// shared with the worker error must still appear in that cell's rendered document.
+test("file export navigates offline and preserves trace and download payloads", async () => {
   const inlinePage = await browser.newPage();
   const networkRequests: string[] = [];
   inlinePage.on("request", (request) => {
@@ -223,10 +227,11 @@ test("file export completes its offline navigation circuit without network reque
       views: Record<string, unknown>;
     };
     expect(embedded.capabilities).toEqual({ recompute: false, refresh: false, verify: false });
-    const downloads = Object.values(embedded.objects).filter((object) => object.download_base64 !== null);
+    const downloads = Object.entries(embedded.objects).filter(([, object]) => object.download_base64 !== null);
     expect(downloads.length).toBeGreaterThan(0);
-    for (const object of downloads) {
-      expect(Buffer.from(object.download_base64!, "base64").length).toBeGreaterThan(0);
+    for (const [ref, object] of downloads) {
+      const bytes = Buffer.from(object.download_base64!, "base64");
+      expect(`sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`).toBe(ref);
     }
     const strings = (value: unknown): string[] => {
       if (typeof value === "string") return [value];
@@ -239,9 +244,23 @@ test("file export completes its offline navigation circuit without network reque
     expect(exported.hostileStrings.filter((value) => !embeddedStrings.some((text) => text.includes(value)))).toEqual([]);
     expect(exported.hostileStrings.filter((value) => !displayedText.includes(value))).toEqual([]);
     expect(embeddedStrings.some((text) => text.includes(exported.hostileText))).toBeTrue();
-    expect(Object.entries(embedded.views).some(([key, value]) =>
-      key.includes("/cells/") && value !== null && typeof value === "object" && "trace_preview" in value,
-    )).toBeTrue();
+    const tracedCells = Object.entries(embedded.views)
+      .filter(([key]) => key.includes("/cells/"))
+      .map(([key, value]) => [key, value as CellDetail] as const)
+      .filter(([, cell]) => cell.trace_preview != null);
+    expect(tracedCells.length).toBeGreaterThan(0);
+    for (const [key, cell] of tracedCells) {
+      expect(cell.trace_preview!.text).not.toBeNull();
+      const trace = JSON.parse(cell.trace_preview!.text!) as { diagnostics: string[] };
+      expect(trace.diagnostics).toEqual(exported.hostileStrings);
+      await inlinePage.goto(`${documentUrl.href}#${key.replace(/^\/api/, "")}`);
+      await inlinePage.waitForFunction((id) => document.querySelector("h1")?.textContent === id, cell.summary.cell_id);
+      const diagnostic = inlinePage.locator(".unavailable-inline").filter({ hasText: "review fixture failure:" });
+      expect(await diagnostic.textContent()).toBe(cell.summary.error_message);
+      for (const recorded of trace.diagnostics) {
+        expect((await diagnostic.textContent())!.includes(recorded)).toBeTrue();
+      }
+    }
 
     await inlinePage.goto(gridUrl);
     await inlinePage.locator("a.cell-state").first().click();
