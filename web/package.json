@@ -1,0 +1,17 @@
+{
+  "name": "assay-review-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests/unit",
+    "test:browser": "bun run build && bun test tests/browser"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.10",
+    "playwright": "1.55.0",
+    "typescript": "5.9.2"
+  }
+}
