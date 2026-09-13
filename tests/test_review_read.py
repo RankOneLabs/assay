@@ -33,7 +33,6 @@ def test_run_preserves_failures_exclusions_and_evaluation_missingness(
     ambiguous = [
         evaluation
         for cell in detail.cells
-        for verdict in cell.verdicts
         for evaluation in reader.cell(detail.summary.run_key, cell.cell_id).evaluations
         if evaluation.error_type == "AmbiguousStructure"
     ]

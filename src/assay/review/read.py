@@ -216,7 +216,8 @@ def _cost(
         try:
             if (
                 not isinstance(value, dict)
-                or value.get("record_schema", "").split("/")[0] != "paa-operating-record"
+                or not isinstance(value.get("record_schema"), str)
+                or value["record_schema"].split("/")[0] != "paa-operating-record"
             ):
                 raise ValueError
             details = []
