@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import httpx
 import pytest
 from review_fixture import ReviewFixture, materialize_review_fixture
 
+from assay.review import server
 from assay.review.index import build_index
 from assay.review.model import canonical_view_json
 from assay.review.read import ReviewReader
@@ -21,6 +23,11 @@ async def fixture(tmp_path_factory: pytest.TempPathFactory) -> ReviewFixture:
 def client_for(store: ObjectStore, **kwargs: object) -> httpx.AsyncClient:
     app = create_app(store, **kwargs)  # type: ignore[arg-type]
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost")
+
+
+def copy_store(store: ObjectStore, destination: Path) -> ObjectStore:
+    shutil.copytree(store.root, destination)
+    return ObjectStore(destination)
 
 
 async def test_store_refresh_uses_exporter_canonical_bytes(fixture: ReviewFixture) -> None:
@@ -61,7 +68,7 @@ async def test_routes_are_views_over_the_reading_layer(fixture: ReviewFixture) -
         reader.pair(fixture.manifest_ref, subject_id, "clean", "inconsistent")
     )
     assert responses["ambiguous"].content == canonical_view_json(
-        tuple(item for item in reader.ambiguities() if item.run_key == fixture.manifest_ref)
+        reader.ambiguities(fixture.manifest_ref)
     )
     assert responses["reports"].content == canonical_view_json(reader.store_summary().reports)
     assert responses["report"].content == canonical_view_json(reader.report(report_ref))
@@ -108,6 +115,42 @@ async def test_error_contract_and_api_fallback(fixture: ReviewFixture) -> None:
     assert bad_scope.status_code == 400
     assert fallback.status_code == 404
     assert fallback.headers["content-type"] == "application/json"
+
+
+async def test_pair_returns_plan_unavailable_when_plan_is_unreachable(
+    fixture: ReviewFixture, tmp_path: Path
+) -> None:
+    store = copy_store(fixture.store, tmp_path / "missing-plan")
+    plan_ref = fixture.result.manifest.plan_ref
+    (store.objects / plan_ref.removeprefix("sha256:")).unlink()
+    subject_id = fixture.snapshot.subjects[0].id
+    async with client_for(store) as client:
+        response = await client.get(f"/api/runs/{fixture.manifest_ref}/pairs/{subject_id}")
+    assert response.status_code == 409
+    assert response.json() == {
+        "error": {
+            "code": "plan_unavailable",
+            "message": "the run plan required for pairing is unavailable",
+            "ref": plan_ref,
+        }
+    }
+
+
+async def test_partial_child_response_carries_issues(
+    fixture: ReviewFixture, tmp_path: Path
+) -> None:
+    store = copy_store(fixture.store, tmp_path / "damaged-child")
+    app = create_app(store)
+    cell_id, execution_ref = next(iter(fixture.result.manifest.execution_records.items()))
+    (store.objects / execution_ref.removeprefix("sha256:")).write_bytes(b"damaged child")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        response = await client.get(f"/api/runs/{fixture.manifest_ref}/cells/{cell_id}")
+    assert response.status_code == 200
+    assert response.json()["summary"]["status"] == "invalid"
+    assert response.json()["summary"]["issues"]
+    assert response.json()["summary"]["issues"][0]["code"] == "integrity_error"
 
 
 async def test_object_passthrough_is_bounded_and_never_renderable(tmp_path: Path) -> None:
@@ -169,8 +212,34 @@ async def test_host_and_origin_guards(fixture: ReviewFixture) -> None:
     assert wrong_port.status_code == 403
     assert same_origin.status_code == 200
     with pytest.raises(ValueError, match="requires --allow-remote"):
-        validate_bind_host("0.0.0.0")
-    validate_bind_host("0.0.0.0", allow_remote=True)
+        validate_bind_host("192.0.2.10")
+    validate_bind_host("192.0.2.10", allow_remote=True)
+    with pytest.raises(ValueError, match="wildcard addresses"):
+        validate_bind_host("0.0.0.0", allow_remote=True)
+
+
+def test_main_warns_for_remote_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[tuple[object, str, int]] = []
+
+    def run(app: object, *, host: str, port: int) -> None:
+        calls.append((app, host, port))
+
+    monkeypatch.setattr("uvicorn.run", run)
+    assert server.main([str(tmp_path / "store"), "--host", "review.example", "--allow-remote"]) == 0
+    assert [(host, port) for _, host, port in calls] == [("review.example", 8000)]
+    warning = capsys.readouterr().err
+    assert "exposed remotely without authentication" in warning
+    assert "requests must use 'review.example' in the Host header" in warning
+
+
+async def test_application_shell_route(tmp_path: Path) -> None:
+    async with client_for(ObjectStore(tmp_path / "shell")) as client:
+        response = await client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert b'<main id="app"' in response.content
 
 
 async def test_direct_corrupt_root_is_422(fixture: ReviewFixture, tmp_path: Path) -> None:

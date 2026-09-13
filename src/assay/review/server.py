@@ -17,7 +17,13 @@ from fastapi.staticfiles import StaticFiles
 
 from assay.review.index import ReviewIndex, build_index
 from assay.review.model import canonical_view_json
-from assay.review.read import ReadError, ReviewReader, verify
+from assay.review.read import (
+    PairPlanUnavailable,
+    PairSelectionError,
+    ReadError,
+    ReviewReader,
+    verify,
+)
 from assay.store import ObjectIntegrityError, ObjectStore
 
 OBJECT_LIMIT = 8 * 1024 * 1024
@@ -82,6 +88,15 @@ def _is_loopback_name(host: str) -> bool:
 
 def validate_bind_host(host: str, *, allow_remote: bool = False) -> None:
     """Reject accidental unauthenticated remote binding."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None and address.is_unspecified:
+        raise ValueError(
+            "--host must be a reachable hostname or IP; "
+            "wildcard addresses cannot pass Host validation"
+        )
     if not _is_loopback_name(host) and not allow_remote:
         raise ValueError("non-loopback --host requires --allow-remote")
 
@@ -221,30 +236,13 @@ def create_app(
             raise HTTPException(404, detail=("not_found", "run was not found", run_key))
         reader = ReviewReader(object_store, app.state.index)
         try:
-            detail = reader.run(run_key)
-            if not detail.arms or detail.summary.worker_repeats is None:
-                raise HTTPException(
-                    409,
-                    detail=(
-                        "plan_unavailable",
-                        "the run plan required for pairing is unavailable",
-                        detail.summary.plan_ref,
-                    ),
-                )
-            arm_ids = {arm.id for arm in detail.arms}
-            if reference is not None and reference not in arm_ids:
-                raise HTTPException(
-                    400, detail=("invalid_arm", "reference arm is not in the run plan", reference)
-                )
-            if candidate is not None and candidate not in arm_ids:
-                raise HTTPException(
-                    400, detail=("invalid_arm", "candidate arm is not in the run plan", candidate)
-                )
-            if not any(subject.id == subject_id for subject in detail.subjects):
-                raise HTTPException(
-                    400, detail=("invalid_subject", "subject is not in the run plan", subject_id)
-                )
             return json_response(reader.pair(run_key, subject_id, reference, candidate))
+        except PairPlanUnavailable as error:
+            raise HTTPException(
+                409, detail=("plan_unavailable", str(error), error.plan_ref)
+            ) from None
+        except PairSelectionError as error:
+            raise HTTPException(400, detail=(error.code, str(error), error.value)) from None
         except ReadError as error:
             raise HTTPException(422, detail=("corrupt_root", str(error), run_key)) from None
 
@@ -253,12 +251,7 @@ def create_app(
         _validate_run_key(run_key)
         if not _known_run(app.state.index, run_key):
             raise HTTPException(404, detail=("not_found", "run was not found", run_key))
-        values = tuple(
-            item
-            for item in ReviewReader(object_store, app.state.index).ambiguities()
-            if item.run_key == run_key
-        )
-        return json_response(values)
+        return json_response(ReviewReader(object_store, app.state.index).ambiguities(run_key))
 
     @app.get("/api/reports")
     async def get_reports() -> Response:
@@ -370,7 +363,11 @@ def create_app(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m assay.review.server")
     parser.add_argument("store")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="reachable bind hostname or IP (wildcard addresses are rejected)",
+    )
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--allow-remote", action="store_true")
     args = parser.parse_args(argv)
@@ -379,7 +376,11 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as error:
         parser.error(str(error))
     if not _is_loopback_name(args.host):
-        print("WARNING: review server is exposed remotely without authentication", file=sys.stderr)
+        print(
+            f"WARNING: review server is exposed remotely without authentication; "
+            f"requests must use {args.host!r} in the Host header",
+            file=sys.stderr,
+        )
     import uvicorn
 
     uvicorn.run(

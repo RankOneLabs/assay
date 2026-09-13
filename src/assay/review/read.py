@@ -70,6 +70,23 @@ class ReadError(ValueError):
     """An unreadable requested root (children instead produce ReadIssue values)."""
 
 
+class PairPlanUnavailable(ReadError):
+    """A pair cannot be projected because its pinned plan is unavailable."""
+
+    def __init__(self, plan_ref: str) -> None:
+        super().__init__("the run plan required for pairing is unavailable")
+        self.plan_ref = plan_ref
+
+
+class PairSelectionError(ValueError):
+    """A requested pair coordinate does not exist in the pinned plan."""
+
+    def __init__(self, code: str, message: str, value: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.value = value
+
+
 def _issue(ref: str | None, code: str, message: str, coordinate: str | None = None) -> ReadIssue:
     # Never copy OSError text: ObjectStore embeds its absolute path in it.
     return ReadIssue(code, message, ref, coordinate)
@@ -872,14 +889,28 @@ class ReviewReader:
     ) -> PairView:
         run_detail = self.run(run_key)
         arms = [x.id for x in run_detail.arms]
+        if not arms or run_detail.summary.worker_repeats is None:
+            raise PairPlanUnavailable(run_detail.summary.plan_ref)
         reference_arm = reference_arm or next(
             (x for x in ("reference", "clean") if x in arms),
-            arms[0] if arms else "reference",
+            arms[0],
         )
         candidate_arm = candidate_arm or next(
             (x for x in ("candidate", "inconsistent") if x in arms),
             next((x for x in arms if x != reference_arm), "candidate"),
         )
+        if reference_arm not in arms:
+            raise PairSelectionError(
+                "invalid_arm", "reference arm is not in the run plan", reference_arm
+            )
+        if candidate_arm not in arms:
+            raise PairSelectionError(
+                "invalid_arm", "candidate arm is not in the run plan", candidate_arm
+            )
+        if not any(subject.id == subject_id for subject in run_detail.subjects):
+            raise PairSelectionError(
+                "invalid_subject", "subject is not in the run plan", subject_id
+            )
         refs = sorted(
             (
                 x
@@ -1006,9 +1037,10 @@ class ReviewReader:
                 "failed", None, stored, None, f"recomputation failed: {type(error).__name__}"
             )
 
-    def ambiguities(self) -> tuple[EvaluationView, ...]:
+    def ambiguities(self, run_key: str | None = None) -> tuple[EvaluationView, ...]:
         result: list[EvaluationView] = []
-        for run in self.index.runs:
+        runs = self.index.runs if run_key is None else (self._run(run_key),)
+        for run in runs:
             detail = self.run(run.run_key)
             for cell in detail.cells:
                 result.extend(
@@ -1219,8 +1251,10 @@ def recompute_report(store: ObjectStore, index: ReviewIndex, report_ref: str) ->
     return ReviewReader(store, index).recompute(report_ref)
 
 
-def read_ambiguities(store: ObjectStore, index: ReviewIndex) -> tuple[EvaluationView, ...]:
-    return ReviewReader(store, index).ambiguities()
+def read_ambiguities(
+    store: ObjectStore, index: ReviewIndex, run_key: str | None = None
+) -> tuple[EvaluationView, ...]:
+    return ReviewReader(store, index).ambiguities(run_key)
 
 
 def verify(
