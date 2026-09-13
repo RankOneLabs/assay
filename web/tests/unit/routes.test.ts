@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { parseRoute, cellFragment, pairFragment, reportFragment } from "../../src/routes";
+import {
+  cellFragment, defaultPair, pairFragment, parseRoute, reportFragment,
+} from "../../src/routes";
 
 describe("fragment routes", () => {
   test("keeps a loose full run key before a cell id", () => {
@@ -18,5 +20,14 @@ describe("fragment routes", () => {
   test("rejects malformed and unknown fragments locally", () => {
     expect(parseRoute("#/runs/%GG").kind).toBe("unavailable");
     expect(parseRoute("#/external/https://example.test").kind).toBe("unavailable");
+  });
+
+  test("chooses semantic arms before declared-order fallback", () => {
+    expect(defaultPair(["candidate", "reference"])).toEqual({
+      reference: "reference", candidate: "candidate",
+    });
+    expect(defaultPair(["baseline", "treatment"])).toEqual({
+      reference: "baseline", candidate: "treatment",
+    });
   });
 });

@@ -1343,15 +1343,32 @@ def closure(
             continue
         seen.add((ref, role))
         refs.add(ref)
-        value, issues = _safe_json(session, ref)
-        if issues:
+        try:
+            raw = session.read_bytes(ref)
+        except (OSError, ObjectIntegrityError, ValueError) as error:
+            issue = _error_issue(ref, error)
             failures.append(
                 ViewVerificationFailure(
-                    issues[0].code, f"{issues[0].message}; referenced by {referrer or 'root'}"
+                    issue.code, f"{issue.message}; referenced by {referrer or 'root'}"
                 )
             )
             continue
         try:
+            value = json.loads(raw)
+        except (UnicodeDecodeError, ValueError):
+            if role == "data":
+                continue
+            failures.append(
+                ViewVerificationFailure(
+                    "invalid_record",
+                    f"recognized object is not canonical JSON: {ref}; "
+                    f"referenced by {referrer or 'root'}",
+                )
+            )
+            continue
+        try:
+            if canonical_json(value) != raw:
+                raise ValueError
             for child, child_role in object_edges(value, role):
                 pending.append((child, child_role, ref))
         except (TypeError, ValueError):

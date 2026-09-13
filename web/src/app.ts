@@ -1,6 +1,8 @@
 import { DataUnavailable, dataSourceFromDocument, type DataSource } from "./data";
 import { addDefinition, appendText, element, localLink, renderJson, section } from "./dom";
-import { cellFragment, pairFragment, parseRoute, reportFragment, runFragment, type Route } from "./routes";
+import {
+  cellFragment, defaultPair, pairFragment, parseRoute, reportFragment, runFragment, type Route,
+} from "./routes";
 import type {
   CellDetail, CellSummary, ComparisonView, CostView, DiffView, Issue, PairView, ReportDetail,
   RecomputeResult, RunDetail, StoreSummary, VerdictSummary, Json,
@@ -125,13 +127,14 @@ function renderGrid(root: HTMLElement, run: RunDetail): void {
   }
   head.append(headerRow); table.append(head);
   const body = element("tbody");
+  const pair = defaultPair(run.arms.map((arm) => arm.id));
   for (const subject of run.subjects) {
     const row = element("tr");
     const subjectHead = element("th");
-    if (run.arms.length >= 2) {
+    if (pair !== null) {
       subjectHead.append(localLink(
         subject.label,
-        pairFragment(run.summary.run_key, subject.id, run.arms[0]!.id, run.arms[1]!.id),
+        pairFragment(run.summary.run_key, subject.id, pair.reference, pair.candidate),
       ));
     } else appendText(subjectHead, subject.label);
     row.append(subjectHead);

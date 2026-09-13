@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -238,6 +240,29 @@ def test_missing_closure_object_names_ref_and_leaves_no_output(
     assert not destination.exists()
 
 
+def test_binary_extension_leaf_is_embedded(fixture: ReviewFixture, tmp_path: Path) -> None:
+    store_path = tmp_path / "binary-store"
+    shutil.copytree(fixture.bundle.root, store_path)
+    store = ObjectStore(store_path)
+    binary = b"\x00\xff\x80opaque"
+    binary_ref = str(store.publish_bytes(binary))
+    coordinate, outcome_ref = next(iter(fixture.result.manifest.execution_records.items()))
+    outcome = json.loads(store.read_bytes(outcome_ref))
+    output = json.loads(store.read_bytes(outcome["output_ref"]))
+    output["assay_object_refs"] = [binary_ref]
+    outcome["output_ref"] = str(store.publish_json(output))
+    rewritten_outcome = str(store.publish_json(outcome))
+    manifest = json.loads(store.read_bytes(fixture.manifest_ref))
+    manifest["execution_records"][coordinate] = rewritten_outcome
+    rewritten_manifest = str(store.publish_json(manifest))
+
+    data = build_export_data(store, rewritten_manifest)
+
+    embedded = data.objects[binary_ref]
+    assert embedded.preview.kind == "binary"
+    assert embedded.download_base64 == base64.b64encode(binary).decode("ascii")
+
+
 def test_existing_destination_is_refused(fixture: ReviewFixture, tmp_path: Path) -> None:
     destination = tmp_path / "existing.html"
     destination.write_bytes(b"keep me")
@@ -246,6 +271,24 @@ def test_existing_destination_is_refused(fixture: ReviewFixture, tmp_path: Path)
         export_review(fixture.bundle, fixture.manifest_ref, destination)
 
     assert destination.read_bytes() == b"keep me"
+
+
+def test_concurrent_destination_is_not_replaced(
+    fixture: ReviewFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "concurrent.html"
+
+    def competing_publish(source: str, target: str | Path) -> None:
+        del source
+        Path(target).write_bytes(b"concurrent winner")
+        raise FileExistsError
+
+    monkeypatch.setattr(os, "link", competing_publish)
+
+    with pytest.raises(ExportError, match="destination_exists"):
+        export_review(fixture.bundle, fixture.manifest_ref, destination)
+
+    assert destination.read_bytes() == b"concurrent winner"
 
 
 def test_export_import_and_full_operation_do_not_require_fastapi(

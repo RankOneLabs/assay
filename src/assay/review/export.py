@@ -362,9 +362,11 @@ def export_review(store: ObjectStore, root_ref: str, destination: str | Path) ->
             stream.write(document)
             stream.flush()
             os.fsync(stream.fileno())
-        if target.exists():
-            raise ExportError("destination_exists", "destination already exists")
-        os.replace(temporary, target)
+        try:
+            os.link(temporary, target)
+        except FileExistsError:
+            raise ExportError("destination_exists", "destination already exists") from None
+        os.unlink(temporary)
         temporary = None
     finally:
         if temporary is not None:

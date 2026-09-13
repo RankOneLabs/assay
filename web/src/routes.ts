@@ -47,6 +47,14 @@ export function parseRoute(hash: string): Route {
 }
 
 const encoded = (value: string) => encodeURIComponent(value);
+export function defaultPair(arms: readonly string[]): { reference: string; candidate: string } | null {
+  if (arms.length < 2) return null;
+  const reference = arms.find((arm) => arm === "reference" || arm === "clean") ?? arms[0]!;
+  const candidate = arms.find(
+    (arm) => arm !== reference && (arm === "candidate" || arm === "inconsistent"),
+  ) ?? arms.find((arm) => arm !== reference)!;
+  return { reference, candidate };
+}
 export const runFragment = (runKey: string) => `#/runs/${encoded(runKey)}`;
 export const cellFragment = (runKey: string, cellId: string) => `${runFragment(runKey)}/cells/${encoded(cellId)}`;
 export const pairFragment = (runKey: string, subjectId: string, reference: string, candidate: string) =>
