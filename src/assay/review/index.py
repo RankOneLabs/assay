@@ -746,7 +746,9 @@ def _read_cache(root: Path, key: dict[str, int]) -> list[IndexedObject | ReadIss
         return None
 
 
-def _write_cache(root: Path, key: dict[str, int], items: list[IndexedObject | ReadIssue]) -> None:
+def _write_cache(
+    root: Path, key: dict[str, int], items: list[IndexedObject | ReadIssue]
+) -> ReadIssue | None:
     payload = {
         "version": CACHE_VERSION,
         "key": key,
@@ -764,11 +766,17 @@ def _write_cache(root: Path, key: dict[str, int], items: list[IndexedObject | Re
         temporary = None
     except OSError:
         # Read-only stores remain fully browseable; caching is optional.
-        pass
+        return ReadIssue(
+            "cache_write",
+            "review index cache could not be written",
+            None,
+            None,
+        )
     finally:
         if temporary is not None:
             with suppress(OSError):
                 os.unlink(temporary)
+    return None
 
 
 def _scan(
@@ -967,6 +975,7 @@ def build_index(
     key, key_issues = _cache_key(store.objects)
     cached = None if refresh or key is None else _read_cache(store.root, key)
     incomplete = False
+    cache_issue: ReadIssue | None = None
     if cached is None:
         limits = (None, None) if refresh else (max_objects, max_bytes)
         items, incomplete, scanned_key = _scan(
@@ -975,11 +984,13 @@ def build_index(
             max_bytes=limits[1],
         )
         if scanned_key is not None and not incomplete:
-            _write_cache(store.root, scanned_key, items)
+            cache_issue = _write_cache(store.root, scanned_key, items)
     else:
         items = cached
     objects = tuple(item for item in items if not isinstance(item, ReadIssue))
     issues = [*key_issues, *(item for item in items if isinstance(item, ReadIssue))]
+    if cache_issue is not None:
+        issues.append(cache_issue)
     by_ref = {item.ref: item for item in objects}
     reachable, closure_issues = _reachable_roots(objects)
     issues.extend(closure_issues)

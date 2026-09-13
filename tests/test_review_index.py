@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -182,6 +183,20 @@ def test_empty_and_budget_limited_stores_return_results(tmp_path: Path) -> None:
     complete = build_index(store, refresh=True, max_objects=0, max_bytes=0)
     assert not complete.scan_incomplete
     assert len(complete.objects) == 1
+
+
+def test_non_writable_cache_is_diagnostic_but_does_not_hide_runs(
+    review_fixture: ReviewFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def deny_replace(source: object, destination: object) -> None:
+        del source, destination
+        raise PermissionError("read-only root")
+
+    monkeypatch.setattr(os, "replace", deny_replace)
+    index = build_index(review_fixture.store, refresh=True)
+
+    assert any(run.manifest_ref == review_fixture.manifest_ref for run in index.runs)
+    assert any(issue.code == "cache_write" for issue in index.issues)
 
 
 def test_manifest_reachable_model_output_cannot_create_loose_run(
