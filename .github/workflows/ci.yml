@@ -15,6 +15,13 @@ jobs:
           version: "0.10.2"
           python-version: '3.13'
       - run: uv sync --locked --extra review
+      - name: Prepare dependency cache for offline wheel acceptance
+        run: |
+          uv build --wheel
+          packaging_env="$(mktemp -d "$RUNNER_TEMP/assay-packaging.XXXXXX")"
+          uv venv --python 3.13 "$packaging_env/venv"
+          wheel_path="$(realpath dist/*.whl)"
+          uv pip install --python "$packaging_env/venv/bin/python" "$wheel_path[review]"
       - run: uv run ruff check src tests
       - run: uv run mypy src
       - run: uv run python -m assay.schema_export --check
