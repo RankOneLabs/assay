@@ -1214,7 +1214,10 @@ def _comparison(value: dict[str, Any], config: ReportConfig | None) -> Compariso
 
 def _persisted_cost(value: Any, issues: tuple[ReadIssue, ...]) -> CostView:
     if not isinstance(value, dict):
-        return _empty_cost(*issues)
+        return _empty_cost(
+            *issues,
+            _issue(None, "invalid_accounting", "persisted report costs are not projectable"),
+        )
     counts = value.get("coverage_counts", {})
     amounts = value.get("amounts", {})
     by_stage_arm = value.get("by_stage_arm", {})

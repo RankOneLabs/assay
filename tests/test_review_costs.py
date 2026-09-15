@@ -45,6 +45,10 @@ def test_report_costs_are_projected_without_recalculation(fixture: ReviewFixture
 @pytest.mark.parametrize(
     "costs",
     [
+        None,
+        [],
+        "unavailable",
+        42,
         {"coverage_counts": [], "amounts": {}},
         {"coverage_counts": {}, "amounts": []},
         {"coverage_counts": {"measured": "bad"}, "amounts": {}},
