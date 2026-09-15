@@ -17,11 +17,36 @@ pinned to immutable upstream commits over public HTTPS; sibling checkouts and
 provider credentials are not required.
 
 ```sh
-uv sync --locked
+uv sync --locked --extra review
 uv run ruff check src tests
 uv run mypy src
 uv run pytest -q
 uv build
+```
+
+## Run the review UI
+
+The review UI reads runs and reports from an Assay object store. Install the
+optional server dependencies and start it with the path to your store:
+
+```sh
+uv sync --locked --extra review
+uv run assay review serve /path/to/store
+```
+
+Then open <http://127.0.0.1:7557>. Replace `/path/to/store` with the directory
+containing the store's `objects/` directory (for example, `.assay` when that is
+where the experiment wrote its data). Stop the server with Ctrl-C.
+
+The browser assets are committed in `src/assay/review/static`, so Bun is not
+needed just to run the UI. When changing files under `web/src`, install Bun
+1.3.10 and rebuild the packaged assets before refreshing the server:
+
+```sh
+cd web
+bun install --frozen-lockfile
+bun run typecheck
+bun run build
 ```
 
 ## Library workflow

@@ -35,7 +35,9 @@ async def test_store_refresh_uses_exporter_canonical_bytes(fixture: ReviewFixtur
         ReviewReader(fixture.store, build_index(fixture.store, refresh=True)).store_summary()
     )
     async with client_for(fixture.store) as client:
-        response = await client.get("/api/store?refresh=true")
+        ordinary = await client.get("/api/store?refresh=true")
+        response = await client.post("/api/store/refresh")
+    assert ordinary.status_code == 200
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/json"
     assert response.content == expected
@@ -166,10 +168,17 @@ async def test_summary_routes_translate_newly_corrupt_root(
     ) as client:
         store_response = await client.get("/api/store")
         reports_response = await client.get("/api/reports")
-    for response in (store_response, reports_response):
+        run_ambiguities = await client.get(
+            f"/api/runs/{fixture.manifest_ref}/ambiguous"
+        )
+        ambiguities = await client.get("/api/ambiguities")
+    for response in (store_response, reports_response, run_ambiguities, ambiguities):
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "corrupt_root"
-        assert response.json()["error"]["ref"] is None
+    assert store_response.json()["error"]["ref"] is None
+    assert reports_response.json()["error"]["ref"] is None
+    assert run_ambiguities.json()["error"]["ref"] == fixture.manifest_ref
+    assert ambiguities.json()["error"]["ref"] is None
 
 
 async def test_object_passthrough_is_bounded_and_never_renderable(tmp_path: Path) -> None:
@@ -249,12 +258,16 @@ async def test_host_and_origin_guards(fixture: ReviewFixture) -> None:
         same_origin = await client.post(
             f"/api/verify/{fixture.manifest_ref}", headers={"origin": "http://localhost"}
         )
+        cross_origin_refresh = await client.post(
+            "/api/store/refresh", headers={"origin": "https://evil.example"}
+        )
     assert foreign.status_code == 400
     assert foreign.json()["error"]["code"] == "invalid_host"
     assert cross_origin.status_code == 403
     assert cross_origin.json()["error"]["code"] == "cross_origin"
     assert wrong_port.status_code == 403
     assert same_origin.status_code == 200
+    assert cross_origin_refresh.status_code == 403
     with pytest.raises(ValueError, match="requires --allow-remote"):
         validate_bind_host("192.0.2.10")
     validate_bind_host("192.0.2.10", allow_remote=True)
@@ -284,7 +297,7 @@ def test_main_warns_for_remote_host(
 
     monkeypatch.setattr("uvicorn.run", run)
     assert server.main([str(tmp_path / "store"), "--host", "review.example", "--allow-remote"]) == 0
-    assert [(host, port) for _, host, port in calls] == [("review.example", 8000)]
+    assert [(host, port) for _, host, port in calls] == [("review.example", 7557)]
     warning = capsys.readouterr().err
     assert "exposed remotely without authentication" in warning
     assert "requests must use 'review.example' in the Host header" in warning

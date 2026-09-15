@@ -37,10 +37,14 @@ export class InlineDataSource implements DataSource {
   }
 
   async run(runKey: string): Promise<RunDetail> {
-    return this.view([`#/runs/${encoded(runKey)}`, `/runs/${encoded(runKey)}`, `run:${runKey}`, runKey]);
+    return this.view([
+      `/api/runs/${encoded(runKey)}`,
+      `#/runs/${encoded(runKey)}`, `/runs/${encoded(runKey)}`, `run:${runKey}`, runKey,
+    ]);
   }
   async cell(runKey: string, cellId: string): Promise<CellDetail> {
     return this.view([
+      `/api/runs/${encoded(runKey)}/cells/${encoded(cellId)}`,
       `#/runs/${encoded(runKey)}/cells/${encoded(cellId)}`,
       `/runs/${encoded(runKey)}/cells/${encoded(cellId)}`,
       `cell:${runKey}:${cellId}`,
@@ -55,10 +59,14 @@ export class InlineDataSource implements DataSource {
     ]);
   }
   async report(reportRef: string): Promise<ReportDetail> {
-    return this.view([`#/reports/${encoded(reportRef)}`, `/reports/${encoded(reportRef)}`, `report:${reportRef}`, reportRef]);
+    return this.view([
+      `/api/reports/${encoded(reportRef)}`,
+      `#/reports/${encoded(reportRef)}`, `/reports/${encoded(reportRef)}`, `report:${reportRef}`, reportRef,
+    ]);
   }
   async ambiguities(): Promise<Ambiguity[]> {
-    const value = this.data.views["#/ambiguities"] ?? this.data.views["/ambiguities"] ?? this.data.views.ambiguities;
+    const value = this.data.views["/api/ambiguities"] ?? this.data.views["#/ambiguities"]
+      ?? this.data.views["/ambiguities"] ?? this.data.views.ambiguities;
     if (value === undefined) throw new DataUnavailable("The ambiguity queue was not included in the offline export.");
     if (!Array.isArray(value)) throw new Error("Malformed inline ambiguity queue");
     return value as unknown as Ambiguity[];
@@ -72,12 +80,26 @@ export class HttpDataSource implements DataSource {
   readonly mode = "http" as const;
   constructor(private readonly base = "") {}
 
+  private async responseError(response: Response): Promise<Error> {
+    let payload: unknown;
+    try { payload = await response.json(); } catch { payload = null; }
+    const envelope = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>).error : null;
+    const error = envelope && typeof envelope === "object" && !Array.isArray(envelope)
+      ? envelope as Record<string, unknown> : null;
+    const message = typeof error?.message === "string"
+      ? error.message : `Request failed (${response.status} ${response.statusText})`;
+    if (response.status === 405 || response.status === 501
+      || (response.status === 404 && message === "API route was not found")) {
+      return new DataUnavailable(message);
+    }
+    const ref = typeof error?.ref === "string" ? ` (${error.ref})` : "";
+    return new Error(`${message}${ref}`);
+  }
+
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(this.base + path, { ...init, headers: { Accept: "application/json", ...init?.headers } });
-    if (response.status === 404 || response.status === 405 || response.status === 501) {
-      throw new DataUnavailable(`The server does not provide this view (${response.status}).`);
-    }
-    if (!response.ok) throw new Error(`Request failed (${response.status} ${response.statusText})`);
+    if (!response.ok) throw await this.responseError(response);
     return objectValue(await response.json(), `response from ${path}`) as T;
   }
 
@@ -94,8 +116,7 @@ export class HttpDataSource implements DataSource {
   report(reportRef: string): Promise<ReportDetail> { return this.request(`/api/reports/${encoded(reportRef)}`); }
   async ambiguities(): Promise<Ambiguity[]> {
     const response = await fetch(this.base + "/api/ambiguities", { headers: { Accept: "application/json" } });
-    if (response.status === 404 || response.status === 405 || response.status === 501) throw new DataUnavailable("The server does not provide the ambiguity queue.");
-    if (!response.ok) throw new Error(`Request failed (${response.status} ${response.statusText})`);
+    if (!response.ok) throw await this.responseError(response);
     const value: unknown = await response.json();
     if (!Array.isArray(value)) throw new Error("Malformed ambiguity response");
     return value as Ambiguity[];

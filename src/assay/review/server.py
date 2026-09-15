@@ -211,9 +211,15 @@ def create_app(
 
     # Keep this first: clients use it to discover every other view.
     @app.get("/api/store")
-    async def get_store(refresh: bool = False) -> Response:
-        if refresh:
-            app.state.index = build_index(object_store, refresh=True)
+    async def get_store() -> Response:
+        try:
+            return json_response(ReviewReader(object_store, app.state.index).store_summary())
+        except ReadError as error:
+            raise HTTPException(422, detail=("corrupt_root", str(error), None)) from None
+
+    @app.post("/api/store/refresh")
+    async def post_store_refresh() -> Response:
+        app.state.index = build_index(object_store, refresh=True)
         try:
             return json_response(ReviewReader(object_store, app.state.index).store_summary())
         except ReadError as error:
@@ -285,11 +291,17 @@ def create_app(
         _validate_run_key(run_key)
         if not _known_run(app.state.index, run_key):
             raise HTTPException(404, detail=("not_found", "run was not found", run_key))
-        return json_response(ReviewReader(object_store, app.state.index).ambiguities(run_key))
+        try:
+            return json_response(ReviewReader(object_store, app.state.index).ambiguities(run_key))
+        except ReadError as error:
+            raise HTTPException(422, detail=("corrupt_root", str(error), run_key)) from None
 
     @app.get("/api/ambiguities")
     async def get_ambiguities() -> Response:
-        return json_response(ReviewReader(object_store, app.state.index).ambiguities())
+        try:
+            return json_response(ReviewReader(object_store, app.state.index).ambiguities())
+        except ReadError as error:
+            raise HTTPException(422, detail=("corrupt_root", str(error), None)) from None
 
     @app.get("/api/reports")
     async def get_reports() -> Response:
@@ -412,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
         default="127.0.0.1",
         help="reachable bind hostname or IP (wildcard addresses are rejected)",
     )
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=7557)
     parser.add_argument("--allow-remote", action="store_true")
     args = parser.parse_args(argv)
     try:

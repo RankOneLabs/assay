@@ -12,6 +12,7 @@ import difflib
 import json
 import re
 from dataclasses import replace
+from math import isfinite
 from typing import Any, Literal, cast
 
 from pydantic import ValidationError
@@ -1205,18 +1206,40 @@ def _comparison(value: dict[str, Any], config: ReportConfig | None) -> Compariso
         value.get("reference", value.get("reference_arm", config.reference_arm if config else ""))
     )
     candidate = str(value.get("candidate", value.get("candidate_arm", "")))
-    return ComparisonView(cast(Any, kind), reference, candidate, cast(JSONObject, dict(value)))
+    projected = dict(value)
+    if kind == "ordinal" and config is not None:
+        projected.setdefault("categories", list(config.categories))
+    return ComparisonView(cast(Any, kind), reference, candidate, cast(JSONObject, projected))
 
 
 def _persisted_cost(value: Any, issues: tuple[ReadIssue, ...]) -> CostView:
     if not isinstance(value, dict):
         return _empty_cost(*issues)
+    counts = value.get("coverage_counts", {})
+    amounts = value.get("amounts", {})
+    by_stage_arm = value.get("by_stage_arm", {})
+    if not isinstance(counts, dict) or not isinstance(amounts, dict):
+        return _empty_cost(
+            *issues,
+            _issue(None, "invalid_accounting", "persisted report costs are not projectable"),
+        )
+    try:
+        projected_counts = {str(key): int(item) for key, item in counts.items()}
+        projected_amounts = {str(key): float(item) for key, item in amounts.items()}
+        attempts = int(value.get("attempts", 0))
+        if not all(isfinite(item) for item in projected_amounts.values()):
+            raise ValueError
+    except (OverflowError, TypeError, ValueError):
+        return _empty_cost(
+            *issues,
+            _issue(None, "invalid_accounting", "persisted report costs are not projectable"),
+        )
     return CostView(
         cast(Any, value.get("coverage", "unavailable")),
-        {str(k): int(v) for k, v in value.get("coverage_counts", {}).items()},
-        {str(k): float(v) for k, v in value.get("amounts", {}).items()},
-        cast(JSONObject, value.get("by_stage_arm", {})),
-        int(value.get("attempts", 0)),
+        projected_counts,
+        projected_amounts,
+        cast(JSONObject, by_stage_arm if isinstance(by_stage_arm, dict) else {}),
+        attempts,
         None,
         None,
         bool(issues) or value.get("coverage") != "measured",

@@ -10,7 +10,7 @@ from review_fixture import ReviewFixture, materialize_review_fixture
 
 from assay.review.index import build_index
 from assay.review.model import JSONObject
-from assay.review.read import ReviewReader
+from assay.review.read import ReviewReader, _persisted_cost
 from assay.store import ObjectStore
 
 
@@ -40,6 +40,24 @@ def test_report_costs_are_projected_without_recalculation(fixture: ReviewFixture
         persisted = cast(JSONObject, detail.report["costs"])
         assert detail.costs.amounts == persisted["amounts"]
         assert detail.costs.by_stage_arm == persisted["by_stage_arm"]
+
+
+@pytest.mark.parametrize(
+    "costs",
+    [
+        {"coverage_counts": [], "amounts": {}},
+        {"coverage_counts": {}, "amounts": []},
+        {"coverage_counts": {"measured": "bad"}, "amounts": {}},
+        {"coverage_counts": {}, "amounts": {"USD": "nan"}},
+        {"coverage_counts": {}, "amounts": {}, "attempts": "bad"},
+    ],
+)
+def test_malformed_persisted_costs_become_issues(costs: object) -> None:
+    projected = _persisted_cost(costs, ())
+
+    assert projected.coverage == "unavailable"
+    assert projected.amounts == {}
+    assert [issue.code for issue in projected.issues] == ["invalid_accounting"]
 
 
 @pytest.mark.parametrize(

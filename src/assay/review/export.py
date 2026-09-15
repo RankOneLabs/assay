@@ -282,15 +282,14 @@ def build_export_data(store: ObjectStore, root_ref: str) -> ExportData:
     index = _root_index(session, root_ref, raw_by_ref)
     reader = review_read.ReviewReader(session, index)
     store_summary, views = _assemble_views(reader, root_ref)
-    budget = compute_export_budget(raw_by_ref, views)
-    if budget > MAX_EXPORT_BYTES:
+    preliminary_budget = compute_export_budget(raw_by_ref, views)
+    if preliminary_budget > MAX_EXPORT_BYTES:
         raise ExportError(
             "export_budget_exceeded",
-            f"static export requires {budget} bytes, exceeding the 64 MiB cap; "
-            "use the local Assay server",
+            f"static export requires at least {preliminary_budget} bytes, exceeding the "
+            "64 MiB cap; use the local Assay server",
             root_ref,
         )
-
     objects: dict[str, EmbeddedObject] = {}
     for ref, raw in sorted(raw_by_ref.items()):
         downloadable = len(raw) <= MAX_DOWNLOAD_BYTES
@@ -353,6 +352,13 @@ def export_review(store: ObjectStore, root_ref: str, destination: str | Path) ->
     if target.exists():
         raise ExportError("destination_exists", "destination already exists")
     document = _document(build_export_data(store, root_ref))
+    if len(document) > MAX_EXPORT_BYTES:
+        raise ExportError(
+            "export_budget_exceeded",
+            f"static export requires {len(document)} bytes, exceeding the 64 MiB cap; "
+            "use the local Assay server",
+            root_ref,
+        )
     temporary: str | None = None
     try:
         descriptor, temporary = tempfile.mkstemp(

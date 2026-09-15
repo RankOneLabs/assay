@@ -87,7 +87,7 @@ def main() -> int:
     review_commands = review.add_subparsers(dest="review_command", required=True)
     review_serve = review_commands.add_parser("serve")
     review_serve.add_argument("store")
-    review_serve.add_argument("--port", type=int, default=8765)
+    review_serve.add_argument("--port", type=int, default=7557)
     review_serve.add_argument("--host", default="127.0.0.1")
     review_serve.add_argument("--allow-remote", action="store_true")
     review_serve.set_defaults(handler=_handle_review_serve, parser=review_serve)

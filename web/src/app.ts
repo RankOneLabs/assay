@@ -72,6 +72,7 @@ function renderBrowser(root: HTMLElement, store: StoreSummary): void {
   clearAndTitle(root, "Evidence browser", "Runs and reports");
   if (!store.runs.length && !store.reports.length) {
     statePage(root, "empty", "No runs or reports were found.");
+    const issue = issuesBlock(store.issues); if (issue) root.append(issue);
     return;
   }
   const runPanel = section("Runs");
@@ -109,6 +110,7 @@ function renderGrid(root: HTMLElement, run: RunDetail): void {
   clearAndTitle(root, run.summary.status, run.summary.run_id);
   if (!run.subjects.length || !run.arms.length) {
     root.append(element("section", { className: "state panel state-empty", text: "This run has no cells to display." }));
+    const issue = issuesBlock(run.summary.issues); if (issue) root.append(issue);
     return;
   }
   const meta = element("dl", { className: "metadata" });
@@ -128,6 +130,10 @@ function renderGrid(root: HTMLElement, run: RunDetail): void {
   head.append(headerRow); table.append(head);
   const body = element("tbody");
   const pair = defaultPair(run.arms.map((arm) => arm.id));
+  const cellKey = (subject: string, arm: string, repeat: number): string => JSON.stringify([subject, arm, repeat]);
+  const cells = new Map(run.cells.map((cell) => [
+    cellKey(cell.subject_id, cell.arm_id, cell.worker_repeat), cell,
+  ]));
   for (const subject of run.subjects) {
     const row = element("tr");
     const subjectHead = element("th");
@@ -139,7 +145,7 @@ function renderGrid(root: HTMLElement, run: RunDetail): void {
     } else appendText(subjectHead, subject.label);
     row.append(subjectHead);
     for (const arm of run.arms) for (let repeat = 0; repeat < repeats; repeat += 1) {
-      const cell = run.cells.find((candidate) => candidate.subject_id === subject.id && candidate.arm_id === arm.id && candidate.worker_repeat === repeat);
+      const cell = cells.get(cellKey(subject.id, arm.id, repeat));
       const td = element("td");
       if (!cell) {
         const exclusion = run.summary.exclusions.find((value) => value.subject_id === subject.id && value.arm_id === arm.id);
@@ -187,7 +193,10 @@ function renderCell(root: HTMLElement, cell: CellDetail, runKey: string): void {
     input.append(element("h3", { text: path }), element("pre", { className: "code", text: content }));
   }
   if (!cell.input_preview.instruction && !cell.input_preview.files) input.append(element("p", { className: "unavailable-inline", text: "Input unavailable." }));
-  root.append(input, previewBlock("Worker output", cell.output_ref, cell.output_text, cell.summary.error_message));
+  const workerError = cell.summary.error_type
+    ? `${cell.summary.error_type}: ${cell.summary.error_message ?? "No detail"}`
+    : cell.summary.error_message;
+  root.append(input, previewBlock("Worker output", cell.output_ref, cell.output_text, workerError));
   const evaluations = section("Evaluations");
   if (!cell.evaluations.length) evaluations.append(element("p", { className: "empty-inline", text: "No evaluations recorded." }));
   for (const evaluation of cell.evaluations) {
@@ -200,6 +209,7 @@ function renderCell(root: HTMLElement, cell: CellDetail, runKey: string): void {
     evaluations.append(article);
   }
   root.append(evaluations);
+  const issue = issuesBlock(cell.summary.issues); if (issue) root.append(issue);
 }
 
 function diffPanel(title: string, diff: DiffView): HTMLElement {
@@ -224,7 +234,9 @@ function sideAvailability(cells: CellDetail[], label: string, emptyReason: strin
   else for (const cell of cells) {
     const state = gridState(cell.summary);
     block.append(element("p", { className: `badge status-${state}`, text: `Repeat ${cell.summary.worker_repeat + 1}: ${STATE_LABEL[state]}` }));
-    if (cell.summary.error_message) block.append(element("p", { className: "diagnostic", text: cell.summary.error_message }));
+    const reason = cell.summary.exclusion?.reason
+      ?? (cell.summary.error_type ? `${cell.summary.error_type}: ${cell.summary.error_message ?? "No detail"}` : cell.summary.error_message);
+    if (reason) block.append(element("p", { className: "diagnostic", text: reason }));
   }
   return block;
 }
@@ -258,22 +270,53 @@ function renderCost(cost: CostView): HTMLElement {
 }
 
 function reportFloor(report: ReportDetail): unknown {
-  return report.report.inference_floor ?? report.report.minimum_inference_n ?? report.report.inference_status ?? "Persisted report does not declare a floor";
+  const profile = report.report.profile;
+  const nested = profile && typeof profile === "object" && !Array.isArray(profile)
+    ? profile.min_subjects : undefined;
+  return nested ?? report.report.inference_floor ?? report.report.minimum_inference_n
+    ?? report.report.inference_status ?? "Persisted report does not declare a floor";
+}
+
+function renderDistribution(label: string, categories: string[], values: Record<string, Json>): HTMLElement {
+  const block = element("section", { className: "distribution" });
+  block.append(element("h4", { text: label }));
+  const list = element("ol", { className: "ordinal" });
+  for (const [category, count] of orderedCategories(categories, values)) {
+    list.append(element("li", { text: `${category}: ${count ?? 0}` }));
+  }
+  block.append(list);
+  return block;
 }
 
 function renderComparison(comparison: ComparisonView): HTMLElement {
   const article = element("article", { className: "comparison" });
   article.append(element("h3", { text: `${comparison.reference} → ${comparison.candidate}` }), element("p", { className: "badge", text: comparison.kind }));
   const categories = comparison.values.categories;
+  const declared = Array.isArray(categories)
+    ? categories.filter((value): value is string => typeof value === "string") : [];
+  const reference = comparison.values.reference_distribution;
+  const candidate = comparison.values.candidate_distribution;
   const counts = comparison.values.counts ?? comparison.values.distribution;
-  if (Array.isArray(categories) && counts && typeof counts === "object" && !Array.isArray(counts)) {
-    const list = element("ol", { className: "ordinal" });
-    for (const [category, count] of orderedCategories(categories.filter((v): v is string => typeof v === "string"), counts as Record<string, Json>)) {
-      list.append(element("li", { text: `${category}: ${count ?? 0}` }));
-    }
-    article.append(list);
+  if (declared.length && reference && typeof reference === "object" && !Array.isArray(reference)
+    && candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+    article.append(
+      renderDistribution("Reference", declared, reference as Record<string, Json>),
+      renderDistribution("Candidate", declared, candidate as Record<string, Json>),
+    );
+  } else if (declared.length && counts && typeof counts === "object" && !Array.isArray(counts)) {
+    article.append(renderDistribution("Distribution", declared, counts as Record<string, Json>));
   } else article.append(renderJson(comparison.values));
   return article;
+}
+
+function reportInferenceStatus(report: ReportDetail): string {
+  if (!report.comparisons.length) return "Inference status unavailable";
+  const decisions = report.comparisons.map((comparison) => comparison.values.decision);
+  if (decisions.every((decision) => decision === "descriptive_only")) return "Descriptive only";
+  if (decisions.some((decision) => typeof decision === "string" && decision !== "descriptive_only")) {
+    return "Inferential results available";
+  }
+  return "Inference status unavailable";
 }
 
 function showRecompute(panel: HTMLElement, result: RecomputeResult): void {
@@ -287,7 +330,7 @@ function renderReport(root: HTMLElement, report: ReportDetail, source: DataSourc
   clearAndTitle(root, report.summary.metric, report.summary.report_ref);
   const layout = element("div", { className: "report-layout" });
   const results = section("Comparison results");
-  results.append(element("p", { className: "inference-floor", text: `Descriptive only · persisted inference floor: ${String(reportFloor(report))}` }));
+  results.append(element("p", { className: "inference-floor", text: `${reportInferenceStatus(report)} · persisted inference floor: ${String(reportFloor(report))}` }));
   if (!report.comparisons.length) results.append(element("p", { className: "empty-inline", text: "No comparisons are available." }));
   else report.comparisons.forEach((comparison) => results.append(renderComparison(comparison)));
   const context = element("div");

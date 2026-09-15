@@ -183,7 +183,7 @@ def test_corrupt_closure_fails_with_code_and_ref_without_output(
     assert not destination.exists()
 
 
-def test_budget_overflow_is_pre_serialization_and_leaves_no_output(
+def test_budget_overflow_leaves_no_output(
     fixture: ReviewFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     destination = tmp_path / "oversize.html"
@@ -194,6 +194,21 @@ def test_budget_overflow_is_pre_serialization_and_leaves_no_output(
 
     assert caught.value.code == "export_budget_exceeded"
     assert caught.value.ref == fixture.manifest_ref
+    assert not destination.exists()
+
+
+def test_budget_caps_the_complete_serialized_document(
+    fixture: ReviewFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = build_export_data(fixture.bundle, fixture.manifest_ref)
+    document_size = len(review_export._document(data))
+    destination = tmp_path / "complete-document-overflow.html"
+    monkeypatch.setattr(review_export, "compute_export_budget", lambda *_args: 0)
+    monkeypatch.setattr(review_export, "MAX_EXPORT_BYTES", document_size - 1)
+
+    with pytest.raises(ExportError, match="export_budget_exceeded"):
+        export_review(fixture.bundle, fixture.manifest_ref, destination)
+
     assert not destination.exists()
 
 

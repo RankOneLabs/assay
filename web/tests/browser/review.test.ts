@@ -24,7 +24,7 @@ const issue = { code: "partial", message: "one value is unavailable", ref: null,
 const cost = { coverage: "mixed", coverage_counts: { measured: 3, unavailable: 1 }, amounts: { USD: 1.25 }, by_stage_arm: {}, attempts: 4, expected_attempts: 5, unaccounted_attempts: 1, partial: true, issues: [issue] };
 const verdict = (value: string | null, failures: string[] = []) => ({ evaluator_id: "correctness", values: [value], repeat_statuses: failures.length ? ["failed"] : ["succeeded"], failures, agreed: failures.length ? null : true, categories: ["incorrect", "correct"] });
 const cells = [
-  { cell_id: "ok", subject_id: "success", arm_id: "candidate", worker_repeat: 0, status: "succeeded", error_type: null, error_message: null, record_refs: [], exclusion: null, verdicts: [verdict("correct")], issues: [] },
+  { cell_id: "ok", subject_id: "success", arm_id: "candidate", worker_repeat: 0, status: "succeeded", error_type: null, error_message: null, record_refs: [], exclusion: null, verdicts: [verdict("correct")], issues: [issue] },
   { cell_id: "neg", subject_id: "negative", arm_id: "candidate", worker_repeat: 0, status: "succeeded", error_type: null, error_message: null, record_refs: [], exclusion: null, verdicts: [verdict("incorrect")], issues: [] },
   { cell_id: "amb", subject_id: "ambiguous", arm_id: "candidate", worker_repeat: 0, status: "succeeded", error_type: null, error_message: null, record_refs: [], exclusion: null, verdicts: [verdict(null, ["AmbiguousStructure: unclear"])], issues: [] },
   { cell_id: "fail", subject_id: "failed", arm_id: "candidate", worker_repeat: 0, status: "failed", error_type: "WorkerFailure", error_message: hostile, record_refs: [], exclusion: null, verdicts: [], issues: [] },
@@ -36,7 +36,7 @@ const store = { root: "/fixture", runs: [runSummary], reports: [reportSummary], 
 const run = { summary: runSummary, subjects: cells.map((cell) => ({ id: cell.subject_id, label: cell.subject_id, digest: `sha256:${cell.subject_id}`, partition: "test" })), arms: [{ id: "candidate", worker_id: "worker", worker_version: "1", intervention_keys: [] }], evaluators: [{ id: "correctness", identity: {}, repeats: 1, categories: ["incorrect", "correct"] }], cells, missing_coordinates: ["worker:missing"], cost_estimate: null };
 const cellDetail = { summary: cells[0], input_ref: null, input_preview: { kind: "consistency", instruction: hostile, files: { "unsafe/<file>.py": hostile }, artifact: null }, output_ref: "sha256:out", output_text: hostile, output_preview: null, trace_ref: null, trace_preview: null, recorded_prompt: null, recorded_prompt_ref: null, evaluations: [{ run_key: runKey, cell_id: "ok", coordinate_id: "coord", evaluator_id: "correctness", evaluator_repeat: 0, status: "succeeded", record_refs: [], verdict: "correct", reason_codes: [], error_type: null, error_message: null, detail_refs: [], detail: { diagnostic: hostile }, issues: [] }], started_at: null, completed_at: null };
 const pair = { run_key: runKey, subject_id: "success", subject_label: "success", reference_arm: "reference", candidate_arm: "candidate", reference_cells: [], candidate_cells: [cellDetail], treatment_diff: { left_ref: null, right_ref: "sha256:input", left_text: null, right_text: hostile, unified: null, unavailable_reason: "Reference excluded by the persisted study." }, output_diffs: [{ left_ref: "sha256:left", right_ref: "sha256:right", left_text: "old", right_text: "new", unified: "-old\n+new", unavailable_reason: null }], issues: [] };
-const report = { summary: reportSummary, report: { inference_floor: 10 }, comparisons: [{ kind: "ordinal", reference: "reference", candidate: "candidate", values: { categories: ["incorrect", "correct"], counts: { correct: 4, incorrect: 1 } } }], missingness: { candidate: { missing: 1 } }, exclusions: [{ subject_id: "s0", arm_id: "candidate", classification: "invalid", reason: hostile, manifest_ref: null }], costs: cost, subject_labels: {} };
+const report = { summary: reportSummary, report: { profile: { min_subjects: 10 } }, comparisons: [{ kind: "ordinal", reference: "reference", candidate: "candidate", values: { decision: "improved", categories: ["incorrect", "correct"], reference_distribution: { correct: 3, incorrect: 2 }, candidate_distribution: { correct: 4, incorrect: 1 } } }], missingness: { candidate: { missing: 1 } }, exclusions: [{ subject_id: "s0", arm_id: "candidate", classification: "invalid", reason: hostile, manifest_ref: null }], costs: cost, subject_labels: {} };
 const ambiguity = [{ ...cellDetail.evaluations[0], cell_id: "amb", status: "failed", error_type: "AmbiguousStructure", error_message: hostile }];
 
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
@@ -125,6 +125,7 @@ test("committed bundle renders every view and safe keyboard links", async () => 
   expect(await page.locator("script").count()).toBe(1);
   await page.locator(".cell-grid .status-succeeded").focus(); await page.keyboard.press("Enter");
   await page.getByText(hostile, { exact: true }).first().waitFor({ state: "visible" });
+  await page.locator(".issues li").filter({ hasText: issue.message }).waitFor({ state: "visible" });
 
   await page.goto(`${origin}/#/runs/${encodeURIComponent(runKey)}/pairs/success?reference=reference&candidate=candidate`);
   await page.locator("h2").nth(1).waitFor({ state: "visible" });
@@ -133,7 +134,9 @@ test("committed bundle renders every view and safe keyboard links", async () => 
 
   await page.goto(`${origin}/#/reports/${encodeURIComponent("sha256:report")}`);
   await page.locator(".ordinal li").first().waitFor({ state: "visible" });
-  expect(await page.locator(".ordinal li").allTextContents()).toEqual(["incorrect: 1", "correct: 4"]);
+  expect(await page.locator(".ordinal").nth(0).locator("li").allTextContents()).toEqual(["incorrect: 2", "correct: 3"]);
+  expect(await page.locator(".ordinal").nth(1).locator("li").allTextContents()).toEqual(["incorrect: 1", "correct: 4"]);
+  expect(await textOf(".inference-floor")).toBe("Inferential results available · persisted inference floor: 10");
   await page.locator("button").evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
   await page.getByText("Recomputing…").waitFor({ state: "visible" });
   expect(await textOf(".recompute-result strong")).toBe("matched");
@@ -256,7 +259,11 @@ test("file export navigates offline and preserves trace and download payloads", 
       await inlinePage.goto(`${documentUrl.href}#${key.replace(/^\/api/, "")}`);
       await inlinePage.waitForFunction((id) => document.querySelector("h1")?.textContent === id, cell.summary.cell_id);
       const diagnostic = inlinePage.locator(".unavailable-inline").filter({ hasText: "review fixture failure:" });
-      expect(await diagnostic.textContent()).toBe(cell.summary.error_message);
+      expect(await diagnostic.textContent()).toBe(
+        cell.summary.error_type
+          ? `${cell.summary.error_type}: ${cell.summary.error_message ?? "No detail"}`
+          : cell.summary.error_message,
+      );
       for (const recorded of trace.diagnostics) {
         expect((await diagnostic.textContent())!.includes(recorded)).toBeTrue();
       }

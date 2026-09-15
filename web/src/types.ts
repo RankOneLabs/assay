@@ -55,6 +55,11 @@ export interface RunDetail {
   cost_estimate: { amount: number | null; currency: string | null; coverage: string } | null;
 }
 export interface ObjectPreview { ref: string; kind: "json" | "text" | "binary" | "unavailable"; text: string | null; size_bytes: number | null; truncated: boolean; issues: Issue[] }
+export interface EmbeddedObject {
+  preview: ObjectPreview;
+  download_base64: string | null;
+  download_unavailable_reason: string | null;
+}
 export interface InputView { kind: "consistency" | "generic" | "unavailable"; instruction: string | null; files: Record<string, string> | null; artifact: ObjectPreview | null }
 export interface EvaluationView {
   run_key: string; cell_id: string; coordinate_id: string; evaluator_id: string; evaluator_repeat: number;
@@ -81,7 +86,7 @@ export interface ReportDetail {
 export interface RecomputeResult { status: "matched" | "mismatched" | "unsupported" | "failed"; matched: boolean | null; stored_digest: string; recomputed_digest: string | null; reason: string | null }
 export interface ExportData {
   schema_version: "assay-review-export/0.1.0"; root_ref: string; store: StoreSummary;
-  views: Record<string, Json>; objects: Record<string, Json>; capabilities: Record<string, boolean>;
+  views: Record<string, Json>; objects: Record<string, EmbeddedObject>; capabilities: Record<string, boolean>;
 }
 
 export type Ambiguity = EvaluationView;

@@ -47,6 +47,10 @@ def test_all_persisted_metric_shapes_remain_available(fixture: ReviewFixture) ->
         "classification",
     }
     assert all(detail.comparisons for detail in details.values())
+    ordinal = details["unmapped_ordinal"]
+    assert ordinal.comparisons[0].values["categories"] == list(
+        fixture.studies.report_configs["unmapped_ordinal"].categories
+    )
 
 
 def test_descriptive_only_and_null_statistics_are_preserved(

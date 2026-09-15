@@ -128,7 +128,7 @@ def test_review_serve_enforces_remote_opt_in_and_uses_cli_default_port(
         ],
     )
     assert main() == 0
-    assert calls == [("192.0.2.10", 8765)]
+    assert calls == [("192.0.2.10", 7557)]
     assert "exposed remotely without authentication" in capsys.readouterr().err
 
 

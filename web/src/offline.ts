@@ -62,7 +62,18 @@ export class OfflineDataSource implements DataSource {
 }
 
 if (typeof document !== "undefined") {
-  const data = exportDataFromDocument(document);
-  if (data === null) throw new Error("Missing offline export data");
-  start(document, new OfflineDataSource(data));
+  try {
+    const data = exportDataFromDocument(document);
+    if (data === null) throw new Error("Missing offline export data");
+    start(document, new OfflineDataSource(data));
+  } catch (error) {
+    const root = document.querySelector("#app");
+    if (root) {
+      const panel = document.createElement("section");
+      panel.className = "state panel state-error";
+      panel.setAttribute("role", "alert");
+      panel.append(document.createTextNode(error instanceof Error ? error.message : String(error)));
+      root.replaceChildren(panel);
+    }
+  }
 }
