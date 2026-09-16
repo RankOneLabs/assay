@@ -1,15 +1,22 @@
-"""Bridge image entrypoint: the end-to-end one-cell driver.
+"""Bridge image entrypoint — NOT the driver a real trial runs through.
 
-Runs entirely against the environment frozen into the image at build time —
-it never installs, resolves, or touches a pricing map. This is the in-
-container half of a trial: it reads the sealed package mounted read-only at
-``/workspace`` (see ``assay.pier_packaging``), makes exactly one guarded
-model call through ``GuardedOpenRouterClient`` (mirroring the ``step_limit: 1``
-in ``config/mini.yaml``), and writes the submitted source to
-``/submission/output``. The container's lifecycle (start, resource limits,
-teardown) is driven from outside by a ``PierTrialClient`` — see
-``container.py`` for the concrete stand-in this project ships in place of
-a real Pier client (README.md, "Known gap").
+``run_one_cell`` below makes exactly one guarded model call through
+``GuardedOpenRouterClient`` and writes the submitted source to a file. It
+needs network access to do that, but ``container.py``'s ``DockerTrialClient``
+always starts this image's container with ``--network none`` (Pier's own
+``NetworkPolicyFieldsMixin`` has no egress-allowlist mode either — see
+README.md, "Pier revision") — so running this module as the container's
+entrypoint, against a real sandboxed container, can never reach OpenRouter.
+That contradiction is intentional and permanent, not a bug to fix here: the
+agent's sandbox must stay network-none, so the guarded call must be made
+from the host process instead. ``host_driver.GuardedCompletionTrialClient``
+is that host-side driver, and is what a real trial is actually run through
+today. This module stays for local/manual smoke testing of
+``GuardedOpenRouterClient`` against a real API key
+(``docker run --network public ...``, deliberately outside any trial), and
+as the eventual home for whatever sandboxed work a real mini-swe-agent loop
+adds inside the container once that lands (see ``pier_adapter.py``'s
+``known_issue``).
 """
 
 from __future__ import annotations

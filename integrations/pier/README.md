@@ -103,6 +103,30 @@ enforces the single-tool submission protocol, and fails closed (raises) on
 any response with an unrecognized top-level field, a different route, or a
 missing/invalid cost.
 
+## The guarded call runs on the host, never inside the sandbox
+
+Review-round discussion on PR #24 surfaced a real contradiction:
+`container.py`'s `DockerTrialClient` always starts a trial's container with
+`--network none` (required — Pier's own `NetworkPolicyFieldsMixin` has no
+egress-allowlist mode, only `no-network`/`public`, per "Pier revision"
+above), but the bridge image's own entrypoint (`__main__.py`) needs network
+access to reach OpenRouter. Running `__main__.py` as that container's
+entrypoint against a real sandboxed container can therefore never succeed.
+
+This is resolved by never running the guarded call inside the container at
+all: `host_driver.GuardedCompletionTrialClient` is the `PierTrialClient` a
+real trial is actually run through today. It calls `__main__.run_one_cell`
+directly from this host process — the same validated code path
+`__main__.py` uses, just invoked without Docker — so the agent's sandbox
+can stay permanently network-none with no egress hole ever punched in it.
+`DockerTrialClient` remains the tested, real-Docker lifecycle harness
+proving the sandbox's mount/uid/resource/teardown guarantees; the two
+`PierTrialClient` implementations cover different halves of the eventual
+design; `container.py`'s `Dockerfile`/`__main__.py` stay in place as the
+future home for whatever sandboxed work a real mini-swe-agent loop adds
+inside the container (see `pier_adapter.py`'s `known_issue`), not as
+today's trial driver.
+
 ## Sealed package boundary
 
 The bridge never reads a realization directory or repository root. It is
