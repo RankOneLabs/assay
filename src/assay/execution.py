@@ -619,6 +619,18 @@ async def execute_plan(
             # cancellation reaches us right away and _drain gets a genuine
             # chance to bound however long the children take to react to it.
             await asyncio.wait(tasks)
+            # asyncio.wait() never raises for a child that finishes cancelled
+            # or errored on its own -- e.g. a worker's internal timeout
+            # self-cancelling without any external task.cancel(). Surface
+            # that here so it still reaches the drain/interruption path
+            # below instead of letting execute_plan silently report success
+            # with the unfinished work dropped.
+            for task in tasks:
+                if task.cancelled():
+                    raise asyncio.CancelledError()
+                error = task.exception()
+                if error is not None:
+                    raise error
         except BaseException:
             record = await _drain(tasks)
             if record is not None and interruption is None:

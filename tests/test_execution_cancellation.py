@@ -111,6 +111,39 @@ async def test_cleanup_timeout_persists_a_typed_interruption_record(
     }
 
 
+async def test_self_cancelled_worker_propagates_instead_of_reporting_success(
+    tmp_path: Any,
+) -> None:
+    """A worker that raises CancelledError on its own -- not from an external
+
+    task.cancel() -- must still abort the run rather than being absorbed by
+    asyncio.wait(), which does not raise for a child that finishes cancelled.
+    """
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("ok",), concurrency=2)
+    arguments = fixture.arguments
+
+    class SelfCancellingWorker(FakeWorker):
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            raise asyncio.CancelledError("self-inflicted, not from outer task.cancel()")
+
+    arguments["workers"] = {arm.id: SelfCancellingWorker() for arm in fixture.snapshot.arms}
+    with pytest.raises(asyncio.CancelledError):
+        await execute_plan(**arguments)
+
+    manifests = []
+    for path in fixture.store.objects.iterdir():
+        try:
+            value = json.loads(path.read_bytes())
+        except (OSError, ValueError):
+            continue
+        if isinstance(value, dict) and value.get("schema_version") == "assay-run-manifest/0.1.0":
+            manifests.append(value)
+    assert len(manifests) == 1
+    manifest = manifests[0]
+    assert manifest["status"] == "incomplete"
+    assert manifest["missing_coordinates"]
+
+
 async def test_no_later_cell_starts_after_typed_admission_halt(tmp_path: Any) -> None:
     fixture = execution_fixture(
         ObjectStore(tmp_path), subject_ids=("ok", "fails"), worker_repeats=1, concurrency=1
