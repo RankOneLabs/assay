@@ -17,6 +17,7 @@ from assay.models import (
     EvaluationCoordinate,
     EvaluationFailure,
     ExecutionOutcome,
+    ExecutionPlan,
     RunManifest,
     StudySnapshot,
 )
@@ -168,6 +169,11 @@ async def execute_plan(
         )
         workers, evaluators = dict(workers), dict(evaluators)
         plan = authorize(plan_bytes, authorization)
+        if not isinstance(plan, ExecutionPlan):
+            raise ValueError(
+                "this execution runtime can only execute assay-execution-plan/0.1.0; "
+                "0.2.0 plans bind a generic runtime identity with no backend implemented yet"
+            )
         snapshot_bytes = canonical_json(snapshot.model_dump(mode="json"))
         if digest_bytes(snapshot_bytes) != plan.snapshot_ref:
             raise ValueError("provided snapshot does not match the authorized plan")

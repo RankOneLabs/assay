@@ -1,4 +1,10 @@
-"""Prepare, inspect, then explicitly authorize a source-only consistency pilot."""
+"""Prepare, inspect, then explicitly authorize a source-only consistency pilot.
+
+The Jig worker stack this module wires up requires the ``assay[legacy]``
+extra. Importing this module never requires Jig; only calling
+``prepare_pilot``/``run_pilot`` does, and a missing extra fails with an
+actionable error at that point rather than at import time.
+"""
 
 from __future__ import annotations
 
@@ -8,20 +14,33 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.metadata import distribution
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from assay._version import __version__
-from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings, render_input
 from assay.execution import RunFailed, WorkerFailure, execute_plan
 from assay.investigations.consistency import (
     CATEGORIES,
     StructuralEvaluator,
     materialize_consistency,
 )
-from assay.models import ReportConfig, StatisticalProfile, StudySnapshot
+from assay.models import ExecutionPlan, ReportConfig, StatisticalProfile, StudySnapshot
 from assay.planning import authorize, compile_plan
 from assay.report_engine import persist_report
 from assay.store import ObjectStore
 from assay.verify import export_bundle, verify_bundle, verify_snapshot
+
+if TYPE_CHECKING:
+    from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings
+
+
+def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSettings], Any]:
+    try:
+        from assay.adapters.consistency import ConsistencyWorker, PilotSettings, render_input
+    except ModuleNotFoundError as error:
+        from assay.adapters import missing_legacy_extra
+
+        raise missing_legacy_extra("assay.investigations.pilot", error) from error
+    return ConsistencyWorker, PilotSettings, render_input
 
 
 @dataclass(frozen=True)
@@ -83,6 +102,7 @@ def prepare_pilot(
     concurrency one. The artifact closure carries the complete authorized policy.
     """
     try:
+        ConsistencyWorker, _, _ = _import_legacy_worker_stack()
         worker = ConsistencyWorker(factory, settings)
         snapshot = materialize_consistency(
             store,
@@ -125,6 +145,9 @@ async def run_pilot(
     try:
         plan_bytes = store.read_bytes(plan_ref)
         plan = authorize(plan_bytes, authorization)
+        if not isinstance(plan, ExecutionPlan):
+            raise ValueError("the Jig pilot runtime can only execute assay-execution-plan/0.1.0")
+        ConsistencyWorker, PilotSettings, render_input = _import_legacy_worker_stack()
         if plan.jig_revision != installed_jig_revision() or plan.assay_version != __version__:
             raise ValueError("installed runtime differs from authorized plan")
         snapshot = StudySnapshot.model_validate_json(store.read_bytes(plan.snapshot_ref))

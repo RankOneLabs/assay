@@ -1,0 +1,1 @@
+{"$id":"https://assay.test/scalar.schema.json","$schema":"http://json-schema.org/draft-07/schema#","allOf":[{"$ref":"https://paa.dev/paa-evidence-record.schema.json"},{"properties":{"verdict":{"properties":{"value":{"maximum":1,"minimum":0,"type":"number"}}}}}]}

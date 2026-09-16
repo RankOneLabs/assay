@@ -23,9 +23,12 @@ from assay.models import (
     EvaluationFailure,
     ExecutionOutcome,
     ExecutionPlan,
+    ExecutionPlanV2,
     ReportConfig,
     RunManifest,
     StudySnapshot,
+    parse_execution_plan,
+    plan_runtime_identity,
 )
 from assay.references import object_edges
 from assay.report_engine import ReportError, build_report, summarize_operating
@@ -134,6 +137,20 @@ def _model(
         issue = _issue(ref, "invalid_record", f"object is not a valid {model.__name__}: {ref}")
         if root:
             raise ReadError(issue.message) from None
+        return None, (issue,)
+
+
+def _plan_model(
+    session: ObjectStore, ref: str
+) -> tuple[ExecutionPlan | ExecutionPlanV2 | None, tuple[ReadIssue, ...]]:
+    """Discriminator-first plan load: never normalize one version through another."""
+    value, issues = _safe_json(session, ref)
+    if issues:
+        return None, issues
+    try:
+        return parse_execution_plan(value), ()
+    except (ValidationError, TypeError, ValueError):
+        issue = _issue(ref, "invalid_record", f"object is not a valid execution plan: {ref}")
         return None, (issue,)
 
 
@@ -342,13 +359,18 @@ class ReviewReader:
 
     def _context(
         self, run: IndexedRun
-    ) -> tuple[RunManifest | None, ExecutionPlan | None, StudySnapshot | None, list[ReadIssue]]:
+    ) -> tuple[
+        RunManifest | None,
+        ExecutionPlan | ExecutionPlanV2 | None,
+        StudySnapshot | None,
+        list[ReadIssue],
+    ]:
         issues: list[ReadIssue] = []
         manifest = None
         if run.manifest_ref:
             manifest, found = _model(self.store, run.manifest_ref, RunManifest, root=True)
             issues.extend(found)
-        plan, found = _model(self.store, run.plan_ref, ExecutionPlan)
+        plan, found = _plan_model(self.store, run.plan_ref)
         issues.extend(found)
         snapshot = None
         if plan is not None:
@@ -459,7 +481,7 @@ class ReviewReader:
         subject: str,
         arm: str,
         repeat: int,
-        plan: ExecutionPlan | None,
+        plan: ExecutionPlan | ExecutionPlanV2 | None,
         snapshot: StudySnapshot | None,
     ) -> CellSummary:
         exclusion = None
@@ -667,7 +689,7 @@ class ReviewReader:
         self,
         run: IndexedRun,
         cell_id: str,
-        plan: ExecutionPlan | None,
+        plan: ExecutionPlan | ExecutionPlanV2 | None,
         snapshot: StudySnapshot | None,
     ) -> tuple[VerdictSummary, ...]:
         declared = {x.id: x for x in snapshot.evaluators} if snapshot else {}
@@ -727,7 +749,7 @@ class ReviewReader:
         self,
         run: IndexedRun,
         manifest: RunManifest | None,
-        plan: ExecutionPlan | None,
+        plan: ExecutionPlan | ExecutionPlanV2 | None,
         snapshot: StudySnapshot | None,
         cells: list[CellSummary],
         context_issues: list[ReadIssue],
@@ -787,6 +809,7 @@ class ReviewReader:
                 *cost.issues,
             )
         )
+        jig_revision, runtime_id, runtime_version = plan_runtime_identity(plan)
         return RunSummary(
             run.run_key,
             run.run_id,
@@ -798,7 +821,9 @@ class ReviewReader:
             None if snapshot is None else tuple(x.id for x in snapshot.arms),
             None if plan is None else plan.worker_repeats,
             None if plan is None else plan.concurrency,
-            None if plan is None else plan.jig_revision,
+            jig_revision,
+            runtime_id,
+            runtime_version,
             None if plan is None else plan.assay_version,
             min((x[0] for x in timestamps), default=None),
             max((x[1] for x in timestamps), default=None),
@@ -829,14 +854,14 @@ class ReviewReader:
         outcome = None
         if len(refs) == 1:
             outcome, _ = _model(self.store, refs[0], ExecutionOutcome)
-        plan, _ = _model(self.store, run.plan_ref, ExecutionPlan)
+        plan, _ = _plan_model(self.store, run.plan_ref)
         input_ref = (
             outcome.input_ref
             if outcome
             else next(
                 (
                     x.realization_ref
-                    for x in (plan.cells if isinstance(plan, ExecutionPlan) else ())
+                    for x in (plan.cells if plan is not None else ())
                     if x.id == cell_id
                 ),
                 None,
@@ -851,7 +876,6 @@ class ReviewReader:
             trace, _ = _safe_json(self.store, outcome.trace_ref)
             if isinstance(trace, dict) and isinstance(trace.get("prompt"), str):
                 recorded_prompt = trace["prompt"]
-        plan = cast(ExecutionPlan | None, plan)
         coordinates = (
             tuple(
                 (item.evaluator_id, item.evaluator_repeat)
@@ -1389,9 +1413,7 @@ def verify(
     )
 
 
-def closure(
-    session: ObjectStore, root_ref: str
-) -> tuple[set[str], list[ViewVerificationFailure]]:
+def closure(session: ObjectStore, root_ref: str) -> tuple[set[str], list[ViewVerificationFailure]]:
     """Walk a root closure and return stable reference-attributed failures."""
     pending: list[tuple[str, str, str | None]] = [(root_ref, "auto", None)]
     seen: set[tuple[str, str]] = set()

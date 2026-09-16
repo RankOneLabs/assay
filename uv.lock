@@ -51,16 +51,19 @@ name = "assay"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "httpx" },
-    { name = "jig", extra = ["openrouter"] },
     { name = "jsonschema" },
-    { name = "openai" },
     { name = "pydantic" },
 ]
 
 [package.optional-dependencies]
+legacy = [
+    { name = "httpx" },
+    { name = "jig", extra = ["openrouter"] },
+    { name = "openai" },
+]
 review = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "uvicorn" },
 ]
 
@@ -77,14 +80,15 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", marker = "extra == 'review'", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "jig", extras = ["openrouter"], git = "https://github.com/RankOneLabs/jig.git?rev=5932f7237a369fe705512915ef4033da0ca27c74" },
+    { name = "httpx", marker = "extra == 'legacy'", specifier = ">=0.27" },
+    { name = "httpx", marker = "extra == 'review'", specifier = ">=0.27" },
+    { name = "jig", extras = ["openrouter"], marker = "extra == 'legacy'", git = "https://github.com/RankOneLabs/jig.git?rev=5932f7237a369fe705512915ef4033da0ca27c74" },
     { name = "jsonschema", specifier = ">=4.23" },
-    { name = "openai", specifier = ">=2,<3" },
+    { name = "openai", marker = "extra == 'legacy'", specifier = ">=2,<3" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "uvicorn", marker = "extra == 'review'", specifier = ">=0.32" },
 ]
-provides-extras = ["review"]
+provides-extras = ["review", "legacy"]
 
 [package.metadata.requires-dev]
 dev = [

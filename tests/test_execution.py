@@ -15,7 +15,14 @@ from assay.execution import (
     WorkerSuccess,
     execute_plan,
 )
-from assay.models import Arm, EvaluatorDeclaration, Realization, StudySnapshot, Subject
+from assay.models import (
+    Arm,
+    EvaluatorDeclaration,
+    Realization,
+    RuntimeProfile,
+    StudySnapshot,
+    Subject,
+)
 from assay.planning import compile_plan
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
@@ -40,6 +47,13 @@ class FakeEvaluator:
         self, *, input_value: Any, output: Any, coordinate: Any
     ) -> EvaluationSuccess:
         return EvaluationSuccess(float(output["score"]), detail={"coordinate": coordinate.id})
+
+
+def default_runtime(
+    store: ObjectStore, *, id: str = "pier", version: str = "1.0.0"
+) -> RuntimeProfile:
+    configuration_ref = str(store.publish_json({"backend": id, "version": version}))
+    return RuntimeProfile(id=id, version=version, configuration_ref=configuration_ref)
 
 
 @dataclass

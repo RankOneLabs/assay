@@ -11,7 +11,13 @@ from typing import Any
 
 from assay._version import __version__
 from assay.canonical import canonical_json, digest_bytes
-from assay.models import ExecutionPlan, ReportConfig, RunManifest, StudySnapshot
+from assay.models import (
+    ExecutionPlanV2,
+    ReportConfig,
+    RunManifest,
+    StudySnapshot,
+    parse_execution_plan,
+)
 from assay.reporting import _holm, bootstrap_paired, paired_effect
 from assay.store import ObjectRef, ObjectStore, verification_session
 
@@ -121,11 +127,15 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
         manifest = RunManifest.model_validate(_read(store, manifest_ref))
         if manifest.status != "complete":
             raise ReportError("reports require complete manifests")
-        plan = ExecutionPlan.model_validate(_read(store, manifest.plan_ref))
+        plan = parse_execution_plan(_read(store, manifest.plan_ref))
         snapshot = StudySnapshot.model_validate(_read(store, plan.snapshot_ref))
         # Populations, exclusions and cost estimates can differ across shards;
-        # task semantics and authorized execution settings cannot.
-        fingerprint = canonical_json({
+        # task semantics and authorized execution settings cannot. The 0.1.0
+        # fingerprint is kept field-for-field identical (including
+        # jig_revision) so historical reports never move; 0.2.0 binds the
+        # generic runtime identity/configuration instead, so legacy and
+        # generic (or cross-profile) shards can never pool by coincidence.
+        common_fingerprint = {
             "task_ref": snapshot.paa_task_ref,
             "scope": snapshot.paa_scope,
             "task_schema_ref": snapshot.task_schema_ref,
@@ -136,9 +146,23 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
             "worker_repeats": plan.worker_repeats,
             "preparation_mode": plan.preparation_mode,
             "concurrency": plan.concurrency,
-            "jig_revision": plan.jig_revision,
-            "assay_version": plan.assay_version,
-        })
+        }
+        if isinstance(plan, ExecutionPlanV2):
+            fingerprint = canonical_json(
+                {
+                    **common_fingerprint,
+                    "runtime": plan.runtime.model_dump(mode="json"),
+                    "assay_version": plan.assay_version,
+                }
+            )
+        else:
+            fingerprint = canonical_json(
+                {
+                    **common_fingerprint,
+                    "jig_revision": plan.jig_revision,
+                    "assay_version": plan.assay_version,
+                }
+            )
         if compatibility is not None and fingerprint != compatibility:
             raise ReportError("run compatibility drift across selected manifests")
         compatibility = fingerprint

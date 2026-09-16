@@ -14,7 +14,10 @@ jobs:
         with:
           version: "0.10.2"
           python-version: '3.13'
-      - run: uv sync --locked --extra review
+      # Both extras: mypy/pytest exercise the legacy Jig/OpenRouter adapters and
+      # investigations too, not just the core+review surface. core-wheel below
+      # separately proves the published wheel needs neither by default.
+      - run: uv sync --locked --extra review --extra legacy
       - name: Prepare dependency cache for offline wheel acceptance
         run: |
           uv build --wheel

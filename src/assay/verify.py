@@ -13,12 +13,12 @@ from assay.canonical import canonical_json, digest_bytes
 from assay.models import (
     EvaluationFailure,
     ExecutionOutcome,
-    ExecutionPlan,
     ReportConfig,
     RunManifest,
     StudySnapshot,
+    parse_execution_plan,
 )
-from assay.planning import validate_plan_snapshot
+from assay.planning import require_runtime_closure, validate_plan_snapshot
 from assay.references import object_edges, walk_closure
 from assay.references import reference_closure as reference_closure
 from assay.schema_validation import SUPPORTED_CONTRACTS as SUPPORTED_CONTRACTS
@@ -89,14 +89,13 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
         manifest = RunManifest.model_validate(
             _json(store, manifest_ref, "assay-run-manifest/0.1.0")
         )
-        plan = ExecutionPlan.model_validate(
-            _json(store, manifest.plan_ref, "assay-execution-plan/0.1.0")
-        )
+        plan = parse_execution_plan(_json(store, manifest.plan_ref))
         snapshot = StudySnapshot.model_validate(
             _json(store, plan.snapshot_ref, "assay-study-snapshot/0.1.0")
         )
         validate_plan_snapshot(plan, snapshot)
         verify_snapshot(store, snapshot)
+        require_runtime_closure(store, plan)
         reference_closure(store, (manifest_ref,))
         task = _json(store, snapshot.paa_task_ref)
         validators = schema_validators(store, snapshot)

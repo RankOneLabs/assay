@@ -115,7 +115,10 @@ function renderGrid(root: HTMLElement, run: RunDetail): void {
   }
   const meta = element("dl", { className: "metadata" });
   addDefinition(meta, "Run key", run.summary.run_key);
-  addDefinition(meta, "Jig revision", run.summary.jig_revision);
+  const runtime = run.summary.runtime_id && run.summary.runtime_version
+    ? `${run.summary.runtime_id} ${run.summary.runtime_version}`
+    : run.summary.jig_revision;
+  addDefinition(meta, "Runtime", runtime);
   addDefinition(meta, "Cost coverage", run.summary.cost.coverage);
   root.append(meta);
 
