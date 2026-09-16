@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 import pytest
-from assay_pier_bridge.container import DockerTrialClient, docker_available
+from assay_pier_bridge.container import DockerTrialClient, docker_available, package_digest
 from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest
 from assay_pier_bridge.runtime import BridgeRuntime
 
@@ -33,7 +33,7 @@ PACKAGE = {"instruction.md": "# Task\n\nsay hi\n"}
 def _request(*, timeout_s: float = 20) -> TrialRequest:
     return TrialRequest(
         cell_id="s1:a1:w0",
-        package_digest="sha256:" + "0" * 64,
+        package_digest=package_digest(PACKAGE),
         model_route=ROUTE,
         limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=timeout_s),
     )
@@ -43,14 +43,18 @@ def _request(*, timeout_s: float = 20) -> TrialRequest:
 def image() -> str:
     if not docker_available():
         pytest.skip("docker CLI is not available in this environment")
+    daemon_check = subprocess.run(
+        ["docker", "info"], capture_output=True, text=True, timeout=10, check=False
+    )
+    if daemon_check.returncode != 0:
+        pytest.skip(f"docker daemon is not reachable: {daemon_check.stderr[-500:]}")
     result = subprocess.run(
         ["docker", "build", "-t", IMAGE_TAG, str(BRIDGE_ROOT)],
         capture_output=True,
         text=True,
         timeout=300,
     )
-    if result.returncode != 0:
-        pytest.skip(f"could not build the bridge image: {result.stderr[-2000:]}")
+    assert result.returncode == 0, f"bridge image build failed:\n{result.stderr[-4000:]}"
     return IMAGE_TAG
 
 

@@ -29,11 +29,17 @@ class ClosedModel(BaseModel):
 
 
 class ModelRoute(ClosedModel):
-    """The exact guarded OpenRouter route a trial is authorized to call."""
+    """The exact guarded OpenRouter route a trial is authorized to call.
 
-    endpoint: str = Field(pattern=r"^https://[a-z0-9.-]+(/[A-Za-z0-9/_-]*)?$")
-    model: str = Field(pattern=r"^[a-z0-9-]+/[a-z0-9._-]+$")
-    provider: str = Field(min_length=1)
+    Exact ``Literal`` values, not permissive patterns: this is the only
+    route ``GuardedOpenRouterClient`` (provider.py) ever calls, so a caller
+    must not be able to authorize a route that execution then silently
+    ignores in favor of a different one.
+    """
+
+    endpoint: Literal["https://openrouter.ai/api/v1"] = "https://openrouter.ai/api/v1"
+    model: Literal["anthropic/claude-3-haiku"] = "anthropic/claude-3-haiku"
+    provider: Literal["amazon-bedrock"] = "amazon-bedrock"
 
 
 class TrialLimits(ClosedModel):

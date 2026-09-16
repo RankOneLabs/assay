@@ -20,6 +20,11 @@ CHAT_COMPLETIONS_URL: Final = f"{ENDPOINT}/chat/completions"
 MODEL: Final = "anthropic/claude-3-haiku"
 PROVIDER: Final = "amazon-bedrock"
 PROVIDER_NAME: Final = "Amazon Bedrock"
+# USD per million tokens, mirroring assay.adapters.openrouter_policy.HAIKU_BEDROCK
+# so this guarded route never routes to a more expensive provider than the
+# root project's own governed catalogue permits.
+MAX_PROMPT_PRICE_PER_MILLION: Final = 0.25
+MAX_COMPLETION_PRICE_PER_MILLION: Final = 1.25
 TOOL_NAME: Final = "submit_output"
 MAX_REQUEST_BODY_BYTES: Final = 65_536
 MAX_RESPONSE_BODY_BYTES: Final = 65_536
@@ -156,7 +161,7 @@ def _validate_submission(message: dict[str, Any], finish_reason: Any) -> Submitt
     return SubmittedOutput(call_id=call_id, source=source)
 
 
-def _validate_response(data: Any) -> RouteResponse:
+def _validate_response(data: Any, *, request_bytes: int) -> RouteResponse:
     if not isinstance(data, dict):
         raise GuardedRouteError("response is not a JSON object")
     if data.get("error") is not None:
@@ -189,7 +194,7 @@ def _validate_response(data: Any) -> RouteResponse:
             prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, cost_usd=float(cost)
         ),
         submission=submission,
-        request_bytes=0,
+        request_bytes=request_bytes,
     )
 
 
@@ -237,31 +242,38 @@ class GuardedOpenRouterClient:
                 "order": [PROVIDER],
                 "allow_fallbacks": False,
                 "require_parameters": True,
+                "max_price": {
+                    "prompt": MAX_PROMPT_PRICE_PER_MILLION,
+                    "completion": MAX_COMPLETION_PRICE_PER_MILLION,
+                    "request": 0,
+                },
             },
         }
         payload = json.dumps(body).encode("utf-8")
         if len(payload) > MAX_REQUEST_BODY_BYTES:
             raise GuardedRouteError("request body exceeds byte limit")
         self._request_count += 1
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
         try:
-            response = self._client.post(
-                CHAT_COMPLETIONS_URL,
-                content=payload,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
+            with self._client.stream(
+                "POST", CHAT_COMPLETIONS_URL, content=payload, headers=headers
+            ) as response:
+                if str(response.url) != CHAT_COMPLETIONS_URL or response.request.method != "POST":
+                    raise GuardedRouteError("request left the guarded endpoint")
+                if not response.is_success:
+                    raise GuardedRouteError(f"non-success status {response.status_code}")
+                body_bytes = bytearray()
+                for chunk in response.iter_bytes():
+                    body_bytes.extend(chunk)
+                    if len(body_bytes) > MAX_RESPONSE_BODY_BYTES:
+                        raise GuardedRouteError("response body exceeds byte limit")
         except httpx.HTTPError as error:
             raise GuardedRouteError(f"transport failure ({type(error).__name__})") from error
-        if str(response.request.url) != CHAT_COMPLETIONS_URL or response.request.method != "POST":
-            raise GuardedRouteError("request left the guarded endpoint")
-        if not response.is_success:
-            raise GuardedRouteError(f"non-success status {response.status_code}")
-        if len(response.content) > MAX_RESPONSE_BODY_BYTES:
-            raise GuardedRouteError("response body exceeds byte limit")
         try:
-            data = response.json()
+            data = json.loads(bytes(body_bytes))
         except ValueError as error:
             raise GuardedRouteError("response is not valid JSON") from error
-        return _validate_response(data)
+        return _validate_response(data, request_bytes=len(payload))

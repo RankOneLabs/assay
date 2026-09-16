@@ -8,6 +8,8 @@ proves it.
 
 from __future__ import annotations
 
+import asyncio
+
 from assay_pier_bridge.protocol import (
     EffectiveEnforcement,
     PierTrialClient,
@@ -48,9 +50,25 @@ class BridgeRuntime:
             return self._failure(handle, request, status="timeout", error=error)
         except TrialCancelledError as error:
             return self._failure(handle, request, status="cancelled", error=error)
+        except asyncio.CancelledError:
+            # BaseException, not Exception: an async client's own
+            # cancellation must still tear the trial down before propagating.
+            handle.teardown()
+            raise
         except Exception as error:  # noqa: BLE001 - converted to a typed failure result
             return self._failure(handle, request, status="failed", error=error)
         effective = handle.teardown()
+        if result.cell_id != request.cell_id:
+            return TrialResult(
+                cell_id=request.cell_id,
+                status="failed",
+                error_type="MismatchedCellIdError",
+                error_message=(
+                    f"trial handle returned a result for {result.cell_id!r}, "
+                    f"not the requested {request.cell_id!r}"
+                ),
+                effective=effective,
+            )
         return result.model_copy(update={"effective": effective})
 
     @staticmethod

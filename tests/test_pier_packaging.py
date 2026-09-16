@@ -9,6 +9,7 @@ from assay.pier_packaging import (
     INSTRUCTION_PATH,
     SUBMISSION_CONTRACT_PATH,
     WORKSPACE_PREFIX,
+    _manifest_digest,
     build_package,
     gate_package,
     non_repository_entries,
@@ -141,6 +142,22 @@ def test_gate_package_rejects_a_mismatched_digest(tmp_path: Path) -> None:
         gate_package(package, expected_digest="sha256:" + "0" * 64)
 
 
+def test_gate_package_rejects_forged_content_with_an_unchanged_digest_field(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    root = _write_tree(tmp_path / "arm", {"solution.py": "print('hi')\n"})
+    package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
+    forged_files = tuple(
+        (path, content if path != f"{WORKSPACE_PREFIX}/solution.py" else "print('forged')\n")
+        for path, content in package.files
+    )
+    forged = replace(package, files=forged_files)  # manifest_digest left unchanged
+    with pytest.raises(ValueError, match="digest does not match"):
+        gate_package(forged, expected_digest=forged.manifest_digest)
+
+
 def test_gate_package_rejects_a_forbidden_sentinel(tmp_path: Path) -> None:
     root = _write_tree(tmp_path / "arm", {"solution.py": "SENTINEL_LEAK = 1\n"})
     package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
@@ -153,13 +170,39 @@ def test_gate_package_rejects_a_forbidden_sentinel(tmp_path: Path) -> None:
 
 
 def test_gate_package_rejects_a_non_allowlisted_entry(tmp_path: Path) -> None:
+    from dataclasses import replace
+
     root = _write_tree(tmp_path / "arm", {"solution.py": "print('hi')\n"})
     package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
     tampered_files = (*package.files, ("evaluator/rubric.json", "{}"))
+    digest = _manifest_digest(dict(sorted(tampered_files)))
+    tampered = replace(package, files=tampered_files, manifest_digest=digest)
+    with pytest.raises(ValueError, match="outside the allowlist"):
+        gate_package(tampered, expected_digest=tampered.manifest_digest)
+
+
+def test_gate_package_rejects_a_traversal_segment_inside_the_workspace_prefix(
+    tmp_path: Path,
+) -> None:
     from dataclasses import replace
 
-    tampered = replace(package, files=tampered_files)
-    with pytest.raises(ValueError, match="outside the allowlist"):
+    root = _write_tree(tmp_path / "arm", {"solution.py": "print('hi')\n"})
+    package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
+    tampered_files = (*package.files, (f"{WORKSPACE_PREFIX}/../evaluator/rubric.json", "{}"))
+    digest = _manifest_digest(dict(sorted(tampered_files)))
+    tampered = replace(package, files=tampered_files, manifest_digest=digest)
+    with pytest.raises(ValueError, match="unsafe path"):
+        gate_package(tampered, expected_digest=tampered.manifest_digest)
+
+
+def test_gate_package_rejects_a_duplicate_path(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    root = _write_tree(tmp_path / "arm", {"solution.py": "print('hi')\n"})
+    package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
+    duplicated_files = (*package.files, package.files[0])
+    tampered = replace(package, files=duplicated_files)
+    with pytest.raises(ValueError, match="duplicate path"):
         gate_package(tampered, expected_digest=tampered.manifest_digest)
 
 

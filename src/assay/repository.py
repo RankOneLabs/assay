@@ -80,19 +80,29 @@ def validate_source_tree(
     """
     if not root.is_dir() or root.is_symlink():
         raise ValueError(f"realization root is not a plain directory: {root}")
+
+    def _raise_walk_error(error: OSError) -> None:
+        raise ValueError(f"could not read realization directory: {error}") from error
+
     files: dict[str, str] = {}
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    total_bytes = 0
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=_raise_walk_error):
         dirnames.sort()
         for name in dirnames:
             if (Path(dirpath) / name).is_symlink():
                 raise ValueError(f"symlink directory is not allowed in a realization: {name}")
         for name in sorted(filenames):
+            if len(files) >= max_files:
+                raise ValueError("repository has too many files")
             full = Path(dirpath) / name
             rel = full.relative_to(root).as_posix()
             if full.is_symlink():
                 raise ValueError(f"symlink is not allowed in a realization: {rel}")
             if not full.is_file():
                 raise ValueError(f"special file is not allowed in a realization: {rel}")
+            total_bytes += full.stat().st_size
+            if total_bytes > max_total_bytes:
+                raise ValueError("repository exceeds the byte limit")
             try:
                 files[rel] = full.read_text(encoding="utf-8")
             except UnicodeDecodeError as error:

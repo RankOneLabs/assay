@@ -33,6 +33,7 @@ from pier.models.trial.config import (
     VerifierConfig,
 )
 
+from assay_pier_bridge.paths import materialize_under
 from assay_pier_bridge.protocol import TrialRequest
 
 WORKSPACE_PREFIX = "workspace"
@@ -73,7 +74,9 @@ def build_trial_config(
         ),
         environment=EnvironmentConfig(
             type=EnvironmentType.DOCKER,
-            override_cpus=math.ceil(request.limits.cpu),
+            # Round down, never up: granting ceil(1.5) == 2 CPUs would exceed
+            # what TrialLimits.cpu actually authorized.
+            override_cpus=max(1, math.floor(request.limits.cpu)),
             override_memory_mb=request.limits.memory_mb,
         ),
         verifier=VerifierConfig(disable=True),
@@ -95,7 +98,11 @@ def write_task_directory(
     agent actually sees inside its container, which is exactly the
     reconciliation gap the module docstring records.
     """
-    task_dir.mkdir(parents=True, exist_ok=True)
+    if task_dir.exists():
+        raise ValueError(
+            f"task directory already exists, refusing to reuse it: {task_dir}"
+        )
+    task_dir.mkdir(parents=True)
     (task_dir / "task.toml").write_text(
         'schema_version = "1.2"\n\n'
         "[agent]\n"
@@ -105,10 +112,7 @@ def write_task_directory(
         encoding="utf-8",
     )
     (task_dir / "instruction.md").write_text(instruction, encoding="utf-8")
-    for path, content in repository.items():
-        full = task_dir / WORKSPACE_PREFIX / path
-        full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_text(content, encoding="utf-8")
+    materialize_under(task_dir / WORKSPACE_PREFIX, repository)
 
 
 __all__ = ["build_trial_config", "sanitized_trial_name", "write_task_directory"]

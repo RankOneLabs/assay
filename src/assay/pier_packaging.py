@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.repository import validate_repository, validate_source_tree
@@ -114,20 +114,30 @@ def gate_package(
 ) -> None:
     """The last check before a package's digest is handed to ``Trial.create``.
 
-    Fails closed on any of: a digest that does not match what the caller is
-    about to authorize (the package was rebuilt or tampered with between
-    build and dispatch), a path outside the fixed allowlist (the workspace
-    prefix plus the instruction and submission contract), or any forbidden
-    substring appearing in file content — a sentinel audit hook a caller can
-    use to check content against hidden tests, other arms, evaluator
-    fixtures, or object-store metadata it holds out of band.
+    Fails closed on any of: a recomputed digest that does not match both the
+    package's own stored digest and what the caller is about to authorize
+    (content was substituted while ``manifest_digest`` was left unchanged, or
+    the package was rebuilt or tampered with between build and dispatch), a
+    duplicate path, a path outside the fixed allowlist or containing a
+    traversal segment (the workspace prefix plus the instruction and
+    submission contract), or any forbidden substring appearing in file
+    content — a sentinel audit hook a caller can use to check content
+    against hidden tests, other arms, evaluator fixtures, or object-store
+    metadata it holds out of band.
     """
-    if package.manifest_digest != expected_digest:
+    current_files = dict(package.files)
+    if len(current_files) != len(package.files):
+        raise ValueError("package entries contain a duplicate path")
+    actual_digest = _manifest_digest(dict(sorted(current_files.items())))
+    if actual_digest != package.manifest_digest or actual_digest != expected_digest:
         raise ValueError("package digest does not match the digest being authorized")
     prefix = f"{WORKSPACE_PREFIX}/"
     for path, content in package.files:
         if path not in _ALLOWED_NON_REPOSITORY_PATHS and not path.startswith(prefix):
             raise ValueError(f"package entry is outside the allowlist: {path}")
+        parts = PurePosixPath(path).parts
+        if PurePosixPath(path).is_absolute() or any(part in {"", ".", ".."} for part in parts):
+            raise ValueError(f"package entry has an unsafe path: {path}")
         for sentinel in forbidden_substrings:
             if sentinel in content:
                 raise ValueError(f"package entry carries a forbidden sentinel: {path}")
