@@ -1,0 +1,21 @@
+# mini-swe-agent configuration for one guarded trial.
+#
+# The model route below is descriptive only: the bridge never lets
+# mini-swe-agent open its own OpenRouter connection. Every completion is
+# proxied through assay_pier_bridge.provider.GuardedOpenRouterClient, which
+# is the only component authorized to speak to openrouter.ai and enforces
+# this exact model/provider pair, zero retries, and no fallback route.
+agent:
+  system_template: config/system_prompt.md
+  instance_template: /workspace/instruction.md
+  step_limit: 1
+  cost_limit: 0
+
+model:
+  model_name: anthropic/claude-3-haiku
+  model_kwargs:
+    provider: amazon-bedrock
+
+environment:
+  cwd: /workspace
+  timeout: 120

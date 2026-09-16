@@ -20,7 +20,15 @@ are being served:
 - the exact Pier commit (see "Known gap" below);
 - the resolved bridge image digest, produced by `Dockerfile` and recorded by
   whatever deploys the image (not by this repo, which has no registry
-  access).
+  access). A local build against this checkout's `uv.lock` produced
+  `sha256:b3e07726d3e92731c1ac1f934d27457a6545a52660af484fd67fb092cf09dc3f`
+  (`docker build -t assay-pier-bridge:test .`); a fresh build from the same
+  lock reproduces the same dependency set, but the image ID itself is not
+  guaranteed byte-stable across builder/base-image updates the way the lock
+  digest is — treat the lock digest, not the image ID, as the durable
+  identity input. `docker run --rm --network none assay-pier-bridge:test`
+  starts and exits 0 with no network access at all, which is the concrete
+  check that the image never reinstalls or resolves anything at trial time.
 
 `runtime.py` never installs a package, resolves a dependency, or writes to a
 pricing map while serving a trial — the lifecycle tests in
