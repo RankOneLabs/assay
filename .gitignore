@@ -9,3 +9,4 @@ dist/
 node_modules/
 .assay/
 /.env
+.trial-runs/
