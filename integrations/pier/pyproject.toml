@@ -11,10 +11,16 @@ dependencies = [
   # identity is the pinned commit, recorded again in README.md alongside the
   # resolved image digest.
   "mini-swe-agent @ git+https://github.com/SWE-agent/mini-swe-agent.git@a83fcae82d2a08f0ee0c688f9d137b3566c097f8",
+  # The real Pier package: published to PyPI as "datacurve-pier" (import name
+  # "pier") from github.com/datacurve-ai/pier, which the project itself
+  # publishes no source repository for — an exact version plus uv.lock's
+  # hash pin is this dependency's durable identity, the same role a commit
+  # SHA plays for mini-swe-agent above. See README.md, "Pier revision".
+  "datacurve-pier==0.3.1",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "mypy>=1.10"]
 
 [build-system]
 requires = ["hatchling"]
