@@ -15,8 +15,17 @@ from assay.execution import (
     WorkerSuccess,
     execute_plan,
 )
-from assay.models import Arm, EvaluatorDeclaration, Realization, StudySnapshot, Subject
-from assay.planning import compile_plan
+from assay.models import (
+    Arm,
+    EvaluatorDeclaration,
+    ExecutionPlan,
+    ExecutionPlanV2,
+    Realization,
+    RuntimeProfile,
+    StudySnapshot,
+    Subject,
+)
+from assay.planning import compile_plan, compile_plan_v2
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
 
@@ -40,6 +49,13 @@ class FakeEvaluator:
         self, *, input_value: Any, output: Any, coordinate: Any
     ) -> EvaluationSuccess:
         return EvaluationSuccess(float(output["score"]), detail={"coordinate": coordinate.id})
+
+
+def default_runtime(
+    store: ObjectStore, *, id: str = "pier", version: str = "1.0.0"
+) -> RuntimeProfile:
+    configuration_ref = str(store.publish_json({"backend": id, "version": version}))
+    return RuntimeProfile(id=id, version=version, configuration_ref=configuration_ref)
 
 
 @dataclass
@@ -67,6 +83,7 @@ def execution_fixture(
     worker_repeats: int = 2,
     evaluator_repeats: int = 2,
     concurrency: int = 4,
+    runtime: RuntimeProfile | None = None,
 ) -> ExecutionFixture:
     def publish(value: Any) -> str:
         return str(store.publish_json(value))
@@ -163,13 +180,24 @@ def execution_fixture(
         evidence_schema_ref=publish(paa_contracts.load_schema("paa-evidence-record")),
         operating_schema_ref=publish(paa_contracts.load_schema("paa-operating-record")),
     )
-    plan = compile_plan(
-        snapshot,
-        snapshot_ref=publish(snapshot.model_dump(mode="json")),
-        worker_repeats=worker_repeats,
-        jig_revision="55081e8",
-        concurrency=concurrency,
-    )
+    snapshot_ref = publish(snapshot.model_dump(mode="json"))
+    plan: ExecutionPlan | ExecutionPlanV2
+    if runtime is None:
+        plan = compile_plan(
+            snapshot,
+            snapshot_ref=snapshot_ref,
+            worker_repeats=worker_repeats,
+            jig_revision="55081e8",
+            concurrency=concurrency,
+        )
+    else:
+        plan = compile_plan_v2(
+            snapshot,
+            snapshot_ref=snapshot_ref,
+            worker_repeats=worker_repeats,
+            runtime=runtime,
+            concurrency=concurrency,
+        )
     return ExecutionFixture(store, snapshot, canonical_json(plan.model_dump(mode="json")))
 
 

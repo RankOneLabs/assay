@@ -22,6 +22,8 @@ from assay.models import (
     StudySnapshot,
     parse_execution_plan,
 )
+from assay.references import walk_closure
+from assay.store import ObjectStore
 
 
 class AuthorizationError(ValueError):
@@ -223,6 +225,18 @@ def validate_plan_snapshot(plan: ExecutionPlan | ExecutionPlanV2, snapshot: Stud
         )
     if expected != plan:
         raise ValueError("plan differs from the deterministic snapshot compilation")
+
+
+def require_runtime_closure(store: ObjectStore, plan: ExecutionPlan | ExecutionPlanV2) -> None:
+    """Reject a 0.2.0 plan whose generic runtime configuration is missing or malformed.
+
+    A 0.1.0 plan pins its runtime by an opaque ``jig_revision`` string with nothing to
+    resolve, so this is a no-op for it. Both execution and reporting must call this
+    before trusting an authorized plan, since neither path recompiles the plan and
+    would otherwise silently proceed against a runtime that was never fully declared.
+    """
+    if isinstance(plan, ExecutionPlanV2):
+        walk_closure(store, {(plan.runtime.configuration_ref, "data")})
 
 
 def authorize(plan_bytes: bytes, authorization: str) -> ExecutionPlan | ExecutionPlanV2:

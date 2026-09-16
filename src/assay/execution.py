@@ -20,7 +20,7 @@ from assay.models import (
     RunManifest,
     StudySnapshot,
 )
-from assay.planning import authorize, validate_plan_snapshot
+from assay.planning import authorize, require_runtime_closure, validate_plan_snapshot
 from assay.schema_validation import schema_validators
 from assay.store import ObjectRef, ObjectStore
 from assay.verify import verify_snapshot
@@ -175,6 +175,7 @@ async def execute_plan(
             raise ValueError("stored snapshot differs from the provided snapshot")
         validate_plan_snapshot(plan, snapshot)
         verify_snapshot(store, snapshot)
+        require_runtime_closure(store, plan)
         if plan.preparation_mode != "none":
             raise ValueError("authorized preparation is not implemented")
         if concurrency is not None and concurrency != plan.concurrency:

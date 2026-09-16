@@ -18,7 +18,7 @@ from assay.models import (
     StudySnapshot,
     parse_execution_plan,
 )
-from assay.planning import validate_plan_snapshot
+from assay.planning import require_runtime_closure, validate_plan_snapshot
 from assay.references import object_edges, walk_closure
 from assay.references import reference_closure as reference_closure
 from assay.schema_validation import SUPPORTED_CONTRACTS as SUPPORTED_CONTRACTS
@@ -95,6 +95,7 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
         )
         validate_plan_snapshot(plan, snapshot)
         verify_snapshot(store, snapshot)
+        require_runtime_closure(store, plan)
         reference_closure(store, (manifest_ref,))
         task = _json(store, snapshot.paa_task_ref)
         validators = schema_validators(store, snapshot)
