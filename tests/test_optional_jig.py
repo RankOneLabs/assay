@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from test_review_packaging import (
     InstalledWheel,
     _installed_environment,
     _run,
     installed_wheel,  # noqa: F401 -- reused as a pytest fixture
 )
+
+FIXTURE_BUNDLE = (
+    Path(__file__).parent / "fixtures" / "legacy-0.1.0-bundle" / "bundle"
+)
+FIXTURE_MANIFEST_REF = "sha256:7f60b6946084c4ef35c81fea380daa2c669a1f634e8edc85b11cf79cf97a3803"
 
 
 def test_installed_wheel_has_no_jig(installed_wheel: InstalledWheel) -> None:  # noqa: F811
@@ -89,3 +96,26 @@ except ModuleNotFoundError as error:
     for name in ("JigWorker", "pilot", "dry_experiment", "realistic_pilot"):
         line = next(line for line in result.stdout.splitlines() if line.startswith(f"{name}: "))
         assert "assay[legacy]" in line
+
+
+def test_fixed_legacy_bundle_verifies_in_a_jig_free_install(
+    installed_wheel: InstalledWheel,  # noqa: F811
+) -> None:
+    program = """
+import sys
+from assay.store import ObjectStore
+from assay.verify import verify_bundle, verify_manifest
+
+store = ObjectStore(sys.argv[1])
+root = sys.argv[2]
+assert verify_manifest(store, root) == (), verify_manifest(store, root)
+assert verify_bundle(store, root) == (), verify_bundle(store, root)
+print("ok")
+"""
+    result = _run(
+        [installed_wheel.python, "-c", program, FIXTURE_BUNDLE, FIXTURE_MANIFEST_REF],
+        cwd=installed_wheel.outside,
+        env=_installed_environment(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ok" in result.stdout

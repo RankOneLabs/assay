@@ -14,8 +14,15 @@ from test_execution import execution_fixture
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import RunSucceeded, execute_plan
-from assay.models import CellCoordinate, ExecutionPlan, PriceEstimate, ReportConfig, StudySnapshot
-from assay.planning import compile_plan, validate_plan_snapshot
+from assay.models import (
+    CellCoordinate,
+    ExecutionPlan,
+    PriceEstimate,
+    ReportConfig,
+    RuntimeProfile,
+    StudySnapshot,
+)
+from assay.planning import compile_plan, compile_plan_v2, validate_plan_snapshot
 from assay.store import ObjectRef, ObjectStore
 from assay.verify import (
     SUPPORTED_CONTRACTS,
@@ -87,6 +94,36 @@ def test_generated_snapshot_schema_rejects_nested_invalid_and_unknown_fields(
     document = fixture.snapshot.model_dump(mode="json")
     document["evaluators"][0]["identity"]["target"] = "unknown"
     assert not validator.is_valid(document)
+
+
+def test_generated_plan_schemas_validate_each_pinned_version_only(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path)
+    fixture = execution_fixture(store)
+    root = Path(__file__).resolve().parents[1] / "schemas"
+    v1_validator = Draft202012Validator(
+        json.loads((root / "assay-execution-plan-v0.1.schema.json").read_text())
+    )
+    v2_validator = Draft202012Validator(
+        json.loads((root / "assay-execution-plan-v0.2.schema.json").read_text())
+    )
+
+    v1_document = json.loads(fixture.plan_bytes)
+    v1_validator.validate(v1_document)
+    assert not v2_validator.is_valid(v1_document)
+
+    study = fixture.snapshot
+    runtime = RuntimeProfile(
+        id="pier", version="1.0.0", configuration_ref=str(store.publish_json({"x": 1}))
+    )
+    v2_plan = compile_plan_v2(
+        study,
+        snapshot_ref=str(store.publish_json(study.model_dump(mode="json"))),
+        worker_repeats=1,
+        runtime=runtime,
+    )
+    v2_document = v2_plan.model_dump(mode="json")
+    v2_validator.validate(v2_document)
+    assert not v1_validator.is_valid(v2_document)
 
 
 def test_normative_contract_hashes_match_pinned_conformance_package() -> None:
