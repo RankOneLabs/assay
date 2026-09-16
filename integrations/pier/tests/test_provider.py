@@ -141,3 +141,109 @@ def test_fails_closed_on_non_success_status() -> None:
 def test_rejects_blank_api_key() -> None:
     with pytest.raises(ValueError, match="nonblank"):
         GuardedOpenRouterClient(api_key="   ")
+
+
+def test_accepts_exactly_one_valid_submit_output_call() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_good_body())
+
+    with _client(handler) as client:
+        response = client.complete(system_prompt="sys", user_message="hi")
+    assert response.submission.source == "x = 1"
+    assert response.submission.call_id == "call_1"
+
+
+def test_fails_closed_on_wrong_finish_reason() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["finish_reason"] = "stop"
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client, pytest.raises(GuardedRouteError, match="finish"):
+        client.complete(system_prompt="sys", user_message="hi")
+
+
+def test_fails_closed_on_zero_tool_calls() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["message"]["tool_calls"] = []
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client, pytest.raises(GuardedRouteError, match="exactly one tool"):
+        client.complete(system_prompt="sys", user_message="hi")
+
+
+def test_fails_closed_on_two_tool_calls() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["message"]["tool_calls"].append(
+            body["choices"][0]["message"]["tool_calls"][0]
+        )
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client, pytest.raises(GuardedRouteError, match="exactly one tool"):
+        client.complete(system_prompt="sys", user_message="hi")
+
+
+def test_fails_closed_on_wrong_tool_name() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["message"]["tool_calls"][0]["function"]["name"] = "shell"
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client, pytest.raises(GuardedRouteError, match="must invoke"):
+        client.complete(system_prompt="sys", user_message="hi")
+
+
+def test_fails_closed_on_non_json_arguments() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = "not json"
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client, pytest.raises(GuardedRouteError, match="not valid JSON"):
+        client.complete(system_prompt="sys", user_message="hi")
+
+
+def test_fails_closed_on_unknown_argument_field() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps(
+            {"source": "x = 1", "extra": "nope"}
+        )
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client, pytest.raises(GuardedRouteError, match="unknown field"):
+        client.complete(system_prompt="sys", user_message="hi")
+
+
+def test_fails_closed_on_unknown_nested_tool_call_field() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["message"]["tool_calls"][0]["surprise"] = "nope"
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client, pytest.raises(GuardedRouteError, match="unknown tool call"):
+        client.complete(system_prompt="sys", user_message="hi")
+
+
+def test_fails_closed_on_unknown_message_field() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["message"]["surprise"] = "nope"
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client, pytest.raises(GuardedRouteError, match="unknown message"):
+        client.complete(system_prompt="sys", user_message="hi")
+
+
+def test_fails_closed_on_oversized_response_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps(
+            {"source": "x" * 200_000}
+        )
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client, pytest.raises(GuardedRouteError, match="byte limit"):
+        client.complete(system_prompt="sys", user_message="hi")
