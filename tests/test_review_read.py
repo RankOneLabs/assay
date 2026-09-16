@@ -158,10 +158,16 @@ def test_verify_missing_closure_object_names_ref_and_referrer(
 
 
 def test_incomplete_run_verifies_as_partial(fixture: ReviewFixture) -> None:
+    # The fixture's manifest is already honestly incomplete (its one injected
+    # execution failure leaves an evaluation unavailable); this additionally
+    # drops an operating record to exercise that second missing-coordinate
+    # shape, folding it into the pre-existing missing set rather than
+    # replacing it.
     manifest = fixture.result.manifest.model_dump(mode="json")
     missing = next(iter(manifest["operating_records"]))
     del manifest["operating_records"][missing]
-    manifest.update(status="incomplete", missing_coordinates=[missing])
+    manifest["missing_coordinates"] = sorted({*manifest["missing_coordinates"], missing})
+    manifest["status"] = "incomplete"
     ref = str(fixture.store.publish_json(manifest))
     assert [failure.code for failure in verify_manifest(fixture.store, ref)] == ["incomplete_run"]
     result = verify(fixture.store, ref)

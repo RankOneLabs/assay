@@ -286,7 +286,17 @@ async def test_failed_worker_evaluation_skip_cannot_be_omitted(tmp_path: Path) -
         key for key, ref in manifest["evaluation_records"].items()
         if json.loads(store.read_bytes(ref)).get("error_type") == "ExecutionUnavailable"
     )
+    # Every worker fails in this fixture, so every evaluation is already
+    # unavailable and genuinely missing regardless of whether its terminal
+    # skip record is even present. The real adversarial case this guards is
+    # a manifest that omits the skip record *and* claims completeness by
+    # scrubbing that coordinate from missing_coordinates too.
     del manifest["evaluation_records"][skipped]
+    manifest["missing_coordinates"] = [
+        coordinate for coordinate in manifest["missing_coordinates"] if coordinate != skipped
+    ]
+    if not manifest["missing_coordinates"]:
+        manifest["status"] = "complete"
     assert any(
         item.code == "missing_coordinates"
         for item in verify_manifest(store, str(store.publish_json(manifest)))

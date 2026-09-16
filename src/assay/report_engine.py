@@ -121,13 +121,21 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
     compatibility: bytes | None = None
     numeric = config.metric == "scalar" or config.ordinal_mapping is not None
     for manifest_ref in sorted(config.manifest_refs):
-        problems = verify_manifest(store, manifest_ref)
+        # An "incomplete_run" flag alone means every coordinate whose worker
+        # failed has an honest, terminal, accounted record (the manifest's
+        # own missingness bookkeeping) -- exactly what this report's own
+        # missingness/exclusion accounting is built to describe. Any other
+        # verification failure, or a planned cell/evaluation with no
+        # terminal record at all, is a real gap and blocks the report.
+        problems = [p for p in verify_manifest(store, manifest_ref) if p.code != "incomplete_run"]
         if problems:
             raise ReportError(f"invalid manifest: {problems[0].code}")
         manifest = RunManifest.model_validate(_read(store, manifest_ref))
-        if manifest.status != "complete":
-            raise ReportError("reports require complete manifests")
         plan = parse_execution_plan(_read(store, manifest.plan_ref))
+        if {cell.id for cell in plan.cells} != set(manifest.execution_records):
+            raise ReportError("reports require every planned cell to have an execution record")
+        if {item.id for item in plan.evaluations} != set(manifest.evaluation_records):
+            raise ReportError("reports require every planned evaluation to have a terminal record")
         snapshot = StudySnapshot.model_validate(_read(store, plan.snapshot_ref))
         # Populations, exclusions and cost estimates can differ across shards;
         # task semantics and authorized execution settings cannot. The 0.1.0

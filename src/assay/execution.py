@@ -292,6 +292,8 @@ async def execute_plan(
     outputs: dict[str, str] = {}
     fatal: Exception | None = None
     halt: AdmissionHalt | None = None
+    unavailable_evaluations: set[str] = set()
+    interruption: dict[str, Any] | None = None
 
     def record_operating(
         *,
@@ -444,6 +446,7 @@ async def execute_plan(
         result: EvaluationResult = EvaluationFailed("NotStarted", "evaluator was not called")
         if output is None:
             result = EvaluationFailed("ExecutionUnavailable", "worker execution did not succeed")
+            unavailable_evaluations.add(coordinate.id)
         else:
             called = False
             returned = False
@@ -556,20 +559,41 @@ async def execute_plan(
                 completed_at=completed_at,
             )
 
-    async def _drain(tasks: list[asyncio.Task[None]]) -> None:
-        """Bounded shield: give active adapter cleanup a fixed window, never an unbounded one."""
+    async def _drain(tasks: list[asyncio.Task[None]]) -> dict[str, Any] | None:
+        """Bounded shield: give active adapter cleanup a fixed window, never an unbounded one.
+
+        Returns a typed cleanup-interruption record when the window elapses
+        with tasks still outstanding, so that a durable trace of the
+        incomplete cleanup survives even though the tasks themselves were
+        abandoned; returns ``None`` when every task drained in time.
+        """
         for child in tasks:
             child.cancel()
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=CANCELLATION_CLEANUP_TIMEOUT,
-            )
+        # asyncio.gather()'s cancel() only forwards to its children and does
+        # not settle until they finish, so wrapping it in wait_for cannot
+        # bound a child that swallows its own cancellation: wait_for's timer
+        # cancels the *task*, which is the same forward-and-wait-for-real
+        # non-resolution. asyncio.wait()'s own timeout is a plain, immediate
+        # timer on its internal waiter, independent of child cooperation, so
+        # it is the one primitive here that is genuinely bounded.
+        _done, pending = await asyncio.wait(tasks, timeout=CANCELLATION_CLEANUP_TIMEOUT)
+        if not pending:
+            return None
+        return {
+            "schema_version": "assay-cleanup-interruption/0.1.0",
+            "run_id": run_id,
+            "reason": "cleanup_timeout",
+            "timeout_seconds": CANCELLATION_CLEANUP_TIMEOUT,
+            "outstanding_tasks": len(pending),
+            "total_tasks": len(tasks),
+            "occurred_at": _now(),
+        }
 
     async def bounded[T](
         items: Iterable[T], call: Callable[[T], Awaitable[None]], *, should_stop: Callable[[], bool]
     ) -> None:
         """Only active slots start; a stop signal halts new dispatch, active calls still drain."""
+        nonlocal interruption
         iterator = iter(items)
 
         async def consume() -> None:
@@ -587,9 +611,18 @@ async def execute_plan(
 
         tasks = [asyncio.create_task(consume()) for _ in range(plan.concurrency)]
         try:
-            await asyncio.gather(*tasks)
+            # asyncio.gather() forwards cancellation to its children but will
+            # not settle -- and so will not deliver that cancellation back to
+            # us -- until every child actually finishes, which is exactly the
+            # unbounded hang this shield exists to prevent. asyncio.wait()'s
+            # internal waiter is cancelled immediately instead, so our own
+            # cancellation reaches us right away and _drain gets a genuine
+            # chance to bound however long the children take to react to it.
+            await asyncio.wait(tasks)
         except BaseException:
-            await _drain(tasks)
+            record = await _drain(tasks)
+            if record is not None and interruption is None:
+                interruption = record
             raise
 
     def _build_manifest() -> RunManifest:
@@ -598,7 +631,11 @@ async def execute_plan(
             sorted(
                 (expected - execution_records.keys() - evaluation_records.keys())
                 | (expected_operating - operating_records.keys())
+                | unavailable_evaluations
             )
+        )
+        interruption_ref = (
+            str(store.publish_json(interruption)) if interruption is not None else None
         )
         return RunManifest(
             run_id=run_id,
@@ -608,6 +645,7 @@ async def execute_plan(
             evaluation_records=evaluation_records,
             operating_records=operating_records,
             missing_coordinates=missing,
+            interruption_ref=interruption_ref,
         )
 
     try:
@@ -618,8 +656,10 @@ async def execute_plan(
             await bounded(plan.evaluations, run_evaluation, should_stop=lambda: fatal is not None)
     except asyncio.CancelledError:
         # Cancellation stays observable to the caller, but whatever recoverable
-        # evidence exists gets a bounded, best-effort chance to become durable
-        # incomplete-manifest evidence before it is re-raised.
+        # evidence exists (including cleanup's own typed interruption record,
+        # if the bounded shield above did not finish in time) gets a bounded,
+        # best-effort chance to become durable incomplete-manifest evidence
+        # before cancellation is re-raised.
         with contextlib.suppress(Exception):
             store.publish_json(_build_manifest().model_dump(mode="json"))
         raise

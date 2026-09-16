@@ -235,7 +235,7 @@ def test_indexing_bundle_preserves_verification(review_fixture: ReviewFixture) -
     build_index(store)
     build_index(store, refresh=True)
     assert set(store.objects.iterdir()) == before
-    assert verify_bundle(store, review_fixture.manifest_ref) == ()
+    assert [f.code for f in verify_bundle(store, review_fixture.manifest_ref)] == ["incomplete_run"]
 
 
 def test_loose_accounting_requires_unique_schema_valid_attribution(
@@ -345,7 +345,9 @@ def test_fixture_index_groups_manifest_and_reports(review_fixture: ReviewFixture
     manifested = [run for run in index.runs if run.manifest_ref == review_fixture.manifest_ref]
     assert len(manifested) == 1
     assert manifested[0].run_key == review_fixture.manifest_ref
-    assert manifested[0].status == "complete"
+    # The fixture's one injected execution failure leaves its own evaluation
+    # genuinely unavailable, so the manifest is honestly incomplete.
+    assert manifested[0].status == "incomplete"
     assert manifested[0].execution_records == {
         key: (ref,) for key, ref in sorted(review_fixture.result.manifest.execution_records.items())
     }
@@ -462,7 +464,9 @@ def test_cache_is_disposable_and_stays_outside_object_namespace(
     cache.write_text(json.dumps({"version": CACHE_VERSION + 1, "key": {}, "objects": []}))
     assert build_index(review_fixture.store) == first
     assert {path.name for path in review_fixture.store.objects.iterdir()} == before_entries
-    assert verify_bundle(review_fixture.bundle, review_fixture.manifest_ref) == ()
+    assert [f.code for f in verify_bundle(review_fixture.bundle, review_fixture.manifest_ref)] == [
+        "incomplete_run"
+    ]
 
 
 def test_warm_cache_hit_preserves_discovered_values(

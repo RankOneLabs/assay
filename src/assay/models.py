@@ -356,6 +356,7 @@ class RunManifest(WireModel):
     evaluation_records: dict[str, Sha256Ref]
     operating_records: dict[str, Sha256Ref] = Field(default_factory=dict)
     missing_coordinates: tuple[str, ...]
+    interruption_ref: Sha256Ref | None = None
 
     @model_validator(mode="after")
     def unique_addresses(self) -> RunManifest:

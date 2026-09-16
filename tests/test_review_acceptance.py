@@ -56,7 +56,9 @@ async def test_serve_and_export_leave_source_and_bundle_objects_unchanged(
         export_review(store, fixture.manifest_ref, tmp_path / f"review-{index}.html")
 
     assert [_object_bytes(store) for store in stores] == before
-    assert verify_bundle(fixture.bundle, fixture.manifest_ref) == ()
+    assert [f.code for f in verify_bundle(fixture.bundle, fixture.manifest_ref)] == [
+        "incomplete_run"
+    ]
 
 
 def _exact_bundle(source: ObjectStore, root_ref: str, destination: Path) -> ObjectStore:
@@ -77,10 +79,14 @@ async def test_verification_scopes_reports_and_post_only_actions(
     overfull_bundle = verify(fixture.store, fixture.manifest_ref, "bundle")
     exact_root = verify(fixture.bundle, fixture.manifest_ref, "root")
     exact_bundle = verify(fixture.bundle, fixture.manifest_ref, "bundle")
-    assert root.status == "passed" and root.failures == ()
+    # The fixture's one injected execution failure makes the manifest
+    # honestly incomplete; "partial" is the passing-but-incomplete verdict
+    # for that, distinct from "failed" (which is reserved for anything
+    # beyond the expected, accounted "incomplete_run" flag).
+    assert root.status == "partial" and root.failures == ()
     assert overfull_bundle.status == "failed"
     assert {failure.code for failure in overfull_bundle.failures} == {"bundle_closure"}
-    assert exact_root.status == exact_bundle.status == "passed"
+    assert exact_root.status == exact_bundle.status == "partial"
 
     report_ref = fixture.studies.report_refs["scalar"]
     report_bundle = fixture.studies.report_bundles["scalar"]

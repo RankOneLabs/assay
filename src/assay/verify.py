@@ -130,6 +130,7 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
     subjects = {item.id: item for item in snapshot.subjects}
     arms = {item.id: item for item in snapshot.arms}
     expected_operating = {f"worker:{key}" for key in outcomes}
+    unavailable_evaluations: set[str] = set()
     for key, ref in manifest.evaluation_records.items():
         try:
             coordinate = evaluations[key]
@@ -147,6 +148,8 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
                     _json(store, failure.trace_ref)
                 if outcome.status == "failed" and failure.error_type != "ExecutionUnavailable":
                     raise ValueError("failed worker must produce an explicit unavailable skip")
+                if outcome.status == "failed":
+                    unavailable_evaluations.add(key)
                 if outcome.status == "succeeded":
                     expected_operating.add(f"evaluator:{key}")
                 continue
@@ -306,6 +309,7 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
             (cells.keys() - actual_execution)
             | (required_evaluation - actual_evaluation)
             | missing_operating
+            | unavailable_evaluations
         )
     )
     if manifest.missing_coordinates != missing:
@@ -316,6 +320,18 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
         failures.append(
             VerificationFailure("incomplete_run", "run has missing planned coordinates")
         )
+    if manifest.interruption_ref is not None:
+        try:
+            if manifest.status != "incomplete":
+                raise ValueError("a cleanup interruption cannot accompany a complete run")
+            interruption = _json(store, manifest.interruption_ref)
+            if (
+                interruption.get("schema_version") != "assay-cleanup-interruption/0.1.0"
+                or interruption.get("run_id") != manifest.run_id
+            ):
+                raise ValueError("cleanup interruption identity differs from this run")
+        except Exception as error:
+            failures.append(VerificationFailure("cleanup_interruption", str(error)))
     return tuple(failures)
 
 
@@ -363,7 +379,14 @@ def verify_bundle(store: ObjectStore, root_ref: str) -> tuple[VerificationFailur
 
 
 def export_bundle(store: ObjectStore, root_ref: str, destination: Path | str) -> ObjectStore:
-    """Copy a verified root's exact object closure into an empty directory."""
+    """Copy a verified root's exact object closure into an empty directory.
+
+    A manifest that is honestly ``incomplete`` (unstarted cells, evaluations
+    unavailable because their worker failed, or missing operating records)
+    is still self-consistent, recoverable partial evidence — its
+    ``incomplete_run`` flag is informational, not a corruption signal, so it
+    does not block export. Any other verification failure does.
+    """
     store = verification_session(store)
     root = _json(store, root_ref)
     failures = (
@@ -371,8 +394,9 @@ def export_bundle(store: ObjectStore, root_ref: str, destination: Path | str) ->
         if root.get("record_schema") == "assay-report/0.1.0"
         else verify_manifest(store, root_ref)
     )
-    if failures:
-        raise ValueError(f"cannot export invalid root: {failures}")
+    blocking = tuple(failure for failure in failures if failure.code != "incomplete_run")
+    if blocking:
+        raise ValueError(f"cannot export invalid root: {blocking}")
     destination = Path(destination)
     if destination.exists() and any(destination.iterdir()):
         raise ValueError("bundle destination must be empty")

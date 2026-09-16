@@ -695,7 +695,12 @@ async def test_pilot_missingness_and_post_execution_failure_refs(
         export_destination=destination,
     )
     assert result.manifest_ref is not None
-    assert verify_manifest(store, result.manifest_ref) == ()
+    # A provider failure fails every worker, so every planned evaluation is
+    # genuinely unavailable and the manifest is honestly incomplete; the
+    # other failure modes leave the worker succeeding, so their manifest
+    # stays complete and verification is clean.
+    expected_codes = ["incomplete_run"] if failure == "provider" else []
+    assert [f.code for f in verify_manifest(store, result.manifest_ref)] == expected_codes
     if failure == "export":
         assert isinstance(result, PilotFailed) and result.report_ref is not None
         assert (destination / "keep.txt").read_text() == "existing user data"

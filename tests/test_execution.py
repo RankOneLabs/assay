@@ -195,10 +195,14 @@ async def test_end_to_end_preserves_failures_and_completes_coordinates(tmp_path:
     fixture = execution_fixture(ObjectStore(tmp_path))
     result = await execute_plan(**fixture.arguments)
     assert isinstance(result, RunSucceeded), result
-    assert result.manifest.status == "complete"
+    # Half the cells fail their worker; every evaluation planned against a
+    # failed worker is genuinely unavailable, not a satisfied coordinate, so
+    # the manifest cannot claim "complete" even though nothing here is fatal.
+    assert result.manifest.status == "incomplete"
     assert len(result.manifest.execution_records) == 8
     assert len(result.manifest.evaluation_records) == 16
     assert len(result.manifest.operating_records) == 16  # 8 workers + 8 actual evaluator attempts
+    assert len(result.manifest.missing_coordinates) == 8
     records = [
         json.loads(fixture.store.read_bytes(ref))
         for ref in result.manifest.execution_records.values()
@@ -214,7 +218,21 @@ async def test_end_to_end_preserves_failures_and_completes_coordinates(tmp_path:
     assert all(record["task"] == "fixture_quality" for record in evidence)
     assert all(record["declaration_version"] == 7 for record in evidence)
     assert all(record["record_id"].startswith(result.manifest.run_id) for record in evidence)
-    assert verify_manifest(fixture.store, str(result.manifest_ref)) == ()
+    unavailable = [
+        record
+        for record in evaluations
+        if record.get("error_type") == "ExecutionUnavailable"
+    ]
+    assert len(unavailable) == 8
+    assert set(result.manifest.missing_coordinates) == {
+        coordinate_id
+        for coordinate_id, ref in result.manifest.evaluation_records.items()
+        if json.loads(fixture.store.read_bytes(ref)).get("error_type") == "ExecutionUnavailable"
+    }
+    # Verification agrees the manifest is legitimately incomplete (not
+    # structurally broken): exactly the one expected "incomplete_run" flag.
+    failures = verify_manifest(fixture.store, str(result.manifest_ref))
+    assert [failure.code for failure in failures] == ["incomplete_run"]
 
 
 async def test_snapshot_drift_makes_zero_worker_calls(tmp_path: Any) -> None:
@@ -352,13 +370,15 @@ async def test_coordinate_aware_worker_end_to_end_preserves_ordering_and_receive
                 return WorkerFailure("FixtureFailure", "intentional")
             return WorkerSuccess({"score": 1 if coordinate.arm_id == "candidate" else 0})
 
-    fixture = execution_fixture(ObjectStore(tmp_path))
+    # Only successful subjects here: this test exercises dispatch ordering
+    # and coordinate delivery, not the missing-coordinate failure semantics.
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("ok",))
     arguments = fixture.arguments
     arguments["workers"] = {arm.id: CoordinateFakeWorker() for arm in fixture.snapshot.arms}
     result = await execute_plan(**arguments)
     assert isinstance(result, RunSucceeded), result
     assert result.manifest.status == "complete"
-    assert len(result.manifest.execution_records) == 8
+    assert len(result.manifest.execution_records) == 4
     plan_cell_ids = {
         f"{cell['subject_id']}:{cell['arm_id']}:w{cell['worker_repeat']}"
         for cell in json.loads(fixture.plan_bytes)["cells"]
