@@ -62,3 +62,16 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
+
+# These modules subclass Jig/OpenRouter base classes at module scope, so they
+# cannot be fully typed without the "legacy" extra installed. CI type-checks
+# the core wheel's dependency set only; the legacy extra is exercised by tests
+# through lazy imports (assay.adapters, assay.investigations.*), not by mypy.
+[[tool.mypy.overrides]]
+module = ["assay.adapters.jig", "assay.adapters.consistency", "assay.adapters.openrouter"]
+disallow_subclassing_any = false
+
+# ignore_missing_imports must target the *imported* module, not the importer.
+[[tool.mypy.overrides]]
+module = ["jig", "jig.*"]
+ignore_missing_imports = true
