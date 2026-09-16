@@ -17,7 +17,7 @@ from assay.investigations.consistency import (
     StructuralEvaluator,
     materialize_consistency,
 )
-from assay.models import ReportConfig, StatisticalProfile, StudySnapshot
+from assay.models import ExecutionPlan, ReportConfig, StatisticalProfile, StudySnapshot
 from assay.planning import authorize, compile_plan
 from assay.report_engine import persist_report
 from assay.store import ObjectStore
@@ -125,6 +125,8 @@ async def run_pilot(
     try:
         plan_bytes = store.read_bytes(plan_ref)
         plan = authorize(plan_bytes, authorization)
+        if not isinstance(plan, ExecutionPlan):
+            raise ValueError("the Jig pilot runtime can only execute assay-execution-plan/0.1.0")
         if plan.jig_revision != installed_jig_revision() or plan.assay_version != __version__:
             raise ValueError("installed runtime differs from authorized plan")
         snapshot = StudySnapshot.model_validate_json(store.read_bytes(plan.snapshot_ref))

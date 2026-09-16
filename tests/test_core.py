@@ -77,9 +77,14 @@ def test_exclusion_removes_only_declared_pair(tmp_path: Path) -> None:
 def test_schema_files_are_valid_and_closed() -> None:
     directory = Path(__file__).resolve().parents[1] / "schemas"
     check_schemas(directory)
-    assert len(schema_documents()) == 7
+    assert len(schema_documents()) == 9
     for name in schema_documents():
         path = directory / name
         schema = json.loads(path.read_text())
         Draft202012Validator.check_schema(schema)
-        assert schema["additionalProperties"] is False
+        if name == "assay-execution-plan.schema.json":
+            # The unversioned name is a discriminator-selected oneOf over the
+            # pinned 0.1.0/0.2.0 documents, not a closed object schema itself.
+            assert schema["oneOf"]
+        else:
+            assert schema["additionalProperties"] is False

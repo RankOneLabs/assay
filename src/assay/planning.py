@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Collection, Mapping
 from decimal import Decimal
+from typing import TypedDict
 
 from pydantic import BaseModel
 
@@ -14,13 +16,29 @@ from assay.models import (
     EvaluationCoordinate,
     Exclusion,
     ExecutionPlan,
+    ExecutionPlanV2,
     PriceEstimate,
+    RuntimeProfile,
     StudySnapshot,
+    parse_execution_plan,
 )
 
 
 class AuthorizationError(ValueError):
     pass
+
+
+class _PlanCommon(TypedDict):
+    snapshot_ref: str
+    worker_repeats: int
+    concurrency: int
+    exclusions: tuple[Exclusion, ...]
+    cells: tuple[CellCoordinate, ...]
+    evaluations: tuple[EvaluationCoordinate, ...]
+    declaration_hashes: tuple[str, ...]
+    execution_conditions_ref: str
+    cost_estimate: PriceEstimate
+    arm_cost_estimates: dict[str, PriceEstimate]
 
 
 def _hash(value: object) -> str:
@@ -29,17 +47,16 @@ def _hash(value: object) -> str:
     return digest_bytes(canonical_json(value))
 
 
-def compile_plan(
+def _compile_common(
     snapshot: StudySnapshot,
     *,
     snapshot_ref: str,
     worker_repeats: int,
-    exclusions: Collection[Exclusion] = (),
-    jig_revision: str,
-    cost_estimate: PriceEstimate | None = None,
-    concurrency: int = 4,
-    arm_cost_estimates: Mapping[str, PriceEstimate] | None = None,
-) -> ExecutionPlan:
+    exclusions: Collection[Exclusion],
+    cost_estimate: PriceEstimate | None,
+    concurrency: int,
+    arm_cost_estimates: Mapping[str, PriceEstimate] | None,
+) -> _PlanCommon:
     snapshot = StudySnapshot.model_validate(snapshot.model_dump(mode="json"))
     if _hash(snapshot) != snapshot_ref:
         raise ValueError("snapshot_ref does not match the canonical snapshot")
@@ -111,45 +128,108 @@ def compile_plan(
         )
     if cost_estimate is not None and cost_estimate != total:
         raise ValueError("total cost estimate must equal the derived arm estimates")
-    return ExecutionPlan(
-        snapshot_ref=snapshot_ref,
-        worker_repeats=worker_repeats,
-        concurrency=concurrency,
-        exclusions=tuple(sorted(exclusions, key=lambda item: (item.subject_id, item.arm_id))),
-        cells=cells,
-        evaluations=evaluations,
-        declaration_hashes=tuple(sorted(_hash(item) for item in declarations)),
-        execution_conditions_ref=_hash(
+    return {
+        "snapshot_ref": snapshot_ref,
+        "worker_repeats": worker_repeats,
+        "concurrency": concurrency,
+        "exclusions": tuple(sorted(exclusions, key=lambda item: (item.subject_id, item.arm_id))),
+        "cells": cells,
+        "evaluations": evaluations,
+        "declaration_hashes": tuple(sorted(_hash(item) for item in declarations)),
+        "execution_conditions_ref": _hash(
             [arm.conditions for arm in sorted(snapshot.arms, key=lambda x: x.id)]
         ),
-        cost_estimate=total,
-        arm_cost_estimates=estimates,
-        jig_revision=jig_revision,
-        assay_version=__version__,
-    )
+        "cost_estimate": total,
+        "arm_cost_estimates": estimates,
+    }
 
 
-def validate_plan_snapshot(plan: ExecutionPlan, snapshot: StudySnapshot) -> None:
-    """Recompile every governed plan field; a matching snapshot hash alone is insufficient."""
-    expected = compile_plan(
+def compile_plan(
+    snapshot: StudySnapshot,
+    *,
+    snapshot_ref: str,
+    worker_repeats: int,
+    exclusions: Collection[Exclusion] = (),
+    jig_revision: str,
+    cost_estimate: PriceEstimate | None = None,
+    concurrency: int = 4,
+    arm_cost_estimates: Mapping[str, PriceEstimate] | None = None,
+) -> ExecutionPlan:
+    """Compile an ``assay-execution-plan/0.1.0`` plan pinned to a Jig revision."""
+    common = _compile_common(
         snapshot,
-        snapshot_ref=plan.snapshot_ref,
-        worker_repeats=plan.worker_repeats,
-        exclusions=plan.exclusions,
-        jig_revision=plan.jig_revision,
-        cost_estimate=plan.cost_estimate,
-        concurrency=plan.concurrency,
-        arm_cost_estimates=plan.arm_cost_estimates,
+        snapshot_ref=snapshot_ref,
+        worker_repeats=worker_repeats,
+        exclusions=exclusions,
+        cost_estimate=cost_estimate,
+        concurrency=concurrency,
+        arm_cost_estimates=arm_cost_estimates,
     )
+    return ExecutionPlan(**common, jig_revision=jig_revision, assay_version=__version__)
+
+
+def compile_plan_v2(
+    snapshot: StudySnapshot,
+    *,
+    snapshot_ref: str,
+    worker_repeats: int,
+    exclusions: Collection[Exclusion] = (),
+    runtime: RuntimeProfile,
+    cost_estimate: PriceEstimate | None = None,
+    concurrency: int = 4,
+    arm_cost_estimates: Mapping[str, PriceEstimate] | None = None,
+) -> ExecutionPlanV2:
+    """Compile an ``assay-execution-plan/0.2.0`` plan bound to a generic runtime.
+
+    ``runtime`` binds a backend-neutral identity to its complete, content-addressed
+    configuration; unlike 0.1.0's ``jig_revision`` string, this generalizes to any
+    future backend (e.g. Pier) without mixing legacy and generic runtime fields.
+    """
+    common = _compile_common(
+        snapshot,
+        snapshot_ref=snapshot_ref,
+        worker_repeats=worker_repeats,
+        exclusions=exclusions,
+        cost_estimate=cost_estimate,
+        concurrency=concurrency,
+        arm_cost_estimates=arm_cost_estimates,
+    )
+    return ExecutionPlanV2(**common, runtime=runtime, assay_version=__version__)
+
+
+def validate_plan_snapshot(plan: ExecutionPlan | ExecutionPlanV2, snapshot: StudySnapshot) -> None:
+    """Recompile every governed plan field; a matching snapshot hash alone is insufficient."""
+    if isinstance(plan, ExecutionPlanV2):
+        expected: ExecutionPlan | ExecutionPlanV2 = compile_plan_v2(
+            snapshot,
+            snapshot_ref=plan.snapshot_ref,
+            worker_repeats=plan.worker_repeats,
+            exclusions=plan.exclusions,
+            runtime=plan.runtime,
+            cost_estimate=plan.cost_estimate,
+            concurrency=plan.concurrency,
+            arm_cost_estimates=plan.arm_cost_estimates,
+        )
+    else:
+        expected = compile_plan(
+            snapshot,
+            snapshot_ref=plan.snapshot_ref,
+            worker_repeats=plan.worker_repeats,
+            exclusions=plan.exclusions,
+            jig_revision=plan.jig_revision,
+            cost_estimate=plan.cost_estimate,
+            concurrency=plan.concurrency,
+            arm_cost_estimates=plan.arm_cost_estimates,
+        )
     if expected != plan:
         raise ValueError("plan differs from the deterministic snapshot compilation")
 
 
-def authorize(plan_bytes: bytes, authorization: str) -> ExecutionPlan:
+def authorize(plan_bytes: bytes, authorization: str) -> ExecutionPlan | ExecutionPlanV2:
     actual = digest_bytes(plan_bytes)
     if authorization != actual:
         raise AuthorizationError(f"authorization {authorization} does not match plan {actual}")
-    plan = ExecutionPlan.model_validate_json(plan_bytes)
+    plan = parse_execution_plan(json.loads(plan_bytes))
     if canonical_json(plan.model_dump(mode="json")) != plan_bytes:
         raise AuthorizationError("authorized plan must be complete canonical wire JSON")
     return plan

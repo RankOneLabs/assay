@@ -89,9 +89,7 @@ def publish_plan_dependencies(store: ObjectStore, snapshot: StudySnapshot) -> No
     """Publish every snapshot-derived object referenced directly by compile_plan."""
     for declaration in (*snapshot.arms, *snapshot.evaluators):
         store.publish_json(declaration.model_dump(mode="json"))
-    store.publish_json(
-        [arm.conditions for arm in sorted(snapshot.arms, key=lambda item: item.id)]
-    )
+    store.publish_json([arm.conditions for arm in sorted(snapshot.arms, key=lambda item: item.id)])
 
 
 def _repository_for(
@@ -196,9 +194,9 @@ def _validate_experiment_shape(
         raise ValueError("consistency experiment subject population changed")
     if {arm.id for arm in snapshot.arms} != {"clean", "inconsistent"}:
         raise ValueError("consistency experiment arms changed")
-    if {
-        arm.conditions.get("assay_execution_schedule") for arm in snapshot.arms
-    } != {"subject-counterbalanced-v1"}:
+    if {arm.conditions.get("assay_execution_schedule") for arm in snapshot.arms} != {
+        "subject-counterbalanced-v1"
+    }:
         raise ValueError("consistency experiment execution schedule changed")
     if any(item.repeats != 1 for item in snapshot.evaluators):
         raise ValueError("consistency experiment evaluator repeats changed")
@@ -216,9 +214,7 @@ def _validate_experiment_shape(
         for realization in snapshot.realizations
     }
     for task in tasks:
-        task_value = task.model_dump(
-            mode="json", exclude={"reused_source", "duplicated_source"}
-        )
+        task_value = task.model_dump(mode="json", exclude={"reused_source", "duplicated_source"})
         subject_ref = digest_bytes(canonical_json(task_value))
         subject = subjects[task.id]
         if (
@@ -269,6 +265,10 @@ async def run_consistency_experiment(
         plan = authorize(plan_bytes, authorization)
         if export_destination is not None and export_destination.exists():
             raise ValueError("export destination already exists")
+        if not isinstance(plan, ExecutionPlan):
+            raise ValueError(
+                "the Jig experiment runtime can only execute assay-execution-plan/0.1.0"
+            )
         if plan.jig_revision != installed_jig_revision() or plan.assay_version != __version__:
             raise ValueError("installed runtime differs from authorized plan")
         snapshot = StudySnapshot.model_validate_json(store.read_bytes(plan.snapshot_ref))

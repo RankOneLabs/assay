@@ -13,10 +13,10 @@ from assay.canonical import canonical_json, digest_bytes
 from assay.models import (
     EvaluationFailure,
     ExecutionOutcome,
-    ExecutionPlan,
     ReportConfig,
     RunManifest,
     StudySnapshot,
+    parse_execution_plan,
 )
 from assay.planning import validate_plan_snapshot
 from assay.references import object_edges, walk_closure
@@ -89,9 +89,7 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
         manifest = RunManifest.model_validate(
             _json(store, manifest_ref, "assay-run-manifest/0.1.0")
         )
-        plan = ExecutionPlan.model_validate(
-            _json(store, manifest.plan_ref, "assay-execution-plan/0.1.0")
-        )
+        plan = parse_execution_plan(_json(store, manifest.plan_ref))
         snapshot = StudySnapshot.model_validate(
             _json(store, plan.snapshot_ref, "assay-study-snapshot/0.1.0")
         )

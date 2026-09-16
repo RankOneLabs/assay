@@ -37,6 +37,13 @@ _PATHS: dict[str, dict[str, str]] = {
         "execution_conditions_ref": "data",
         "cells.*.realization_ref": "data",
     },
+    "assay-execution-plan/0.2.0": {
+        "snapshot_ref": "assay-study-snapshot/0.1.0",
+        "declaration_hashes.*": "data",
+        "execution_conditions_ref": "data",
+        "cells.*.realization_ref": "data",
+        "runtime.configuration_ref": "data",
+    },
     "assay-run-manifest/0.1.0": {
         "plan_ref": "assay-execution-plan/0.1.0",
         "execution_records.*": "assay-execution-outcome/0.1.0",

@@ -19,7 +19,8 @@ export interface RunSummary {
   run_key: string; run_id: string; manifest_ref: string | null; plan_ref: string;
   snapshot_ref: string | null; status: "complete" | "incomplete" | "unmanifested";
   subjects: number | null; arms: string[] | null; worker_repeats: number | null;
-  concurrency: number | null; jig_revision: string | null; assay_version: string | null;
+  concurrency: number | null; jig_revision: string | null;
+  runtime_id: string | null; runtime_version: string | null; assay_version: string | null;
   started_at: string | null; completed_at: string | null; cells_total: number | null;
   cells_succeeded: number; cells_failed: number; cells_missing: number | null;
   cells_invalid: number; cells_conflicted: number; evaluations_total: number | null;
