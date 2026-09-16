@@ -1,13 +1,31 @@
-"""Proposed Qwen smoke policy. Constructing this policy does not authorize spend."""
+"""Proposed Qwen smoke policy. Constructing this policy does not authorize spend.
+
+The Jig worker stack this module's settings are shaped for requires the
+``assay[legacy]`` extra. Importing this module never requires Jig; only calling
+one of these functions does, and a missing extra fails with an actionable
+error at that point rather than at import time.
+"""
 
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
-from assay.adapters.consistency import PilotSettings
+if TYPE_CHECKING:
+    from assay.adapters.consistency import PilotSettings
 
 
-def qwen_smoke_settings() -> PilotSettings:
+def _pilot_settings() -> type["PilotSettings"]:
+    try:
+        from assay.adapters.consistency import PilotSettings
+    except ModuleNotFoundError as error:
+        from assay.adapters import missing_legacy_extra
+
+        raise missing_legacy_extra("assay.investigations.openrouter_smoke", error) from error
+    return PilotSettings
+
+
+def qwen_smoke_settings() -> "PilotSettings":
     """Twelve executions, at most 24 requests, $0.48 admission ceiling per run."""
-    return PilotSettings(
+    return _pilot_settings()(
         mode="paid",
         max_total_requests=24,
         max_spend_usd=Decimal("0.48"),
@@ -21,9 +39,9 @@ def qwen_smoke_settings() -> PilotSettings:
     )
 
 
-def haiku_smoke_settings() -> PilotSettings:
+def haiku_smoke_settings() -> "PilotSettings":
     """Twelve executions, at most 24 requests, $1.44 admission ceiling per run."""
-    return PilotSettings(
+    return _pilot_settings()(
         mode="paid",
         max_total_requests=24,
         max_spend_usd=Decimal("1.44"),

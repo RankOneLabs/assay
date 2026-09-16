@@ -596,6 +596,35 @@ async def test_unpinned_runtime_fails_prepare_and_run_before_provider_calls(tmp_
     assert factory.created == 0 and factory.calls == []
 
 
+@pytest.mark.asyncio
+async def test_run_pilot_reports_a_missing_legacy_extra_before_reading_jig_metadata(
+    tmp_path: Path,
+) -> None:
+    """A Jig-free install must see the actionable assay[legacy] error, not a raw
+    PackageNotFoundError from installed_jig_revision's importlib.metadata lookup.
+    """
+    store, factory = ObjectStore(tmp_path), FakeFactory()
+    prepared = prepare(store, factory, PilotSettings())
+    with (
+        patch(
+            "assay.investigations.pilot._import_legacy_worker_stack",
+            side_effect=ModuleNotFoundError("assay[legacy]"),
+        ),
+        patch(
+            "assay.investigations.pilot.installed_jig_revision",
+            side_effect=AssertionError("installed_jig_revision must not run first"),
+        ),
+    ):
+        result = await run_pilot(
+            store,
+            plan_ref=prepared.plan_ref,
+            authorization=prepared.plan_ref,
+            factory=factory,
+        )
+    assert isinstance(result, PilotFailed)
+    assert result.error_type == "ModuleNotFoundError" and "assay[legacy]" in result.message
+
+
 def test_worker_policy_cannot_diverge_from_ledger() -> None:
     worker = ConsistencyWorker(FakeFactory(), PilotSettings())
     with pytest.raises(dataclasses.FrozenInstanceError):

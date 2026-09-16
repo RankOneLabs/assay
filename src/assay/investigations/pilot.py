@@ -147,12 +147,12 @@ async def run_pilot(
         plan = authorize(plan_bytes, authorization)
         if not isinstance(plan, ExecutionPlan):
             raise ValueError("the Jig pilot runtime can only execute assay-execution-plan/0.1.0")
+        ConsistencyWorker, PilotSettings, render_input = _import_legacy_worker_stack()
         if plan.jig_revision != installed_jig_revision() or plan.assay_version != __version__:
             raise ValueError("installed runtime differs from authorized plan")
         snapshot = StudySnapshot.model_validate_json(store.read_bytes(plan.snapshot_ref))
         if plan.concurrency != 1 or plan.worker_repeats != 2:
             raise ValueError("pilot requires concurrency one and two worker repeats")
-        ConsistencyWorker, PilotSettings, render_input = _import_legacy_worker_stack()
         settings = PilotSettings.model_validate(snapshot.arms[0].worker["settings"])
         if settings.mode == "paid" and not allow_paid:
             raise ValueError("paid pilot requires explicit allow_paid=True")

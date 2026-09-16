@@ -238,7 +238,8 @@
     "cost_estimate",
     "arm_cost_estimates",
     "jig_revision",
-    "assay_version"
+    "assay_version",
+    "schema_version"
   ],
   "title": "ExecutionPlan",
   "type": "object",

@@ -47,6 +47,7 @@ import assay.investigations.realistic_fixtures
 import assay.investigations.dry_experiment
 import assay.investigations.pilot
 import assay.investigations.realistic_pilot
+import assay.investigations.openrouter_smoke
 import assay.adapters
 import assay.adapters.openrouter_policy
 print("ok")
@@ -87,6 +88,12 @@ try:
     realistic_pilot.realistic_haiku_settings()
 except ModuleNotFoundError as error:
     print(f"realistic_pilot: {error}")
+
+import assay.investigations.openrouter_smoke as openrouter_smoke
+try:
+    openrouter_smoke.qwen_smoke_settings()
+except ModuleNotFoundError as error:
+    print(f"openrouter_smoke: {error}")
 """
     result = _run(
         [installed_wheel.python, "-c", program],
@@ -94,7 +101,7 @@ except ModuleNotFoundError as error:
         env=_installed_environment(),
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    for name in ("JigWorker", "pilot", "dry_experiment", "realistic_pilot"):
+    for name in ("JigWorker", "pilot", "dry_experiment", "realistic_pilot", "openrouter_smoke"):
         line = next(line for line in result.stdout.splitlines() if line.startswith(f"{name}: "))
         assert "assay[legacy]" in line
 

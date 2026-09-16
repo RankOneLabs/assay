@@ -265,7 +265,8 @@
     "cost_estimate",
     "arm_cost_estimates",
     "runtime",
-    "assay_version"
+    "assay_version",
+    "schema_version"
   ],
   "title": "ExecutionPlanV2",
   "type": "object",

@@ -207,6 +207,7 @@ async def run_consistency_experiment(
             raise ValueError(
                 "the Jig experiment runtime can only execute assay-execution-plan/0.1.0"
             )
+        ConsistencyWorker, PilotSettings, render_input = _import_legacy_worker_stack()
         if plan.jig_revision != installed_jig_revision() or plan.assay_version != __version__:
             raise ValueError("installed runtime differs from authorized plan")
         snapshot = StudySnapshot.model_validate_json(store.read_bytes(plan.snapshot_ref))
@@ -242,7 +243,6 @@ async def run_consistency_experiment(
             expected_cells=expected_cells,
             expected_evaluations=expected_evaluations,
         )
-        ConsistencyWorker, PilotSettings, render_input = _import_legacy_worker_stack()
         settings = PilotSettings.model_validate(snapshot.arms[0].worker["settings"])
         profile_validator(factory, settings)
         if settings.mode == "paid" and not allow_paid:

@@ -23,6 +23,7 @@ from assay.models import (
     StudySnapshot,
 )
 from assay.planning import compile_plan, compile_plan_v2, validate_plan_snapshot
+from assay.schema_export import plan_schema_registry
 from assay.store import ObjectRef, ObjectStore
 from assay.verify import (
     SUPPORTED_CONTRACTS,
@@ -124,6 +125,45 @@ def test_generated_plan_schemas_validate_each_pinned_version_only(tmp_path: Path
     v2_document = v2_plan.model_dump(mode="json")
     v2_validator.validate(v2_document)
     assert not v1_validator.is_valid(v2_document)
+
+    for document in (v1_document, v2_document):
+        without_version = {k: v for k, v in document.items() if k != "schema_version"}
+        assert not v1_validator.is_valid(without_version)
+        assert not v2_validator.is_valid(without_version)
+    mismatched_v1 = {**v1_document, "schema_version": "assay-execution-plan/0.2.0"}
+    mismatched_v2 = {**v2_document, "schema_version": "assay-execution-plan/0.1.0"}
+    assert not v1_validator.is_valid(mismatched_v1)
+    assert not v2_validator.is_valid(mismatched_v2)
+
+
+def test_root_plan_schema_validates_each_pinned_version_through_its_registry(
+    tmp_path: Path,
+) -> None:
+    """A validator loading only the root document must resolve its oneOf refs offline."""
+    store = ObjectStore(tmp_path)
+    fixture = execution_fixture(store)
+    root = Path(__file__).resolve().parents[1] / "schemas"
+    union = Draft202012Validator(
+        json.loads((root / "assay-execution-plan.schema.json").read_text()),
+        registry=plan_schema_registry(),
+    )
+
+    v1_document = json.loads(fixture.plan_bytes)
+    union.validate(v1_document)
+
+    study = fixture.snapshot
+    runtime = RuntimeProfile(
+        id="pier", version="1.0.0", configuration_ref=str(store.publish_json({"x": 1}))
+    )
+    v2_plan = compile_plan_v2(
+        study,
+        snapshot_ref=str(store.publish_json(study.model_dump(mode="json"))),
+        worker_repeats=1,
+        runtime=runtime,
+    )
+    union.validate(v2_plan.model_dump(mode="json"))
+
+    assert not union.is_valid({k: v for k, v in v1_document.items() if k != "schema_version"})
 
 
 def test_normative_contract_hashes_match_pinned_conformance_package() -> None:
