@@ -272,7 +272,7 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
                 raise ValueError("operating attempt needs exactly one accounting provenance object")
             detail = _json(store, next(iter(detail_refs)))
             coverage = detail.get("coverage")
-            if coverage not in {"measured", "estimated", "unavailable", "mixed"}:
+            if coverage not in {"measured", "estimated", "unavailable", "mixed", "uncertain"}:
                 raise ValueError("invalid accounting coverage")
             if detail != {
                 "run_id": manifest.run_id,
@@ -285,10 +285,10 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
                 raise ValueError(
                     "accounting provenance differs from run/attempt/configuration/pricing"
                 )
-            if record["price"] is not None and coverage == "unavailable":
-                raise ValueError("available price cannot have unavailable coverage")
-            if record["price"] is None and coverage != "unavailable":
-                raise ValueError("missing price must have unavailable coverage")
+            if record["price"] is not None and coverage in ("unavailable", "uncertain"):
+                raise ValueError("available price cannot have unavailable or uncertain coverage")
+            if record["price"] is None and coverage not in ("unavailable", "uncertain"):
+                raise ValueError("missing price must have unavailable or uncertain coverage")
             if (
                 record["task"] != task["task"]
                 or record["declaration_version"] != task["version"]

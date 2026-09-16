@@ -400,7 +400,7 @@ def summarize_operating(store: ObjectStore, refs: list[str]) -> dict[str, Any]:
             raise ReportError("overlapping operating attempt sources")
         seen.add(key)
         state = detail["coverage"]
-        if state not in ("measured", "estimated", "unavailable", "mixed"):
+        if state not in ("measured", "estimated", "unavailable", "mixed", "uncertain"):
             raise ReportError("unknown operating coverage")
         coverage[state] += 1
         stage, _subject, arm, *_rest = detail["attempt"].split(":")
@@ -410,11 +410,11 @@ def summarize_operating(store: ObjectStore, refs: list[str]) -> dict[str, Any]:
         if record.get("components"):
             raise ReportError("component operating prices are not supported")
         if price is None:
-            if state != "unavailable":
+            if state not in ("unavailable", "uncertain"):
                 raise ReportError("missing price cannot claim measured or estimated coverage")
             continue
-        if state == "unavailable":
-            raise ReportError("priced attempt cannot claim unavailable coverage")
+        if state in ("unavailable", "uncertain"):
+            raise ReportError("priced attempt cannot claim unavailable or uncertain coverage")
         currency = price["currency"]
         amount = Decimal(str(price["amount"]))
         totals[currency] += amount
