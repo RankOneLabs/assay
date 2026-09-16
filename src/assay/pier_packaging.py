@@ -103,6 +103,36 @@ def repository_only_entries(package: SealedPackage) -> dict[str, str]:
     return {path: content for path, content in package.files if path.startswith(prefix)}
 
 
+_ALLOWED_NON_REPOSITORY_PATHS = frozenset({INSTRUCTION_PATH, SUBMISSION_CONTRACT_PATH})
+
+
+def gate_package(
+    package: SealedPackage,
+    *,
+    expected_digest: str,
+    forbidden_substrings: tuple[str, ...] = (),
+) -> None:
+    """The last check before a package's digest is handed to ``Trial.create``.
+
+    Fails closed on any of: a digest that does not match what the caller is
+    about to authorize (the package was rebuilt or tampered with between
+    build and dispatch), a path outside the fixed allowlist (the workspace
+    prefix plus the instruction and submission contract), or any forbidden
+    substring appearing in file content — a sentinel audit hook a caller can
+    use to check content against hidden tests, other arms, evaluator
+    fixtures, or object-store metadata it holds out of band.
+    """
+    if package.manifest_digest != expected_digest:
+        raise ValueError("package digest does not match the digest being authorized")
+    prefix = f"{WORKSPACE_PREFIX}/"
+    for path, content in package.files:
+        if path not in _ALLOWED_NON_REPOSITORY_PATHS and not path.startswith(prefix):
+            raise ValueError(f"package entry is outside the allowlist: {path}")
+        for sentinel in forbidden_substrings:
+            if sentinel in content:
+                raise ValueError(f"package entry carries a forbidden sentinel: {path}")
+
+
 def non_repository_entries(package: SealedPackage) -> dict[str, str]:
     """Project a package onto everything except its repository content.
 

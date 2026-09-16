@@ -10,11 +10,12 @@ from assay.pier_packaging import (
     SUBMISSION_CONTRACT_PATH,
     WORKSPACE_PREFIX,
     build_package,
+    gate_package,
     non_repository_entries,
     render_instruction,
     repository_only_entries,
 )
-from assay.repository import validate_source_tree
+from assay.repository import validate_repository, validate_source_tree
 
 
 def _write_tree(root: Path, files: dict[str, str]) -> Path:
@@ -118,7 +119,62 @@ def test_validate_source_tree_enforces_file_count_limit(tmp_path: Path) -> None:
 
 
 def test_build_package_rejects_traversal_from_repository_dict(tmp_path: Path) -> None:
-    from assay.repository import validate_repository
-
     with pytest.raises(ValueError, match="unsafe repository path"):
         validate_repository({"../escape.py": "x = 1\n"})
+
+
+def test_validate_repository_rejects_case_folded_duplicate_paths() -> None:
+    with pytest.raises(ValueError, match="duplicate repository path"):
+        validate_repository({"Solution.py": "a = 1\n", "solution.py": "b = 2\n"})
+
+
+def test_gate_package_accepts_the_expected_digest(tmp_path: Path) -> None:
+    root = _write_tree(tmp_path / "arm", {"solution.py": "print('hi')\n"})
+    package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
+    gate_package(package, expected_digest=package.manifest_digest)
+
+
+def test_gate_package_rejects_a_mismatched_digest(tmp_path: Path) -> None:
+    root = _write_tree(tmp_path / "arm", {"solution.py": "print('hi')\n"})
+    package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
+    with pytest.raises(ValueError, match="digest does not match"):
+        gate_package(package, expected_digest="sha256:" + "0" * 64)
+
+
+def test_gate_package_rejects_a_forbidden_sentinel(tmp_path: Path) -> None:
+    root = _write_tree(tmp_path / "arm", {"solution.py": "SENTINEL_LEAK = 1\n"})
+    package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
+    with pytest.raises(ValueError, match="forbidden sentinel"):
+        gate_package(
+            package,
+            expected_digest=package.manifest_digest,
+            forbidden_substrings=("SENTINEL_LEAK",),
+        )
+
+
+def test_gate_package_rejects_a_non_allowlisted_entry(tmp_path: Path) -> None:
+    root = _write_tree(tmp_path / "arm", {"solution.py": "print('hi')\n"})
+    package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
+    tampered_files = (*package.files, ("evaluator/rubric.json", "{}"))
+    from dataclasses import replace
+
+    tampered = replace(package, files=tampered_files)
+    with pytest.raises(ValueError, match="outside the allowlist"):
+        gate_package(tampered, expected_digest=tampered.manifest_digest)
+
+
+def test_dockerfile_context_is_confined_to_the_named_allowlist() -> None:
+    dockerfile = Path(__file__).parents[1] / "integrations" / "pier" / "Dockerfile"
+    text = dockerfile.read_text(encoding="utf-8")
+    allowed_copy_sources = {"pyproject.toml", "uv.lock", "README.md", "src", "config"}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("COPY "):
+            continue
+        parts = stripped.split()
+        if any(part.startswith("--from=") for part in parts):
+            continue  # copies from another build stage/image, not the build context
+        sources = parts[1:-1]
+        assert sources, f"COPY with no explicit source is not allowed: {line}"
+        for source in sources:
+            assert source in allowed_copy_sources, f"unlisted COPY source: {source}"

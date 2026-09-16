@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import unicodedata
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -51,6 +52,15 @@ def validate_repository(
         parts = raw_path.split("/")
         if any("/".join(parts[:index]) in paths for index in range(1, len(parts))):
             raise ValueError("repository path collides with a directory")
+    normalized_seen: dict[str, str] = {}
+    for raw_path in paths:
+        normalized = unicodedata.normalize("NFC", raw_path).casefold()
+        if normalized in normalized_seen and normalized_seen[normalized] != raw_path:
+            raise ValueError(
+                f"duplicate repository path under case/unicode folding: {raw_path!r} "
+                f"collides with {normalized_seen[normalized]!r}"
+            )
+        normalized_seen[normalized] = raw_path
     return dict(sorted(repository.items()))
 
 
