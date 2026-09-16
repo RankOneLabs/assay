@@ -288,6 +288,40 @@ def test_loose_accounting_requires_unique_schema_valid_attribution(
     )
 
 
+def test_uncertain_accounting_is_accepted_and_never_reads_as_measured_zero(
+    review_fixture: ReviewFixture,
+    tmp_path: Path,
+) -> None:
+    """An attempt that failed before usage/price was ever observed must index
+
+    as "uncertain" coverage with no amount -- not as an invalid_accounting
+    issue, and never as a silently-summed zero cost.
+    """
+    store = ObjectStore(tmp_path / "uncertain-index")
+    shutil.copytree(review_fixture.bundle.root, store.root)
+    manifest_dict = review_fixture.result.manifest.model_dump(mode="json")
+    attempt, original_ref = next(iter(manifest_dict["operating_records"].items()))
+    record = json.loads(store.read_bytes(original_ref))
+    for position, source in enumerate(record["source_references"]):
+        detail = json.loads(store.read_bytes(source))
+        if isinstance(detail, dict) and "coverage" in detail and "attempt" in detail:
+            detail["coverage"] = "uncertain"
+            record["source_references"][position] = str(store.publish_json(detail))
+            break
+    record["price"] = None
+    (store.objects / original_ref.removeprefix("sha256:")).unlink()
+    uncertain_ref = str(store.publish_json(record))
+    manifest_dict["operating_records"][attempt] = uncertain_ref
+    manifest_ref = str(store.publish_json(manifest_dict))
+
+    index = build_index(store, refresh=True)
+    run = next(r for r in index.runs if r.manifest_ref == manifest_ref)
+    assert uncertain_ref in run.operating_records
+    assert not any(issue.ref == uncertain_ref for issue in run.summary.cost.issues)
+    assert run.summary.cost.coverage_counts.get("uncertain") == 1
+    assert 0.0 not in run.summary.cost.amounts.values()
+
+
 def test_loose_cost_cannot_use_manifested_terminal_as_second_source(
     review_fixture: ReviewFixture,
 ) -> None:
