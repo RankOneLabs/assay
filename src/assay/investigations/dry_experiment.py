@@ -1,4 +1,10 @@
-"""Prepared, explicitly authorized 12-subject DRY consistency experiment."""
+"""Prepared, explicitly authorized 12-subject DRY consistency experiment.
+
+The Jig/OpenRouter worker stack this module wires up requires the
+``assay[legacy]`` extra. Importing this module never requires Jig; only
+calling ``prepare_dry_experiment``/``run_dry_experiment`` does, and a missing
+extra fails with an actionable error at that point rather than at import time.
+"""
 
 from __future__ import annotations
 
@@ -7,11 +13,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from assay._version import __version__
-from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings, render_input
-from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
-from assay.canonical import canonical_json, digest_bytes
+from assay.canonical import canonical_json
 from assay.execution import Evaluator, RunFailed, WorkerFailure, execute_plan
 from assay.investigations.consistency import (
     CATEGORIES,
@@ -26,12 +31,20 @@ from assay.investigations.correctness import (
     FunctionalCorrectnessEvaluator,
     SandboxFailure,
 )
+from assay.investigations.dry_common import (
+    publish_plan_dependencies,
+    repository_for,
+    validate_experiment_shape,
+)
 from assay.investigations.pilot import installed_jig_revision
 from assay.models import ExecutionPlan, ReportConfig, StatisticalProfile, StudySnapshot
 from assay.planning import authorize, compile_plan, validate_plan_snapshot
 from assay.report_engine import persist_report
 from assay.store import ObjectStore
 from assay.verify import export_bundle, reference_closure, verify_bundle, verify_snapshot
+
+if TYPE_CHECKING:
+    from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings
 
 
 @dataclass(frozen=True)
@@ -58,8 +71,19 @@ class DryExperimentSucceeded:
     correctness_report_ref: str
 
 
+def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSettings], Any]:
+    try:
+        from assay.adapters.consistency import ConsistencyWorker, PilotSettings, render_input
+    except ModuleNotFoundError as error:
+        from assay.adapters import missing_legacy_extra
+
+        raise missing_legacy_extra("assay.investigations.dry_experiment", error) from error
+    return ConsistencyWorker, PilotSettings, render_input
+
+
 def haiku_dry_settings() -> PilotSettings:
     """Forty-eight one-call cells, $2.88 conservative admission ceiling."""
+    _, PilotSettings, _ = _import_legacy_worker_stack()
     return PilotSettings(
         mode="paid",
         max_llm_calls=1,
@@ -77,37 +101,14 @@ def haiku_dry_settings() -> PilotSettings:
 
 
 def _validate_haiku_profile(factory: ClientFactory, settings: PilotSettings) -> None:
+    from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
+
     if settings != haiku_dry_settings():
         raise ValueError("DRY experiment settings differ from the governed Haiku profile")
     if canonical_json(factory.configuration()) != canonical_json(
         OpenRouterFactory(HAIKU_BEDROCK).configuration()
     ):
         raise ValueError("DRY experiment provider differs from the governed Haiku profile")
-
-
-def publish_plan_dependencies(store: ObjectStore, snapshot: StudySnapshot) -> None:
-    """Publish every snapshot-derived object referenced directly by compile_plan."""
-    for declaration in (*snapshot.arms, *snapshot.evaluators):
-        store.publish_json(declaration.model_dump(mode="json"))
-    store.publish_json([arm.conditions for arm in sorted(snapshot.arms, key=lambda item: item.id)])
-
-
-def _repository_for(
-    task: CodingTask,
-    arm_id: str,
-    repository_variants: Mapping[str, Mapping[str, Mapping[str, str]]] | None,
-) -> dict[str, str]:
-    if repository_variants is not None:
-        try:
-            return dict(repository_variants[task.id][arm_id])
-        except KeyError as error:
-            raise ValueError(f"missing {arm_id} repository for task {task.id}") from error
-    example = task.reused_source if arm_id == "clean" else task.duplicated_source
-    return {
-        task.target_path: (
-            task.helper_source + "\n" + example.replace("implement", "existing_feature")
-        )
-    }
 
 
 def prepare_dry_experiment(
@@ -123,6 +124,7 @@ def prepare_dry_experiment(
         if len(EXPERIMENT_TASKS) < 10:
             raise ValueError("DRY experiment requires at least ten subjects")
         _validate_haiku_profile(factory, settings)
+        ConsistencyWorker, _, _ = _import_legacy_worker_stack()
         worker = ConsistencyWorker(factory, settings)
         correctness = FunctionalCorrectnessEvaluator(runner)
         snapshot = materialize_consistency(
@@ -174,70 +176,6 @@ def _report_config(
         statistical_profile=StatisticalProfile(seed=7, bootstrap_samples=10_000),
         engine_version=__version__,
     )
-
-
-def _validate_experiment_shape(
-    store: ObjectStore,
-    snapshot: StudySnapshot,
-    plan: ExecutionPlan,
-    *,
-    tasks: Sequence[CodingTask] = EXPERIMENT_TASKS,
-    repository_variants: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
-    expected_subjects: int = 12,
-    expected_cells: int = 48,
-    expected_evaluations: int = 96,
-) -> None:
-    tasks_by_id = {task.id: task for task in tasks}
-    if len(tasks_by_id) != expected_subjects or {
-        subject.id for subject in snapshot.subjects
-    } != set(tasks_by_id):
-        raise ValueError("consistency experiment subject population changed")
-    if {arm.id for arm in snapshot.arms} != {"clean", "inconsistent"}:
-        raise ValueError("consistency experiment arms changed")
-    if {arm.conditions.get("assay_execution_schedule") for arm in snapshot.arms} != {
-        "subject-counterbalanced-v1"
-    }:
-        raise ValueError("consistency experiment execution schedule changed")
-    if any(item.repeats != 1 for item in snapshot.evaluators):
-        raise ValueError("consistency experiment evaluator repeats changed")
-    if (
-        plan.concurrency != 1
-        or plan.worker_repeats != 2
-        or len(plan.cells) != expected_cells
-        or len(plan.evaluations) != expected_evaluations
-    ):
-        raise ValueError("consistency experiment execution grid changed")
-
-    subjects = {subject.id: subject for subject in snapshot.subjects}
-    realizations = {
-        (realization.subject_id, realization.arm_id): realization
-        for realization in snapshot.realizations
-    }
-    for task in tasks:
-        task_value = task.model_dump(mode="json", exclude={"reused_source", "duplicated_source"})
-        subject_ref = digest_bytes(canonical_json(task_value))
-        subject = subjects[task.id]
-        if (
-            subject.label != task.instruction
-            or subject.partition != task.family
-            or subject.digest != subject_ref
-            or subject.payload_ref != subject_ref
-        ):
-            raise ValueError("consistency experiment subject declaration changed")
-        for arm_id in ("clean", "inconsistent"):
-            repository = _repository_for(task, arm_id, repository_variants)
-            expected = {
-                "task": task_value,
-                "repository": repository,
-                "base_subject_ref": subject_ref,
-            }
-            realization = realizations[(task.id, arm_id)]
-            expected_ref = digest_bytes(canonical_json(expected))
-            if realization.digest != expected_ref or realization.artifact_ref != expected_ref:
-                raise ValueError("consistency experiment realization declaration changed")
-            stored_value = json.loads(store.read_bytes(expected_ref))
-            if canonical_json(stored_value) != canonical_json(expected):
-                raise ValueError("consistency experiment realization content changed")
 
 
 async def run_consistency_experiment(
@@ -294,7 +232,7 @@ async def run_consistency_experiment(
         reference_closure(store, (plan_ref,))
         if {item.id for item in snapshot.evaluators} != {"abstraction", "correctness"}:
             raise ValueError("DRY experiment evaluator set changed")
-        _validate_experiment_shape(
+        validate_experiment_shape(
             store,
             snapshot,
             plan,
@@ -304,6 +242,7 @@ async def run_consistency_experiment(
             expected_cells=expected_cells,
             expected_evaluations=expected_evaluations,
         )
+        ConsistencyWorker, PilotSettings, render_input = _import_legacy_worker_stack()
         settings = PilotSettings.model_validate(snapshot.arms[0].worker["settings"])
         profile_validator(factory, settings)
         if settings.mode == "paid" and not allow_paid:
@@ -332,7 +271,7 @@ async def run_consistency_experiment(
                 return DryExperimentFailed(rendered.error_type, rendered.message)
         sandbox_check = await runner.run(
             task=tasks[0],
-            repository=_repository_for(tasks[0], "clean", repository_variants),
+            repository=repository_for(tasks[0], "clean", repository_variants),
             target_path=tasks[0].target_path,
             source=tasks[0].reused_source,
         )

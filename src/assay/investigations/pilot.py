@@ -1,4 +1,10 @@
-"""Prepare, inspect, then explicitly authorize a source-only consistency pilot."""
+"""Prepare, inspect, then explicitly authorize a source-only consistency pilot.
+
+The Jig worker stack this module wires up requires the ``assay[legacy]``
+extra. Importing this module never requires Jig; only calling
+``prepare_pilot``/``run_pilot`` does, and a missing extra fails with an
+actionable error at that point rather than at import time.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +14,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.metadata import distribution
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from assay._version import __version__
-from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings, render_input
 from assay.execution import RunFailed, WorkerFailure, execute_plan
 from assay.investigations.consistency import (
     CATEGORIES,
@@ -22,6 +28,19 @@ from assay.planning import authorize, compile_plan
 from assay.report_engine import persist_report
 from assay.store import ObjectStore
 from assay.verify import export_bundle, verify_bundle, verify_snapshot
+
+if TYPE_CHECKING:
+    from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings
+
+
+def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSettings], Any]:
+    try:
+        from assay.adapters.consistency import ConsistencyWorker, PilotSettings, render_input
+    except ModuleNotFoundError as error:
+        from assay.adapters import missing_legacy_extra
+
+        raise missing_legacy_extra("assay.investigations.pilot", error) from error
+    return ConsistencyWorker, PilotSettings, render_input
 
 
 @dataclass(frozen=True)
@@ -83,6 +102,7 @@ def prepare_pilot(
     concurrency one. The artifact closure carries the complete authorized policy.
     """
     try:
+        ConsistencyWorker, _, _ = _import_legacy_worker_stack()
         worker = ConsistencyWorker(factory, settings)
         snapshot = materialize_consistency(
             store,
@@ -132,6 +152,7 @@ async def run_pilot(
         snapshot = StudySnapshot.model_validate_json(store.read_bytes(plan.snapshot_ref))
         if plan.concurrency != 1 or plan.worker_repeats != 2:
             raise ValueError("pilot requires concurrency one and two worker repeats")
+        ConsistencyWorker, PilotSettings, render_input = _import_legacy_worker_stack()
         settings = PilotSettings.model_validate(snapshot.arms[0].worker["settings"])
         if settings.mode == "paid" and not allow_paid:
             raise ValueError("paid pilot requires explicit allow_paid=True")
