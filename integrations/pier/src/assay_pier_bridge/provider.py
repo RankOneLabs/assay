@@ -88,9 +88,13 @@ def _fail_closed_on_unknown_fields(data: dict[str, Any]) -> None:
     if not _ALLOWED_TOP_LEVEL_FIELDS.issuperset(data):
         raise GuardedRouteError("unknown top-level response field")
     choices = data.get("choices")
-    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
-        if not _ALLOWED_CHOICE_FIELDS.issuperset(choices[0]):
-            raise GuardedRouteError("unknown choice field")
+    if (
+        isinstance(choices, list)
+        and choices
+        and isinstance(choices[0], dict)
+        and not _ALLOWED_CHOICE_FIELDS.issuperset(choices[0])
+    ):
+        raise GuardedRouteError("unknown choice field")
     usage = data.get("usage")
     if isinstance(usage, dict) and not _ALLOWED_USAGE_FIELDS.issuperset(usage):
         raise GuardedRouteError("unknown usage field")

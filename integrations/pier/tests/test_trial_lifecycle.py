@@ -4,7 +4,6 @@ import subprocess
 from dataclasses import dataclass, field
 
 import pytest
-
 from assay_pier_bridge.protocol import (
     EffectiveEnforcement,
     ModelRoute,

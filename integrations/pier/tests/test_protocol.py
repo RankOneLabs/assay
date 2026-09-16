@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from assay_pier_bridge.protocol import (
     EffectiveEnforcement,
     ModelRoute,
@@ -11,6 +9,7 @@ from assay_pier_bridge.protocol import (
     TrialResult,
     TrialUsage,
 )
+from pydantic import ValidationError
 
 ROUTE = ModelRoute(
     endpoint="https://openrouter.ai/api/v1",

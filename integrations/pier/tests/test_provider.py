@@ -5,7 +5,6 @@ from typing import Any
 
 import httpx
 import pytest
-
 from assay_pier_bridge.provider import (
     CHAT_COMPLETIONS_URL,
     MODEL,
