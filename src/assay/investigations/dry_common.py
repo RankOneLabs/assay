@@ -10,11 +10,43 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from decimal import ROUND_HALF_EVEN, Decimal
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.investigations.consistency import EXPERIMENT_TASKS, CodingTask
-from assay.models import ExecutionPlan, StudySnapshot
+from assay.models import ExecutionPlan, PriceEstimate, StudySnapshot
 from assay.store import ObjectStore
+
+
+def deterministic_cell_price_estimate(
+    *, cell_count: int, per_cell_usd: Decimal, currency: str = "USD"
+) -> PriceEstimate:
+    """A price estimate derived purely from a cell count and a fixed per-cell rate.
+
+    Every paid profile's admission ceiling must come from here rather than a
+    hand-typed literal: the ceiling is a fact about ``cell_count *
+    per_cell_usd``, not a number that happens to agree with it today.
+    """
+    if cell_count < 1:
+        raise ValueError("cell_count must be positive")
+    if per_cell_usd <= 0:
+        raise ValueError("per_cell_usd must be positive")
+    amount = (per_cell_usd * cell_count).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+    return PriceEstimate(amount=float(amount), currency=currency, coverage="estimated")
+
+
+def deterministic_arm_price_estimates(
+    *, arm_ids: Sequence[str], cells_per_arm: int, per_cell_usd: Decimal, currency: str = "USD"
+) -> dict[str, PriceEstimate]:
+    """Per-arm ceilings, each independently tied to the same per-cell rate."""
+    if len(set(arm_ids)) != len(arm_ids):
+        raise ValueError("arm_ids must be unique")
+    return {
+        arm_id: deterministic_cell_price_estimate(
+            cell_count=cells_per_arm, per_cell_usd=per_cell_usd, currency=currency
+        )
+        for arm_id in arm_ids
+    }
 
 
 def publish_plan_dependencies(store: ObjectStore, snapshot: StudySnapshot) -> None:

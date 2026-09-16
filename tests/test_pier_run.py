@@ -1,0 +1,188 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from pathlib import Path
+
+import pytest
+
+from assay._version import __version__
+from assay.adapters.pier import BridgeTrialResult, PierBridgeHandle
+from assay.canonical import canonical_json, digest_bytes
+from assay.investigations.pier_experiment import (
+    PierExperimentFailed,
+    PierExperimentPrepared,
+    PierExperimentSucceeded,
+    prepare_pier_qualification,
+    prepare_pier_smoke,
+    run_pier_qualification,
+    run_pier_smoke,
+)
+from assay.models import ReportConfig, RunManifest, StatisticalProfile
+from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange
+from assay.references import reference_closure
+from assay.report_engine import ReportError, build_report
+from assay.store import ObjectStore
+
+
+def _manifest_and_artifacts(exchange: PierExchange) -> tuple[ArtifactManifest, dict[str, bytes]]:
+    contents = {
+        "raw_trajectory.json": b'{"steps": ["thought", "action", "submit"]}',
+        "candidate.txt": b"def solve():\n    return 42\n",
+        "result.json": b'{"passed": true}',
+        "configuration.json": b'{"model": "anthropic/claude-3-haiku"}',
+        "manifest_marker.json": b'{"manifest": "committed"}',
+    }
+    kinds = {
+        "raw_trajectory.json": "raw_trajectory",
+        "candidate.txt": "candidate",
+        "result.json": "result",
+        "configuration.json": "configuration",
+        "manifest_marker.json": "manifest",
+    }
+    entries = tuple(
+        ArtifactEntry(
+            path=path,
+            kind=kind,  # type: ignore[arg-type]
+            size_bytes=len(contents[path]),
+            checksum=digest_bytes(contents[path]),
+            utf8=True,
+        )
+        for path, kind in kinds.items()
+    )
+    manifest = ArtifactManifest(
+        exchange=exchange, entries=entries, aggregate_bytes=sum(e.size_bytes for e in entries)
+    )
+    manifest_bytes = canonical_json(manifest.model_dump(mode="json"))
+    artifacts = {**contents, "manifest.json": manifest_bytes}
+    return manifest, artifacts
+
+
+class _Handle:
+    def __init__(self, result: BridgeTrialResult) -> None:
+        self._result = result
+
+    def run(self) -> BridgeTrialResult:
+        return self._result
+
+    def teardown(self) -> None:
+        pass
+
+
+class _AlwaysSucceedsBridge:
+    def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> PierBridgeHandle:
+        _, artifacts = _manifest_and_artifacts(exchange)
+        return _Handle(
+            BridgeTrialResult(
+                exchange=exchange,
+                status="succeeded",
+                exception_info=None,
+                exit_status="Submitted",
+                usage={"cost_usd": 0.72, "prompt_tokens": 100, "completion_tokens": 50},
+                artifacts=artifacts,
+            )
+        )
+
+
+async def test_full_successful_smoke_run_publishes_evidence_reachable_from_closure(
+    tmp_path: Path,
+) -> None:
+    store = ObjectStore(tmp_path / ".assay")
+    prepared = prepare_pier_smoke(store)
+    assert isinstance(prepared, PierExperimentPrepared)
+    plan_bytes = store.read_bytes(prepared.plan_ref)
+    result = await run_pier_smoke(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=digest_bytes(plan_bytes),
+        bridge=_AlwaysSucceedsBridge(),
+        allow_paid=True,
+    )
+    assert isinstance(result, PierExperimentSucceeded), result
+
+    manifest = RunManifest.model_validate_json(store.read_bytes(result.manifest_ref))
+    assert manifest.status == "complete"
+    assert len(manifest.execution_records) == 4
+
+    closure = reference_closure(store, (result.manifest_ref,))
+    assert result.manifest_ref in closure
+    for ref in manifest.execution_records.values():
+        assert ref in closure
+    for ref in manifest.operating_records.values():
+        assert ref in closure
+
+    for ref in manifest.execution_records.values():
+        outcome = json.loads(store.read_bytes(ref))
+        assert outcome["status"] == "succeeded"
+        output = json.loads(store.read_bytes(outcome["output_ref"]))
+        for key in (
+            "candidate_ref",
+            "raw_trajectory_ref",
+            "result_ref",
+            "configuration_ref",
+            "manifest_ref",
+        ):
+            assert output[key] is not None
+            assert output[key] in closure, f"{key} not reachable from the outcome closure"
+
+
+async def test_execution_requires_paid_approval(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / ".assay")
+    prepared = prepare_pier_smoke(store)
+    assert isinstance(prepared, PierExperimentPrepared)
+    plan_bytes = store.read_bytes(prepared.plan_ref)
+    result = await run_pier_smoke(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=digest_bytes(plan_bytes),
+        bridge=_AlwaysSucceedsBridge(),
+        allow_paid=False,
+    )
+    assert isinstance(result, PierExperimentFailed)
+    assert "allow_paid" in result.message
+
+
+async def test_different_pier_profile_manifests_cannot_be_pooled_in_one_report(
+    tmp_path: Path,
+) -> None:
+    store = ObjectStore(tmp_path / ".assay")
+    smoke_prepared = prepare_pier_smoke(store)
+    qualification_prepared = prepare_pier_qualification(store)
+    assert isinstance(smoke_prepared, PierExperimentPrepared)
+    assert isinstance(qualification_prepared, PierExperimentPrepared)
+
+    smoke_bytes = store.read_bytes(smoke_prepared.plan_ref)
+    qualification_bytes = store.read_bytes(qualification_prepared.plan_ref)
+
+    smoke_result = await run_pier_smoke(
+        store,
+        plan_ref=smoke_prepared.plan_ref,
+        authorization=digest_bytes(smoke_bytes),
+        bridge=_AlwaysSucceedsBridge(),
+        allow_paid=True,
+    )
+    qualification_result = await run_pier_qualification(
+        store,
+        plan_ref=qualification_prepared.plan_ref,
+        authorization=digest_bytes(qualification_bytes),
+        bridge=_AlwaysSucceedsBridge(),
+        allow_paid=True,
+    )
+    assert isinstance(smoke_result, PierExperimentSucceeded)
+    assert isinstance(qualification_result, PierExperimentSucceeded)
+
+    config = ReportConfig(
+        manifest_refs=(smoke_result.manifest_ref, qualification_result.manifest_ref),
+        record_refs=(),
+        reference_arm="clean",
+        candidates=("inconsistent",),
+        evaluator_id="candidate_submitted",
+        metric="ordinal",
+        categories=("failed", "submitted"),
+        evaluator_repeat_aggregation="median",
+        worker_repeat_aggregation="median",
+        statistical_profile=StatisticalProfile(seed=1, bootstrap_samples=100),
+        engine_version=__version__,
+    )
+    with pytest.raises(ReportError, match="compatibility drift"):
+        build_report(store, config)

@@ -22,6 +22,7 @@ that boundary:
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import tempfile
 from collections.abc import Mapping
@@ -29,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from assay.canonical import canonical_json
+from assay.canonical import canonical_json, digest_bytes
 from assay.execution import Accounting, WorkerFailure, WorkerResult, WorkerSuccess
 from assay.models import CellCoordinate
 from assay.pier_packaging import build_package, gate_package
@@ -92,8 +93,29 @@ def _publish_available_artifacts(
     A blob that fails manifest binding is still durable, content-addressed
     evidence -- this is what keeps a partial, independently-valid artifact
     reachable via ``assay_object_refs`` even when the overall run fails.
+
+    Each blob is wrapped in a canonical JSON envelope rather than published as
+    raw bytes: a real bridge's trajectory/result/configuration JSON is
+    produced by an external tool with its own formatting, almost certainly
+    not Assay's canonical form, and ``references.walk_closure`` requires
+    every object it walks to be canonical JSON if it parses as JSON at all
+    (rejecting a parseable-but-noncanonical value, rather than treating it as
+    an opaque leaf, is deliberate -- see ``test_reference_canonicality.py``).
+    The envelope preserves the exact original bytes losslessly via base64 and
+    records their own checksum for audit, without ever publishing content
+    that could itself be mistaken for a noncanonical governed document.
     """
-    return {path: str(store.publish_bytes(data)) for path, data in artifacts.items()}
+    refs: dict[str, str] = {}
+    for path, data in artifacts.items():
+        envelope = {
+            "schema_version": "assay-pier-raw-artifact/0.1.0",
+            "path": path,
+            "byte_length": len(data),
+            "checksum": digest_bytes(data),
+            "content_base64": base64.b64encode(data).decode("ascii"),
+        }
+        refs[path] = str(store.publish_json(envelope))
+    return refs
 
 
 def _trace(
