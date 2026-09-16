@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import paa_contracts
+import pytest
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import (
@@ -13,10 +14,13 @@ from assay.execution import (
     RunSucceeded,
     WorkerFailure,
     WorkerSuccess,
+    _dispatch_worker,
+    _worker_supports_coordinates,
     execute_plan,
 )
 from assay.models import (
     Arm,
+    CellCoordinate,
     EvaluatorDeclaration,
     Realization,
     RuntimeProfile,
@@ -222,3 +226,144 @@ async def test_snapshot_drift_makes_zero_worker_calls(tmp_path: Any) -> None:
     result = await execute_plan(**arguments)
     assert not isinstance(result, RunSucceeded)
     assert "snapshot" in result.message
+
+
+def _sample_coordinate() -> CellCoordinate:
+    return CellCoordinate(
+        subject_id="ok", arm_id="candidate", worker_repeat=0, realization_ref="sha256:" + "a" * 64
+    )
+
+
+async def test_dispatch_uses_legacy_run_for_a_structurally_legacy_worker() -> None:
+    calls: list[tuple[Any, Any]] = []
+
+    class LegacyWorker:
+        def configuration(self, arm_id: str) -> dict[str, Any]:
+            return {"id": "legacy", "version": "1"}
+
+        async def run(self, *, input_value: Any, arm_id: str) -> WorkerSuccess:
+            calls.append((input_value, arm_id))
+            return WorkerSuccess({"ok": True})
+
+    worker = LegacyWorker()
+    assert _worker_supports_coordinates(worker) is False
+    result = await _dispatch_worker(
+        worker, arm_id="candidate", cell=_sample_coordinate(), input_value={"prompt": "x"}
+    )
+    assert isinstance(result, WorkerSuccess)
+    assert calls == [({"prompt": "x"}, "candidate")]
+
+
+async def test_dispatch_never_uses_run_cell_unless_the_flag_is_explicitly_true() -> None:
+    # A worker that defines run_cell but does not (or falsely) advertise the
+    # capability must still go through the legacy structural path.
+    calls: list[str] = []
+
+    class UnadvertisedWorker:
+        supports_cell_coordinates = False
+
+        def configuration(self, arm_id: str) -> dict[str, Any]:
+            return {"id": "unadvertised", "version": "1"}
+
+        async def run(self, *, input_value: Any, arm_id: str) -> WorkerSuccess:
+            calls.append("run")
+            return WorkerSuccess({"ok": True})
+
+        async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerSuccess:
+            calls.append("run_cell")
+            return WorkerSuccess({"ok": True})
+
+    worker = UnadvertisedWorker()
+    assert _worker_supports_coordinates(worker) is False
+    await _dispatch_worker(
+        worker, arm_id="candidate", cell=_sample_coordinate(), input_value={"prompt": "x"}
+    )
+    assert calls == ["run"]
+
+
+async def test_dispatch_delivers_the_exact_immutable_coordinate_when_advertised() -> None:
+    received: list[CellCoordinate] = []
+
+    class CoordinateWorker:
+        supports_cell_coordinates = True
+
+        def configuration(self, arm_id: str) -> dict[str, Any]:
+            return {"id": "coordinate-aware", "version": "1"}
+
+        async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerSuccess:
+            received.append(coordinate)
+            return WorkerSuccess({"ok": True})
+
+        async def run(self, *, input_value: Any, arm_id: str) -> WorkerFailure:
+            raise AssertionError("legacy path must not be used when the flag is advertised")
+
+    worker = CoordinateWorker()
+    assert _worker_supports_coordinates(worker) is True
+    coordinate = _sample_coordinate()
+    result = await _dispatch_worker(
+        worker, arm_id="candidate", cell=coordinate, input_value={"prompt": "x"}
+    )
+    assert isinstance(result, WorkerSuccess)
+    assert received == [coordinate]
+    assert received[0] is coordinate
+
+
+async def test_adapter_internal_type_error_propagates_and_is_not_a_fallback_signal() -> None:
+    calls: list[str] = []
+
+    class BuggyCoordinateWorker:
+        supports_cell_coordinates = True
+
+        def configuration(self, arm_id: str) -> dict[str, Any]:
+            return {"id": "buggy", "version": "1"}
+
+        async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerSuccess:
+            calls.append("run_cell")
+            raise TypeError("adapter bug: wrong argument shape internally")
+
+        async def run(self, *, input_value: Any, arm_id: str) -> WorkerSuccess:
+            calls.append("run")
+            return WorkerSuccess({"ok": True})
+
+    worker = BuggyCoordinateWorker()
+    with pytest.raises(TypeError, match="adapter bug"):
+        await _dispatch_worker(
+            worker, arm_id="candidate", cell=_sample_coordinate(), input_value={"prompt": "x"}
+        )
+    assert calls == ["run_cell"]
+
+
+async def test_coordinate_aware_worker_end_to_end_preserves_ordering_and_receives_coordinates(
+    tmp_path: Any,
+) -> None:
+    received: dict[str, CellCoordinate] = {}
+
+    class CoordinateFakeWorker:
+        supports_cell_coordinates = True
+
+        def configuration(self, arm_id: str) -> dict[str, Any]:
+            return {"id": "fake", "version": "1"}
+
+        async def run_cell(
+            self, *, input_value: Any, coordinate: CellCoordinate
+        ) -> WorkerSuccess | WorkerFailure:
+            received[coordinate.id] = coordinate
+            if input_value["subject"] == "fails":
+                return WorkerFailure("FixtureFailure", "intentional")
+            return WorkerSuccess({"score": 1 if coordinate.arm_id == "candidate" else 0})
+
+    fixture = execution_fixture(ObjectStore(tmp_path))
+    arguments = fixture.arguments
+    arguments["workers"] = {arm.id: CoordinateFakeWorker() for arm in fixture.snapshot.arms}
+    result = await execute_plan(**arguments)
+    assert isinstance(result, RunSucceeded), result
+    assert result.manifest.status == "complete"
+    assert len(result.manifest.execution_records) == 8
+    plan_cell_ids = {
+        f"{cell['subject_id']}:{cell['arm_id']}:w{cell['worker_repeat']}"
+        for cell in json.loads(fixture.plan_bytes)["cells"]
+    }
+    assert set(received) == plan_cell_ids
+    for cell_id, coordinate in received.items():
+        assert coordinate.id == cell_id
+    assert verify_manifest(fixture.store, str(result.manifest_ref)) == ()

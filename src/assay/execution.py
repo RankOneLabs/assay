@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import uuid
@@ -26,32 +27,42 @@ from assay.schema_validation import schema_validators
 from assay.store import ObjectRef, ObjectStore
 from assay.verify import verify_snapshot
 
+type CoverageState = Literal["measured", "estimated", "unavailable", "mixed", "uncertain"]
+
+_COVERAGE_STATES = ("measured", "estimated", "unavailable", "mixed", "uncertain")
+
 
 @dataclass(frozen=True, slots=True)
 class Accounting:
-    """Attempt usage, including failed attempts; unavailable prices are never zero."""
+    """Attempt usage, including failed attempts; unavailable prices are never zero.
+
+    ``unavailable`` means the attempt genuinely incurred no priced cost (it was
+    never dispatched, or the adapter explicitly has no pricing model).
+    ``uncertain`` means the attempt was dispatched but failed before usage or
+    price could be observed — the cost is unknown, not zero.
+    """
 
     usage: dict[str, float | None] | None = None
     amount: float | None = None
     currency: str | None = None
-    coverage: Literal["measured", "estimated", "unavailable", "mixed"] = "unavailable"
+    coverage: CoverageState = "unavailable"
     basis: str | None = None
 
     def __post_init__(self) -> None:
-        if self.coverage not in ("measured", "estimated", "unavailable", "mixed"):
+        if self.coverage not in _COVERAGE_STATES:
             raise ValueError("unknown price coverage")
         if self.amount is None:
             if (
-                self.coverage != "unavailable"
+                self.coverage not in ("unavailable", "uncertain")
                 or self.currency is not None
                 or self.basis is not None
             ):
-                raise ValueError("unavailable price must have no currency or pricing basis")
+                raise ValueError("unpriced attempt must have no currency or pricing basis")
         elif (
             isinstance(self.amount, bool)
             or not math.isfinite(self.amount)
             or self.amount < 0
-            or self.coverage == "unavailable"
+            or self.coverage in ("unavailable", "uncertain")
             or not self.currency
             or not self.basis
         ):
@@ -116,6 +127,59 @@ class Worker(Protocol):
     async def run(self, *, input_value: Any, arm_id: str) -> WorkerResult: ...
 
 
+class CoordinateAwareWorker(Protocol):
+    """A worker that explicitly advertises the immutable-coordinate dispatch path.
+
+    ``supports_cell_coordinates`` must be ``True`` for ``run_cell`` to be used;
+    a worker without this attribute (or with it false) is dispatched through
+    the structural legacy ``Worker.run`` path instead. This is a deliberate,
+    explicit capability flag — never a structural/``hasattr`` guess, and never
+    a fallback triggered by catching a ``TypeError`` from a call attempt.
+    """
+
+    supports_cell_coordinates: bool
+
+    def configuration(self, arm_id: str) -> dict[str, Any]: ...
+
+    async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerResult: ...
+
+
+class AdmissionHalt(Exception):
+    """Typed control signal: stop admitting new cells, deterministically.
+
+    Adapters raise this — rather than returning a ``WorkerFailure`` — to
+    signal budget exhaustion, identity uncertainty, or billing uncertainty:
+    conditions that must stop new dispatch without being mistaken for an
+    ordinary per-attempt failure. The cell that raised it still gets a
+    definite, recorded outcome; only cells not yet started are affected.
+    """
+
+    def __init__(
+        self,
+        code: Literal["budget_exhausted", "identity_uncertain", "billing_uncertain"],
+        message: str,
+        *,
+        accounting: Accounting | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.accounting = accounting if accounting is not None else Accounting(coverage="uncertain")
+
+
+def _worker_supports_coordinates(worker: Worker | CoordinateAwareWorker) -> bool:
+    return getattr(worker, "supports_cell_coordinates", False) is True
+
+
+async def _dispatch_worker(
+    worker: Worker | CoordinateAwareWorker, *, arm_id: str, cell: CellCoordinate, input_value: Any
+) -> WorkerResult:
+    """Call the explicitly advertised interface; never probe by catching TypeError."""
+    if _worker_supports_coordinates(worker):
+        return await worker.run_cell(input_value=input_value, coordinate=cell)  # type: ignore[union-attr]
+    return await worker.run(input_value=input_value, arm_id=arm_id)  # type: ignore[union-attr]
+
+
 class Evaluator(Protocol):
     def configuration(self) -> dict[str, Any]: ...
 
@@ -145,13 +209,16 @@ def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+CANCELLATION_CLEANUP_TIMEOUT = 5.0
+
+
 async def execute_plan(
     *,
     plan_bytes: bytes,
     authorization: str,
     snapshot: StudySnapshot,
     store: ObjectStore,
-    workers: dict[str, Worker],
+    workers: dict[str, Worker | CoordinateAwareWorker],
     evaluators: dict[str, Evaluator],
     concurrency: int | None = None,
 ) -> RunResult:
@@ -224,6 +291,7 @@ async def execute_plan(
     expected_operating: set[str] = set()
     outputs: dict[str, str] = {}
     fatal: Exception | None = None
+    halt: AdmissionHalt | None = None
 
     def record_operating(
         *,
@@ -236,12 +304,12 @@ async def execute_plan(
         completed_at: str,
     ) -> None:
         if accounting.amount is None:
-            if accounting.coverage != "unavailable":
-                raise ValueError("missing price must declare unavailable coverage")
+            if accounting.coverage not in ("unavailable", "uncertain"):
+                raise ValueError("missing price must declare unavailable or uncertain coverage")
             price = None
         else:
             if (
-                accounting.coverage == "unavailable"
+                accounting.coverage in ("unavailable", "uncertain")
                 or not accounting.currency
                 or not accounting.basis
             ):
@@ -294,26 +362,39 @@ async def execute_plan(
         operating_records[key] = str(store.publish_json(record))
 
     async def run_cell(cell: CellCoordinate) -> None:
+        nonlocal halt
         started_at = _now()
         arm = arms[cell.arm_id]
+        attempted = False
+        returned = False
         result: WorkerResult = WorkerFailure("NotStarted", "worker was not called")
         try:
             if canonical_json(workers[arm.id].configuration(arm.id)) != canonical_json(arm.worker):
                 raise ValueError("worker configuration changed after authorization")
-            result = await workers[arm.id].run(
-                input_value=json.loads(store.read_bytes(cell.realization_ref)), arm_id=arm.id
+            attempted = True
+            result = await _dispatch_worker(
+                workers[arm.id],
+                arm_id=arm.id,
+                cell=cell,
+                input_value=json.loads(store.read_bytes(cell.realization_ref)),
             )
+            returned = True
             if not isinstance(result, WorkerSuccess | WorkerFailure):
                 raise TypeError("worker returned an invalid Result")
             if isinstance(result, WorkerSuccess):
                 canonical_json(result.output)
             canonical_json(result.trace)
+        except AdmissionHalt as error:
+            if halt is None:
+                halt = error
+            result = WorkerFailure(error.code, error.message, accounting=error.accounting)
         except Exception as error:
-            accounting = (
-                result.accounting
-                if isinstance(result, WorkerSuccess | WorkerFailure)
-                else Accounting()
-            )
+            if returned and isinstance(result, WorkerSuccess | WorkerFailure):
+                accounting = result.accounting
+            elif attempted:
+                accounting = Accounting(coverage="uncertain")
+            else:
+                accounting = Accounting()
             trace = result.trace if isinstance(result, WorkerSuccess | WorkerFailure) else None
             try:
                 canonical_json(trace)
@@ -364,25 +445,30 @@ async def execute_plan(
         if output is None:
             result = EvaluationFailed("ExecutionUnavailable", "worker execution did not succeed")
         else:
+            called = False
+            returned = False
             try:
                 if canonical_json(evaluators[declaration.id].configuration()) != canonical_json(
                     declaration.configuration
                 ):
                     raise ValueError("evaluator configuration changed after authorization")
+                called = True
                 result = await evaluators[declaration.id].evaluate(
                     input_value=json.loads(store.read_bytes(cell.realization_ref)),
                     output=json.loads(store.read_bytes(output)),
                     coordinate=coordinate,
                 )
+                returned = True
                 if not isinstance(result, EvaluationSuccess | EvaluationFailed):
                     raise TypeError("evaluator returned an invalid Result")
                 canonical_json(result.detail)
             except Exception as error:
-                accounting = (
-                    result.accounting
-                    if isinstance(result, EvaluationSuccess | EvaluationFailed)
-                    else Accounting()
-                )
+                if returned and isinstance(result, EvaluationSuccess | EvaluationFailed):
+                    accounting = result.accounting
+                elif called:
+                    accounting = Accounting(coverage="uncertain")
+                else:
+                    accounting = Accounting()
                 result = EvaluationFailed(type(error).__name__, str(error), accounting=accounting)
         completed_at = _now()
         detail_ref = str(store.publish_json(result.detail)) if result.detail is not None else None
@@ -470,13 +556,25 @@ async def execute_plan(
                 completed_at=completed_at,
             )
 
-    async def bounded[T](items: Iterable[T], call: Callable[[T], Awaitable[None]]) -> None:
-        """Only active slots start; fatal persistence stops dispatch, drains active calls."""
+    async def _drain(tasks: list[asyncio.Task[None]]) -> None:
+        """Bounded shield: give active adapter cleanup a fixed window, never an unbounded one."""
+        for child in tasks:
+            child.cancel()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=CANCELLATION_CLEANUP_TIMEOUT,
+            )
+
+    async def bounded[T](
+        items: Iterable[T], call: Callable[[T], Awaitable[None]], *, should_stop: Callable[[], bool]
+    ) -> None:
+        """Only active slots start; a stop signal halts new dispatch, active calls still drain."""
         iterator = iter(items)
 
         async def consume() -> None:
             nonlocal fatal
-            while fatal is None:
+            while not should_stop():
                 try:
                     item = next(iterator)
                 except StopIteration:
@@ -491,32 +589,49 @@ async def execute_plan(
         try:
             await asyncio.gather(*tasks)
         except BaseException:
-            for child in tasks:
-                child.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await _drain(tasks)
             raise
 
-    await bounded(plan.cells, run_cell)
-    if fatal is None:
-        await bounded(plan.evaluations, run_evaluation)
-    expected = set(cells) | {item.id for item in plan.evaluations}
-    missing = tuple(sorted(
-        (expected - execution_records.keys() - evaluation_records.keys())
-        | (expected_operating - operating_records.keys())
-    ))
-    manifest = RunManifest(
-        run_id=run_id,
-        plan_ref=authorization,
-        status="complete" if not missing and fatal is None else "incomplete",
-        execution_records=execution_records,
-        evaluation_records=evaluation_records,
-        operating_records=operating_records,
-        missing_coordinates=missing,
-    )
+    def _build_manifest() -> RunManifest:
+        expected = set(cells) | {item.id for item in plan.evaluations}
+        missing = tuple(
+            sorted(
+                (expected - execution_records.keys() - evaluation_records.keys())
+                | (expected_operating - operating_records.keys())
+            )
+        )
+        return RunManifest(
+            run_id=run_id,
+            plan_ref=authorization,
+            status="complete" if not missing and fatal is None and halt is None else "incomplete",
+            execution_records=execution_records,
+            evaluation_records=evaluation_records,
+            operating_records=operating_records,
+            missing_coordinates=missing,
+        )
+
+    try:
+        await bounded(
+            plan.cells, run_cell, should_stop=lambda: fatal is not None or halt is not None
+        )
+        if fatal is None:
+            await bounded(plan.evaluations, run_evaluation, should_stop=lambda: fatal is not None)
+    except asyncio.CancelledError:
+        # Cancellation stays observable to the caller, but whatever recoverable
+        # evidence exists gets a bounded, best-effort chance to become durable
+        # incomplete-manifest evidence before it is re-raised.
+        with contextlib.suppress(Exception):
+            store.publish_json(_build_manifest().model_dump(mode="json"))
+        raise
+
+    manifest = _build_manifest()
     try:
         ref = store.publish_json(manifest.model_dump(mode="json"))
     except Exception as error:
         return RunFailed(type(error).__name__, str(error), manifest=manifest)
-    if fatal is not None:
-        return RunFailed(type(fatal).__name__, str(fatal), manifest=manifest, manifest_ref=ref)
+    terminal = fatal or halt
+    if terminal is not None:
+        return RunFailed(
+            type(terminal).__name__, str(terminal), manifest=manifest, manifest_ref=ref
+        )
     return RunSucceeded(ref, manifest)

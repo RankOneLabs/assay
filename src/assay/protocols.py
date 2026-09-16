@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from assay.execution import AdmissionHalt as AdmissionHalt
 from assay.execution import EvaluationResult, WorkerResult
-from assay.models import Arm, EvaluationCoordinate, PriceEstimate, Realization, Subject
+from assay.models import (
+    Arm,
+    CellCoordinate,
+    EvaluationCoordinate,
+    PriceEstimate,
+    Realization,
+    Subject,
+)
 
 
 class SubjectMaterializer(Protocol):
@@ -24,6 +32,21 @@ class WorkerExecutor(Protocol):
     def configuration(self, arm_id: str) -> dict[str, Any]: ...
 
     async def run(self, *, input_value: Any, arm_id: str) -> WorkerResult: ...
+
+
+class CoordinateAwareWorkerExecutor(Protocol):
+    """The explicit-opt-in dispatch path: see ``execution.CoordinateAwareWorker``.
+
+    ``supports_cell_coordinates`` must be ``True`` for the executor to call
+    ``run_cell`` instead of the legacy ``WorkerExecutor.run`` path; the flag is
+    checked structurally, never inferred by catching a ``TypeError``.
+    """
+
+    supports_cell_coordinates: bool
+
+    def configuration(self, arm_id: str) -> dict[str, Any]: ...
+
+    async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerResult: ...
 
 
 class EvaluatorExecutor(Protocol):
