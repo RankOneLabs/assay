@@ -19,10 +19,11 @@ from assay.models import (
     EvaluationFailure,
     ExecutionOutcome,
     ExecutionPlan,
+    ExecutionPlanV2,
     RunManifest,
     StudySnapshot,
 )
-from assay.planning import authorize, validate_plan_snapshot
+from assay.planning import authorize, require_runtime_closure, validate_plan_snapshot
 from assay.schema_validation import schema_validators
 from assay.store import ObjectRef, ObjectStore
 from assay.verify import verify_snapshot
@@ -236,11 +237,8 @@ async def execute_plan(
         )
         workers, evaluators = dict(workers), dict(evaluators)
         plan = authorize(plan_bytes, authorization)
-        if not isinstance(plan, ExecutionPlan):
-            raise ValueError(
-                "this execution runtime can only execute assay-execution-plan/0.1.0; "
-                "0.2.0 plans bind a generic runtime identity with no backend implemented yet"
-            )
+        if not isinstance(plan, ExecutionPlan | ExecutionPlanV2):
+            raise ValueError(f"unsupported execution plan type: {type(plan).__name__}")
         snapshot_bytes = canonical_json(snapshot.model_dump(mode="json"))
         if digest_bytes(snapshot_bytes) != plan.snapshot_ref:
             raise ValueError("provided snapshot does not match the authorized plan")
@@ -248,6 +246,11 @@ async def execute_plan(
             raise ValueError("stored snapshot differs from the provided snapshot")
         validate_plan_snapshot(plan, snapshot)
         verify_snapshot(store, snapshot)
+        # A 0.2.0 plan's runtime configuration is a separate closure from the
+        # snapshot's; verify_snapshot never walks it, so a caller trusting an
+        # authorized V2 plan without this call could run against a runtime
+        # configuration that was never fully declared or stored.
+        require_runtime_closure(store, plan)
         if plan.preparation_mode != "none":
             raise ValueError("authorized preparation is not implemented")
         if concurrency is not None and concurrency != plan.concurrency:
