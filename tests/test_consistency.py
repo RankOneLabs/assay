@@ -115,8 +115,11 @@ async def test_local_acceptance_with_failure_exclusion_and_separate_repeats(tmp_
         evaluators={"abstraction": evaluator},
     )
     assert isinstance(result, RunSucceeded), result
-    assert result.manifest.status == "complete"
-    assert verify_manifest(store, str(result.manifest_ref)) == ()
+    # The one failed worker cell has two evaluations planned against it that
+    # are now genuinely unavailable, so the manifest is honestly incomplete
+    # -- but self-consistent: verification reports only that expected flag.
+    assert result.manifest.status == "incomplete"
+    assert [f.code for f in verify_manifest(store, str(result.manifest_ref))] == ["incomplete_run"]
     executions = [
         json.loads(store.read_bytes(ref)) for ref in result.manifest.execution_records.values()
     ]

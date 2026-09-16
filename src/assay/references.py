@@ -53,6 +53,7 @@ _PATHS: dict[str, dict[str, str]] = {
         "execution_records.*": "assay-execution-outcome/0.1.0",
         "evaluation_records.*": "evaluation",
         "operating_records.*": "operating",
+        "interruption_ref": "data",
     },
     "assay-execution-outcome/0.1.0": {
         "plan_ref": "assay-execution-plan",

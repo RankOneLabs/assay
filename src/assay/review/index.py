@@ -34,6 +34,7 @@ from assay.models import (
 )
 from assay.references import object_edges
 from assay.review.model import (
+    CostCoverage,
     CostView,
     ExclusionView,
     JSONObject,
@@ -375,9 +376,9 @@ def _cost(
             named_terminals = set(sources) & set(terminal_refs.values())
             if named_terminals != {terminal_refs[attempt]}:
                 raise ValueError("accounting requires exactly one terminal source")
-            if coverage not in ("measured", "estimated", "mixed", "unavailable"):
+            if coverage not in ("measured", "estimated", "mixed", "unavailable", "uncertain"):
                 raise ValueError("invalid accounting coverage")
-            if (price is None) != (coverage == "unavailable"):
+            if (price is None) != (coverage in ("unavailable", "uncertain")):
                 raise ValueError("accounting price and coverage disagree")
             amount = 0.0
             currency: str | None = None
@@ -433,14 +434,14 @@ def _cost(
         if attempt not in accounted
     )
     observed = set(counts)
-    coverage_value: Literal["measured", "estimated", "unavailable", "mixed"]
+    coverage_value: CostCoverage
     if not observed:
         coverage_value = "unavailable"
     elif len(observed) > 1:
         coverage_value = "mixed"
     else:
         only = next(iter(observed))
-        coverage_value = cast(Literal["measured", "estimated", "unavailable", "mixed"], only)
+        coverage_value = cast(CostCoverage, only)
     missing = len(terminal_refs) - attempts
     return CostView(
         coverage_value,

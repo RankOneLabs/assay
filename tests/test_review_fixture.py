@@ -22,10 +22,18 @@ async def fixture(tmp_path_factory: pytest.TempPathFactory) -> ReviewFixture:
     return await materialize_review_fixture(tmp_path_factory.mktemp("review-fixture"))
 
 
-def test_primary_manifest_is_complete_and_verifies(fixture: ReviewFixture) -> None:
-    assert fixture.result.manifest.status == "complete"
-    assert verify_manifest(fixture.store, fixture.manifest_ref) == ()
-    assert verify_bundle(fixture.bundle, fixture.manifest_ref) == ()
+def test_primary_manifest_is_honestly_incomplete_and_verifies(fixture: ReviewFixture) -> None:
+    # The one injected execution failure makes its own evaluation genuinely
+    # unavailable, so the manifest cannot claim "complete" — but it is still
+    # self-consistent: verification reports only the expected incompleteness.
+    assert fixture.result.manifest.status == "incomplete"
+    assert len(fixture.result.manifest.missing_coordinates) == 1
+    assert [f.code for f in verify_manifest(fixture.store, fixture.manifest_ref)] == [
+        "incomplete_run"
+    ]
+    assert [f.code for f in verify_bundle(fixture.bundle, fixture.manifest_ref)] == [
+        "incomplete_run"
+    ]
 
 
 def test_ambiguity_and_execution_unavailability_are_distinct(fixture: ReviewFixture) -> None:

@@ -96,7 +96,10 @@ async def test_actions_are_post_only_and_return_read_layer_results(
     assert matched.json()["stored_digest"] == matched.json()["recomputed_digest"]
     assert unsupported.json()["status"] == "unsupported"
     assert unsupported.json()["reason"]
-    assert verified.json()["status"] == "passed"
+    # The fixture's one injected execution failure makes the manifest
+    # honestly incomplete, which verifies as "partial" (accounted, not
+    # broken), not "passed".
+    assert verified.json()["status"] == "partial"
 
 
 async def test_error_contract_and_api_fallback(fixture: ReviewFixture) -> None:

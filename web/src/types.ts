@@ -4,7 +4,7 @@ export type CellStatus = "succeeded" | "failed" | "missing" | "excluded" | "inva
 export type EvaluationStatus = "succeeded" | "failed" | "missing" | "invalid" | "conflicted";
 
 export interface CostView {
-  coverage: "measured" | "estimated" | "unavailable" | "mixed";
+  coverage: "measured" | "estimated" | "unavailable" | "mixed" | "uncertain";
   coverage_counts: Record<string, number>;
   amounts: Record<string, number>;
   by_stage_arm: Record<string, Json>;
