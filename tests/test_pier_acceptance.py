@@ -28,11 +28,13 @@ integration, it does not execute it for money.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -57,6 +59,30 @@ ROOT = Path(__file__).resolve().parents[1]
 QUALIFY_SCRIPT = ROOT / "integrations" / "pier" / "scripts" / "qualify_local.py"
 _PAID_APPROVAL_ENV = PIER_PAID_APPROVAL_ENV
 _PAID_CREDENTIAL_ENV = PIER_PAID_CREDENTIAL_ENV
+# Docker server version and the locally-built bridge image's digest are the
+# only two measured identities qualify_local.py compares that are
+# legitimately host/build-dependent (integrations/pier/README.md flags the
+# image digest as explicitly non-reproducible across machines); every other
+# comparison (lock digest, pinned revisions, uid/gid, route, trial limits)
+# is reproducible from this checkout alone and must always match.
+_HOST_DEPENDENT_PROBES = ("docker_available", "image_identity")
+
+
+def _load_qualify_local() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("qualify_local", QUALIFY_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # dataclasses.dataclass resolves this module's own string annotations
+    # (from __future__ import annotations) via sys.modules[cls.__module__]
+    # -- it must already be registered there before exec_module runs.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def qualify_local() -> ModuleType:
+    return _load_qualify_local()
 
 
 class _PoisonBridge:
@@ -206,6 +232,16 @@ def test_qualify_local_never_reads_or_needs_a_provider_credential() -> None:
     reason="docker daemon is not reachable in this environment",
 )
 def test_qualify_local_emits_an_inventory_after_every_probe_passes(tmp_path: Path) -> None:
+    """End to end against the real local Docker daemon -- with one caveat.
+
+    Docker server version and the built bridge image's digest are the two
+    measured identities qualify_local.py compares that are legitimately
+    host/build-dependent (see ``_HOST_DEPENDENT_PROBES``); a machine that is
+    not the one reference machine ``EXPECTED_DOCKER_VERSION``/
+    ``PIER_BRIDGE_IMAGE_DIGEST`` were pinned from can therefore fail here
+    for exactly that reason and no other -- still proving every probe up to
+    that point ran for real, and that no inventory is published either way.
+    """
     output_dir = tmp_path / ".assay-pier-qualification"
     result = subprocess.run(
         [
@@ -221,10 +257,63 @@ def test_qualify_local_emits_an_inventory_after_every_probe_passes(tmp_path: Pat
         timeout=600,
         env={**os.environ, "OPENROUTER_API_KEY": ""},
     )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "qualified: sha256:" in result.stdout
-    objects = list((output_dir / "objects" / "sha256").iterdir())
-    assert objects, "qualify_local.py reported success but published no inventory object"
+    if result.returncode == 0:
+        assert "qualified: sha256:" in result.stdout
+        objects = list((output_dir / "objects" / "sha256").iterdir())
+        assert objects, "qualify_local.py reported success but published no inventory object"
+        return
+
+    combined = result.stdout + result.stderr
+    assert any(f"FAIL [{probe}]" in combined for probe in _HOST_DEPENDENT_PROBES), combined
+    assert not output_dir.exists(), "a failed qualification must never publish an inventory"
+
+
+def _raise_qualification_failed(probe: str, module: ModuleType) -> Any:
+    def _fail(*args: object, **kwargs: object) -> None:
+        raise module.QualificationFailed(probe, "forced failure for a negative test")
+
+    return _fail
+
+
+_PROBE_ATTRIBUTES = (
+    "probe_pinned_revisions",
+    "probe_lock_identity",
+    "probe_docker_available",
+    "probe_image_identity",
+    "probe_no_reinstall",
+    "probe_trial_lifecycle",
+    "probe_storage_enforcement",
+    "probe_fake_boundary",
+    "_probe_adapter_boundary",
+)
+
+
+@pytest.mark.parametrize("probe_attribute", _PROBE_ATTRIBUTES)
+def test_a_failed_probe_never_publishes_an_inventory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    qualify_local: ModuleType,
+    probe_attribute: str,
+) -> None:
+    """Every probe category, forced to fail in isolation, must leave no trace.
+
+    Each of ``qualify_local.py``'s own probes is monkeypatched to fail on
+    its own, one at a time, proving the qualification loop actually stops at
+    that specific probe (not merely that the script structurally cannot
+    reach the inventory-publishing step at all) and that no
+    ``QualificationInventory`` -- partial or otherwise -- is ever written.
+    """
+    monkeypatch.setattr(
+        qualify_local, probe_attribute, _raise_qualification_failed(probe_attribute, qualify_local)
+    )
+    output_dir = tmp_path / ".assay-pier-qualification"
+
+    exit_code = qualify_local.run_qualification(
+        output_dir=output_dir, image_tag="assay-pier-bridge:unused-for-this-test"
+    )
+
+    assert exit_code == 1
+    assert not output_dir.exists(), "a failed probe must never publish an inventory"
 
 
 @pytest.mark.paid

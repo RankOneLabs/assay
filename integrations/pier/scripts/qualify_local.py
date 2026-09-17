@@ -66,6 +66,17 @@ from assay.adapters.pier import (  # noqa: E402
 )
 from assay.canonical import digest_bytes  # noqa: E402
 from assay.execution import WorkerFailure, WorkerSuccess  # noqa: E402
+from assay.investigations.pier_experiment import (  # noqa: E402
+    EXPECTED_BRIDGE_LOCK_DIGEST,
+    EXPECTED_DOCKER_VERSION,
+    EXPECTED_GID,
+    EXPECTED_MINI_SWE_AGENT_REVISION,
+    EXPECTED_PIER_REVISION,
+    EXPECTED_UID,
+    PIER_BRIDGE_IMAGE_DIGEST,
+    PIER_MODEL_ROUTE,
+    PIER_TRIAL_LIMITS,
+)
 from assay.models import CellCoordinate  # noqa: E402
 from assay.pier_protocol import (  # noqa: E402
     ArtifactEntry,
@@ -83,12 +94,45 @@ from assay.store import ObjectStore  # noqa: E402
 
 _ZERO_REF = "sha256:" + "0" * 64
 _ORPHAN_PREFIX = "assay-pier-"
+# ModelRoute's fields are exact Literal types (mypy cannot check a
+# **Mapping[str, str] unpacking against them), so the route is still a
+# literal construction -- but asserted equal to PIER_MODEL_ROUTE below, at
+# import time, so a drift between this script and the route paid execution
+# is actually configured to call fails immediately, not silently.
 _ROUTE = ModelRoute(
     endpoint="https://openrouter.ai/api/v1",
     model="anthropic/claude-3-haiku",
     provider="amazon-bedrock",
 )
+assert (
+    _ROUTE.endpoint == PIER_MODEL_ROUTE["endpoint"]
+    and _ROUTE.model == PIER_MODEL_ROUTE["model"]
+    and _ROUTE.provider == PIER_MODEL_ROUTE["provider"]
+), "qualify_local.py's guarded route no longer matches pier_experiment.PIER_MODEL_ROUTE"
 _TRIAL_PACKAGE = {"instruction.md": "# Qualification\n\nsay hi\n"}
+# A small, deliberately-overflowable cap for probe_storage_enforcement --
+# distinct from PIER_TRIAL_LIMITS["storage_mb"] (which probe_trial_lifecycle
+# already uses at its real, production size): proving a small declared cap
+# is really enforced does not require overflowing the much larger real one.
+_STORAGE_PROBE_LIMIT_MB = 16
+
+
+def _production_trial_limits() -> TrialLimits:
+    """The exact ``TrialLimits`` a real paid trial dispatches under.
+
+    Built field by field (not ``TrialLimits(**PIER_TRIAL_LIMITS)``) because
+    ``PIER_TRIAL_LIMITS`` is deliberately typed as a plain
+    ``Mapping[str, float | int]`` in ``pier_experiment.py`` (it is also
+    published as JSON configuration there), which mypy cannot check against
+    ``TrialLimits``'s own int/float-typed fields through a ``**`` unpack.
+    """
+    return TrialLimits(
+        cpu=float(PIER_TRIAL_LIMITS["cpu"]),
+        memory_mb=int(PIER_TRIAL_LIMITS["memory_mb"]),
+        pids=int(PIER_TRIAL_LIMITS["pids"]),
+        timeout_s=float(PIER_TRIAL_LIMITS["timeout_s"]),
+        storage_mb=int(PIER_TRIAL_LIMITS["storage_mb"]),
+    )
 
 
 class QualificationFailed(Exception):
@@ -134,6 +178,19 @@ def probe_pinned_revisions(m: Measurements) -> None:
         )
     m.pier_revision = pier_match.group(1)
     m.mini_swe_agent_revision = mini_match.group(1)
+    if m.pier_revision != EXPECTED_PIER_REVISION:
+        raise QualificationFailed(
+            "pinned_revisions",
+            f"pier_revision {m.pier_revision!r} does not match the revision "
+            f"pier_experiment.py requires for paid execution ({EXPECTED_PIER_REVISION!r})",
+        )
+    if m.mini_swe_agent_revision != EXPECTED_MINI_SWE_AGENT_REVISION:
+        raise QualificationFailed(
+            "pinned_revisions",
+            f"mini_swe_agent_revision {m.mini_swe_agent_revision!r} does not match the "
+            "revision pier_experiment.py requires for paid execution "
+            f"({EXPECTED_MINI_SWE_AGENT_REVISION!r})",
+        )
 
 
 def probe_lock_identity(m: Measurements) -> None:
@@ -141,6 +198,12 @@ def probe_lock_identity(m: Measurements) -> None:
     if not lock_path.is_file():
         raise QualificationFailed("lock_identity", f"missing {lock_path}")
     m.lock_digest = digest_bytes(lock_path.read_bytes())
+    if m.lock_digest != EXPECTED_BRIDGE_LOCK_DIGEST:
+        raise QualificationFailed(
+            "lock_identity",
+            f"lock_digest {m.lock_digest!r} does not match the digest pier_experiment.py "
+            f"requires for paid execution ({EXPECTED_BRIDGE_LOCK_DIGEST!r})",
+        )
 
 
 def probe_docker_available(m: Measurements) -> None:
@@ -155,6 +218,12 @@ def probe_docker_available(m: Measurements) -> None:
     if version.returncode != 0 or not version.stdout.strip():
         raise QualificationFailed("docker_available", "could not read the Docker server version")
     m.docker_version = version.stdout.strip()
+    if m.docker_version != EXPECTED_DOCKER_VERSION:
+        raise QualificationFailed(
+            "docker_available",
+            f"Docker server version {m.docker_version!r} does not match the version "
+            f"pier_experiment.py requires for paid execution ({EXPECTED_DOCKER_VERSION!r})",
+        )
 
 
 def probe_image_identity(m: Measurements, *, image_tag: str) -> None:
@@ -172,6 +241,12 @@ def probe_image_identity(m: Measurements, *, image_tag: str) -> None:
     if re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None:
         raise QualificationFailed("image_identity", f"unexpected image id shape: {image_id!r}")
     m.bridge_image_digest = image_id
+    if m.bridge_image_digest != PIER_BRIDGE_IMAGE_DIGEST:
+        raise QualificationFailed(
+            "image_identity",
+            f"bridge image digest {m.bridge_image_digest!r} does not match the digest "
+            f"pier_experiment.py requires for paid execution ({PIER_BRIDGE_IMAGE_DIGEST!r})",
+        )
 
 
 def probe_no_reinstall(image_tag: str) -> None:
@@ -197,11 +272,15 @@ def probe_trial_lifecycle(m: Measurements, *, image_tag: str) -> None:
         command=["/bin/sh", "-c", "printf 'answer = 1' > /submission/output"],
     )
     runtime = BridgeRuntime(client)
+    # The exact TrialLimits a real paid trial dispatches under (cpu/memory/
+    # pids/storage) -- not an independently-sized, qualification-only
+    # profile that could pass here while production's real resource ceiling
+    # goes unproven.
     request = TrialRequest(
         cell_id="qualify:local:w0",
         package_digest=package_digest(_TRIAL_PACKAGE),
         model_route=_ROUTE,
-        limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=30),
+        limits=_production_trial_limits(),
     )
     result = runtime.run_cell(request)
     if result.status != "succeeded":
@@ -210,9 +289,11 @@ def probe_trial_lifecycle(m: Measurements, *, image_tag: str) -> None:
             f"qualification trial did not succeed: {result.status}/{result.error_message}",
         )
     effective = result.effective
-    if effective.uid < 1 or effective.gid < 1 or effective.uid == 0 or effective.gid == 0:
+    if effective.uid != EXPECTED_UID or effective.gid != EXPECTED_GID:
         raise QualificationFailed(
-            "effective_docker_controls", "trial did not run as a non-root user"
+            "effective_docker_controls",
+            f"trial ran as uid={effective.uid} gid={effective.gid}, not the uid/gid "
+            f"paid execution requires ({EXPECTED_UID}/{EXPECTED_GID})",
         )
     if not effective.workspace_read_only:
         raise QualificationFailed("effective_docker_controls", "workspace mount was not read-only")
@@ -220,17 +301,33 @@ def probe_trial_lifecycle(m: Measurements, *, image_tag: str) -> None:
         raise QualificationFailed(
             "effective_docker_controls", f"unexpected network policy: {effective.network_policy}"
         )
-    if not (0 < effective.cpu_limit <= 1):
+    # Observed (effective) enforcement compared to declared (PIER_TRIAL_LIMITS),
+    # not merely to plausible-looking bounds -- an enforcement mechanism that
+    # silently rounds, caps, or ignores part of the declared profile must
+    # fail here rather than only being discovered at paid dispatch time.
+    if effective.cpu_limit != PIER_TRIAL_LIMITS["cpu"]:
         raise QualificationFailed(
-            "effective_docker_controls", f"unexpected cpu limit: {effective.cpu_limit}"
+            "effective_docker_controls",
+            f"effective cpu limit {effective.cpu_limit} does not match the declared "
+            f"trial limit {PIER_TRIAL_LIMITS['cpu']}",
         )
-    if effective.memory_limit_mb != 256:
+    if effective.memory_limit_mb != PIER_TRIAL_LIMITS["memory_mb"]:
         raise QualificationFailed(
-            "effective_docker_controls", f"unexpected memory limit: {effective.memory_limit_mb}"
+            "effective_docker_controls",
+            f"effective memory limit {effective.memory_limit_mb} does not match the "
+            f"declared trial limit {PIER_TRIAL_LIMITS['memory_mb']}",
         )
-    if effective.pids_limit != 32:
+    if effective.pids_limit != PIER_TRIAL_LIMITS["pids"]:
         raise QualificationFailed(
-            "effective_docker_controls", f"unexpected pids limit: {effective.pids_limit}"
+            "effective_docker_controls",
+            f"effective pids limit {effective.pids_limit} does not match the declared "
+            f"trial limit {PIER_TRIAL_LIMITS['pids']}",
+        )
+    if effective.storage_limit_mb != PIER_TRIAL_LIMITS["storage_mb"]:
+        raise QualificationFailed(
+            "effective_docker_controls",
+            f"effective storage limit {effective.storage_limit_mb} does not match the "
+            f"declared trial limit {PIER_TRIAL_LIMITS['storage_mb']}",
         )
     if not effective.teardown_completed or effective.containers_remaining != 0:
         raise QualificationFailed("teardown", "container was not fully torn down after the trial")
@@ -250,6 +347,62 @@ def probe_trial_lifecycle(m: Measurements, *, image_tag: str) -> None:
 
     m.uid = effective.uid
     m.gid = effective.gid
+
+
+def probe_storage_enforcement(image_tag: str) -> None:
+    """A declared ``/scratch`` storage cap must be a real ceiling, not merely a recorded number.
+
+    Deliberately uses ``_STORAGE_PROBE_LIMIT_MB`` (16), not
+    ``PIER_TRIAL_LIMITS["storage_mb"]`` (512, already exercised for identity
+    in ``probe_trial_lifecycle``): overflowing a small, dedicated cap here is
+    cheap and proves the enforcement mechanism itself works, independent of
+    which size it happens to be configured with for a real paid trial.
+    """
+    client = DockerTrialClient(
+        image=image_tag,
+        package=_TRIAL_PACKAGE,
+        command=[
+            "/bin/sh",
+            "-c",
+            "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null 2>&1; "
+            "printf '%s' \"$?\" > /submission/output",
+        ],
+    )
+    runtime = BridgeRuntime(client)
+    request = TrialRequest(
+        cell_id="qualify:local:w1",
+        package_digest=package_digest(_TRIAL_PACKAGE),
+        model_route=_ROUTE,
+        limits=TrialLimits(
+            cpu=1, memory_mb=256, pids=32, timeout_s=30, storage_mb=_STORAGE_PROBE_LIMIT_MB
+        ),
+    )
+    result = runtime.run_cell(request)
+    if result.status != "succeeded":
+        raise QualificationFailed(
+            "storage_enforcement",
+            f"storage probe trial did not succeed: {result.status}/{result.error_message}",
+        )
+    if not result.effective.teardown_completed or result.effective.containers_remaining != 0:
+        raise QualificationFailed(
+            "storage_enforcement", "container was not fully torn down after the storage probe"
+        )
+    if result.effective.storage_limit_mb != _STORAGE_PROBE_LIMIT_MB:
+        raise QualificationFailed(
+            "storage_enforcement",
+            f"docker reported enforcing a {result.effective.storage_limit_mb}m scratch "
+            f"limit, not the declared {_STORAGE_PROBE_LIMIT_MB}m",
+        )
+    if result.submission_ref == digest_bytes(b"0"):
+        raise QualificationFailed(
+            "storage_enforcement",
+            "a write past the declared scratch limit did not fail -- the storage cap "
+            "is not actually enforced",
+        )
+    if not _no_stray_containers():
+        raise QualificationFailed(
+            "orphan_containers", "stray assay-pier- containers remained after the storage probe"
+        )
 
 
 def _good_response_body(**overrides: Any) -> dict[str, Any]:
@@ -283,6 +436,16 @@ def _good_response_body(**overrides: Any) -> dict[str, Any]:
 
 
 def probe_fake_boundary() -> None:
+    # The bridge's own guarded route identity must still be the exact route
+    # paid execution is configured to call -- a drift here would mean this
+    # probe validates a boundary no real paid trial actually uses.
+    if PIER_MODEL_ROUTE["model"] != MODEL or PIER_MODEL_ROUTE["provider"] != PROVIDER_NAME:
+        raise QualificationFailed(
+            "fake_boundary",
+            "the bridge's guarded route model/provider no longer matches the route "
+            "pier_experiment.py requires for paid execution",
+        )
+
     def accept(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_good_response_body())
 
@@ -528,6 +691,54 @@ def _build_inventory(m: Measurements) -> QualificationInventory:
     )
 
 
+def _probes(m: Measurements, *, image_tag: str, output_dir: Path) -> list[tuple[str, Any]]:
+    """The fixed probe order. Each entry calls its probe by module-level name,
+    resolved fresh on every invocation -- a test that monkeypatches, say,
+    ``qualify_local.probe_docker_available`` observes that replacement here,
+    without this function needing to know it is being tested."""
+    return [
+        ("pinned_revisions", lambda: probe_pinned_revisions(m)),
+        ("lock_identity", lambda: probe_lock_identity(m)),
+        ("docker_available", lambda: probe_docker_available(m)),
+        ("image_identity", lambda: probe_image_identity(m, image_tag=image_tag)),
+        ("no_reinstall", lambda: probe_no_reinstall(image_tag)),
+        ("trial_lifecycle", lambda: probe_trial_lifecycle(m, image_tag=image_tag)),
+        ("storage_enforcement", lambda: probe_storage_enforcement(image_tag)),
+        ("fake_boundary", probe_fake_boundary),
+        (
+            "artifact_accounting_cancellation",
+            lambda: asyncio.run(_probe_adapter_boundary(m, output_dir=output_dir)),
+        ),
+    ]
+
+
+def run_qualification(*, output_dir: Path, image_tag: str) -> int:
+    """Run every probe in order; publish an inventory only if all of them pass.
+
+    No ``ObjectStore`` is even constructed until the loop below completes
+    without a ``QualificationFailed`` -- a failure at any probe, for any
+    reason, leaves ``output_dir`` untouched rather than publishing a partial
+    or best-effort inventory.
+    """
+    m = Measurements()
+    for name, probe in _probes(m, image_tag=image_tag, output_dir=output_dir):
+        print(f"==> {name}", flush=True)
+        try:
+            probe()
+        except QualificationFailed as error:
+            print(f"FAIL [{error.probe}]: {error.reason}", file=sys.stderr)
+            return 1
+        print("    ok", flush=True)
+
+    inventory = _build_inventory(m)
+    store = ObjectStore(output_dir)
+    payload = inventory.model_dump(mode="json")
+    ref = store.publish_json(payload)
+    print(f"qualified: {ref}")
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -542,38 +753,7 @@ def main() -> int:
         help="Tag the bridge image is built under for this qualification run",
     )
     args = parser.parse_args()
-
-    m = Measurements()
-    probes: list[tuple[str, Any]] = [
-        ("pinned_revisions", lambda: probe_pinned_revisions(m)),
-        ("lock_identity", lambda: probe_lock_identity(m)),
-        ("docker_available", lambda: probe_docker_available(m)),
-        ("image_identity", lambda: probe_image_identity(m, image_tag=args.image_tag)),
-        ("no_reinstall", lambda: probe_no_reinstall(args.image_tag)),
-        ("trial_lifecycle", lambda: probe_trial_lifecycle(m, image_tag=args.image_tag)),
-        ("fake_boundary", probe_fake_boundary),
-        (
-            "artifact_accounting_cancellation",
-            lambda: asyncio.run(_probe_adapter_boundary(m, output_dir=args.output_dir)),
-        ),
-    ]
-
-    for name, probe in probes:
-        print(f"==> {name}", flush=True)
-        try:
-            probe()
-        except QualificationFailed as error:
-            print(f"FAIL [{error.probe}]: {error.reason}", file=sys.stderr)
-            return 1
-        print("    ok", flush=True)
-
-    inventory = _build_inventory(m)
-    store = ObjectStore(args.output_dir)
-    payload = inventory.model_dump(mode="json")
-    ref = store.publish_json(payload)
-    print(f"qualified: {ref}")
-    print(json.dumps(payload, indent=2, sort_keys=True))
-    return 0
+    return run_qualification(output_dir=args.output_dir, image_tag=args.image_tag)
 
 
 if __name__ == "__main__":

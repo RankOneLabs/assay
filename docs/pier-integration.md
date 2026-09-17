@@ -48,20 +48,39 @@ produces one, but only after every probe it runs has passed:
 uv run --extra review --extra legacy python integrations/pier/scripts/qualify_local.py
 ```
 
-In order, it checks: the bridge's exact lock digest (`integrations/pier/uv.lock`)
-and the locally built image's digest; that a real container built from that
-image runs, tears down cleanly, and leaves zero stray `assay-pier-` containers
-(the trial-lifecycle, effective-Docker-controls, teardown, and orphan checks);
-that the image needs no network to start (the no-reinstall check, and that a
-single bridge lifecycle refuses a second trial request); the guarded
-OpenRouter route's fail-closed behavior against a fake HTTP transport (no real
-network call, no credential); and the core-side artifact round trip,
-accounting, and cancellation-cleanup behavior against a fake bridge client.
+In order, it checks: the bridge's exact pinned revisions, lock digest
+(`integrations/pier/uv.lock`), and locally built image digest, each compared
+against the exact identity `assay.investigations.pier_experiment` requires
+for paid execution -- not merely recorded and trusted; that a real container
+built from that image runs under the exact same `TrialLimits` (cpu, memory,
+pids, and a size-capped `/scratch` tmpfs) a real paid trial dispatches under,
+observes those limits actually enforced (not merely declared), tears down
+cleanly, and leaves zero stray `assay-pier-` containers (the trial-lifecycle,
+effective-Docker-controls, teardown, and orphan checks); that a small,
+dedicated storage cap is a real ENOSPC ceiling, proven by a deliberate
+overflow write that must fail (the storage-enforcement check); that the
+image needs no network to start (the no-reinstall check, and that a single
+bridge lifecycle refuses a second trial request); the guarded OpenRouter
+route's fail-closed behavior against a fake HTTP transport, at the exact
+route paid execution is configured to call (no real network call, no
+credential); and the core-side artifact round trip, accounting, and
+cancellation-cleanup behavior against a fake bridge client.
+
+Because Docker server version and the locally built image's digest are the
+two measured identities that are legitimately host/build-dependent
+(`integrations/pier/README.md` flags the image digest as explicitly
+non-reproducible across machines), qualification can fail here even on a
+correctly configured machine simply because it is not the one reference
+machine `EXPECTED_DOCKER_VERSION`/`PIER_BRIDGE_IMAGE_DIGEST` were pinned
+from -- this is a real, working gate, not a bug in the script.
 
 The first probe that fails stops the run with a nonzero exit and no inventory
-is written -- there is no partial or best-effort qualification. On success it
-publishes the inventory into a local `ObjectStore` (`--output-dir`, default
-`.assay-pier-qualification`) and prints its `sha256:` ref:
+is written -- there is no partial or best-effort qualification, and every
+probe category has an independent negative test in
+`tests/test_pier_acceptance.py` proving it specifically leaves no inventory.
+On success it publishes the inventory into a local `ObjectStore`
+(`--output-dir`, default `.assay-pier-qualification`) and prints its `sha256:`
+ref:
 
 ```
 qualified: sha256:...
