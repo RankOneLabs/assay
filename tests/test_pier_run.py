@@ -16,6 +16,8 @@ from assay.investigations.pier_experiment import (
     EXPECTED_MINI_SWE_AGENT_REVISION,
     EXPECTED_PIER_REVISION,
     PIER_BRIDGE_IMAGE_DIGEST,
+    PIER_PAID_APPROVAL_ENV,
+    PIER_PAID_CREDENTIAL_ENV,
     PierExperimentFailed,
     PierExperimentPrepared,
     PierExperimentSucceeded,
@@ -29,6 +31,15 @@ from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange
 from assay.references import reference_closure
 from assay.report_engine import ReportError, build_report
 from assay.store import ObjectStore
+
+
+@pytest.fixture(autouse=True)
+def _paid_gates_satisfied(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module exercises real dispatch given every gate is satisfied --
+    ``tests/test_pier_acceptance.py`` covers each gate's own rejection,
+    including this env-level approval/credential pair, independently."""
+    monkeypatch.setenv(PIER_PAID_APPROVAL_ENV, "1")
+    monkeypatch.setenv(PIER_PAID_CREDENTIAL_ENV, "sk-not-a-real-key")
 
 
 def _qualified_inventory_ref(store: ObjectStore) -> str:

@@ -68,28 +68,34 @@ realistic-pilot investigations (see `docs/dry-experiment.md`).
 
 ## Three distinct paid decisions -- never substitutable for one another
 
-Paid dispatch requires three things at once, each an independent, explicit
-operator decision:
+Paid dispatch requires four things at once, each an independent, explicit
+operator decision, enforced by `run_pier_*` itself (`assay.investigations.pier_experiment`)
+before a single byte of the plan is read or the bridge client's `create` is
+ever invoked:
 
 1. `allow_paid=True` on the specific `run_pier_*` call for the specific
    profile being authorized -- approving `smoke` never authorizes
    `qualification` or `full`;
-2. a real `inventory_ref` from a qualification `qualify_local.py` actually ran
-   on this machine -- the synthetic preparation default is never accepted
-   here, and an omitted ref is a hard failure before the plan is even read;
-3. a real `OPENROUTER_API_KEY` in the process environment, since the bridge's
-   guarded route (`GuardedOpenRouterClient`) needs one to place its single
-   call per trial.
+2. `ASSAY_ALLOW_PAID_PIER=1` in the process environment -- a distinct,
+   env-level approval a caller's own `allow_paid=True` can never itself
+   satisfy, so a script that always passes `allow_paid=True` still cannot
+   dispatch for real without a separate operator decision on the machine
+   actually running it;
+3. a real, nonblank `OPENROUTER_API_KEY` in the process environment, since
+   the bridge's guarded route (`GuardedOpenRouterClient`) needs one to place
+   its single call per trial;
+4. a real `inventory_ref` from a qualification `qualify_local.py` actually
+   ran on this machine -- the synthetic preparation default is never
+   accepted here, and an omitted ref is a hard failure.
 
-`tests/test_pier_acceptance.py` proves the first two independently: a paid
-call with `allow_paid` omitted, and a paid call with `allow_paid=True` but no
-real `inventory_ref`, each reject with a specific message *before* the bridge
-client's `create` is ever invoked -- a poison bridge that would fail the test
-outright if dispatch ever reached it. Ordinary CI sets none of the three, so
-none of the sections below ever run for real there; a `@pytest.mark.paid` test
-documents the third decision the same way and is skipped, never dispatched,
-unless an operator has separately set `ASSAY_ALLOW_PAID_PIER=1` and a real
-credential.
+`tests/test_pier_acceptance.py` proves each of the four independently, for
+every profile: a paid call missing just that one gate rejects with a message
+naming that gate specifically, *before* the bridge client's `create` is ever
+invoked -- a poison bridge that would fail the test outright if dispatch ever
+reached it. Ordinary CI sets neither environment variable, so none of the
+sections below ever run for real there; a `@pytest.mark.paid` test documents
+the same two-env-variable requirement and is skipped, never dispatched,
+unless an operator has separately set both.
 
 ### One-subject paid smoke -- $2.88 ceiling
 

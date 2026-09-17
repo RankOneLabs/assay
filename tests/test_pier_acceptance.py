@@ -39,6 +39,8 @@ import pytest
 
 from assay.investigations.correctness import DockerPythonRunner
 from assay.investigations.pier_experiment import (
+    PIER_PAID_APPROVAL_ENV,
+    PIER_PAID_CREDENTIAL_ENV,
     PierExperimentFailed,
     PierExperimentPrepared,
     prepare_pier_full,
@@ -53,8 +55,8 @@ from assay.store import ObjectStore
 
 ROOT = Path(__file__).resolve().parents[1]
 QUALIFY_SCRIPT = ROOT / "integrations" / "pier" / "scripts" / "qualify_local.py"
-_PAID_APPROVAL_ENV = "ASSAY_ALLOW_PAID_PIER"
-_PAID_CREDENTIAL_ENV = "OPENROUTER_API_KEY"
+_PAID_APPROVAL_ENV = PIER_PAID_APPROVAL_ENV
+_PAID_CREDENTIAL_ENV = PIER_PAID_CREDENTIAL_ENV
 
 
 class _PoisonBridge:
@@ -97,11 +99,79 @@ async def test_omitted_allow_paid_rejects_before_the_bridge_boundary(
 
 
 @pytest.mark.parametrize("prepare,run", _PROFILES, ids=["smoke", "qualification", "full"])
+async def test_missing_paid_approval_env_rejects_before_the_bridge_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prepare: Any, run: Any
+) -> None:
+    """``allow_paid=True`` alone is never enough -- a distinct env-level approval is required too.
+
+    A caller that always passes ``allow_paid=True`` (e.g. a fixed script) must
+    still be unable to dispatch for real without an operator separately
+    setting ``ASSAY_ALLOW_PAID_PIER=1`` in the process environment.
+    """
+    monkeypatch.delenv(_PAID_APPROVAL_ENV, raising=False)
+    monkeypatch.setenv(_PAID_CREDENTIAL_ENV, "sk-not-a-real-key")
+    store = ObjectStore(tmp_path / ".assay")
+    prepared = prepare(store, runner=DockerPythonRunner())
+    assert isinstance(prepared, PierExperimentPrepared)
+
+    result = await run(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=prepared.plan_ref,
+        bridge=_PoisonBridge(),
+        allow_paid=True,
+    )
+
+    assert isinstance(result, PierExperimentFailed)
+    assert _PAID_APPROVAL_ENV in result.message
+
+
+@pytest.mark.parametrize("prepare,run", _PROFILES, ids=["smoke", "qualification", "full"])
+async def test_missing_provider_credential_rejects_before_the_bridge_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prepare: Any, run: Any
+) -> None:
+    """Approval to spend is not a credential to spend with -- both gates are independent."""
+    monkeypatch.setenv(_PAID_APPROVAL_ENV, "1")
+    monkeypatch.delenv(_PAID_CREDENTIAL_ENV, raising=False)
+    store = ObjectStore(tmp_path / ".assay")
+    prepared = prepare(store, runner=DockerPythonRunner())
+    assert isinstance(prepared, PierExperimentPrepared)
+
+    result = await run(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=prepared.plan_ref,
+        bridge=_PoisonBridge(),
+        allow_paid=True,
+    )
+
+    assert isinstance(result, PierExperimentFailed)
+    assert _PAID_CREDENTIAL_ENV in result.message
+
+    monkeypatch.setenv(_PAID_CREDENTIAL_ENV, "")
+    result = await run(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=prepared.plan_ref,
+        bridge=_PoisonBridge(),
+        allow_paid=True,
+    )
+
+    assert isinstance(result, PierExperimentFailed)
+    assert _PAID_CREDENTIAL_ENV in result.message
+
+
+@pytest.mark.parametrize("prepare,run", _PROFILES, ids=["smoke", "qualification", "full"])
 async def test_allow_paid_without_a_real_inventory_still_rejects_before_the_bridge_boundary(
-    tmp_path: Path, prepare: Any, run: Any
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prepare: Any, run: Any
 ) -> None:
     from assay.canonical import digest_bytes
 
+    # Both env-level gates satisfied, so this isolates the inventory_ref gate
+    # specifically -- proving it is independent of, not shadowed by, either
+    # of the other two.
+    monkeypatch.setenv(_PAID_APPROVAL_ENV, "1")
+    monkeypatch.setenv(_PAID_CREDENTIAL_ENV, "sk-not-a-real-key")
     store = ObjectStore(tmp_path / ".assay")
     prepared = prepare(store, runner=DockerPythonRunner())
     assert isinstance(prepared, PierExperimentPrepared)
