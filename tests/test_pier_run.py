@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from test_execution import execution_fixture
 
 from assay._version import __version__
 from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult, PierBridgeHandle
@@ -134,6 +135,51 @@ async def test_full_successful_smoke_run_publishes_evidence_reachable_from_closu
         assert output["transcript_status"] == "unavailable"
 
 
+async def test_successful_run_produces_separate_paired_reports_and_export_bundles(
+    tmp_path: Path,
+) -> None:
+    """Acceptance criterion: a successful run produces separate abstraction
+    and correctness reports and exact verified bundle exports."""
+    from assay.verify import verify_bundle as _verify_bundle
+
+    store = ObjectStore(tmp_path / ".assay")
+    prepared = prepare_pier_smoke(store)
+    assert isinstance(prepared, PierExperimentPrepared)
+    plan_bytes = store.read_bytes(prepared.plan_ref)
+    destination = tmp_path / "export"
+    result = await run_pier_smoke(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=digest_bytes(plan_bytes),
+        bridge=_AlwaysSucceedsBridge(),
+        allow_paid=True,
+        export_destination=destination,
+    )
+    assert isinstance(result, PierExperimentSucceeded), result
+    assert result.abstraction_report_ref != result.correctness_report_ref
+
+    abstraction_report = json.loads(store.read_bytes(result.abstraction_report_ref))
+    correctness_report = json.loads(store.read_bytes(result.correctness_report_ref))
+    assert abstraction_report != correctness_report
+
+    abstraction_store = ObjectStore(destination / "abstraction")
+    correctness_store = ObjectStore(destination / "correctness")
+    assert _verify_bundle(abstraction_store, result.abstraction_report_ref) == ()
+    assert _verify_bundle(correctness_store, result.correctness_report_ref) == ()
+
+    # Re-running into the same destination must not silently overwrite it.
+    replay = await run_pier_smoke(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=digest_bytes(plan_bytes),
+        bridge=_AlwaysSucceedsBridge(),
+        allow_paid=True,
+        export_destination=destination,
+    )
+    assert isinstance(replay, PierExperimentFailed)
+    assert "already exists" in replay.message
+
+
 async def test_execution_requires_paid_approval(tmp_path: Path) -> None:
     store = ObjectStore(tmp_path / ".assay")
     prepared = prepare_pier_smoke(store)
@@ -182,15 +228,66 @@ async def test_different_pier_profile_manifests_cannot_be_pooled_in_one_report(
     config = ReportConfig(
         manifest_refs=(smoke_result.manifest_ref, qualification_result.manifest_ref),
         record_refs=(),
-        reference_arm="clean",
-        candidates=("inconsistent",),
-        evaluator_id="candidate_submitted",
+        reference_arm="inconsistent",
+        candidates=("clean",),
+        evaluator_id="abstraction",
         metric="ordinal",
-        categories=("failed", "submitted"),
+        categories=("duplicated", "mixed", "reused"),
         evaluator_repeat_aggregation="median",
         worker_repeat_aggregation="median",
         statistical_profile=StatisticalProfile(seed=1, bootstrap_samples=100),
         engine_version=__version__,
     )
     with pytest.raises(ReportError, match="compatibility drift"):
+        build_report(store, config)
+
+
+async def test_legacy_v1_and_pier_v2_manifests_cannot_be_pooled_in_one_report(
+    tmp_path: Path,
+) -> None:
+    """A legacy (jig-based, assay-execution-plan/0.1.0) manifest and a Pier
+    (assay-execution-plan/0.2.0) manifest must never pool into one report --
+    the 0.1.0 fingerprint binds jig_revision, the 0.2.0 fingerprint binds
+    runtime identity instead, so the two are never coincidentally equal."""
+    from assay.execution import RunSucceeded
+    from assay.execution import execute_plan as _execute_plan
+
+    store = ObjectStore(tmp_path / ".assay")
+    legacy_fixture = execution_fixture(store, subject_ids=("ok",))
+    legacy_result = await _execute_plan(**legacy_fixture.arguments)
+    assert isinstance(legacy_result, RunSucceeded), legacy_result
+
+    smoke_prepared = prepare_pier_smoke(store)
+    assert isinstance(smoke_prepared, PierExperimentPrepared)
+    smoke_bytes = store.read_bytes(smoke_prepared.plan_ref)
+    smoke_result = await run_pier_smoke(
+        store,
+        plan_ref=smoke_prepared.plan_ref,
+        authorization=digest_bytes(smoke_bytes),
+        bridge=_AlwaysSucceedsBridge(),
+        allow_paid=True,
+    )
+    assert isinstance(smoke_result, PierExperimentSucceeded), smoke_result
+
+    config = ReportConfig(
+        manifest_refs=(str(legacy_result.manifest_ref), smoke_result.manifest_ref),
+        record_refs=(),
+        reference_arm="reference",
+        candidates=("candidate",),
+        evaluator_id="quality",
+        metric="scalar",
+        scalar_direction="higher_is_better",
+        evaluator_repeat_aggregation="mean",
+        worker_repeat_aggregation="mean",
+        statistical_profile=StatisticalProfile(seed=1, bootstrap_samples=100),
+        engine_version=__version__,
+    )
+    # Whichever manifest ref sorts first, build_report rejects the pool: the
+    # legacy snapshot has no "abstraction"/"correctness" evaluator and Pier's
+    # snapshot has no "quality" evaluator, so the per-manifest evaluator
+    # check alone already forbids pooling them -- on top of, independently
+    # of, the 0.1.0-vs-0.2.0 fingerprint the two plans would also fail on
+    # (jig_revision vs runtime) if a shared evaluator id ever let the check
+    # get that far.
+    with pytest.raises(ReportError, match="evaluator or arm absent|compatibility drift"):
         build_report(store, config)

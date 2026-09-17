@@ -18,25 +18,37 @@ established in ``assay.adapters.openrouter_policy``/``dry_experiment``.
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import paa_contracts
 
+from assay._version import __version__
 from assay.adapters.pier import PierAdapter, PierBridgeClient, worker_configuration
 from assay.canonical import canonical_json
 from assay.execution import (
     EvaluationFailed,
-    EvaluationSuccess,
     Evaluator,
     RunFailed,
     execute_plan,
 )
-from assay.investigations.consistency import EXPERIMENT_TASKS, CodingTask
+from assay.investigations.consistency import (
+    CATEGORIES,
+    EXPERIMENT_TASKS,
+    CodingTask,
+    StructuralEvaluator,
+)
+from assay.investigations.correctness import (
+    CORRECTNESS_CATEGORIES,
+    DockerPythonRunner,
+    FunctionalCorrectnessEvaluator,
+)
 from assay.investigations.dry_common import (
     deterministic_arm_price_estimates,
     publish_plan_dependencies,
@@ -48,7 +60,9 @@ from assay.models import (
     EvaluatorDeclaration,
     ExecutionPlanV2,
     Realization,
+    ReportConfig,
     RuntimeProfile,
+    StatisticalProfile,
     StudySnapshot,
     Subject,
 )
@@ -59,6 +73,7 @@ from assay.planning import (
     require_runtime_closure,
     validate_plan_snapshot,
 )
+from assay.report_engine import persist_report
 from assay.runtime_inventory import (
     QualificationInventory,
     QualificationRejected,
@@ -66,7 +81,7 @@ from assay.runtime_inventory import (
     runtime_binding_from_inventory,
 )
 from assay.store import ObjectStore
-from assay.verify import reference_closure, verify_snapshot
+from assay.verify import export_bundle, reference_closure, verify_bundle, verify_snapshot
 
 PIER_COST_PER_CELL_USD = Decimal("0.72")
 
@@ -162,7 +177,9 @@ def _validate_qualification_identity(inventory: QualificationInventory) -> None:
     if bridge.lock_digest != EXPECTED_BRIDGE_LOCK_DIGEST:
         raise ValueError("qualification lock_digest does not match the expected pinned lock")
     if bridge.bridge_image_digest != PIER_BRIDGE_IMAGE_DIGEST:
-        raise ValueError("qualification bridge_image_digest does not match the expected pinned image")
+        raise ValueError(
+            "qualification bridge_image_digest does not match the expected pinned image"
+        )
     if measured.docker_version != EXPECTED_DOCKER_VERSION:
         raise ValueError("qualification docker_version does not match the expected pinned version")
     if measured.network_none_verified is not True:
@@ -171,7 +188,9 @@ def _validate_qualification_identity(inventory: QualificationInventory) -> None:
         raise ValueError("qualification uid/gid does not match the expected sandbox identity")
 
 
-def _load_and_validate_inventory(store: ObjectStore, *, inventory_ref: str) -> QualificationInventory:
+def _load_and_validate_inventory(
+    store: ObjectStore, *, inventory_ref: str
+) -> QualificationInventory:
     """Read, freshness-check, and identity-check a qualification; fails closed.
 
     Never touches the network or Docker -- ``load_qualification_inventory``
@@ -215,25 +234,52 @@ class PierExperimentFailed:
     error_type: str
     message: str
     manifest_ref: str | None = None
+    abstraction_report_ref: str | None = None
+    correctness_report_ref: str | None = None
 
 
 @dataclass(frozen=True)
 class PierExperimentSucceeded:
     manifest_ref: str
+    abstraction_report_ref: str
+    correctness_report_ref: str
 
 
-class _CandidateSubmittedEvaluator:
-    """The trivial pass/fail check every Pier profile shares: did a candidate land."""
+@dataclass(frozen=True, slots=True)
+class PierCandidateEvaluator:
+    """Adapts Pier's ``candidate_ref`` into the ``output["source"]`` string
+    shape ``StructuralEvaluator``/``FunctionalCorrectnessEvaluator`` already
+    expect, then delegates unchanged -- ``configuration()`` returns exactly
+    the wrapped delegate's own configuration, so the declared evaluator
+    identity a plan authorizes is the real structural/functional check, not
+    a distinct wrapper identity.
+
+    Pier's worker output is a content ref (``candidate_ref``), not raw
+    source text: the referenced object is the base64 envelope
+    ``_publish_available_artifacts`` wraps every raw artifact in (see
+    ``assay.adapters.pier``), so this decodes that envelope back to the
+    original bytes before handing plain source text to the delegate.
+    """
+
+    store: ObjectStore
+    delegate: Evaluator
 
     def configuration(self) -> dict[str, Any]:
-        return {"id": "pier-candidate-submitted", "version": "1"}
+        return self.delegate.configuration()
 
     async def evaluate(
         self, *, input_value: Any, output: Any, coordinate: Any
-    ) -> EvaluationSuccess | EvaluationFailed:
-        if not isinstance(output, dict) or not output.get("candidate_ref"):
+    ) -> EvaluationFailed | Any:
+        if not isinstance(output, dict) or not isinstance(output.get("candidate_ref"), str):
             return EvaluationFailed("MissingCandidate", "no candidate_ref in worker output")
-        return EvaluationSuccess("submitted")
+        try:
+            envelope = json.loads(self.store.read_bytes(output["candidate_ref"]))
+            source = base64.b64decode(envelope["content_base64"]).decode("utf-8")
+        except Exception as error:
+            return EvaluationFailed(type(error).__name__, f"could not decode candidate: {error}")
+        return await self.delegate.evaluate(
+            input_value=input_value, output={"source": source}, coordinate=coordinate
+        )
 
 
 def _publish_runtime(
@@ -268,6 +314,17 @@ def _publish_runtime(
     return binding, runtime
 
 
+def _companion_schema(schema_id: str, categories: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": schema_id,
+        "allOf": [
+            {"$ref": "https://paa.dev/paa-evidence-record.schema.json"},
+            {"properties": {"verdict": {"properties": {"value": {"enum": list(categories)}}}}},
+        ],
+    }
+
+
 def _materialize_pier_snapshot(
     store: ObjectStore,
     *,
@@ -275,6 +332,7 @@ def _materialize_pier_snapshot(
     tasks: Sequence[CodingTask],
     repositories: Mapping[str, Mapping[str, Mapping[str, str]]],
     inventory_ref: str,
+    runner: DockerPythonRunner,
 ) -> tuple[StudySnapshot, RuntimeBinding]:
     """One subject per task, two arms (clean/inconsistent), Pier-shaped realizations."""
 
@@ -305,7 +363,11 @@ def _materialize_pier_snapshot(
         )
         for arm_id in ARM_IDS:
             repository = repositories[task.id][arm_id]
-            realization_value = {"task": task.instruction, "repository": dict(repository)}
+            # The full task dict, not just its instruction string: the
+            # abstraction/correctness evaluators below need CodingTask's own
+            # fields (helper, primitives, test_cases, ...), not merely the
+            # instruction text the bridge package renders.
+            realization_value = {"task": task_value, "repository": dict(repository)}
             artifact_ref = publish(realization_value)
             realizations.append(
                 Realization(
@@ -316,30 +378,63 @@ def _materialize_pier_snapshot(
                 )
             )
 
-    identity = {
-        "property": "candidate_submitted",
+    abstraction_identity = {
+        "property": "abstraction_use",
         "target": "output",
         "technique": "deterministic",
-        "evaluation_basis": {"kind": "invariant", "ref": "pier-candidate-submitted-v1"},
+        "evaluation_basis": {
+            "kind": "rubric",
+            "ref": publish(
+                {
+                    "categories": list(CATEGORIES),
+                    "definition": (
+                        "Direct helper reuse; mixed includes calls to any primitive "
+                        "used by the helper."
+                    ),
+                }
+            ),
+        },
         "epistemic_status": "proxy",
         "version": "1",
         "authority": "advisory",
     }
-    companion = {
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "$id": f"https://assay.local/schemas/pier-{profile}-evidence-v1.json",
-        "allOf": [
-            {"$ref": "https://paa.dev/paa-evidence-record.schema.json"},
-            {"properties": {"verdict": {"properties": {"value": {"type": "string"}}}}},
-        ],
+    abstraction_schema_id = f"https://assay.local/schemas/pier-{profile}-abstraction-v1.json"
+    abstraction = EvaluatorDeclaration(
+        id="abstraction",
+        identity=abstraction_identity,
+        payload_schema=abstraction_schema_id,
+        payload_schema_ref=publish(_companion_schema(abstraction_schema_id, CATEGORIES)),
+        configuration=StructuralEvaluator().configuration(),
+        basis_ref=publish({"invariant": "structural abstraction-use classification"}),
+        repeats=1,
+    )
+    correctness_identity = {
+        "property": "functional_correctness",
+        "target": "output",
+        "technique": "deterministic",
+        "evaluation_basis": {
+            "kind": "invariant",
+            "ref": publish(
+                {
+                    "categories": list(CORRECTNESS_CATEGORIES),
+                    "definition": "All hidden deterministic task cases pass in the pinned sandbox.",
+                }
+            ),
+        },
+        "epistemic_status": "proxy",
+        "version": "1",
+        "authority": "advisory",
     }
-    evaluator = EvaluatorDeclaration(
-        id="candidate_submitted",
-        identity=identity,
-        payload_schema=str(companion["$id"]),
-        payload_schema_ref=publish(companion),
-        configuration=_CandidateSubmittedEvaluator().configuration(),
-        basis_ref=publish({"invariant": "candidate_ref must be present on success"}),
+    correctness_schema_id = f"https://assay.local/schemas/pier-{profile}-correctness-v1.json"
+    correctness = EvaluatorDeclaration(
+        id="correctness",
+        identity=correctness_identity,
+        payload_schema=correctness_schema_id,
+        payload_schema_ref=publish(
+            _companion_schema(correctness_schema_id, CORRECTNESS_CATEGORIES)
+        ),
+        configuration=FunctionalCorrectnessEvaluator(runner).configuration(),
+        basis_ref=publish({"invariant": "finite hidden test-case correctness"}),
         repeats=1,
     )
     task_declaration = {
@@ -349,7 +444,7 @@ def _materialize_pier_snapshot(
         "boundary": {"input": "task_repository", "output": "candidate_source"},
         "initial_position": "manual",
         "deployment": "shadow",
-        "evaluators": [identity],
+        "evaluators": [abstraction_identity, correctness_identity],
         "position_policy": {"manual": "offline", "hitl": "blocking"},
         "promotion": {
             "from": "manual",
@@ -369,7 +464,7 @@ def _materialize_pier_snapshot(
         subjects=tuple(subjects),
         arms=arms,
         realizations=tuple(realizations),
-        evaluators=(evaluator,),
+        evaluators=(abstraction, correctness),
         paa_task_ref=publish(task_declaration),
         pricing_catalog_ref=publish({"per_cell_usd": str(PIER_COST_PER_CELL_USD)}),
         task_schema_ref=publish(paa_contracts.load_schema("paa-task")),
@@ -409,6 +504,7 @@ def _prepare(
     worker_repeats: int,
     expected_cells: int,
     inventory_ref: str,
+    runner: DockerPythonRunner,
 ) -> PierExperimentPrepared | PierExperimentFailed:
     try:
         snapshot, _ = _materialize_pier_snapshot(
@@ -417,6 +513,7 @@ def _prepare(
             tasks=tasks,
             repositories=repositories,
             inventory_ref=inventory_ref,
+            runner=runner,
         )
         verify_snapshot(store, snapshot)
         snapshot_ref = str(store.publish_json(snapshot.model_dump(mode="json")))
@@ -445,13 +542,18 @@ def _prepare(
 
 
 def prepare_pier_full(
-    store: ObjectStore, *, inventory_ref: str | None = None
+    store: ObjectStore,
+    *,
+    inventory_ref: str | None = None,
+    runner: DockerPythonRunner | None = None,
 ) -> PierExperimentPrepared | PierExperimentFailed:
     """Twelve subjects, two arms, two repeats: 48 ordered cells, $34.56 ceiling.
 
     ``inventory_ref`` defaults to this module's own canonical, always-fresh
     qualification when omitted; a caller wanting to prove a stale or
     mismatched qualification is rejected passes their own ref instead.
+    ``runner`` only declares the correctness evaluator's configuration here
+    -- it is never run at prepare time, so this never touches Docker.
     """
     return _prepare(
         store,
@@ -461,11 +563,15 @@ def prepare_pier_full(
         worker_repeats=2,
         expected_cells=48,
         inventory_ref=inventory_ref or _default_qualification_inventory_ref(store),
+        runner=runner or DockerPythonRunner(),
     )
 
 
 def prepare_pier_smoke(
-    store: ObjectStore, *, inventory_ref: str | None = None
+    store: ObjectStore,
+    *,
+    inventory_ref: str | None = None,
+    runner: DockerPythonRunner | None = None,
 ) -> PierExperimentPrepared | PierExperimentFailed:
     """One subject, two arms, two repeats: 4 cells, $2.88 ceiling."""
     tasks = EXPERIMENT_TASKS[:1]
@@ -477,11 +583,15 @@ def prepare_pier_smoke(
         worker_repeats=2,
         expected_cells=4,
         inventory_ref=inventory_ref or _default_qualification_inventory_ref(store),
+        runner=runner or DockerPythonRunner(),
     )
 
 
 def prepare_pier_qualification(
-    store: ObjectStore, *, inventory_ref: str | None = None
+    store: ObjectStore,
+    *,
+    inventory_ref: str | None = None,
+    runner: DockerPythonRunner | None = None,
 ) -> PierExperimentPrepared | PierExperimentFailed:
     """All four realistic-pilot fixtures, two arms, two repeats: 16 cells, $11.52 ceiling."""
     return _prepare(
@@ -492,6 +602,7 @@ def prepare_pier_qualification(
         worker_repeats=2,
         expected_cells=16,
         inventory_ref=inventory_ref or _default_qualification_inventory_ref(store),
+        runner=runner or DockerPythonRunner(),
     )
 
 
@@ -524,6 +635,28 @@ def _revalidate_before_dispatch(
         raise ValueError("Pier runtime/route differs from the plan being authorized")
 
 
+def _pier_report_config(
+    manifest_ref: str,
+    record_refs: tuple[str, ...],
+    *,
+    evaluator_id: str,
+    categories: tuple[str, ...],
+) -> ReportConfig:
+    return ReportConfig(
+        manifest_refs=(manifest_ref,),
+        record_refs=record_refs,
+        reference_arm="inconsistent",
+        candidates=("clean",),
+        evaluator_id=evaluator_id,
+        metric="ordinal",
+        categories=categories,
+        evaluator_repeat_aggregation="median",
+        worker_repeat_aggregation="median",
+        statistical_profile=StatisticalProfile(seed=7, bootstrap_samples=10_000),
+        engine_version=__version__,
+    )
+
+
 async def _run(
     store: ObjectStore,
     *,
@@ -534,11 +667,17 @@ async def _run(
     allow_paid: bool,
     expected_cells: int,
     inventory_ref: str | None = None,
+    runner: DockerPythonRunner | None = None,
+    export_destination: Path | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
     manifest_ref: str | None = None
+    abstraction_ref: str | None = None
+    correctness_ref: str | None = None
     try:
         if not allow_paid:
             raise ValueError(f"paid Pier {profile} execution requires explicit allow_paid=True")
+        if export_destination is not None and export_destination.exists():
+            raise ValueError("export destination already exists")
         plan_bytes = store.read_bytes(plan_ref)
         plan = authorize(plan_bytes, authorization)
         if not isinstance(plan, ExecutionPlanV2):
@@ -555,6 +694,8 @@ async def _run(
         reference_closure(store, (plan_ref,))
         if len(plan.cells) != expected_cells:
             raise ValueError(f"unexpected Pier {profile} grid at execution time")
+        if {item.id for item in snapshot.evaluators} != {"abstraction", "correctness"}:
+            raise ValueError("Pier experiment evaluator set changed")
 
         binding, _ = _publish_runtime(
             store,
@@ -571,7 +712,19 @@ async def _run(
             model_route=PIER_MODEL_ROUTE,
             trial_limits=PIER_TRIAL_LIMITS,
         )
-        evaluator: Evaluator = _CandidateSubmittedEvaluator()
+        runner = runner or DockerPythonRunner()
+        runtime_evaluators: dict[str, Evaluator] = {
+            "abstraction": PierCandidateEvaluator(store=store, delegate=StructuralEvaluator()),
+            "correctness": PierCandidateEvaluator(
+                store=store, delegate=FunctionalCorrectnessEvaluator(runner)
+            ),
+        }
+        declared_evaluators = {item.id: item for item in snapshot.evaluators}
+        for evaluator_id, evaluator in runtime_evaluators.items():
+            if canonical_json(evaluator.configuration()) != canonical_json(
+                declared_evaluators[evaluator_id].configuration
+            ):
+                raise ValueError("Pier evaluator configuration differs from the authorized plan")
         # PierAdapter is a frozen dataclass, so mypy treats its
         # ``supports_cell_coordinates`` attribute as read-only, which the
         # CoordinateAwareWorker protocol's settable-attribute check rejects
@@ -583,16 +736,69 @@ async def _run(
             snapshot=snapshot,
             store=store,
             workers=workers,
-            evaluators={"candidate_submitted": evaluator},
+            evaluators=runtime_evaluators,
         )
         if result.manifest_ref is not None:
             manifest_ref = str(result.manifest_ref)
         if isinstance(result, RunFailed):
-            return PierExperimentFailed(result.error_type, result.message, manifest_ref)
+            return PierExperimentFailed(
+                result.error_type, result.message, manifest_ref, abstraction_ref, correctness_ref
+            )
         assert manifest_ref is not None
-        return PierExperimentSucceeded(manifest_ref)
+
+        by_evaluator: dict[str, tuple[str, ...]] = {}
+        for evaluator_id in ("abstraction", "correctness"):
+            selected = tuple(
+                sorted(
+                    str(result.manifest.evaluation_records[coordinate.id])
+                    for coordinate in plan.evaluations
+                    if coordinate.evaluator_id == evaluator_id
+                )
+            )
+            by_evaluator[evaluator_id] = selected
+        abstraction_ref = str(
+            persist_report(
+                store,
+                _pier_report_config(
+                    manifest_ref,
+                    by_evaluator["abstraction"],
+                    evaluator_id="abstraction",
+                    categories=CATEGORIES,
+                ),
+            )
+        )
+        correctness_ref = str(
+            persist_report(
+                store,
+                _pier_report_config(
+                    manifest_ref,
+                    by_evaluator["correctness"],
+                    evaluator_id="correctness",
+                    categories=CORRECTNESS_CATEGORIES,
+                ),
+            )
+        )
+        if export_destination is not None:
+            if export_destination.exists():
+                raise ValueError("export destination already exists")
+            abstraction_bundle = export_bundle(
+                store, abstraction_ref, export_destination / "abstraction"
+            )
+            correctness_bundle = export_bundle(
+                store, correctness_ref, export_destination / "correctness"
+            )
+            for bundle, report_ref in (
+                (abstraction_bundle, abstraction_ref),
+                (correctness_bundle, correctness_ref),
+            ):
+                failures = verify_bundle(bundle, report_ref)
+                if failures:
+                    raise ValueError(f"exported bundle failed verification: {failures}")
+        return PierExperimentSucceeded(manifest_ref, abstraction_ref, correctness_ref)
     except Exception as error:
-        return PierExperimentFailed(type(error).__name__, str(error), manifest_ref)
+        return PierExperimentFailed(
+            type(error).__name__, str(error), manifest_ref, abstraction_ref, correctness_ref
+        )
 
 
 async def run_pier_full(
@@ -603,6 +809,8 @@ async def run_pier_full(
     bridge: PierBridgeClient,
     allow_paid: bool = False,
     inventory_ref: str | None = None,
+    runner: DockerPythonRunner | None = None,
+    export_destination: Path | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
     return await _run(
         store,
@@ -613,6 +821,8 @@ async def run_pier_full(
         allow_paid=allow_paid,
         expected_cells=48,
         inventory_ref=inventory_ref,
+        runner=runner,
+        export_destination=export_destination,
     )
 
 
@@ -624,6 +834,8 @@ async def run_pier_smoke(
     bridge: PierBridgeClient,
     allow_paid: bool = False,
     inventory_ref: str | None = None,
+    runner: DockerPythonRunner | None = None,
+    export_destination: Path | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
     return await _run(
         store,
@@ -634,6 +846,8 @@ async def run_pier_smoke(
         allow_paid=allow_paid,
         expected_cells=4,
         inventory_ref=inventory_ref,
+        runner=runner,
+        export_destination=export_destination,
     )
 
 
@@ -645,6 +859,8 @@ async def run_pier_qualification(
     bridge: PierBridgeClient,
     allow_paid: bool = False,
     inventory_ref: str | None = None,
+    runner: DockerPythonRunner | None = None,
+    export_destination: Path | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
     return await _run(
         store,
@@ -655,6 +871,8 @@ async def run_pier_qualification(
         allow_paid=allow_paid,
         expected_cells=16,
         inventory_ref=inventory_ref,
+        runner=runner,
+        export_destination=export_destination,
     )
 
 
@@ -671,6 +889,12 @@ PIER_QUALIFICATION_PER_ARM_USD = "5.76"
 
 __all__ = [
     "ARM_IDS",
+    "EXPECTED_BRIDGE_LOCK_DIGEST",
+    "EXPECTED_DOCKER_VERSION",
+    "EXPECTED_GID",
+    "EXPECTED_MINI_SWE_AGENT_REVISION",
+    "EXPECTED_PIER_REVISION",
+    "EXPECTED_UID",
     "PIER_BRIDGE_IMAGE_DIGEST",
     "PIER_COST_PER_CELL_USD",
     "PIER_FULL_PER_ARM_USD",
@@ -681,6 +905,7 @@ __all__ = [
     "PIER_SMOKE_PER_ARM_USD",
     "PIER_SMOKE_TOTAL_USD",
     "PIER_TRIAL_LIMITS",
+    "PierCandidateEvaluator",
     "PierExperimentFailed",
     "PierExperimentPrepared",
     "PierExperimentSucceeded",

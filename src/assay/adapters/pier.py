@@ -123,6 +123,23 @@ class PierAdapterError(Exception):
     pass
 
 
+def _instruction_from_task_field(task_field: Any) -> str | None:
+    """The realization's ``task`` field is either a plain instruction string
+    (the lower-level adapter contract) or a full task dict carrying its own
+    ``instruction`` field (what investigation profiles that also need the
+    task's other fields -- for structural/functional evaluation -- publish
+    instead). Either shape is accepted; anything else, or a blank result, is
+    rejected by the caller.
+    """
+    if isinstance(task_field, str):
+        instruction = task_field
+    elif isinstance(task_field, Mapping) and isinstance(task_field.get("instruction"), str):
+        instruction = task_field["instruction"]
+    else:
+        return None
+    return instruction if instruction.strip() else None
+
+
 def _repository_dir(stack: contextlib.ExitStack, repository: Mapping[str, str]) -> Path:
     root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="assay-pier-")))
     for path, content in repository.items():
@@ -230,7 +247,9 @@ class PierAdapter:
             worker_id=self.worker_id,
         )
 
-    async def _bounded_teardown(self, handle: PierBridgeHandle) -> BridgeEffectiveEnforcement | None:
+    async def _bounded_teardown(
+        self, handle: PierBridgeHandle
+    ) -> BridgeEffectiveEnforcement | None:
         """Tear the handle down within ``CLEANUP_TIMEOUT``; ``None`` means unverified.
 
         A timeout or an exception from ``teardown`` itself is not silently
@@ -238,7 +257,9 @@ class PierAdapter:
         as an unverified (never "clean") cleanup.
         """
         try:
-            return await asyncio.wait_for(asyncio.to_thread(handle.teardown), timeout=CLEANUP_TIMEOUT)
+            return await asyncio.wait_for(
+                asyncio.to_thread(handle.teardown), timeout=CLEANUP_TIMEOUT
+            )
         except Exception:
             return None
 
@@ -268,8 +289,8 @@ class PierAdapter:
             input_value.get("repository"), dict
         ):
             return WorkerFailure("InvalidInput", "Pier realization must be a task/repository pair")
-        task = input_value.get("task")
-        if not isinstance(task, str) or not task.strip():
+        task = _instruction_from_task_field(input_value.get("task"))
+        if not task:
             return WorkerFailure("InvalidInput", "Pier realization requires a nonblank task")
 
         try:
@@ -324,7 +345,9 @@ class PierAdapter:
             )
 
         effective = await self._bounded_teardown(handle)
-        return self._settle(exchange, bridge_result, cleanup_incomplete=_cleanup_incomplete(effective))
+        return self._settle(
+            exchange, bridge_result, cleanup_incomplete=_cleanup_incomplete(effective)
+        )
 
     def _settle(
         self, exchange: PierExchange, bridge_result: BridgeTrialResult, *, cleanup_incomplete: bool
