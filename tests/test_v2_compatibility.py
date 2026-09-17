@@ -1,11 +1,12 @@
 """End-to-end 0.2.0 runtime closure enforcement and cross-profile report isolation.
 
-There is no v2 execution backend yet (Pier support is a later cohort in this epic;
-``execute_plan`` rejects ``ExecutionPlanV2`` outright, see
-``test_execution_rejects_v2_plans_outright`` below). These tests instead re-root a
-real, fully verified v1 run onto an equivalent v2 plan -- exercising the closure,
-verification, and report-fingerprint machinery against a genuine manifest without
-claiming v2 plans are executable.
+``execute_plan`` now accepts ``ExecutionPlanV2`` generically (the Pier cohort of
+this epic wires a real backend to it; see ``assay.adapters.pier`` and
+``tests/test_pier_run.py``), so ``test_execution_accepts_v2_plans`` below exercises
+that path directly with the ordinary fixture worker. The remaining tests in this
+module still re-root a real, fully verified v1 run onto an equivalent v2 plan --
+that re-rooting exercises the closure, verification, and report-fingerprint
+machinery independently of which worker executed the underlying cells.
 """
 
 from __future__ import annotations
@@ -120,8 +121,8 @@ def _records(store: ObjectStore, manifest_ref: str) -> tuple[str, tuple[str, ...
     return manifest_ref, tuple(sorted(manifest.evaluation_records.values()))
 
 
-async def test_execution_rejects_v2_plans_outright(tmp_path: Path) -> None:
-    """0.2.0 plans bind a generic runtime with no backend implemented yet."""
+async def test_execution_accepts_v2_plans(tmp_path: Path) -> None:
+    """A 0.2.0 plan with a fully declared runtime closure executes like any v1 plan."""
     store = ObjectStore(tmp_path)
     fixture = execution_fixture(store, subject_ids=("ok",), worker_repeats=1)
     v1_plan = json.loads(fixture.plan_bytes)
@@ -138,9 +139,35 @@ async def test_execution_rejects_v2_plans_outright(tmp_path: Path) -> None:
         "authorization": digest_bytes(v2_plan_bytes),
     }
     result = await execute_plan(**arguments)
+    assert isinstance(result, RunSucceeded), result
+    assert result.manifest.status == "complete"
+
+
+async def test_execution_rejects_a_v2_plan_with_a_dangling_runtime_configuration(
+    tmp_path: Path,
+) -> None:
+    """A v2 plan's runtime configuration must itself be stored, not merely referenced."""
+    store = ObjectStore(tmp_path)
+    fixture = execution_fixture(store, subject_ids=("ok",), worker_repeats=1)
+    v1_plan = json.loads(fixture.plan_bytes)
+    runtime = RuntimeProfile(
+        id="pier", version="lock-v1", configuration_ref="sha256:" + "9" * 64
+    )
+    v2_plan = compile_plan_v2(
+        fixture.snapshot,
+        snapshot_ref=v1_plan["snapshot_ref"],
+        worker_repeats=1,
+        runtime=runtime,
+    )
+    v2_plan_bytes = canonical_json(v2_plan.model_dump(mode="json"))
+    arguments = {
+        **fixture.arguments,
+        "plan_bytes": v2_plan_bytes,
+        "authorization": digest_bytes(v2_plan_bytes),
+    }
+    result = await execute_plan(**arguments)
     assert not isinstance(result, RunSucceeded)
     assert result.manifest is None and result.manifest_ref is None
-    assert "0.1.0" in result.message
 
 
 async def test_manifest_rooted_closure_requires_the_v2_runtime_object(tmp_path: Path) -> None:

@@ -76,6 +76,12 @@ _PATHS: dict[str, dict[str, str]] = {
         "payload.detail_refs.*": "data",
     },
     "operating": {"source_references.*": "data", "worker.configuration_ref": "data"},
+    # A Pier artifact manifest is content-addressed like every other governed
+    # document; its own binding/configuration references must be walkable so
+    # an outcome's evidence closure includes the exact runtime it was bound to.
+    "assay-pier-artifact-manifest/0.1.0": {
+        "exchange.binding.configuration_ref": "data",
+    },
     "assay-report-config/0.1.0": {
         "manifest_refs.*": "assay-run-manifest/0.1.0",
         "record_refs.*": "evaluation",
