@@ -220,6 +220,16 @@ PIER_TRIAL_LIMITS: Mapping[str, float | int] = {
 
 ARM_IDS = ("clean", "inconsistent")
 
+# Cost ceilings this cohort was specified against -- literal numbers, checked
+# in tests/test_pier_profiles.py against deterministic_cell_price_estimate's
+# derivation from PIER_COST_PER_CELL_USD, never hardcoded independently here.
+PIER_FULL_TOTAL_USD = "34.56"
+PIER_FULL_PER_ARM_USD = "17.28"
+PIER_SMOKE_TOTAL_USD = "2.88"
+PIER_SMOKE_PER_ARM_USD = "1.44"
+PIER_QUALIFICATION_TOTAL_USD = "11.52"
+PIER_QUALIFICATION_PER_ARM_USD = "5.76"
+
 
 @dataclass(frozen=True)
 class PierExperimentPrepared:
@@ -606,33 +616,47 @@ def prepare_pier_qualification(
     )
 
 
+# The exact (total, per-arm) USD ceiling every authorized plan for a profile
+# must carry -- checked against the plan itself immediately before dispatch,
+# never assumed from how the plan was prepared.
+_PROFILE_CEILINGS_USD: Mapping[str, tuple[str, str]] = {
+    "full": (PIER_FULL_TOTAL_USD, PIER_FULL_PER_ARM_USD),
+    "smoke": (PIER_SMOKE_TOTAL_USD, PIER_SMOKE_PER_ARM_USD),
+    "qualification": (PIER_QUALIFICATION_TOTAL_USD, PIER_QUALIFICATION_PER_ARM_USD),
+}
+
+
 def _revalidate_before_dispatch(
-    plan: Any,
+    plan: ExecutionPlanV2,
     *,
+    profile: str,
     binding: RuntimeBinding,
-    model_route: Mapping[str, str],
-    trial_limits: Mapping[str, Any],
 ) -> None:
-    """Mirror ``openrouter_policy``'s gate: re-check identity/route/price right
-    before the paid call, not only at prepare time."""
-    expected = worker_configuration(
-        binding=binding, model_route=model_route, trial_limits=trial_limits
-    )
-    canonical_json(plan.cost_estimate.model_dump(mode="json"))
-    for estimate in plan.arm_cost_estimates.values():
-        canonical_json(estimate.model_dump(mode="json"))
-    if canonical_json(expected) != canonical_json(
-        {
-            "id": "pier",
-            "version": binding.runtime_version,
-            "runtime_id": binding.runtime_id,
-            "image_digest": binding.image_digest,
-            "configuration_ref": binding.configuration_ref,
-            "model_route": dict(model_route),
-            "trial_limits": dict(trial_limits),
-        }
-    ):
-        raise ValueError("Pier runtime/route differs from the plan being authorized")
+    """Re-check the plan actually being authorized -- not a value re-derived
+    from this call's own arguments -- right before the paid call.
+
+    Two independent facts about ``plan`` are checked here, neither of which
+    the earlier ``plan.runtime.version``/``plan_runtime_configuration``
+    checks in ``_run`` already cover: that the plan's authorized runtime
+    configuration is byte-identical (by content address) to the binding
+    dispatch is about to use, and that the plan's declared cost ceilings are
+    exactly the profile's published ceiling, not merely internally
+    consistent.
+    """
+    if plan.runtime.configuration_ref != binding.configuration_ref:
+        raise ValueError(
+            "Pier runtime configuration differs from the plan being authorized"
+        )
+    total_usd, per_arm_usd = _PROFILE_CEILINGS_USD[profile]
+    expected_total = float(Decimal(total_usd))
+    expected_per_arm = float(Decimal(per_arm_usd))
+    if plan.cost_estimate.amount != expected_total or plan.cost_estimate.currency != "USD":
+        raise ValueError("Pier plan total cost ceiling differs from the authorized profile")
+    for arm_id, estimate in plan.arm_cost_estimates.items():
+        if estimate.amount != expected_per_arm or estimate.currency != "USD":
+            raise ValueError(
+                f"Pier plan per-arm cost ceiling for {arm_id!r} differs from the authorized profile"
+            )
 
 
 def _pier_report_config(
@@ -702,9 +726,7 @@ async def _run(
             profile=profile,
             inventory_ref=inventory_ref or _default_qualification_inventory_ref(store),
         )
-        _revalidate_before_dispatch(
-            plan, binding=binding, model_route=PIER_MODEL_ROUTE, trial_limits=PIER_TRIAL_LIMITS
-        )
+        _revalidate_before_dispatch(plan, profile=profile, binding=binding)
         adapter = PierAdapter(
             store=store,
             bridge=bridge,
@@ -876,15 +898,6 @@ async def run_pier_qualification(
     )
 
 
-# Cost ceilings this cohort was specified against -- literal numbers, checked
-# in tests/test_pier_profiles.py against deterministic_cell_price_estimate's
-# derivation from PIER_COST_PER_CELL_USD, never hardcoded independently here.
-PIER_FULL_TOTAL_USD = "34.56"
-PIER_FULL_PER_ARM_USD = "17.28"
-PIER_SMOKE_TOTAL_USD = "2.88"
-PIER_SMOKE_PER_ARM_USD = "1.44"
-PIER_QUALIFICATION_TOTAL_USD = "11.52"
-PIER_QUALIFICATION_PER_ARM_USD = "5.76"
 
 
 __all__ = [
