@@ -11,6 +11,11 @@ from assay._version import __version__
 from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult, PierBridgeHandle
 from assay.canonical import canonical_json, digest_bytes
 from assay.investigations.pier_experiment import (
+    EXPECTED_BRIDGE_LOCK_DIGEST,
+    EXPECTED_DOCKER_VERSION,
+    EXPECTED_MINI_SWE_AGENT_REVISION,
+    EXPECTED_PIER_REVISION,
+    PIER_BRIDGE_IMAGE_DIGEST,
     PierExperimentFailed,
     PierExperimentPrepared,
     PierExperimentSucceeded,
@@ -24,6 +29,35 @@ from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange
 from assay.references import reference_closure
 from assay.report_engine import ReportError, build_report
 from assay.store import ObjectStore
+
+
+def _qualified_inventory_ref(store: ObjectStore) -> str:
+    """A qualification matching every EXPECTED_* constant pier_experiment pins.
+
+    ``run_pier_*`` requires a real, explicit ``inventory_ref`` -- it never
+    falls back to the synthetic default the way ``prepare_pier_*`` does.
+    """
+    return str(
+        store.publish_json(
+            {
+                "schema_version": "assay-pier-qualification/0.1.0",
+                "bridge": {
+                    "pier_revision": EXPECTED_PIER_REVISION,
+                    "mini_swe_agent_revision": EXPECTED_MINI_SWE_AGENT_REVISION,
+                    "lock_digest": EXPECTED_BRIDGE_LOCK_DIGEST,
+                    "bridge_image_digest": PIER_BRIDGE_IMAGE_DIGEST,
+                },
+                "measured": {
+                    "docker_version": EXPECTED_DOCKER_VERSION,
+                    "network_none_verified": True,
+                    "uid": 1000,
+                    "gid": 1000,
+                },
+                "qualified_at": "2026-09-11T00:00:00Z",
+                "outcome": "succeeded",
+            }
+        )
+    )
 
 
 def _manifest_and_artifacts(exchange: PierExchange) -> tuple[ArtifactManifest, dict[str, bytes]]:
@@ -92,7 +126,8 @@ async def test_full_successful_smoke_run_publishes_evidence_reachable_from_closu
     tmp_path: Path,
 ) -> None:
     store = ObjectStore(tmp_path / ".assay")
-    prepared = prepare_pier_smoke(store)
+    inventory_ref = _qualified_inventory_ref(store)
+    prepared = prepare_pier_smoke(store, inventory_ref=inventory_ref)
     assert isinstance(prepared, PierExperimentPrepared)
     plan_bytes = store.read_bytes(prepared.plan_ref)
     result = await run_pier_smoke(
@@ -101,6 +136,7 @@ async def test_full_successful_smoke_run_publishes_evidence_reachable_from_closu
         authorization=digest_bytes(plan_bytes),
         bridge=_AlwaysSucceedsBridge(),
         allow_paid=True,
+        inventory_ref=inventory_ref,
     )
     assert isinstance(result, PierExperimentSucceeded), result
 
@@ -143,7 +179,8 @@ async def test_successful_run_produces_separate_paired_reports_and_export_bundle
     from assay.verify import verify_bundle as _verify_bundle
 
     store = ObjectStore(tmp_path / ".assay")
-    prepared = prepare_pier_smoke(store)
+    inventory_ref = _qualified_inventory_ref(store)
+    prepared = prepare_pier_smoke(store, inventory_ref=inventory_ref)
     assert isinstance(prepared, PierExperimentPrepared)
     plan_bytes = store.read_bytes(prepared.plan_ref)
     destination = tmp_path / "export"
@@ -153,6 +190,7 @@ async def test_successful_run_produces_separate_paired_reports_and_export_bundle
         authorization=digest_bytes(plan_bytes),
         bridge=_AlwaysSucceedsBridge(),
         allow_paid=True,
+        inventory_ref=inventory_ref,
         export_destination=destination,
     )
     assert isinstance(result, PierExperimentSucceeded), result
@@ -174,6 +212,7 @@ async def test_successful_run_produces_separate_paired_reports_and_export_bundle
         authorization=digest_bytes(plan_bytes),
         bridge=_AlwaysSucceedsBridge(),
         allow_paid=True,
+        inventory_ref=inventory_ref,
         export_destination=destination,
     )
     assert isinstance(replay, PierExperimentFailed)
@@ -196,12 +235,34 @@ async def test_execution_requires_paid_approval(tmp_path: Path) -> None:
     assert "allow_paid" in result.message
 
 
+async def test_paid_execution_requires_an_explicit_inventory_ref(tmp_path: Path) -> None:
+    """Unlike ``prepare_pier_*``, a paid run never falls back to the
+    synthetic default qualification -- an omitted ``inventory_ref`` fails
+    the run rather than silently authorizing dispatch against unmeasured
+    evidence."""
+    store = ObjectStore(tmp_path / ".assay")
+    inventory_ref = _qualified_inventory_ref(store)
+    prepared = prepare_pier_smoke(store, inventory_ref=inventory_ref)
+    assert isinstance(prepared, PierExperimentPrepared)
+    plan_bytes = store.read_bytes(prepared.plan_ref)
+    result = await run_pier_smoke(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=digest_bytes(plan_bytes),
+        bridge=_AlwaysSucceedsBridge(),
+        allow_paid=True,
+    )
+    assert isinstance(result, PierExperimentFailed)
+    assert "inventory_ref" in result.message
+
+
 async def test_different_pier_profile_manifests_cannot_be_pooled_in_one_report(
     tmp_path: Path,
 ) -> None:
     store = ObjectStore(tmp_path / ".assay")
-    smoke_prepared = prepare_pier_smoke(store)
-    qualification_prepared = prepare_pier_qualification(store)
+    inventory_ref = _qualified_inventory_ref(store)
+    smoke_prepared = prepare_pier_smoke(store, inventory_ref=inventory_ref)
+    qualification_prepared = prepare_pier_qualification(store, inventory_ref=inventory_ref)
     assert isinstance(smoke_prepared, PierExperimentPrepared)
     assert isinstance(qualification_prepared, PierExperimentPrepared)
 
@@ -214,6 +275,7 @@ async def test_different_pier_profile_manifests_cannot_be_pooled_in_one_report(
         authorization=digest_bytes(smoke_bytes),
         bridge=_AlwaysSucceedsBridge(),
         allow_paid=True,
+        inventory_ref=inventory_ref,
     )
     qualification_result = await run_pier_qualification(
         store,
@@ -221,6 +283,7 @@ async def test_different_pier_profile_manifests_cannot_be_pooled_in_one_report(
         authorization=digest_bytes(qualification_bytes),
         bridge=_AlwaysSucceedsBridge(),
         allow_paid=True,
+        inventory_ref=inventory_ref,
     )
     assert isinstance(smoke_result, PierExperimentSucceeded)
     assert isinstance(qualification_result, PierExperimentSucceeded)
@@ -257,7 +320,8 @@ async def test_legacy_v1_and_pier_v2_manifests_cannot_be_pooled_in_one_report(
     legacy_result = await _execute_plan(**legacy_fixture.arguments)
     assert isinstance(legacy_result, RunSucceeded), legacy_result
 
-    smoke_prepared = prepare_pier_smoke(store)
+    inventory_ref = _qualified_inventory_ref(store)
+    smoke_prepared = prepare_pier_smoke(store, inventory_ref=inventory_ref)
     assert isinstance(smoke_prepared, PierExperimentPrepared)
     smoke_bytes = store.read_bytes(smoke_prepared.plan_ref)
     smoke_result = await run_pier_smoke(
@@ -266,6 +330,7 @@ async def test_legacy_v1_and_pier_v2_manifests_cannot_be_pooled_in_one_report(
         authorization=digest_bytes(smoke_bytes),
         bridge=_AlwaysSucceedsBridge(),
         allow_paid=True,
+        inventory_ref=inventory_ref,
     )
     assert isinstance(smoke_result, PierExperimentSucceeded), smoke_result
 

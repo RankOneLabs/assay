@@ -124,12 +124,19 @@ EXPECTED_GID = 1000
 # profile can hardcode without decaying its own fixtures.
 _QUALIFICATION_CLOCK_SKEW_TOLERANCE = timedelta(seconds=60)
 
-# The canonical, always-valid qualification this module's profiles default
-# to when no caller-supplied inventory_ref is given. It matches every
+# The canonical, always-valid qualification ``prepare_pier_*`` defaults to
+# when no caller-supplied inventory_ref is given. It matches every
 # EXPECTED_* constant exactly and is dated safely in the past, so it never
 # fails the not-in-the-future freshness check -- callers who want to
 # exercise a different (including a deliberately stale or mismatched)
 # inventory pass their own inventory_ref instead.
+#
+# This default is for local preparation (and tests) only: it asserts
+# measured Docker/network/uid/gid properties from constants, not from an
+# operator-recorded qualification run. Paid ``run_pier_*`` execution never
+# falls back to it -- an omitted ``inventory_ref`` there is a hard error, so
+# a real paid run can never be authorized against evidence nobody actually
+# measured.
 _DEFAULT_QUALIFICATION_INVENTORY = {
     "schema_version": "assay-pier-qualification/0.1.0",
     "bridge": {
@@ -721,11 +728,13 @@ async def _run(
         if {item.id for item in snapshot.evaluators} != {"abstraction", "correctness"}:
             raise ValueError("Pier experiment evaluator set changed")
 
-        binding, _ = _publish_runtime(
-            store,
-            profile=profile,
-            inventory_ref=inventory_ref or _default_qualification_inventory_ref(store),
-        )
+        if inventory_ref is None:
+            raise ValueError(
+                f"paid Pier {profile} execution requires an explicit inventory_ref from a "
+                "real recorded qualification -- the synthetic default is for local "
+                "preparation only and is never accepted for a paid run"
+            )
+        binding, _ = _publish_runtime(store, profile=profile, inventory_ref=inventory_ref)
         _revalidate_before_dispatch(plan, profile=profile, binding=binding)
         adapter = PierAdapter(
             store=store,
@@ -834,6 +843,13 @@ async def run_pier_full(
     runner: DockerPythonRunner | None = None,
     export_destination: Path | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
+    """Dispatch the ``full`` profile's plan for real, paid execution.
+
+    ``inventory_ref`` must be a real recorded qualification -- unlike
+    ``prepare_pier_full``, this never falls back to the synthetic default
+    inventory. Omitting it fails the run rather than silently authorizing
+    paid dispatch against evidence nobody actually measured.
+    """
     return await _run(
         store,
         profile="full",
@@ -859,6 +875,12 @@ async def run_pier_smoke(
     runner: DockerPythonRunner | None = None,
     export_destination: Path | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
+    """Dispatch the ``smoke`` profile's plan for real, paid execution.
+
+    ``inventory_ref`` must be a real recorded qualification -- see
+    ``run_pier_full``'s docstring for why the synthetic default is never
+    accepted here.
+    """
     return await _run(
         store,
         profile="smoke",
@@ -884,6 +906,12 @@ async def run_pier_qualification(
     runner: DockerPythonRunner | None = None,
     export_destination: Path | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
+    """Dispatch the ``qualification`` profile's plan for real, paid execution.
+
+    ``inventory_ref`` must be a real recorded qualification -- see
+    ``run_pier_full``'s docstring for why the synthetic default is never
+    accepted here.
+    """
     return await _run(
         store,
         profile="qualification",
