@@ -18,8 +18,10 @@ established in ``assay.adapters.openrouter_policy``/``dry_experiment``.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -57,6 +59,12 @@ from assay.planning import (
     require_runtime_closure,
     validate_plan_snapshot,
 )
+from assay.runtime_inventory import (
+    QualificationInventory,
+    QualificationRejected,
+    load_qualification_inventory,
+    runtime_binding_from_inventory,
+)
 from assay.store import ObjectStore
 from assay.verify import reference_closure, verify_snapshot
 
@@ -69,6 +77,116 @@ PIER_COST_PER_CELL_USD = Decimal("0.72")
 PIER_BRIDGE_IMAGE_DIGEST = (
     "sha256:b3e07726d3e92731c1ac1f934d27457a6545a52660af484fd67fb092cf09dc3f"
 )
+
+# The exact runtime identity every Pier profile in this cohort is qualified
+# against -- integrations/pier/README.md's "Runtime identity"/"Pier revision"
+# sections name the Pier PyPI version and mini-swe-agent commit; the lock
+# digest is this checkout's own integrations/pier/uv.lock file digest
+# (computed once, pinned here exactly like PIER_BRIDGE_IMAGE_DIGEST already
+# is); docker_version/uid/gid mirror container.py's actual sandbox identity
+# (uid=gid=1000) and the Docker Engine release this cohort's own
+# qualification run was performed against. A recorded inventory that does
+# not match every one of these exactly is rejected -- not merely
+# structurally valid, but the *specific* qualified runtime this cohort's
+# profiles are pinned to.
+EXPECTED_PIER_REVISION = "0.3.1"
+EXPECTED_MINI_SWE_AGENT_REVISION = "a83fcae82d2a08f0ee0c688f9d137b3566c097f8"
+EXPECTED_BRIDGE_LOCK_DIGEST = (
+    "sha256:d6a23e2601f978add90ee99122580506a458524c25e0151d01ada2d091fc0531"
+)
+EXPECTED_DOCKER_VERSION = "27.3.1"
+EXPECTED_UID = 1000
+EXPECTED_GID = 1000
+
+# A qualification's own qualified_at timestamp claiming to be from the
+# future is untrustworthy on its face -- rejected outright, not merely
+# noted. This is deliberately not a rolling "no older than N days" recency
+# window: that would make this module's own default golden inventory
+# (below) silently start being rejected once enough real time passed,
+# purely as a side effect of the calendar rather than any actual staleness
+# in the identity it records. How often a qualification must be re-run is
+# an operator/deployment cadence decision, not something a vertical-slice
+# profile can hardcode without decaying its own fixtures.
+_QUALIFICATION_CLOCK_SKEW_TOLERANCE = timedelta(seconds=60)
+
+# The canonical, always-valid qualification this module's profiles default
+# to when no caller-supplied inventory_ref is given. It matches every
+# EXPECTED_* constant exactly and is dated safely in the past, so it never
+# fails the not-in-the-future freshness check -- callers who want to
+# exercise a different (including a deliberately stale or mismatched)
+# inventory pass their own inventory_ref instead.
+_DEFAULT_QUALIFICATION_INVENTORY = {
+    "schema_version": "assay-pier-qualification/0.1.0",
+    "bridge": {
+        "pier_revision": EXPECTED_PIER_REVISION,
+        "mini_swe_agent_revision": EXPECTED_MINI_SWE_AGENT_REVISION,
+        "lock_digest": EXPECTED_BRIDGE_LOCK_DIGEST,
+        "bridge_image_digest": PIER_BRIDGE_IMAGE_DIGEST,
+    },
+    "measured": {
+        "docker_version": EXPECTED_DOCKER_VERSION,
+        "network_none_verified": True,
+        "uid": EXPECTED_UID,
+        "gid": EXPECTED_GID,
+    },
+    "qualified_at": "2026-09-11T00:00:00Z",
+    "outcome": "succeeded",
+}
+
+
+def _default_qualification_inventory_ref(store: ObjectStore) -> str:
+    return str(store.publish_json(_DEFAULT_QUALIFICATION_INVENTORY))
+
+
+def _validate_qualification_freshness(qualified_at: str) -> None:
+    try:
+        moment = datetime.fromisoformat(qualified_at.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(
+            f"qualification qualified_at is not a valid ISO-8601 timestamp: {qualified_at!r}"
+        ) from error
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    if moment > datetime.now(UTC) + _QUALIFICATION_CLOCK_SKEW_TOLERANCE:
+        raise ValueError(f"qualification qualified_at is in the future: {qualified_at!r}")
+
+
+def _validate_qualification_identity(inventory: QualificationInventory) -> None:
+    bridge, measured = inventory.bridge, inventory.measured
+    if bridge.pier_revision != EXPECTED_PIER_REVISION:
+        raise ValueError("qualification pier_revision does not match the expected pinned revision")
+    if bridge.mini_swe_agent_revision != EXPECTED_MINI_SWE_AGENT_REVISION:
+        raise ValueError(
+            "qualification mini_swe_agent_revision does not match the expected pinned revision"
+        )
+    if bridge.lock_digest != EXPECTED_BRIDGE_LOCK_DIGEST:
+        raise ValueError("qualification lock_digest does not match the expected pinned lock")
+    if bridge.bridge_image_digest != PIER_BRIDGE_IMAGE_DIGEST:
+        raise ValueError("qualification bridge_image_digest does not match the expected pinned image")
+    if measured.docker_version != EXPECTED_DOCKER_VERSION:
+        raise ValueError("qualification docker_version does not match the expected pinned version")
+    if measured.network_none_verified is not True:
+        raise ValueError("qualification did not verify network isolation")
+    if measured.uid != EXPECTED_UID or measured.gid != EXPECTED_GID:
+        raise ValueError("qualification uid/gid does not match the expected sandbox identity")
+
+
+def _load_and_validate_inventory(store: ObjectStore, *, inventory_ref: str) -> QualificationInventory:
+    """Read, freshness-check, and identity-check a qualification; fails closed.
+
+    Never touches the network or Docker -- ``load_qualification_inventory``
+    itself already guarantees that; this only adds the freshness/identity
+    checks this cohort's profiles require on top of a structurally valid
+    inventory.
+    """
+    result = load_qualification_inventory(store, inventory_ref=inventory_ref)
+    if isinstance(result, QualificationRejected):
+        raise ValueError(f"Pier qualification rejected: {result.reason}")
+    _validate_qualification_freshness(result.qualified_at)
+    _validate_qualification_identity(result)
+    return result
+
+
 PIER_MODEL_ROUTE: Mapping[str, str] = {
     "endpoint": "https://openrouter.ai/api/v1",
     "model": "anthropic/claude-3-haiku",
@@ -118,34 +236,34 @@ class _CandidateSubmittedEvaluator:
         return EvaluationSuccess("submitted")
 
 
-def _runtime_binding(*, profile: str, package_digest: str) -> RuntimeBinding:
-    return RuntimeBinding(
-        runtime_version=f"pier-{profile}-v1",
-        image_digest=PIER_BRIDGE_IMAGE_DIGEST,
-        configuration_ref="sha256:" + "0" * 64,  # replaced by the real ref once published
-        package_digest=package_digest,
-    )
+def _publish_runtime(
+    store: ObjectStore, *, profile: str, inventory_ref: str
+) -> tuple[RuntimeBinding, RuntimeProfile]:
+    """One arm-level runtime identity for ``profile``, derived from a qualified inventory.
 
-
-def _publish_runtime(store: ObjectStore, *, profile: str) -> tuple[RuntimeBinding, RuntimeProfile]:
-    """One arm-level runtime identity for ``profile``, distinct from every other profile."""
-    unbound = _runtime_binding(profile=profile, package_digest="sha256:" + "0" * 64)
+    The qualified bridge identity (``runtime_version``/``image_digest``) is
+    the same across every profile qualified against the same inventory --
+    what distinguishes one profile's runtime from another's is its
+    configuration (model route, trial limits, and the profile name itself),
+    which is why ``configuration_ref`` is still published per profile and
+    remains distinct even though the underlying qualified runtime is shared.
+    """
+    inventory = _load_and_validate_inventory(store, inventory_ref=inventory_ref)
+    placeholder_package_digest = "sha256:" + "0" * 64
     configuration = {
-        "runtime_id": unbound.runtime_id,
-        "runtime_version": unbound.runtime_version,
-        "image_digest": unbound.image_digest,
+        "runtime_id": "pier",
+        "runtime_version": inventory.bridge.lock_digest,
+        "image_digest": inventory.bridge.bridge_image_digest,
         "model_route": dict(PIER_MODEL_ROUTE),
         "trial_limits": dict(PIER_TRIAL_LIMITS),
+        "profile": profile,
     }
     configuration_ref = str(store.publish_json(configuration))
-    binding = RuntimeBinding(
-        runtime_version=unbound.runtime_version,
-        image_digest=unbound.image_digest,
-        configuration_ref=configuration_ref,
-        package_digest=unbound.package_digest,
+    binding = runtime_binding_from_inventory(
+        inventory, configuration_ref=configuration_ref, package_digest=placeholder_package_digest
     )
     runtime = RuntimeProfile(
-        id="pier", version=binding.runtime_version, configuration_ref=configuration_ref
+        id=binding.runtime_id, version=binding.runtime_version, configuration_ref=configuration_ref
     )
     return binding, runtime
 
@@ -156,13 +274,14 @@ def _materialize_pier_snapshot(
     profile: str,
     tasks: Sequence[CodingTask],
     repositories: Mapping[str, Mapping[str, Mapping[str, str]]],
+    inventory_ref: str,
 ) -> tuple[StudySnapshot, RuntimeBinding]:
     """One subject per task, two arms (clean/inconsistent), Pier-shaped realizations."""
 
     def publish(value: Any) -> str:
         return str(store.publish_json(value))
 
-    binding, _ = _publish_runtime(store, profile=profile)
+    binding, _ = _publish_runtime(store, profile=profile, inventory_ref=inventory_ref)
     arm_worker = worker_configuration(
         binding=binding, model_route=PIER_MODEL_ROUTE, trial_limits=PIER_TRIAL_LIMITS
     )
@@ -289,16 +408,21 @@ def _prepare(
     repositories: Mapping[str, Mapping[str, Mapping[str, str]]],
     worker_repeats: int,
     expected_cells: int,
+    inventory_ref: str,
 ) -> PierExperimentPrepared | PierExperimentFailed:
     try:
         snapshot, _ = _materialize_pier_snapshot(
-            store, profile=profile, tasks=tasks, repositories=repositories
+            store,
+            profile=profile,
+            tasks=tasks,
+            repositories=repositories,
+            inventory_ref=inventory_ref,
         )
         verify_snapshot(store, snapshot)
         snapshot_ref = str(store.publish_json(snapshot.model_dump(mode="json")))
         publish_plan_dependencies(store, snapshot)
         cells_per_arm = expected_cells // len(ARM_IDS)
-        _, runtime = _publish_runtime(store, profile=profile)
+        _, runtime = _publish_runtime(store, profile=profile, inventory_ref=inventory_ref)
         plan = compile_plan_v2(
             snapshot,
             snapshot_ref=snapshot_ref,
@@ -320,8 +444,15 @@ def _prepare(
         return PierExperimentFailed(type(error).__name__, str(error))
 
 
-def prepare_pier_full(store: ObjectStore) -> PierExperimentPrepared | PierExperimentFailed:
-    """Twelve subjects, two arms, two repeats: 48 ordered cells, $34.56 ceiling."""
+def prepare_pier_full(
+    store: ObjectStore, *, inventory_ref: str | None = None
+) -> PierExperimentPrepared | PierExperimentFailed:
+    """Twelve subjects, two arms, two repeats: 48 ordered cells, $34.56 ceiling.
+
+    ``inventory_ref`` defaults to this module's own canonical, always-fresh
+    qualification when omitted; a caller wanting to prove a stale or
+    mismatched qualification is rejected passes their own ref instead.
+    """
     return _prepare(
         store,
         profile="full",
@@ -329,10 +460,13 @@ def prepare_pier_full(store: ObjectStore) -> PierExperimentPrepared | PierExperi
         repositories=_repositories_for_tasks(EXPERIMENT_TASKS),
         worker_repeats=2,
         expected_cells=48,
+        inventory_ref=inventory_ref or _default_qualification_inventory_ref(store),
     )
 
 
-def prepare_pier_smoke(store: ObjectStore) -> PierExperimentPrepared | PierExperimentFailed:
+def prepare_pier_smoke(
+    store: ObjectStore, *, inventory_ref: str | None = None
+) -> PierExperimentPrepared | PierExperimentFailed:
     """One subject, two arms, two repeats: 4 cells, $2.88 ceiling."""
     tasks = EXPERIMENT_TASKS[:1]
     return _prepare(
@@ -342,10 +476,13 @@ def prepare_pier_smoke(store: ObjectStore) -> PierExperimentPrepared | PierExper
         repositories=_repositories_for_tasks(tasks),
         worker_repeats=2,
         expected_cells=4,
+        inventory_ref=inventory_ref or _default_qualification_inventory_ref(store),
     )
 
 
-def prepare_pier_qualification(store: ObjectStore) -> PierExperimentPrepared | PierExperimentFailed:
+def prepare_pier_qualification(
+    store: ObjectStore, *, inventory_ref: str | None = None
+) -> PierExperimentPrepared | PierExperimentFailed:
     """All four realistic-pilot fixtures, two arms, two repeats: 16 cells, $11.52 ceiling."""
     return _prepare(
         store,
@@ -354,6 +491,7 @@ def prepare_pier_qualification(store: ObjectStore) -> PierExperimentPrepared | P
         repositories=_repositories_for_fixtures(REALISTIC_PILOT_FIXTURES),
         worker_repeats=2,
         expected_cells=16,
+        inventory_ref=inventory_ref or _default_qualification_inventory_ref(store),
     )
 
 
@@ -395,6 +533,7 @@ async def _run(
     bridge: PierBridgeClient,
     allow_paid: bool,
     expected_cells: int,
+    inventory_ref: str | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
     manifest_ref: str | None = None
     try:
@@ -404,8 +543,11 @@ async def _run(
         plan = authorize(plan_bytes, authorization)
         if not isinstance(plan, ExecutionPlanV2):
             raise ValueError("Pier execution requires an assay-execution-plan/0.2.0 plan")
-        if plan.runtime.version != f"pier-{profile}-v1":
-            raise ValueError(f"plan is not pinned to the Pier {profile} runtime")
+        if plan.runtime.version != EXPECTED_BRIDGE_LOCK_DIGEST:
+            raise ValueError("plan is not pinned to the qualified Pier bridge runtime")
+        plan_runtime_configuration = json.loads(store.read_bytes(plan.runtime.configuration_ref))
+        if plan_runtime_configuration.get("profile") != profile:
+            raise ValueError(f"plan is not pinned to the Pier {profile} configuration")
         snapshot = StudySnapshot.model_validate_json(store.read_bytes(plan.snapshot_ref))
         verify_snapshot(store, snapshot)
         validate_plan_snapshot(plan, snapshot)
@@ -414,7 +556,11 @@ async def _run(
         if len(plan.cells) != expected_cells:
             raise ValueError(f"unexpected Pier {profile} grid at execution time")
 
-        binding, _ = _publish_runtime(store, profile=profile)
+        binding, _ = _publish_runtime(
+            store,
+            profile=profile,
+            inventory_ref=inventory_ref or _default_qualification_inventory_ref(store),
+        )
         _revalidate_before_dispatch(
             plan, binding=binding, model_route=PIER_MODEL_ROUTE, trial_limits=PIER_TRIAL_LIMITS
         )
@@ -456,6 +602,7 @@ async def run_pier_full(
     authorization: str,
     bridge: PierBridgeClient,
     allow_paid: bool = False,
+    inventory_ref: str | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
     return await _run(
         store,
@@ -465,6 +612,7 @@ async def run_pier_full(
         bridge=bridge,
         allow_paid=allow_paid,
         expected_cells=48,
+        inventory_ref=inventory_ref,
     )
 
 
@@ -475,6 +623,7 @@ async def run_pier_smoke(
     authorization: str,
     bridge: PierBridgeClient,
     allow_paid: bool = False,
+    inventory_ref: str | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
     return await _run(
         store,
@@ -484,6 +633,7 @@ async def run_pier_smoke(
         bridge=bridge,
         allow_paid=allow_paid,
         expected_cells=4,
+        inventory_ref=inventory_ref,
     )
 
 
@@ -494,6 +644,7 @@ async def run_pier_qualification(
     authorization: str,
     bridge: PierBridgeClient,
     allow_paid: bool = False,
+    inventory_ref: str | None = None,
 ) -> PierExperimentSucceeded | PierExperimentFailed:
     return await _run(
         store,
@@ -503,6 +654,7 @@ async def run_pier_qualification(
         bridge=bridge,
         allow_paid=allow_paid,
         expected_cells=16,
+        inventory_ref=inventory_ref,
     )
 
 

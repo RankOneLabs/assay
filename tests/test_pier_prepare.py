@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import json
 import socket
 import subprocess
 from pathlib import Path
@@ -8,6 +9,16 @@ from pathlib import Path
 import pytest
 
 from assay.canonical import canonical_json, digest_bytes
+from assay.investigations.pier_experiment import (
+    EXPECTED_BRIDGE_LOCK_DIGEST,
+    EXPECTED_DOCKER_VERSION,
+    EXPECTED_MINI_SWE_AGENT_REVISION,
+    EXPECTED_PIER_REVISION,
+    PIER_BRIDGE_IMAGE_DIGEST,
+    PierExperimentFailed,
+    PierExperimentPrepared,
+    prepare_pier_smoke,
+)
 from assay.runtime_inventory import (
     QualificationInventory,
     QualificationRejected,
@@ -136,6 +147,92 @@ def test_prepare_never_spawns_a_subprocess(tmp_path: Path, monkeypatch: pytest.M
         result, configuration_ref="sha256:" + "3" * 64, package_digest="sha256:" + "4" * 64
     )
     assert binding.runtime_id == "pier"
+
+
+def _qualified_inventory_value(**overrides: object) -> dict[str, object]:
+    """A qualification matching every EXPECTED_* constant pier_experiment pins."""
+    value: dict[str, object] = {
+        "schema_version": "assay-pier-qualification/0.1.0",
+        "bridge": {
+            "pier_revision": EXPECTED_PIER_REVISION,
+            "mini_swe_agent_revision": EXPECTED_MINI_SWE_AGENT_REVISION,
+            "lock_digest": EXPECTED_BRIDGE_LOCK_DIGEST,
+            "bridge_image_digest": PIER_BRIDGE_IMAGE_DIGEST,
+        },
+        "measured": {
+            "docker_version": EXPECTED_DOCKER_VERSION,
+            "network_none_verified": True,
+            "uid": 1000,
+            "gid": 1000,
+        },
+        "qualified_at": "2026-09-11T00:00:00Z",
+        "outcome": "succeeded",
+    }
+    value.update(overrides)
+    return value
+
+
+def test_prepare_pier_smoke_flows_a_correct_inventory_through_to_the_runtime_binding(
+    tmp_path: Path,
+) -> None:
+    store = ObjectStore(tmp_path / ".assay")
+    ref = str(store.publish_json(_qualified_inventory_value()))
+    result = prepare_pier_smoke(store, inventory_ref=ref)
+    assert isinstance(result, PierExperimentPrepared)
+    plan = json.loads(store.read_bytes(result.plan_ref))
+    assert plan["runtime"]["version"] == EXPECTED_BRIDGE_LOCK_DIGEST
+
+
+def test_prepare_pier_smoke_rejects_a_stale_inventory(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / ".assay")
+    stale = _qualified_inventory_value(qualified_at="not-a-timestamp")
+    ref = str(store.publish_json(stale))
+    result = prepare_pier_smoke(store, inventory_ref=ref)
+    assert isinstance(result, PierExperimentFailed)
+    assert "qualified_at" in result.message
+
+
+def test_prepare_pier_smoke_rejects_a_future_dated_inventory(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / ".assay")
+    future = _qualified_inventory_value(qualified_at="2999-01-01T00:00:00Z")
+    ref = str(store.publish_json(future))
+    result = prepare_pier_smoke(store, inventory_ref=ref)
+    assert isinstance(result, PierExperimentFailed)
+    assert "future" in result.message
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"bridge": {"pier_revision": "9.9.9"}},
+        {"bridge": {"mini_swe_agent_revision": "0" * 40}},
+        {"bridge": {"lock_digest": "sha256:" + "1" * 64}},
+        {"bridge": {"bridge_image_digest": "sha256:" + "1" * 64}},
+        {"measured": {"docker_version": "1.0.0"}},
+        {"measured": {"uid": 2000}},
+        {"measured": {"gid": 2000}},
+    ],
+)
+def test_prepare_pier_smoke_rejects_a_mismatched_identity(
+    tmp_path: Path, overrides: dict[str, object]
+) -> None:
+    store = ObjectStore(tmp_path / ".assay")
+    base = _qualified_inventory_value()
+    for key, patch in overrides.items():
+        base[key] = {**base[key], **patch}  # type: ignore[dict-item]
+    ref = str(store.publish_json(base))
+    result = prepare_pier_smoke(store, inventory_ref=ref)
+    assert isinstance(result, PierExperimentFailed)
+
+
+def test_prepare_pier_smoke_rejects_a_structurally_invalid_inventory(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / ".assay")
+    value = _qualified_inventory_value()
+    del value["measured"]
+    ref = str(store.publish_json(value))
+    result = prepare_pier_smoke(store, inventory_ref=ref)
+    assert isinstance(result, PierExperimentFailed)
+    assert "qualification rejected" in result.message.lower()
 
 
 def test_prepare_never_imports_httpx_client_construction(

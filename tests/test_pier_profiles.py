@@ -114,14 +114,24 @@ def test_qualification_profile_shape_retains_all_four_fixtures(tmp_path: Path) -
     assert plan.cost_estimate.amount == float(PIER_QUALIFICATION_TOTAL_USD)
 
 
-def test_profiles_use_distinct_pinned_runtimes_with_no_fallback(tmp_path: Path) -> None:
+def test_profiles_share_the_qualified_runtime_but_pin_distinct_configurations(
+    tmp_path: Path,
+) -> None:
+    """Every profile is qualified against the same bridge identity (the same
+    recorded qualification's lock digest) -- what must never be substitutable
+    across profiles is the study *configuration* (model route, trial limits,
+    profile name), which is why configuration_ref stays distinct per profile
+    even though runtime.version is now the shared, exactly-pinned qualified
+    identity rather than an invented per-profile version string."""
+    from assay.investigations.pier_experiment import EXPECTED_BRIDGE_LOCK_DIGEST
+
     store = ObjectStore(tmp_path / ".assay")
     full = _plan_for(store, prepare_pier_full(store))
     smoke = _plan_for(store, prepare_pier_smoke(store))
     qualification = _plan_for(store, prepare_pier_qualification(store))
 
     runtimes = {full.runtime.version, smoke.runtime.version, qualification.runtime.version}
-    assert runtimes == {"pier-full-v1", "pier-smoke-v1", "pier-qualification-v1"}
+    assert runtimes == {EXPECTED_BRIDGE_LOCK_DIGEST}
     assert full.runtime.configuration_ref != smoke.runtime.configuration_ref
     assert full.runtime.configuration_ref != qualification.runtime.configuration_ref
     assert smoke.runtime.configuration_ref != qualification.runtime.configuration_ref
