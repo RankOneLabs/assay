@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -103,6 +104,23 @@ class ContainerObservation:
     cpu_limit: float
     memory_limit_mb: int
     pids_limit: int
+    storage_limit_mb: int
+
+
+def _tmpfs_storage_limit_mb(host_config: Mapping[str, object]) -> int:
+    """Parse the size this container's ``/scratch`` tmpfs was actually declared with.
+
+    ``docker inspect``'s ``HostConfig.Tmpfs`` map echoes back the exact
+    ``--tmpfs`` option string this process passed (see
+    ``_docker_run_args``), not a derived or rounded value -- a missing or
+    unparsable entry is reported as 0, never silently substituted with the
+    limit this process asked for, so a caller cannot mistake "docker did not
+    confirm this" for "docker confirmed this."
+    """
+    tmpfs = host_config.get("Tmpfs")
+    options = tmpfs.get("/scratch", "") if isinstance(tmpfs, Mapping) else ""
+    match = re.search(r"size=(\d+)m", options)
+    return int(match.group(1)) if match else 0
 
 
 def _inspect(name: str) -> ContainerObservation | None:
@@ -124,6 +142,7 @@ def _inspect(name: str) -> ContainerObservation | None:
         cpu_limit=(host_config.get("NanoCpus") or 0) / 1_000_000_000,
         memory_limit_mb=(host_config.get("Memory") or 0) // (1024 * 1024),
         pids_limit=host_config.get("PidsLimit") or 0,
+        storage_limit_mb=_tmpfs_storage_limit_mb(host_config),
     )
 
 
@@ -183,13 +202,13 @@ class DockerTrialHandle:
         self._workdir = runs_root / name
         self._workspace = self._workdir / "workspace"
         self._submission = self._workdir / "submission"
-        self._scratch = self._workdir / "scratch"
-        for directory in (self._workspace, self._submission, self._scratch):
+        for directory in (self._workspace, self._submission):
             directory.mkdir(parents=True, exist_ok=True)
-        # /submission and /scratch are writable by the container's uid 1000,
-        # which will not equal the runner's own uid on most real hosts.
+        # /submission is writable by the container's uid 1000, which will
+        # not equal the runner's own uid on most real hosts. /scratch is a
+        # size-capped tmpfs (below), not a host directory -- there is
+        # nothing on the host to create or clean up for it.
         self._submission.chmod(0o777)
-        self._scratch.chmod(0o777)
         materialize_under(self._workspace, _mount_paths(package))
         self._cancel = threading.Event()
 
@@ -211,6 +230,8 @@ class DockerTrialHandle:
             "--read-only",
             "--tmpfs",
             "/tmp",
+            "--tmpfs",
+            f"/scratch:size={limits.storage_mb}m,uid={_UID},gid={_GID}",
             "--cpus",
             str(limits.cpu),
             "--memory",
@@ -232,8 +253,6 @@ class DockerTrialHandle:
             f"{self._workspace}:/workspace:ro",
             "-v",
             f"{self._submission}:/submission:rw",
-            "-v",
-            f"{self._scratch}:/scratch:rw",
             "--entrypoint",
             self._command[0],
             self._image,
@@ -294,6 +313,7 @@ class DockerTrialHandle:
             cpu_limit=observation.cpu_limit if observation else limits.cpu,
             memory_limit_mb=observation.memory_limit_mb if observation else limits.memory_mb,
             pids_limit=observation.pids_limit if observation else limits.pids,
+            storage_limit_mb=observation.storage_limit_mb if observation else limits.storage_mb,
             containers_remaining=containers_remaining,
             child_processes_remaining=0,
             teardown_completed=containers_remaining == 0,
@@ -321,6 +341,7 @@ class DockerTrialHandle:
             cpu_limit=observation.cpu_limit if observation else limits.cpu,
             memory_limit_mb=observation.memory_limit_mb if observation else limits.memory_mb,
             pids_limit=observation.pids_limit if observation else limits.pids,
+            storage_limit_mb=observation.storage_limit_mb if observation else limits.storage_mb,
             containers_remaining=containers_remaining,
             child_processes_remaining=0,
             teardown_completed=containers_remaining == 0,

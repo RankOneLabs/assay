@@ -28,7 +28,7 @@ def _request() -> TrialRequest:
         cell_id="s1:a1:w0",
         package_digest="sha256:" + "0" * 64,
         model_route=ROUTE,
-        limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=20),
+        limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=20, storage_mb=64),
     )
 
 

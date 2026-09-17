@@ -9,6 +9,7 @@ in ``protocol.py``.
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import threading
 import time
@@ -30,12 +31,14 @@ ROUTE = ModelRoute(
 PACKAGE = {"instruction.md": "# Task\n\nsay hi\n"}
 
 
-def _request(*, timeout_s: float = 20) -> TrialRequest:
+def _request(*, timeout_s: float = 20, storage_mb: int = 64) -> TrialRequest:
     return TrialRequest(
         cell_id="s1:a1:w0",
         package_digest=package_digest(PACKAGE),
         model_route=ROUTE,
-        limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=timeout_s),
+        limits=TrialLimits(
+            cpu=1, memory_mb=256, pids=32, timeout_s=timeout_s, storage_mb=storage_mb
+        ),
     )
 
 
@@ -82,9 +85,39 @@ def test_success_leaves_a_read_only_mount_and_zero_containers(image: str) -> Non
     assert result.submission_ref is not None
     assert result.effective.workspace_read_only is True
     assert result.effective.uid == 1000
+    assert result.effective.storage_limit_mb == 64
     assert result.effective.containers_remaining == 0
     assert result.effective.child_processes_remaining == 0
     assert result.effective.teardown_completed is True
+    assert _no_stray_containers()
+
+
+def test_scratch_storage_limit_is_really_enforced_not_merely_declared(image: str) -> None:
+    """A declared ``storage_mb`` that a trial could silently exceed would be
+    worse than no limit at all -- a caller reading ``storage_limit_mb`` off
+    the result needs it to mean a real ``/scratch`` cannot grow past it."""
+    client = DockerTrialClient(
+        image=image,
+        package=PACKAGE,
+        command=[
+            "/bin/sh",
+            "-c",
+            "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null 2>&1; "
+            "printf '%s' \"$?\" > /submission/output",
+        ],
+    )
+    runtime = BridgeRuntime(client)
+
+    result = runtime.run_cell(_request(storage_mb=16))
+
+    assert result.status == "succeeded"
+    assert result.effective.storage_limit_mb == 16
+    submission = result.submission_ref
+    assert submission is not None
+    # dd's own exit code (nonzero) is the trial's submission content -- a
+    # write past the declared 16 MiB tmpfs must fail with ENOSPC, not
+    # silently succeed past the ceiling this result claims was enforced.
+    assert submission != f"sha256:{hashlib.sha256(b'0').hexdigest()}"
     assert _no_stray_containers()
 
 

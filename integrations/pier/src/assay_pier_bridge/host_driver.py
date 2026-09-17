@@ -64,6 +64,7 @@ def _host_enforcement(limits: TrialLimits) -> EffectiveEnforcement:
         cpu_limit=limits.cpu,
         memory_limit_mb=limits.memory_mb,
         pids_limit=limits.pids,
+        storage_limit_mb=limits.storage_mb,
         containers_remaining=0,
         child_processes_remaining=0,
         teardown_completed=True,

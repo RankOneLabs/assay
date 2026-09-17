@@ -186,3 +186,18 @@ governed path to deterministic 1,225-line multi-file repositories. A four-call
 GPT-OSS smoke gate checks the complete operational path before the four-subject
 Haiku qualification grid validates repository navigation and sandboxed package
 execution ahead of a new confirmatory study.
+
+## Pier integration
+
+`integrations/pier` is an isolated bridge to the third-party Pier execution
+provider. `integrations/pier/scripts/qualify_local.py` runs a fail-closed
+local qualification -- exact lock/image identity, real-container trial
+lifecycle and no-reinstall checks, effective Docker controls, a fake-HTTP
+guarded-route boundary, and artifact/accounting/cancellation round trips --
+and only publishes a `QualificationInventory` once every probe passes.
+`tests/test_pier_acceptance.py` is the credential-free acceptance matrix CI
+runs on every change; it never sets an OpenRouter credential and never
+authorizes a paid dispatch. See [the Pier integration guide](docs/pier-integration.md)
+for preparation through recovery -- one-subject smoke, four-task
+qualification, and full study execution are each a distinct, explicit,
+separately paid operator decision, none of them performed by CI.

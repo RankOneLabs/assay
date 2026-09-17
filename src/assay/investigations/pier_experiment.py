@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -112,6 +113,16 @@ EXPECTED_BRIDGE_LOCK_DIGEST = (
 EXPECTED_DOCKER_VERSION = "27.3.1"
 EXPECTED_UID = 1000
 EXPECTED_GID = 1000
+
+# Two independent, explicit operator decisions a paid run needs beyond
+# allow_paid=True -- an env-level approval distinct from the call-level
+# allow_paid argument (so a script that always passes allow_paid=True can
+# never itself be the thing standing between CI and a paid dispatch), and a
+# real, nonblank provider credential in the process environment. Both are
+# checked in `_run`, before any plan bytes are even read, so a poison bridge
+# standing in for a real PierBridgeClient is never reached for either gate.
+PIER_PAID_APPROVAL_ENV = "ASSAY_ALLOW_PAID_PIER"
+PIER_PAID_CREDENTIAL_ENV = "OPENROUTER_API_KEY"
 
 # A qualification's own qualified_at timestamp claiming to be from the
 # future is untrustworthy on its face -- rejected outright, not merely
@@ -223,6 +234,12 @@ PIER_TRIAL_LIMITS: Mapping[str, float | int] = {
     "memory_mb": 1024,
     "pids": 64,
     "timeout_s": 600,
+    # A size-capped tmpfs, not an unbounded scratch directory --
+    # integrations/pier's container.py enforces this exactly (a real
+    # ENOSPC past this ceiling, not merely a declared one); the local
+    # qualification script proves that enforcement before this constant is
+    # ever trusted for a paid run.
+    "storage_mb": 512,
 }
 
 ARM_IDS = ("clean", "inconsistent")
@@ -707,6 +724,17 @@ async def _run(
     try:
         if not allow_paid:
             raise ValueError(f"paid Pier {profile} execution requires explicit allow_paid=True")
+        if os.environ.get(PIER_PAID_APPROVAL_ENV) != "1":
+            raise ValueError(
+                f"paid Pier {profile} execution requires {PIER_PAID_APPROVAL_ENV}=1 in the "
+                "process environment -- a distinct operator decision from allow_paid=True, "
+                "never satisfied by it"
+            )
+        if not os.environ.get(PIER_PAID_CREDENTIAL_ENV):
+            raise ValueError(
+                f"paid Pier {profile} execution requires a nonblank {PIER_PAID_CREDENTIAL_ENV} "
+                "in the process environment"
+            )
         if export_destination is not None and export_destination.exists():
             raise ValueError("export destination already exists")
         plan_bytes = store.read_bytes(plan_ref)
@@ -941,6 +969,8 @@ __all__ = [
     "PIER_FULL_PER_ARM_USD",
     "PIER_FULL_TOTAL_USD",
     "PIER_MODEL_ROUTE",
+    "PIER_PAID_APPROVAL_ENV",
+    "PIER_PAID_CREDENTIAL_ENV",
     "PIER_QUALIFICATION_PER_ARM_USD",
     "PIER_QUALIFICATION_TOTAL_USD",
     "PIER_SMOKE_PER_ARM_USD",

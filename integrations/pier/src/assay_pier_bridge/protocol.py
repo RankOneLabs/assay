@@ -47,6 +47,10 @@ class TrialLimits(ClosedModel):
     memory_mb: int = Field(ge=64, le=8192)
     pids: int = Field(ge=1, le=256)
     timeout_s: float = Field(gt=0, le=1800, allow_inf_nan=False)
+    # /scratch is a size-capped tmpfs (container.py), never an unbounded
+    # host bind mount -- a trial that fills it hits a real ENOSPC, not a
+    # declared-but-unenforced ceiling.
+    storage_mb: int = Field(ge=16, le=8192)
 
 
 class BridgeIdentity(ClosedModel):
@@ -88,6 +92,7 @@ class EffectiveEnforcement(ClosedModel):
     cpu_limit: float = Field(gt=0, allow_inf_nan=False)
     memory_limit_mb: int = Field(ge=1)
     pids_limit: int = Field(ge=1)
+    storage_limit_mb: int = Field(ge=1)
     containers_remaining: int = Field(ge=0)
     child_processes_remaining: int = Field(ge=0)
     teardown_completed: bool

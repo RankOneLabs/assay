@@ -28,7 +28,7 @@ def _request(**overrides: object) -> TrialRequest:
         cell_id="s1:a1:w0",
         package_digest="sha256:" + "0" * 64,
         model_route=ROUTE,
-        limits=TrialLimits(cpu=1.5, memory_mb=512, pids=32, timeout_s=120),
+        limits=TrialLimits(cpu=1.5, memory_mb=512, pids=32, timeout_s=120, storage_mb=64),
     )
     base.update(overrides)
     return TrialRequest.model_validate(base)
