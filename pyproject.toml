@@ -51,6 +51,9 @@ required-version = "==0.10.2"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "paid: requires ASSAY_ALLOW_PAID_PIER=1 and a real OPENROUTER_API_KEY; skips otherwise, never dispatches for real",
+]
 
 [tool.ruff]
 line-length = 100

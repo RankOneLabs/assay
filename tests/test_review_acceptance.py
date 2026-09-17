@@ -16,7 +16,17 @@ from assay.store import ObjectStore
 from assay.verify import verify_bundle
 
 ROOT = Path(__file__).resolve().parents[1]
-FORBIDDEN_REVIEW_CALLS = ("execute_plan", "compile_plan", "persist_report")
+FORBIDDEN_REVIEW_CALLS = (
+    "execute_plan",
+    "compile_plan",
+    "persist_report",
+    # The review layer must never be able to trigger a paid Pier dispatch
+    # either -- these three are the only functions that ever set
+    # allow_paid=True against a real bridge (assay.investigations.pier_experiment).
+    "run_pier_full",
+    "run_pier_smoke",
+    "run_pier_qualification",
+)
 
 
 @pytest.fixture(scope="module")
