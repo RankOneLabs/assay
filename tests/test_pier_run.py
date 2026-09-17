@@ -127,6 +127,11 @@ async def test_full_successful_smoke_run_publishes_evidence_reachable_from_closu
         ):
             assert output[key] is not None
             assert output[key] in closure, f"{key} not reachable from the outcome closure"
+        # No "transcript" kind entry is present in this fixture's manifest --
+        # ATIF absence must never fail a run, and must be an explicit,
+        # distinguishable tri-state, not merely a silently-null field.
+        assert output["transcript_ref"] is None
+        assert output["transcript_status"] == "unavailable"
 
 
 async def test_execution_requires_paid_approval(tmp_path: Path) -> None:

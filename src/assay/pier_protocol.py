@@ -79,6 +79,17 @@ def exchanges_match(expected: PierExchange, actual: PierExchange) -> bool:
     return expected == actual
 
 
+# Structured, JSON-shaped kinds: always UTF-8, and (checked separately, in
+# ``verify_artifact_bytes``) their declared bytes must actually parse as
+# JSON, not merely decode as text. "candidate" is arbitrary source in
+# whatever language the trial produced -- it may or may not be UTF-8, and is
+# never required to parse as anything. "transcript" (ATIF) is an optional
+# derived view with the same latitude as "candidate".
+JSON_STRUCTURED_ARTIFACT_KINDS: frozenset[str] = frozenset(
+    {"raw_trajectory", "result", "configuration", "manifest"}
+)
+
+
 class ArtifactEntry(WireModel):
     path: NonEmpty
     kind: ArtifactKind
@@ -91,6 +102,23 @@ class ArtifactEntry(WireModel):
         parts = PurePosixPath(self.path).parts
         if PurePosixPath(self.path).is_absolute() or any(part in {"", ".", ".."} for part in parts):
             raise ValueError(f"artifact path is unsafe: {self.path}")
+        return self
+
+    @model_validator(mode="after")
+    def utf8_matches_kind_rule(self) -> ArtifactEntry:
+        """The UTF-8 declaration is not a free per-entry choice for every kind.
+
+        A structured JSON kind (``raw_trajectory``/``result``/
+        ``configuration``/``manifest``) cannot declare ``utf8=False`` --
+        nothing about those kinds is ever legitimately binary. ``candidate``
+        and ``transcript`` are unconstrained here: whether they happen to be
+        UTF-8 is a fact about the trial's own output, not something this
+        type can require one way or the other.
+        """
+        if self.kind in JSON_STRUCTURED_ARTIFACT_KINDS and not self.utf8:
+            raise ValueError(
+                f"artifact kind {self.kind!r} is structured JSON and must declare utf8=True"
+            )
         return self
 
 
@@ -149,9 +177,11 @@ def verify_artifact_bytes(manifest: ArtifactManifest, *, artifact_bytes: dict[st
     """Check every declared entry against the actual bytes crossing the bridge boundary.
 
     Raises ``ManifestRejected`` on the first mismatch -- missing, oversized,
-    wrong checksum, or (for a UTF-8-declared entry) not valid UTF-8. This is
-    the sole point where artifact content is trusted; the manifest's own
-    declarations are otherwise just claims.
+    wrong checksum, not valid UTF-8 for a UTF-8-declared entry, or (the
+    "type" half of the kind rule, distinct from the UTF-8 half) not valid
+    JSON for a structured JSON kind declared UTF-8. This is the sole place
+    where artifact content is trusted; the manifest's own declarations are
+    otherwise just claims.
     """
     for entry in manifest.entries:
         data = artifact_bytes.get(entry.path)
@@ -161,11 +191,19 @@ def verify_artifact_bytes(manifest: ArtifactManifest, *, artifact_bytes: dict[st
             raise ManifestRejected(f"artifact size mismatch: {entry.path}")
         if digest_bytes(data) != entry.checksum:
             raise ManifestRejected(f"artifact checksum mismatch: {entry.path}")
-        if entry.utf8:
+        if not entry.utf8:
+            continue
+        try:
+            text = data.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise ManifestRejected(f"artifact is not valid UTF-8: {entry.path}") from error
+        if entry.kind in JSON_STRUCTURED_ARTIFACT_KINDS:
             try:
-                data.decode("utf-8", errors="strict")
-            except UnicodeDecodeError as error:
-                raise ManifestRejected(f"artifact is not valid UTF-8: {entry.path}") from error
+                json.loads(text)
+            except ValueError as error:
+                raise ManifestRejected(
+                    f"artifact kind {entry.kind!r} must be valid JSON: {entry.path}"
+                ) from error
 
 
 def reject_on_binding_mismatch(expected: RuntimeBinding, actual: RuntimeBinding) -> None:
@@ -231,6 +269,7 @@ def bridge_reports_failure(
 
 
 __all__ = [
+    "JSON_STRUCTURED_ARTIFACT_KINDS",
     "MAX_AGGREGATE_ARTIFACT_BYTES",
     "MAX_ARTIFACT_BYTES",
     "REQUIRED_SUCCESS_KINDS",

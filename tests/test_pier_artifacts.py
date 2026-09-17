@@ -117,6 +117,54 @@ def test_independent_partial_artifacts_remain_reachable_via_object_refs(tmp_path
     assert {trace_ref, raw_trajectory_ref, candidate_ref, atif_unavailable_ref} <= closure
 
 
+def test_configuration_entry_claiming_non_utf8_is_rejected_by_the_type() -> None:
+    """A structured JSON kind cannot declare utf8=False -- nothing about
+    ``configuration`` is ever legitimately binary."""
+    with pytest.raises(ValidationError, match="utf8=True"):
+        _entry("configuration.json", b'{"model": "x"}', kind="configuration", utf8=False)
+
+
+@pytest.mark.parametrize("kind", ["raw_trajectory", "result", "configuration", "manifest"])
+def test_structured_kinds_reject_non_utf8_declaration(kind: str) -> None:
+    with pytest.raises(ValidationError, match="utf8=True"):
+        _entry(f"{kind}.json", b"{}", kind=kind, utf8=False)
+
+
+def test_candidate_entry_may_declare_non_utf8() -> None:
+    """Arbitrary candidate source is never required to be UTF-8 or JSON."""
+    _entry("candidate.bin", b"\xff\xfe", kind="candidate", utf8=False)
+
+
+def test_configuration_entry_with_utf8_valid_non_json_bytes_is_rejected() -> None:
+    """The UTF-8 rule and the "type" (JSON-parses) rule are independent
+    checks: text that is valid UTF-8 but not valid JSON must still fail for
+    a structured kind."""
+    exchange = bind_exchange(coordinate=_coordinate(), binding=RuntimeBinding(**_binding()))
+    data = b"this is not json"
+    entry = _entry("configuration.json", data, kind="configuration", utf8=True)
+    manifest = ArtifactManifest(exchange=exchange, entries=(entry,), aggregate_bytes=len(data))
+    with pytest.raises(ManifestRejected, match="valid JSON"):
+        verify_artifact_bytes(manifest, artifact_bytes={"configuration.json": data})
+
+
+def test_configuration_entry_with_valid_json_is_accepted() -> None:
+    exchange = bind_exchange(coordinate=_coordinate(), binding=RuntimeBinding(**_binding()))
+    data = b'{"model": "anthropic/claude-3-haiku"}'
+    entry = _entry("configuration.json", data, kind="configuration", utf8=True)
+    manifest = ArtifactManifest(exchange=exchange, entries=(entry,), aggregate_bytes=len(data))
+    verify_artifact_bytes(manifest, artifact_bytes={"configuration.json": data})
+
+
+def test_candidate_entry_declared_utf8_is_not_required_to_be_json() -> None:
+    """Only the four structured kinds get the JSON "type" rule; candidate
+    text declared UTF-8 is still never required to parse as JSON."""
+    exchange = bind_exchange(coordinate=_coordinate(), binding=RuntimeBinding(**_binding()))
+    data = b"def solve():\n    return 42\n"
+    entry = _entry("candidate.txt", data, kind="candidate", utf8=True)
+    manifest = ArtifactManifest(exchange=exchange, entries=(entry,), aggregate_bytes=len(data))
+    verify_artifact_bytes(manifest, artifact_bytes={"candidate.txt": data})
+
+
 def test_atif_unavailable_is_recorded_not_treated_as_missing_evidence() -> None:
     """ATIF is an optional derived view; a manifest with every required kind but
     no transcript still reports complete required-success evidence."""
