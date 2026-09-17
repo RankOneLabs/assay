@@ -29,6 +29,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -270,6 +271,10 @@ def probe_trial_lifecycle(m: Measurements, *, image_tag: str) -> None:
         image=image_tag,
         package=_TRIAL_PACKAGE,
         command=["/bin/sh", "-c", "printf 'answer = 1' > /submission/output"],
+        # Explicit, never the process environment: qualification must never
+        # inherit a real OPENROUTER_API_KEY a developer machine happens to
+        # have set, even by omission-driven default.
+        openrouter_api_key="",
     )
     runtime = BridgeRuntime(client)
     # The exact TrialLimits a real paid trial dispatches under (cpu/memory/
@@ -367,6 +372,8 @@ def probe_storage_enforcement(image_tag: str) -> None:
             "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null 2>&1; "
             "printf '%s' \"$?\" > /submission/output",
         ],
+        # Same explicit-empty-credential guarantee as probe_trial_lifecycle.
+        openrouter_api_key="",
     )
     runtime = BridgeRuntime(client)
     request = TrialRequest(
@@ -573,8 +580,13 @@ def _coordinate(worker_repeat: int) -> CellCoordinate:
     )
 
 
-async def _probe_adapter_boundary(m: Measurements, *, output_dir: Path) -> None:
-    store = ObjectStore(output_dir / "adapter-probe")
+async def _probe_adapter_boundary(m: Measurements) -> None:
+    # A throwaway directory outside output_dir entirely, not a subdirectory
+    # of it: a probe failure partway through (e.g. the tampered-manifest
+    # assertion below) must never leave anything under output_dir, which is
+    # only ever populated once every probe -- including this one -- has
+    # already succeeded.
+    store = ObjectStore(Path(tempfile.mkdtemp(prefix="assay-pier-qualify-adapter-")))
     binding = RuntimeBinding(
         runtime_version=m.lock_digest or "unknown",
         image_digest=m.bridge_image_digest or _ZERO_REF,
@@ -691,7 +703,7 @@ def _build_inventory(m: Measurements) -> QualificationInventory:
     )
 
 
-def _probes(m: Measurements, *, image_tag: str, output_dir: Path) -> list[tuple[str, Any]]:
+def _probes(m: Measurements, *, image_tag: str) -> list[tuple[str, Any]]:
     """The fixed probe order. Each entry calls its probe by module-level name,
     resolved fresh on every invocation -- a test that monkeypatches, say,
     ``qualify_local.probe_docker_available`` observes that replacement here,
@@ -707,7 +719,7 @@ def _probes(m: Measurements, *, image_tag: str, output_dir: Path) -> list[tuple[
         ("fake_boundary", probe_fake_boundary),
         (
             "artifact_accounting_cancellation",
-            lambda: asyncio.run(_probe_adapter_boundary(m, output_dir=output_dir)),
+            lambda: asyncio.run(_probe_adapter_boundary(m)),
         ),
     ]
 
@@ -721,7 +733,7 @@ def run_qualification(*, output_dir: Path, image_tag: str) -> int:
     or best-effort inventory.
     """
     m = Measurements()
-    for name, probe in _probes(m, image_tag=image_tag, output_dir=output_dir):
+    for name, probe in _probes(m, image_tag=image_tag):
         print(f"==> {name}", flush=True)
         try:
             probe()

@@ -226,9 +226,23 @@ def test_qualify_local_never_reads_or_needs_a_provider_credential() -> None:
     assert "os.environ" not in text and "os.getenv" not in text
 
 
+def _docker_daemon_reachable() -> bool:
+    """False for both an unreachable daemon and a missing ``docker`` CLI.
+
+    A bare ``subprocess.run(["docker", ...])`` raises ``FileNotFoundError``
+    when the executable itself is absent, which would otherwise blow up
+    collection instead of skipping -- exactly the credential-free-suite
+    contradiction this helper exists to prevent.
+    """
+    try:
+        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10, check=False)
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
+
+
 @pytest.mark.skipif(
-    subprocess.run(["docker", "info"], capture_output=True, timeout=10, check=False).returncode
-    != 0,
+    not _docker_daemon_reachable(),
     reason="docker daemon is not reachable in this environment",
 )
 def test_qualify_local_emits_an_inventory_after_every_probe_passes(tmp_path: Path) -> None:
