@@ -7,6 +7,37 @@ to end -- preparation through recovery -- without performing a paid run. No
 command below spends money or requires an OpenRouter credential unless its
 section says so explicitly.
 
+## Clean build, both projects
+
+The root project and the isolated `integrations/pier` bridge each carry their
+own lock and are checked independently -- this is the exact, reproducible
+sequence `.github/workflows/ci.yml`'s `pier-qualification` job runs, in this
+order, from a clean checkout:
+
+```sh
+uv sync --locked --extra review --extra legacy
+uv run ruff check integrations/pier
+MYPYPATH=integrations/pier/src uv run mypy integrations/pier/scripts/qualify_local.py
+uv run pytest -q tests/test_pier_acceptance.py
+
+cd integrations/pier
+uv sync --locked --group dev
+uv run mypy src
+uv run pytest -q
+cd -
+```
+
+The first block lints/type-checks/tests the qualification script and the
+credential-free acceptance matrix against the root project's own locked
+environment (root `ruff`/`mypy` already cover `src`/`tests` themselves --
+see `README.md`'s "Install and check"). The second block syncs, type-checks,
+and runs the bridge's full pytest suite (protocol, provider, host-driver,
+container-lifecycle, and trial-lifecycle tests) against the bridge's own
+separate lock -- no shared virtualenv, no shared dependency resolution. Every
+step above is credential-free; the container-lifecycle and trial-lifecycle
+tests skip themselves cleanly when no local Docker daemon is reachable
+rather than failing.
+
 ## Qualify the local runtime first
 
 Every paid Pier profile requires a real, recorded `QualificationInventory`

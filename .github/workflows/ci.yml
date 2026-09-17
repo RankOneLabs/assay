@@ -108,7 +108,21 @@ jobs:
           version: "0.10.2"
           python-version: '3.13'
       - run: uv sync --locked --extra review --extra legacy
-      - run: uv run ruff check integrations/pier/scripts
+      - name: Lint the isolated bridge project too (root ruff config covers its tree)
+        run: uv run ruff check integrations/pier
       - name: mypy over the qualification script (needs both projects' sources on MYPYPATH)
         run: MYPYPATH=integrations/pier/src uv run mypy integrations/pier/scripts/qualify_local.py
       - run: uv run pytest -q tests/test_pier_acceptance.py
+      # The bridge is a deliberately separate uv workspace with its own
+      # pyproject.toml/uv.lock (integrations/pier/README.md) -- synced,
+      # type-checked, and tested against its own lock here, independent of
+      # the root project's own dependency set above.
+      - name: Sync the isolated bridge project's own locked dependencies
+        working-directory: integrations/pier
+        run: uv sync --locked --group dev
+      - name: Type-check the isolated bridge project against its own lock
+        working-directory: integrations/pier
+        run: uv run mypy src
+      - name: Run the full isolated bridge pytest suite
+        working-directory: integrations/pier
+        run: uv run pytest -q
