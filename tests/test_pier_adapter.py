@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
+from assay.adapters.pier import _publish_available_artifacts
 from assay.models import CellCoordinate
 from assay.pier_protocol import (
+    MAX_ARTIFACT_BYTES,
     ArtifactEntry,
     ArtifactManifest,
     ManifestRejected,
@@ -16,6 +20,7 @@ from assay.pier_protocol import (
     trial_name_for,
     verify_artifact_bytes,
 )
+from assay.store import ObjectStore
 
 
 def _coordinate(**overrides: object) -> CellCoordinate:
@@ -45,6 +50,13 @@ def test_trial_name_matches_dashed_cell_id() -> None:
     assert trial_name_for(coordinate) == "s1-a1-w0"
     exchange = bind_exchange(coordinate=coordinate, binding=_binding())
     assert exchange.trial_name == "s1-a1-w0"
+
+
+def test_trial_name_for_is_injective_across_hyphenated_components() -> None:
+    """Hyphens inside subject_id/arm_id must not collide with the field separator."""
+    left = trial_name_for(_coordinate(subject_id="a-b", arm_id="c"))
+    right = trial_name_for(_coordinate(subject_id="a", arm_id="b-c"))
+    assert left != right
 
 
 def test_exchange_rejects_a_mismatched_trial_name() -> None:
@@ -123,6 +135,17 @@ def test_manifest_rejects_duplicate_paths() -> None:
         ArtifactManifest(exchange=exchange, entries=(entry, entry), aggregate_bytes=4)
 
 
+def test_manifest_allows_identical_bytes_at_distinct_paths() -> None:
+    """Distinct paths may share content -- the object store already dedupes by
+    checksum, and neither the bridge model nor this manifest requires unique
+    checksums across entries."""
+    exchange = bind_exchange(coordinate=_coordinate(), binding=_binding())
+    first = _entry("candidate.txt", b"same", kind="candidate")
+    second = _entry("transcript.txt", b"same", kind="transcript")
+    manifest = ArtifactManifest(exchange=exchange, entries=(first, second), aggregate_bytes=8)
+    assert manifest.kinds() == {"candidate", "transcript"}
+
+
 def test_manifest_rejects_aggregate_mismatch() -> None:
     exchange = bind_exchange(coordinate=_coordinate(), binding=_binding())
     entry = _entry("candidate.txt", b"hi")
@@ -198,3 +221,31 @@ def test_manifest_missing_required_kind_is_reported() -> None:
     entries = (_entry("candidate.json", b"{}", kind="candidate"),)
     manifest = ArtifactManifest(exchange=exchange, entries=entries, aggregate_bytes=2)
     assert not manifest.has_required_success_evidence()
+
+
+def test_oversized_artifact_is_never_published(tmp_path: Path) -> None:
+    """A single blob larger than MAX_ARTIFACT_BYTES is bounded before any
+    write to the store, regardless of what the (not-yet-parsed) manifest
+    would have declared for it."""
+    store = ObjectStore(tmp_path / ".assay")
+    refs = _publish_available_artifacts(
+        store, {"huge.bin": b"x" * (MAX_ARTIFACT_BYTES + 1), "small.txt": b"ok"}
+    )
+    assert "huge.bin" not in refs
+    assert "small.txt" in refs
+
+
+def test_aggregate_ceiling_stops_further_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once publishing so far would cross the aggregate ceiling, later
+    artifacts are bounded rather than written."""
+    monkeypatch.setattr("assay.adapters.pier.MAX_AGGREGATE_ARTIFACT_BYTES", 30)
+    store = ObjectStore(tmp_path / ".assay")
+    artifacts = {
+        "first.bin": b"a" * 20,
+        "second.bin": b"b" * 20,
+    }
+    refs = _publish_available_artifacts(store, artifacts)
+    assert "first.bin" in refs
+    assert "second.bin" not in refs

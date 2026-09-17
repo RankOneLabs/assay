@@ -38,7 +38,7 @@ import contextlib
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 
 from assay.canonical import canonical_json, digest_bytes
@@ -46,6 +46,8 @@ from assay.execution import Accounting, WorkerFailure, WorkerResult, WorkerSucce
 from assay.models import CellCoordinate
 from assay.pier_packaging import build_package, gate_package
 from assay.pier_protocol import (
+    MAX_AGGREGATE_ARTIFACT_BYTES,
+    MAX_ARTIFACT_BYTES,
     ArtifactManifest,
     ManifestRejected,
     PierExchange,
@@ -143,6 +145,9 @@ def _instruction_from_task_field(task_field: Any) -> str | None:
 def _repository_dir(stack: contextlib.ExitStack, repository: Mapping[str, str]) -> Path:
     root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="assay-pier-")))
     for path, content in repository.items():
+        parts = PurePosixPath(path).parts
+        if PurePosixPath(path).is_absolute() or any(part in {"", ".", ".."} for part in parts):
+            raise ValueError(f"repository entry has an unsafe path: {path}")
         full = root / path
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
@@ -168,9 +173,28 @@ def _publish_available_artifacts(
     The envelope preserves the exact original bytes losslessly via base64 and
     records their own checksum for audit, without ever publishing content
     that could itself be mistaken for a noncanonical governed document.
+
+    A hostile or malfunctioning bridge can return an unbounded number of
+    artifacts, or artifacts far larger than any manifest would ever declare,
+    long before ``manifest.json`` itself is parsed and its own per-entry
+    limits checked. Both the per-artifact and aggregate byte ceilings
+    (``MAX_ARTIFACT_BYTES``/``MAX_AGGREGATE_ARTIFACT_BYTES``, the same
+    ceilings the manifest's own entries are bound by) are therefore enforced
+    here too, before anything is written to the store: an oversized artifact,
+    or one that would push the running total over the aggregate ceiling, is
+    never published. A skipped artifact simply has no ref -- if it was a
+    declared manifest entry, ``verify_artifact_bytes`` rejects the manifest
+    for the resulting missing bytes; if it was an undeclared extra, it is
+    silently bounded rather than trusted or stored.
     """
     refs: dict[str, str] = {}
+    aggregate_bytes = 0
     for path, data in artifacts.items():
+        if len(data) > MAX_ARTIFACT_BYTES:
+            continue
+        if aggregate_bytes + len(data) > MAX_AGGREGATE_ARTIFACT_BYTES:
+            continue
+        aggregate_bytes += len(data)
         envelope = {
             "schema_version": "assay-pier-raw-artifact/0.1.0",
             "path": path,
@@ -410,6 +434,22 @@ class PierAdapter:
                 accounting=dispatched_accounting,
             )
 
+        # ``submission_ref`` is only Pier's claim about what it submitted; it is
+        # never trusted just because it is non-null. The real bridge computes
+        # it from the submitted source, so it must match the digest of the
+        # candidate bytes this manifest actually declares -- otherwise a
+        # bridge could report success for digest A while publishing candidate
+        # bytes B, and the run would evaluate B as if it were the attested
+        # submission.
+        candidate_bytes = _bytes_for(manifest, bridge_result.artifacts, "candidate")
+        if candidate_bytes is None or digest_bytes(candidate_bytes) != bridge_result.submission_ref:
+            return WorkerFailure(
+                "SubmissionMismatch",
+                "bridge submission_ref does not match the digest of the declared candidate",
+                trace=_trace(exchange, refs=refs, reason="submission_mismatch"),
+                accounting=dispatched_accounting,
+            )
+
         def _ref_for(kind: str) -> str | None:
             path = _path_for(manifest, kind)
             return refs.get(path) if path is not None else None
@@ -448,14 +488,32 @@ def _bytes_for(
 
 
 def _accounting_from_usage(usage: Mapping[str, float] | None) -> Accounting:
+    """Convert a bridge-reported usage mapping into ``Accounting``.
+
+    ``BridgeTrialResult`` is a local dataclass with no runtime validation of
+    its ``usage`` field (unlike the real bridge's ``TrialUsage`` model), so a
+    malformed ``cost_usd`` -- present but not numeric -- must not raise out
+    of this local-adapter boundary. It is reported as uncertain coverage
+    rather than letting a conversion error escape ``_settle``/``run_cell``.
+    """
     if usage is None:
         return Accounting(coverage="uncertain")
     cost = usage.get("cost_usd")
     if cost is None:
         return Accounting(usage=dict(usage), coverage="uncertain")
+    try:
+        amount = float(cost)
+    except (TypeError, ValueError):
+        # ``Accounting`` itself requires every usage quantity to be a finite
+        # nonnegative number or null; a malformed cost_usd is dropped from
+        # the recorded usage rather than passed through and rejected there.
+        remaining: dict[str, float | None] = {
+            key: value for key, value in usage.items() if key != "cost_usd"
+        }
+        return Accounting(usage=remaining or None, coverage="uncertain")
     return Accounting(
         usage={key: value for key, value in usage.items() if key != "cost_usd"} or None,
-        amount=float(cost),
+        amount=amount,
         currency="USD",
         coverage="measured",
         basis="Pier bridge trial usage (guarded OpenRouter route, inline cost)",

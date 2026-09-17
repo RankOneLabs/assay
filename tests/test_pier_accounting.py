@@ -125,8 +125,7 @@ class _FixedBridge:
         )
 
 
-def _adapter(tmp_path: Path, bridge: Any) -> PierAdapter:
-    store = ObjectStore(tmp_path / ".assay")
+def _adapter_for(store: ObjectStore, bridge: Any) -> PierAdapter:
     return PierAdapter(
         store=store,
         bridge=bridge,
@@ -134,6 +133,10 @@ def _adapter(tmp_path: Path, bridge: Any) -> PierAdapter:
         model_route={"model": "anthropic/claude-3-haiku", "provider": "amazon-bedrock"},
         trial_limits={"cpu": 1, "memory_mb": 512, "timeout_s": 60},
     )
+
+
+def _adapter(tmp_path: Path, bridge: Any) -> PierAdapter:
+    return _adapter_for(ObjectStore(tmp_path / ".assay"), bridge)
 
 
 def _coordinate(**overrides: object) -> CellCoordinate:
@@ -172,6 +175,64 @@ async def test_uncertain_accounting_when_dispatched_without_usage(tmp_path: Path
     assert result.accounting.amount is None
 
 
+async def test_nonnumeric_cost_usd_is_uncertain_not_a_raised_error(tmp_path: Path) -> None:
+    """``BridgeTrialResult`` is a local dataclass with no runtime validation of
+    ``usage``; a malformed ``cost_usd`` must not raise out of ``_settle``."""
+    usage: dict[str, Any] = {
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "cost_usd": "not-a-number",
+    }
+    bridge = _FixedBridge(usage=usage)
+    adapter = _adapter(tmp_path, bridge)
+    result = await adapter.run_cell(
+        input_value={"task": "do it", "repository": {"a.py": "x = 1\n"}}, coordinate=_coordinate()
+    )
+    assert isinstance(result, WorkerSuccess)
+    assert result.accounting.coverage == "uncertain"
+    assert result.accounting.amount is None
+
+
+async def test_repository_entry_with_traversal_path_is_rejected(tmp_path: Path) -> None:
+    """A realization-supplied repository path must never write outside the
+    package's temporary root."""
+    bridge = _FixedBridge(usage=None)
+    adapter = _adapter(tmp_path, bridge)
+    result = await adapter.run_cell(
+        input_value={"task": "do it", "repository": {"../../etc/x": "malicious"}},
+        coordinate=_coordinate(),
+    )
+    assert isinstance(result, WorkerFailure)
+    assert bridge.created == []
+
+
+async def test_submission_ref_mismatched_with_candidate_bytes_is_rejected(tmp_path: Path) -> None:
+    """A bridge that reports success for a submission_ref not matching the
+    declared candidate bytes must not be accepted."""
+
+    class _LyingBridge:
+        def create(self, *, exchange: PierExchange, package: dict[str, str]) -> PierBridgeHandle:
+            _, artifacts = _manifest_and_artifacts(exchange)
+            return _Handle(
+                BridgeTrialResult(
+                    exchange=exchange,
+                    status="succeeded",
+                    submission_ref="sha256:" + "9" * 64,
+                    error_type=None,
+                    error_message=None,
+                    usage=None,
+                    artifacts=artifacts,
+                )
+            )
+
+    adapter = _adapter(tmp_path, _LyingBridge())
+    result = await adapter.run_cell(
+        input_value={"task": "do it", "repository": {"a.py": "x = 1\n"}}, coordinate=_coordinate()
+    )
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == "SubmissionMismatch"
+
+
 async def test_unavailable_accounting_when_never_dispatched(tmp_path: Path) -> None:
     bridge = _FixedBridge(usage=None)
     adapter = _adapter(tmp_path, bridge)
@@ -200,7 +261,7 @@ def _pier_execution_fixture(store: ObjectStore, *, bridge: Any) -> tuple[bytes, 
     def publish(value: Any) -> str:
         return str(store.publish_json(value))
 
-    adapter = _adapter(Path(store.root), bridge)
+    adapter = _adapter_for(store, bridge)
     subjects = tuple(
         Subject(
             id=value,

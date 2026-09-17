@@ -50,8 +50,19 @@ class RuntimeBinding(WireModel):
 
 
 def trial_name_for(coordinate: CellCoordinate) -> str:
-    """Mirror ``assay_pier_bridge.pier_adapter.sanitized_trial_name``: no colons on disk."""
-    return coordinate.id.replace(":", "-")
+    """A filesystem-safe, injective encoding of the cell's id: no colons on disk.
+
+    A plain ``coordinate.id.replace(":", "-")`` is not injective -- ``Identifier``
+    permits hyphens, so ``(subject_id="a-b", arm_id="c")`` and
+    ``(subject_id="a", arm_id="b-c")`` would both normalize to ``a-b-c-w0``.
+    Doubling every hyphen already present in ``subject_id``/``arm_id`` before
+    joining on a single, un-doubled hyphen keeps the encoding reversible: a
+    lone hyphen in the result is always a field separator, never part of a
+    component's own text.
+    """
+    subject = coordinate.subject_id.replace("-", "--")
+    arm = coordinate.arm_id.replace("-", "--")
+    return f"{subject}-{arm}-w{coordinate.worker_repeat}"
 
 
 class PierExchange(WireModel):
@@ -142,9 +153,11 @@ class ArtifactManifest(WireModel):
         paths = [entry.path for entry in self.entries]
         if len(set(paths)) != len(paths):
             raise ValueError("duplicate artifact path in manifest")
-        checksums = [entry.checksum for entry in self.entries]
-        if len(set(checksums)) != len(checksums):
-            raise ValueError("duplicate artifact checksum in manifest")
+        # Distinct paths may legitimately carry identical bytes (e.g. an
+        # empty candidate and an empty transcript) -- the object store
+        # already dedupes by content, and neither the bridge model nor this
+        # manifest requires checksum uniqueness. Only path uniqueness is
+        # checked.
         total = sum(entry.size_bytes for entry in self.entries)
         if total != self.aggregate_bytes:
             raise ValueError("aggregate_bytes does not match declared entry sizes")

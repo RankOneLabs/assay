@@ -230,11 +230,13 @@ async def test_cancellation_with_no_partial_evidence_records_no_refs(tmp_path: P
     assert trace["partial_artifact_refs"] == {}
 
 
-async def test_admission_stops_before_dispatch_reports_unavailable_accounting(
+async def test_blank_task_rejected_before_dispatch_reports_unavailable_accounting(
     tmp_path: Path,
 ) -> None:
-    """A cell that never reaches the bridge (admission already stopped) is
-    unavailable, not uncertain: no attempt was ever dispatched for it."""
+    """A cell rejected by ``run_cell``'s own input validation (blank task) never
+    reaches the bridge: unavailable, not uncertain, accounting -- no attempt was
+    ever dispatched for it. This exercises the adapter's pre-dispatch input
+    boundary, not ``execute_plan``'s admission-stop path."""
     bridge = _NeverCreatedBridge()
     adapter = _adapter(tmp_path, bridge)
     result = await adapter.run_cell(
