@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from assay._version import __version__
-from assay.adapters.pier import BridgeTrialResult, PierBridgeHandle
+from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult, PierBridgeHandle
 from assay.canonical import canonical_json, digest_bytes
 from assay.investigations.pier_experiment import (
     PierExperimentFailed,
@@ -29,7 +29,7 @@ def _manifest_and_artifacts(exchange: PierExchange) -> tuple[ArtifactManifest, d
     contents = {
         "raw_trajectory.json": b'{"steps": ["thought", "action", "submit"]}',
         "candidate.txt": b"def solve():\n    return 42\n",
-        "result.json": b'{"passed": true}',
+        "result.json": b'{"passed": true, "exit_status": "Submitted"}',
         "configuration.json": b'{"model": "anthropic/claude-3-haiku"}',
         "manifest_marker.json": b'{"manifest": "committed"}',
     }
@@ -65,8 +65,10 @@ class _Handle:
     def run(self) -> BridgeTrialResult:
         return self._result
 
-    def teardown(self) -> None:
-        pass
+    def teardown(self) -> BridgeEffectiveEnforcement:
+        return BridgeEffectiveEnforcement(
+            containers_remaining=0, child_processes_remaining=0, teardown_completed=True
+        )
 
 
 class _AlwaysSucceedsBridge:
@@ -76,8 +78,9 @@ class _AlwaysSucceedsBridge:
             BridgeTrialResult(
                 exchange=exchange,
                 status="succeeded",
-                exception_info=None,
-                exit_status="Submitted",
+                submission_ref=digest_bytes(artifacts["candidate.txt"]),
+                error_type=None,
+                error_message=None,
                 usage={"cost_usd": 0.72, "prompt_tokens": 100, "completion_tokens": 50},
                 artifacts=artifacts,
             )

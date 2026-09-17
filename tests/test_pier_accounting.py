@@ -7,7 +7,12 @@ from typing import Any
 import paa_contracts
 import pytest
 
-from assay.adapters.pier import BridgeTrialResult, PierAdapter, PierBridgeHandle
+from assay.adapters.pier import (
+    BridgeEffectiveEnforcement,
+    BridgeTrialResult,
+    PierAdapter,
+    PierBridgeHandle,
+)
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import (
     EvaluationSuccess,
@@ -52,7 +57,7 @@ def _manifest_and_artifacts(exchange: PierExchange) -> tuple[ArtifactManifest, d
     contents = {
         "raw_trajectory.json": b'{"steps": []}',
         "candidate.txt": b"final answer",
-        "result.json": b'{"passed": true}',
+        "result.json": b'{"passed": true, "exit_status": "Submitted"}',
         "configuration.json": b'{"model": "x"}',
         "manifest_marker.json": b'{"manifest": "committed"}',
     }
@@ -89,8 +94,11 @@ class _Handle:
     def run(self) -> BridgeTrialResult:
         return self._result
 
-    def teardown(self) -> None:
+    def teardown(self) -> BridgeEffectiveEnforcement:
         self.torn_down = True
+        return BridgeEffectiveEnforcement(
+            containers_remaining=0, child_processes_remaining=0, teardown_completed=True
+        )
 
 
 class _FixedBridge:
@@ -108,8 +116,9 @@ class _FixedBridge:
             BridgeTrialResult(
                 exchange=exchange,
                 status="succeeded",
-                exception_info=None,
-                exit_status="Submitted",
+                submission_ref=digest_bytes(artifacts["candidate.txt"]),
+                error_type=None,
+                error_message=None,
                 usage=self.usage,
                 artifacts=artifacts,
             )

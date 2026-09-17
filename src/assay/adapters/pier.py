@@ -3,20 +3,31 @@
 ``PierAdapter`` implements ``execution.CoordinateAwareWorker``. It never talks
 to Docker or the Pier bridge process directly -- it is handed a
 ``PierBridgeClient`` (a narrow local protocol mirroring
-``integrations/pier``'s ``PierTrialClient`` without importing it, since that
-project is deliberately isolated from this one) and does three things around
-that boundary:
+``integrations/pier``'s ``PierTrialClient``/``TrialHandle`` without importing
+them, since that project is deliberately isolated from this one) and does
+three things around that boundary:
 
 1. binds the request to the authorized ``CellCoordinate`` plus the exact
    runtime/image/configuration/package identity (``pier_protocol``), and
    rejects any mismatch as a terminal failure;
 2. accepts a success only when the raw trajectory, verbatim candidate,
    result, resolved configuration, and manifest evidence are all present and
-   byte-valid, and neither Pier's ``exception_info`` nor mini's
-   ``exit_status`` indicates failure;
-3. on cancellation, tears the bridge handle down within a bounded window and
-   still publishes whatever partial evidence exists, with uncertain
-   accounting -- never a bare/unbounded hang, never silently zero cost.
+   byte-valid, and neither Pier's own trial ``status``/``error_type`` nor
+   mini's embedded ``exit_status`` indicates failure;
+3. on cancellation, tears the bridge handle down within a bounded window,
+   verifies (rather than assumes) that cleanup actually completed, and still
+   publishes whatever partial evidence exists, with uncertain accounting --
+   never a bare/unbounded hang, never silently zero cost, and never treating
+   an unverified cleanup the same as a confirmed one.
+
+Known gap (see the module's ``BridgeTrialResult`` docstring): the real bridge
+integration as it exists today (``assay_pier_bridge.protocol.TrialResult``,
+``host_driver.GuardedCompletionTrialHandle``) has no mechanism to return raw
+trajectory/candidate/configuration/manifest bytes at all -- only a bare
+``submission_ref`` digest. This adapter's ``artifacts`` field on
+``BridgeTrialResult`` is therefore a documented, flagged extension beyond the
+real wire contract, not something grounded in a real API a bridge client
+implements today.
 """
 
 from __future__ import annotations
@@ -41,29 +52,65 @@ from assay.pier_protocol import (
     RuntimeBinding,
     bind_exchange,
     bridge_reports_failure,
+    mini_exit_status_from_result_bytes,
     verify_artifact_bytes,
 )
 from assay.store import ObjectStore
 
 CLEANUP_TIMEOUT = 5.0
 
+BridgeTrialStatus = Literal["succeeded", "failed", "timeout", "cancelled"]
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeEffectiveEnforcement:
+    """Local mirror of the cleanup-relevant fields of
+    ``assay_pier_bridge.protocol.EffectiveEnforcement``.
+
+    Only the fields this adapter actually inspects (whether teardown
+    genuinely completed) are mirrored; the real type additionally reports
+    mount/uid/resource-limit observations this adapter has no use for.
+    """
+
+    containers_remaining: int
+    child_processes_remaining: int
+    teardown_completed: bool
+
 
 @dataclass(frozen=True, slots=True)
 class BridgeTrialResult:
-    """The bridge's response to one ``PierExchange``; ``artifacts`` is path -> bytes."""
+    """Mirrors ``assay_pier_bridge.protocol.TrialResult``'s real fields
+    (``status``/``submission_ref``/``usage``/``error_type``/``error_message``),
+    plus this adapter's own exchange binding.
+
+    ``artifacts`` (path -> bytes) is NOT part of the real wire contract: as
+    of this writing, ``integrations/pier``'s ``TrialHandle``/``TrialResult``
+    expose no way at all to retrieve raw trajectory/candidate/configuration/
+    manifest bytes -- only a bare ``submission_ref`` digest (see
+    ``assay_pier_bridge.protocol.TrialResult`` and
+    ``host_driver.GuardedCompletionTrialHandle``, which writes the submitted
+    source only to a host-local temp file, never returned to the caller).
+    This is a documented, flagged extension this adapter requires; a real
+    ``PierBridgeClient`` implementation will need to grow a way to surface
+    these bytes before this adapter can run against it for real -- recorded
+    as a known gap, not invented as if it already existed.
+    """
 
     exchange: PierExchange
-    status: Literal["succeeded", "failed", "timeout", "cancelled"]
-    exception_info: str | None
-    exit_status: str | None
-    usage: dict[str, float] | None
+    status: BridgeTrialStatus
+    submission_ref: str | None
+    usage: Mapping[str, float] | None
+    error_type: str | None
+    error_message: str | None
     artifacts: Mapping[str, bytes]
 
 
 class PierBridgeHandle(Protocol):
+    """Mirrors ``assay_pier_bridge.protocol.TrialHandle``'s ``run``/``teardown``."""
+
     def run(self) -> BridgeTrialResult: ...
 
-    def teardown(self) -> None: ...
+    def teardown(self) -> BridgeEffectiveEnforcement: ...
 
 
 class PierBridgeClient(Protocol):
@@ -132,6 +179,17 @@ def _trace(
     return trace
 
 
+def _cleanup_incomplete(effective: BridgeEffectiveEnforcement | None) -> bool:
+    """``True`` unless teardown's own report confirms a clean, complete cleanup."""
+    if effective is None:
+        return True
+    return (
+        not effective.teardown_completed
+        or effective.containers_remaining != 0
+        or effective.child_processes_remaining != 0
+    )
+
+
 def worker_configuration(
     *,
     binding: RuntimeBinding,
@@ -172,9 +230,38 @@ class PierAdapter:
             worker_id=self.worker_id,
         )
 
-    async def _bounded_teardown(self, handle: PierBridgeHandle) -> None:
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(asyncio.to_thread(handle.teardown), timeout=CLEANUP_TIMEOUT)
+    async def _bounded_teardown(self, handle: PierBridgeHandle) -> BridgeEffectiveEnforcement | None:
+        """Tear the handle down within ``CLEANUP_TIMEOUT``; ``None`` means unverified.
+
+        A timeout or an exception from ``teardown`` itself is not silently
+        treated as success -- the caller must see ``None`` and account for it
+        as an unverified (never "clean") cleanup.
+        """
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(handle.teardown), timeout=CLEANUP_TIMEOUT)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _recover_partial_artifacts(handle: PierBridgeHandle) -> Mapping[str, bytes]:
+        """Best-effort recovery of whatever artifact bytes exist at cancellation time.
+
+        Not part of the real ``assay_pier_bridge.protocol.TrialHandle``
+        contract -- that protocol exposes no way to read partial evidence
+        before ``run()`` returns or ``teardown()`` is called. A handle *may*
+        optionally implement ``partial_artifacts()`` (checked via ``getattr``,
+        the same explicit-capability style ``execution.CoordinateAwareWorker``
+        uses); a handle that does not is not treated as an error, it simply
+        has no partial evidence to recover.
+        """
+        getter = getattr(handle, "partial_artifacts", None)
+        if not callable(getter):
+            return {}
+        try:
+            artifacts = getter()
+        except Exception:
+            return {}
+        return artifacts if isinstance(artifacts, Mapping) else {}
 
     async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerResult:
         if not isinstance(input_value, dict) or not isinstance(
@@ -211,18 +298,37 @@ class PierAdapter:
         try:
             bridge_result = await asyncio.to_thread(handle.run)
         except asyncio.CancelledError:
-            await self._bounded_teardown(handle)
+            partial = self._recover_partial_artifacts(handle)
+            effective = await self._bounded_teardown(handle)
+            # No WorkerResult survives a cancellation (the task itself is
+            # cancelled), but whatever partial evidence existed, and whether
+            # cleanup actually completed, must still be durable and
+            # forensically reachable -- never silently dropped.
+            refs = _publish_available_artifacts(self.store, partial) if partial else {}
+            self.store.publish_json(
+                {
+                    "schema_version": "assay-pier-cancellation-trace/0.1.0",
+                    "coordinate": exchange.coordinate.model_dump(mode="json"),
+                    "cleanup_incomplete": _cleanup_incomplete(effective),
+                    "partial_artifact_refs": refs,
+                }
+            )
             raise
         except Exception as error:
-            await self._bounded_teardown(handle)
+            effective = await self._bounded_teardown(handle)
             return WorkerFailure(
-                type(error).__name__, str(error), accounting=Accounting(coverage="uncertain")
+                type(error).__name__,
+                str(error),
+                trace={"cleanup_incomplete": _cleanup_incomplete(effective)},
+                accounting=Accounting(coverage="uncertain"),
             )
 
-        await self._bounded_teardown(handle)
-        return self._settle(exchange, bridge_result)
+        effective = await self._bounded_teardown(handle)
+        return self._settle(exchange, bridge_result, cleanup_incomplete=_cleanup_incomplete(effective))
 
-    def _settle(self, exchange: PierExchange, bridge_result: BridgeTrialResult) -> WorkerResult:
+    def _settle(
+        self, exchange: PierExchange, bridge_result: BridgeTrialResult, *, cleanup_incomplete: bool
+    ) -> WorkerResult:
         refs = _publish_available_artifacts(self.store, bridge_result.artifacts)
         dispatched_accounting = _accounting_from_usage(bridge_result.usage)
 
@@ -255,14 +361,19 @@ class PierAdapter:
                 accounting=dispatched_accounting,
             )
 
+        result_bytes = _bytes_for(manifest, bridge_result.artifacts, "result")
+        mini_exit_status = mini_exit_status_from_result_bytes(result_bytes)
         failed = bridge_reports_failure(
-            exception_info=bridge_result.exception_info, exit_status=bridge_result.exit_status
+            status=bridge_result.status,
+            submission_ref=bridge_result.submission_ref,
+            error_type=bridge_result.error_type,
+            mini_exit_status=mini_exit_status,
         )
         if failed:
             return WorkerFailure(
                 "BridgeReportedFailure",
-                bridge_result.exception_info
-                or f"mini-swe-agent exit_status={bridge_result.exit_status!r}",
+                bridge_result.error_message
+                or f"Pier status={bridge_result.status!r} mini exit_status={mini_exit_status!r}",
                 trace=_trace(exchange, refs=refs, reason="bridge_reported_failure"),
                 accounting=dispatched_accounting,
             )
@@ -280,6 +391,7 @@ class PierAdapter:
             path = _path_for(manifest, kind)
             return refs.get(path) if path is not None else None
 
+        transcript_ref = _ref_for("transcript")
         output = {
             "cell_id": exchange.coordinate.id,
             "candidate_ref": _ref_for("candidate"),
@@ -287,12 +399,15 @@ class PierAdapter:
             "raw_trajectory_ref": _ref_for("raw_trajectory"),
             "configuration_ref": _ref_for("configuration"),
             "manifest_ref": _ref_for("manifest"),
-            "transcript_ref": _ref_for("transcript"),
+            "transcript_ref": transcript_ref,
+            "transcript_status": "available" if transcript_ref is not None else "unavailable",
         }
         canonical_json(output)  # fail fast rather than surface a bad output at publish time
+        trace = _trace(exchange, refs=refs)
+        trace["cleanup_incomplete"] = cleanup_incomplete
         return WorkerSuccess(
             output=output,
-            trace=_trace(exchange, refs=refs),
+            trace=trace,
             accounting=dispatched_accounting,
         )
 
@@ -302,7 +417,14 @@ def _path_for(manifest: ArtifactManifest, kind: str) -> str | None:
     return entry.path if entry is not None else None
 
 
-def _accounting_from_usage(usage: dict[str, float] | None) -> Accounting:
+def _bytes_for(
+    manifest: ArtifactManifest, artifacts: Mapping[str, bytes], kind: str
+) -> bytes | None:
+    path = _path_for(manifest, kind)
+    return artifacts.get(path) if path is not None else None
+
+
+def _accounting_from_usage(usage: Mapping[str, float] | None) -> Accounting:
     if usage is None:
         return Accounting(coverage="uncertain")
     cost = usage.get("cost_usd")
@@ -318,6 +440,7 @@ def _accounting_from_usage(usage: dict[str, float] | None) -> Accounting:
 
 
 __all__ = [
+    "BridgeEffectiveEnforcement",
     "BridgeTrialResult",
     "PierAdapter",
     "PierAdapterError",

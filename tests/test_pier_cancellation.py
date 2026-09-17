@@ -9,7 +9,12 @@ from typing import Any
 import paa_contracts
 import pytest
 
-from assay.adapters.pier import BridgeTrialResult, PierAdapter, PierBridgeHandle
+from assay.adapters.pier import (
+    BridgeEffectiveEnforcement,
+    BridgeTrialResult,
+    PierAdapter,
+    PierBridgeHandle,
+)
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import Accounting, EvaluationSuccess, WorkerFailure, execute_plan
 from assay.models import (
@@ -44,9 +49,16 @@ def _coordinate() -> CellCoordinate:
 class _HangingHandle:
     """Simulates a live bridge/container process that never finishes on its own."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        cleanup_confirms: bool = True,
+        partial: Mapping[str, bytes] | None = None,
+    ) -> None:
         self.teardown_called = False
         self.teardown_started = asyncio.Event()
+        self._cleanup_confirms = cleanup_confirms
+        self._partial = partial
 
     def run(self) -> BridgeTrialResult:
         import time
@@ -57,18 +69,32 @@ class _HangingHandle:
             time.sleep(0.01)
         raise RuntimeError("trial cancelled")
 
-    def teardown(self) -> None:
+    def teardown(self) -> BridgeEffectiveEnforcement:
         self.teardown_called = True
+        if self._cleanup_confirms:
+            return BridgeEffectiveEnforcement(
+                containers_remaining=0, child_processes_remaining=0, teardown_completed=True
+            )
+        return BridgeEffectiveEnforcement(
+            containers_remaining=1, child_processes_remaining=0, teardown_completed=False
+        )
+
+    def partial_artifacts(self) -> Mapping[str, bytes]:
+        return self._partial if self._partial is not None else {}
 
 
 class _CancellingBridge:
-    def __init__(self) -> None:
+    def __init__(
+        self, *, cleanup_confirms: bool = True, partial: Mapping[str, bytes] | None = None
+    ) -> None:
         self.created: list[PierExchange] = []
         self.handle: _HangingHandle | None = None
+        self._cleanup_confirms = cleanup_confirms
+        self._partial = partial
 
     def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> PierBridgeHandle:
         self.created.append(exchange)
-        self.handle = _HangingHandle()
+        self.handle = _HangingHandle(cleanup_confirms=self._cleanup_confirms, partial=self._partial)
         return self.handle
 
 
@@ -92,6 +118,36 @@ def _adapter(tmp_path: Path, bridge: Any) -> PierAdapter:
         model_route={"model": "anthropic/claude-3-haiku", "provider": "amazon-bedrock"},
         trial_limits={"cpu": 1, "memory_mb": 512, "timeout_s": 60},
     )
+
+
+def _find_cancellation_trace(store: ObjectStore) -> dict[str, Any] | None:
+    """Scan every published object for the one cancellation trace, if any."""
+    for path in store.objects.iterdir():
+        try:
+            value = json.loads(path.read_bytes())
+        except (OSError, ValueError):
+            continue
+        if (
+            isinstance(value, dict)
+            and value.get("schema_version") == "assay-pier-cancellation-trace/0.1.0"
+        ):
+            return value
+    return None
+
+
+async def _run_and_cancel(tmp_path: Path, bridge: Any) -> ObjectStore:
+    adapter = _adapter(tmp_path, bridge)
+    task = asyncio.create_task(
+        adapter.run_cell(
+            input_value={"task": "do it", "repository": {"a.py": "x = 1\n"}},
+            coordinate=_coordinate(),
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    return adapter.store
 
 
 async def test_cancellation_tears_down_the_bridge_handle_within_the_bounded_window(
@@ -131,6 +187,49 @@ async def test_cancellation_leaves_no_orphan_bridge_handle(tmp_path: Path) -> No
     assert bridge.handle is not None and bridge.handle.teardown_called
 
 
+async def test_confirmed_cleanup_on_cancellation_is_recorded_as_complete(tmp_path: Path) -> None:
+    """A teardown that reports a full, confirmed cleanup is distinguishable
+    from one that does not -- never silently indistinguishable."""
+    store = await _run_and_cancel(tmp_path, _CancellingBridge(cleanup_confirms=True))
+    trace = _find_cancellation_trace(store)
+    assert trace is not None
+    assert trace["cleanup_incomplete"] is False
+
+
+async def test_unconfirmed_cleanup_on_cancellation_is_recorded_as_incomplete(
+    tmp_path: Path,
+) -> None:
+    """A fake handle whose teardown reports ``containers_remaining=1`` must
+    produce a distinguishable outcome from one that reports full cleanup."""
+    store = await _run_and_cancel(tmp_path, _CancellingBridge(cleanup_confirms=False))
+    trace = _find_cancellation_trace(store)
+    assert trace is not None
+    assert trace["cleanup_incomplete"] is True
+
+
+async def test_cancellation_recovers_available_partial_artifacts(tmp_path: Path) -> None:
+    """When the fake bridge makes partial evidence available at cancellation
+    time, it must be published and reachable, not silently dropped."""
+    from assay.references import reference_closure
+
+    partial = {"raw_trajectory.json": b'{"steps": ["thought"]}'}
+    store = await _run_and_cancel(tmp_path, _CancellingBridge(partial=partial))
+    trace = _find_cancellation_trace(store)
+    assert trace is not None
+    assert trace["partial_artifact_refs"], "available partial evidence must be published"
+    ref = trace["partial_artifact_refs"]["raw_trajectory.json"]
+    closure = reference_closure(store, (ref,))
+    assert ref in closure
+
+
+async def test_cancellation_with_no_partial_evidence_records_no_refs(tmp_path: Path) -> None:
+    """A handle with nothing recoverable publishes no spurious artifact refs."""
+    store = await _run_and_cancel(tmp_path, _CancellingBridge())
+    trace = _find_cancellation_trace(store)
+    assert trace is not None
+    assert trace["partial_artifact_refs"] == {}
+
+
 async def test_admission_stops_before_dispatch_reports_unavailable_accounting(
     tmp_path: Path,
 ) -> None:
@@ -155,8 +254,10 @@ async def test_cancellation_preserves_partial_evidence_reachability(tmp_path: Pa
         def run(self) -> BridgeTrialResult:
             raise RuntimeError("bridge connection dropped mid-trial")
 
-        def teardown(self) -> None:
-            pass
+        def teardown(self) -> BridgeEffectiveEnforcement:
+            return BridgeEffectiveEnforcement(
+                containers_remaining=0, child_processes_remaining=0, teardown_completed=True
+            )
 
     class _FailingBridge:
         def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> PierBridgeHandle:
@@ -175,6 +276,43 @@ async def test_cancellation_preserves_partial_evidence_reachability(tmp_path: Pa
     assert isinstance(result, WorkerFailure)
     assert result.accounting.coverage == "uncertain"
     assert result.accounting.amount is None
+    assert result.trace is not None and result.trace["cleanup_incomplete"] is False
+
+
+async def test_mid_flight_failure_with_unconfirmed_teardown_flags_cleanup_incomplete(
+    tmp_path: Path,
+) -> None:
+    """A non-cancellation failure whose own teardown never confirms cleanup
+    must be distinguishable from one that did -- accounting stays uncertain
+    either way, but the trace records which case actually happened."""
+    store = ObjectStore(tmp_path / ".assay")
+
+    class _FailingHandle:
+        def run(self) -> BridgeTrialResult:
+            raise RuntimeError("bridge connection dropped mid-trial")
+
+        def teardown(self) -> BridgeEffectiveEnforcement:
+            return BridgeEffectiveEnforcement(
+                containers_remaining=1, child_processes_remaining=0, teardown_completed=False
+            )
+
+    class _FailingBridge:
+        def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> PierBridgeHandle:
+            return _FailingHandle()
+
+    adapter = PierAdapter(
+        store=store,
+        bridge=_FailingBridge(),
+        binding=_binding(),
+        model_route={"model": "anthropic/claude-3-haiku", "provider": "amazon-bedrock"},
+        trial_limits={"cpu": 1, "memory_mb": 512, "timeout_s": 60},
+    )
+    result = await adapter.run_cell(
+        input_value={"task": "do it", "repository": {"a.py": "x = 1\n"}}, coordinate=_coordinate()
+    )
+    assert isinstance(result, WorkerFailure)
+    assert result.accounting.coverage == "uncertain"
+    assert result.trace is not None and result.trace["cleanup_incomplete"] is True
 
 
 async def test_execution_cancellation_persists_exact_missing_coordinates(tmp_path: Path) -> None:

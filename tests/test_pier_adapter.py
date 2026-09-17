@@ -62,19 +62,50 @@ def test_binding_match_is_accepted() -> None:
 
 
 @pytest.mark.parametrize(
-    ("exception_info", "exit_status", "expected"),
+    ("status", "submission_ref", "error_type", "mini_exit_status", "expected"),
     [
-        (None, "Submitted", False),
-        ("boom", "Submitted", True),
-        (None, "LimitsExceeded", True),
-        (None, None, True),
+        ("succeeded", "sha256:" + "0" * 64, None, "Submitted", False),
+        ("succeeded", "sha256:" + "0" * 64, None, "LimitsExceeded", True),
+        ("succeeded", "sha256:" + "0" * 64, None, None, True),
+        ("succeeded", None, None, "Submitted", True),
+        ("succeeded", "sha256:" + "0" * 64, "SomeError", "Submitted", True),
+        ("failed", None, "SomeError", "Submitted", True),
+        ("timeout", None, "TrialTimeoutError", "Submitted", True),
+        ("cancelled", None, "TrialCancelledError", "Submitted", True),
     ],
 )
 def test_bridge_reports_failure(
-    exception_info: str | None, exit_status: str | None, expected: bool
+    status: str,
+    submission_ref: str | None,
+    error_type: str | None,
+    mini_exit_status: str | None,
+    expected: bool,
 ) -> None:
-    actual = bridge_reports_failure(exception_info=exception_info, exit_status=exit_status)
+    actual = bridge_reports_failure(
+        status=status,
+        submission_ref=submission_ref,
+        error_type=error_type,
+        mini_exit_status=mini_exit_status,
+    )
     assert actual is expected
+
+
+def test_mini_exit_status_from_result_bytes_extracts_top_level_field() -> None:
+    from assay.pier_protocol import mini_exit_status_from_result_bytes
+
+    assert mini_exit_status_from_result_bytes(b'{"exit_status": "Submitted"}') == "Submitted"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [None, b"not json", b'{"no_exit_status": true}', b"[]", b"\xff\xfe", b'{"exit_status": 1}'],
+)
+def test_mini_exit_status_from_result_bytes_is_none_on_anything_malformed(
+    raw: bytes | None,
+) -> None:
+    from assay.pier_protocol import mini_exit_status_from_result_bytes
+
+    assert mini_exit_status_from_result_bytes(raw) is None
 
 
 def _entry(path: str, data: bytes, kind: str = "candidate", utf8: bool = True) -> ArtifactEntry:

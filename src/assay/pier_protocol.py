@@ -16,6 +16,7 @@ one (see ``integrations/pier/README.md``).
 
 from __future__ import annotations
 
+import json
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -175,15 +176,58 @@ def reject_on_binding_mismatch(expected: RuntimeBinding, actual: RuntimeBinding)
 # mini-swe-agent's own terminal signal for the agent loop: only this exact
 # value means the agent actually produced and submitted a candidate. Every
 # other value (e.g. "LimitsExceeded", "Error") is a partial/failed run, and
-# Pier's own ``exception_info`` being non-null is independently terminal.
+# Pier's own reported failure (a non-"succeeded" ``status``, a set
+# ``error_type``, or a missing ``submission_ref``) is independently terminal.
 SUCCEEDED_EXIT_STATUS = "Submitted"
 
+# The real bridge's ``TrialResult`` (integrations/pier's
+# ``assay_pier_bridge.protocol.TrialResult``) has no top-level field for
+# mini-swe-agent's own exit_status -- that signal lives inside mini's own
+# result/trajectory JSON, produced entirely inside the (currently unbuilt)
+# sandboxed agent loop. There is no shipped schema for that JSON today (see
+# ``integrations/pier``'s "known_issue" notes), so this module makes one
+# conservative, documented assumption: the parsed "result" artifact's bytes,
+# if they parse as a JSON object, carry mini's own terminal status under a
+# top-level ``"exit_status"`` key. Anything that fails to parse, or carries
+# no such key, is treated as "not the succeeded sentinel" -- i.e. a failure,
+# never silently treated as a pass.
+def mini_exit_status_from_result_bytes(result_bytes: bytes | None) -> str | None:
+    """Best-effort extraction of mini's own exit_status from the "result" artifact.
 
-def bridge_reports_failure(*, exception_info: str | None, exit_status: str | None) -> bool:
-    """Neither Pier's ``exception_info`` nor mini's ``exit_status`` may indicate failure."""
-    if exception_info is not None:
-        return True
-    return exit_status != SUCCEEDED_EXIT_STATUS
+    Returns ``None`` on anything but a clean top-level string value -- missing
+    bytes, non-UTF-8, non-JSON, a non-object payload, or a non-string value.
+    ``bridge_reports_failure`` treats ``None`` as "not the succeeded sentinel",
+    so a malformed or absent result artifact is conservatively a failure.
+    """
+    if result_bytes is None:
+        return None
+    try:
+        value = json.loads(result_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    status = value.get("exit_status")
+    return status if isinstance(status, str) else None
+
+
+def bridge_reports_failure(
+    *,
+    status: str,
+    submission_ref: str | None,
+    error_type: str | None,
+    mini_exit_status: str | None,
+) -> bool:
+    """Both Pier's own trial status and mini's embedded exit_status must pass.
+
+    Mirrors ``assay_pier_bridge.protocol.TrialResult``'s own consistency rule
+    (a "succeeded" trial has a submission and no error; anything else is a
+    failure) as an independent, defense-in-depth check on this side of the
+    isolation boundary -- a bridge response is never trusted structurally
+    just because it claims ``status="succeeded"``.
+    """
+    pier_signal_ok = status == "succeeded" and submission_ref is not None and error_type is None
+    return not pier_signal_ok or mini_exit_status != SUCCEEDED_EXIT_STATUS
 
 
 __all__ = [
@@ -200,6 +244,7 @@ __all__ = [
     "bind_exchange",
     "bridge_reports_failure",
     "exchanges_match",
+    "mini_exit_status_from_result_bytes",
     "reject_on_binding_mismatch",
     "trial_name_for",
     "verify_artifact_bytes",
