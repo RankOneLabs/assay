@@ -149,39 +149,74 @@ unless an operator has separately set both.
 
 ### One-subject paid smoke -- $2.88 ceiling
 
+Exact operator sequence, in order, with a checkpoint after each step:
+
+```sh
+export ASSAY_ALLOW_PAID_PIER=1
+export OPENROUTER_API_KEY=sk-...   # a real key -- this step spends money
+```
+
 ```python
-from assay.investigations.pier_experiment import run_pier_smoke
+from pathlib import Path
+
+from assay.investigations.correctness import DockerPythonRunner
+from assay.investigations.pier_experiment import PierExperimentPrepared, prepare_pier_smoke
+from assay.store import ObjectStore
+from assay.canonical import digest_bytes
+
+store = ObjectStore(".assay/pier-smoke-v1")
+prepared = prepare_pier_smoke(store, inventory_ref=qualified_inventory_ref, runner=DockerPythonRunner())
+assert isinstance(prepared, PierExperimentPrepared)          # checkpoint: compiled, not yet authorized
+assert prepared.cells == 4 and prepared.evaluations == 8     # checkpoint: exact smoke-profile grid
+
+# Read the plan back and inspect it -- authorization below is against these
+# exact bytes' digest, never a plan re-derived from the profile's name alone.
+plan_bytes = store.read_bytes(prepared.plan_ref)
+authorization = digest_bytes(plan_bytes)
+```
+
+```python
+from assay.investigations.pier_experiment import PierExperimentSucceeded, run_pier_smoke
 
 result = await run_pier_smoke(
     store,
-    plan_ref=approved_plan_ref,
-    authorization=approved_plan_ref,
+    plan_ref=prepared.plan_ref,
+    authorization=authorization,
     bridge=your_pier_bridge_client,
     allow_paid=True,
     inventory_ref=qualified_inventory_ref,
     export_destination=Path(".assay/pier-smoke-v1-run-1-bundles"),
 )
+assert isinstance(result, PierExperimentSucceeded), result   # checkpoint: dispatched and completed
 ```
 
 Four cells (one subject, two arms, two worker repeats), $1.44 per arm. This is
 an operational check of the whole path -- routing, packaging, artifact
-evidence, reporting -- not evidence about the treatment itself.
+evidence, reporting -- not evidence about the treatment itself. See "Bundle
+verification" below for the checkpoint after this one.
 
 ### Four-task paid qualification -- $11.52 ceiling
 
-Same call shape against `run_pier_qualification`: 16 cells across the four
-`REALISTIC_PILOT_FIXTURES` tasks, $5.76 per arm. Validates repository
-navigation and sandboxed package execution across a larger, more realistic
-grid before committing to the full study.
+Same sequence and checkpoints, against `prepare_pier_qualification`/
+`run_pier_qualification`: 16 cells across the four `REALISTIC_PILOT_FIXTURES`
+tasks (`assert prepared.cells == 16 and prepared.evaluations == 32`),
+$5.76 per arm. Validates repository navigation and sandboxed package
+execution across a larger, more realistic grid before committing to the
+full study. `ASSAY_ALLOW_PAID_PIER=1` and `OPENROUTER_API_KEY` are the same
+two environment variables from the smoke run above -- approving smoke does
+not carry over; this is its own independent operator decision at the moment
+`run_pier_qualification` is actually called.
 
 ### Full paid study execution -- $34.56 ceiling
 
-Same call shape against `run_pier_full`: 48 cells across all twelve
-`EXPERIMENT_TASKS`, $17.28 per arm. Requires its own independent plan
-inspection and `allow_paid=True` decision -- passing smoke or qualification is
-not a substitute, and `_revalidate_before_dispatch` re-checks the plan's own
-runtime configuration and cost ceilings against the live binding immediately
-before dispatch, not merely once at preparation time.
+Same sequence and checkpoints, against `prepare_pier_full`/`run_pier_full`:
+48 cells across all twelve `EXPERIMENT_TASKS`
+(`assert prepared.cells == 48 and prepared.evaluations == 96`), $17.28 per
+arm. Requires its own independent plan inspection and `allow_paid=True`
+decision -- passing smoke or qualification is not a substitute, and
+`_revalidate_before_dispatch` re-checks the plan's own runtime configuration
+and cost ceilings against the live binding immediately before dispatch, not
+merely once at preparation time.
 
 ## Bundle verification
 
@@ -205,11 +240,32 @@ An operator-cancelled trial never returns a `WorkerResult` -- the
 publishes a durable `assay-pier-cancellation-trace/0.1.0` object into the
 store before it does, recording the coordinate, whether teardown was
 independently confirmed clean (`cleanup_incomplete`), and refs to whatever
-partial artifacts existed. Find it by scanning the store for that
-`schema_version`, the same way `qualify_local.py`'s own cancellation probe
-checks its fake bridge scenario. `cleanup_incomplete: true` means teardown was
-never confirmed complete -- treat any resources it might have left as
-possibly still live, not as safely gone.
+partial artifacts existed. Find it with the exact scan
+`qualify_local.py`'s own cancellation probe uses:
+
+```python
+import json
+
+from assay.store import ObjectStore
+
+store = ObjectStore(".assay/pier-smoke-v1")
+traces = [
+    json.loads(path.read_bytes())
+    for path in sorted(store.objects.iterdir())
+    if path.is_file()
+]
+cancellation_traces = [
+    trace for trace in traces
+    if isinstance(trace, dict) and trace.get("schema_version") == "assay-pier-cancellation-trace/0.1.0"
+]
+for trace in cancellation_traces:
+    print(trace["coordinate"], "cleanup_incomplete:", trace["cleanup_incomplete"])
+```
+
+`cleanup_incomplete: true` means teardown was never confirmed complete --
+treat any resources it might have left as possibly still live, not as
+safely gone; combine this with the orphan check below before concluding a
+cancelled run left nothing running.
 
 ## Orphan cleanup checks
 
@@ -263,11 +319,31 @@ cases to special-case away in a report:
 ## Final rehearsal
 
 Before relying on any of the above for a real decision, rehearse it end to
-end in a clean environment with no Jig extra installed (mirroring
-`tests/test_optional_jig.py`'s no-Jig wheel acceptance): verify the fixed
-legacy bundle recorded in this checkout, then generate and verify a fresh
-Pier bundle from a local qualification and a `smoke` preparation, and inspect
-every model-visible and exported artifact for a hidden, reference, or
-alternate-arm sentinel -- none of the sections above should leak arm identity,
-task family, or evaluator hints into anything the model or an exported bundle
-can see.
+end -- automated and re-run on every pull request by
+`tests/test_pier_final_rehearsal.py::test_final_rehearsal_verifies_the_legacy_bundle_and_a_fresh_pier_bundle`:
+
+```sh
+uv run pytest -q tests/test_pier_final_rehearsal.py
+```
+
+It verifies the fixed legacy bundle recorded in this checkout (the same
+fixture `tests/test_optional_jig.py` proves verifies in a wheel install with
+no Jig at all), then generates and verifies a fresh Pier bundle from a real,
+recorded qualification and a `smoke` preparation -- run through the real
+`prepare_pier_smoke`/`run_pier_smoke` path against a fake bridge (never a
+real credential; see the file's own docstring for exactly what "no Jig"
+means for Pier specifically, since Pier's own adapter never imports Jig at
+all). It then scans every byte of both exported report bundles for a
+sentinel published to the store but never referenced by any artifact,
+manifest, or report, confirming the export closure cannot reach it -- the
+same "hidden/reference/other-arm byte never reaches..." property
+`tests/test_pier_secrecy.py` proves at the packaging layer, checked again
+here at the export/report boundary.
+
+`assay.investigations.pier_experiment` requires `paa-contracts`, which is
+declared only as a development dependency, not a wheel runtime dependency
+(`pyproject.toml`'s `[dependency-groups]`, not `[project.optional-dependencies]`)
+-- a real installed-wheel rehearsal of the Pier path, of the kind
+`tests/test_optional_jig.py` runs for the legacy bundle, is not possible
+until that gap is closed; recorded as a known limitation of this rehearsal,
+not a claim it already covers.
