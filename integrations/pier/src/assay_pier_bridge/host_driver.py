@@ -28,7 +28,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from assay_pier_bridge.__main__ import FALLBACK_SYSTEM_PROMPT, run_one_cell
+from assay_pier_bridge.paths import collect_artifacts
 from assay_pier_bridge.protocol import (
+    MAX_ARTIFACT_BYTES,
     EffectiveEnforcement,
     TrialLimits,
     TrialRequest,
@@ -91,11 +93,17 @@ class GuardedCompletionTrialHandle:
             api_key=self.api_key,
             submission_output=self.submission_dir / "output",
         )
+        # Collected from the submission directory rather than from ``source``
+        # directly, so this client's artifact paths are keyed exactly like
+        # ``DockerTrialHandle``'s: both read back the same /submission
+        # contract, and a consumer must not have to know which one ran.
+        artifacts = collect_artifacts(self.submission_dir, max_bytes=MAX_ARTIFACT_BYTES)
         return TrialResult(
             cell_id=self.request.cell_id,
             status="succeeded",
             submission_ref=_digest(source.encode("utf-8")),
             effective=self.effective_enforcement(),
+            artifacts=artifacts,
         )
 
     def effective_enforcement(self) -> EffectiveEnforcement:

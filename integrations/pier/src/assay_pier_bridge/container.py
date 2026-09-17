@@ -24,8 +24,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from assay_pier_bridge.paths import materialize_under
+from assay_pier_bridge.paths import collect_artifacts, materialize_under
 from assay_pier_bridge.protocol import (
+    MAX_ARTIFACT_BYTES,
     EffectiveEnforcement,
     TrialLimits,
     TrialRequest,
@@ -69,16 +70,32 @@ def _digest(data: bytes) -> str:
 
 
 def package_digest(package: Mapping[str, str]) -> str:
-    """The bridge's own identity check for a materialized package's content.
+    """The bridge's identity check for a materialized package's content.
 
-    Deliberately independent of ``assay.pier_packaging``'s manifest digest
-    algorithm (this project has no import edge back onto ``assay``): each
-    side of the wire contract computes its own digest over the same sorted
-    ``(path, content)`` entries, and ``TrialRequest.package_digest`` is the
-    value both sides are expected to agree on out of band.
+    A local reimplementation of ``assay.pier_packaging.manifest_digest``,
+    not an independent algorithm: this project has no import edge back onto
+    ``assay`` (see README.md), but ``DockerTrialHandle`` rejects any request
+    whose ``package_digest`` does not match what it computes here, so a
+    genuinely independent algorithm would reject every real dispatch. The
+    two implementations are pinned to the same expected outputs by
+    ``tests/fixtures/pier_wire_contract.json`` in the root project, asserted
+    from both test suites.
+
+    Entries are hashed as ``[path, sha256(content)]`` pairs rather than as
+    raw content so the digest never buffers the whole package, and they are
+    sorted because the JSON encoding preserves array order.
     """
-    entries = sorted(package.items())
-    return _digest(json.dumps(entries, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    entries = [
+        [path, _digest(content.encode("utf-8"))] for path, content in sorted(package.items())
+    ]
+    return _digest(_canonical_json(entries))
+
+
+def _canonical_json(value: object) -> bytes:
+    """``assay.canonical.canonical_json``'s encoding, mirrored locally."""
+    return json.dumps(
+        value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _mount_paths(package: Mapping[str, str]) -> dict[str, str]:
@@ -289,11 +306,15 @@ class DockerTrialHandle:
         ):
             raise RuntimeError("trial container exited nonzero or wrote no submission")
         submission_source = submission_file.read_text(encoding="utf-8")
+        # Read the submission mount before teardown removes it: these bytes
+        # exist nowhere else, and the caller cannot go back for them.
+        artifacts = collect_artifacts(self._submission, max_bytes=MAX_ARTIFACT_BYTES)
         return TrialResult(
             cell_id=self._request.cell_id,
             status="succeeded",
             submission_ref=_digest(submission_source.encode("utf-8")),
             effective=self.effective_enforcement(),
+            artifacts=artifacts,
         )
 
     def effective_enforcement(self) -> EffectiveEnforcement:

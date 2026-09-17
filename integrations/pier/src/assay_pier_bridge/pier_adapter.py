@@ -40,8 +40,25 @@ WORKSPACE_PREFIX = "workspace"
 
 
 def sanitized_trial_name(cell_id: str) -> str:
-    """Pier trial names are filesystem directory names; ``cell_id`` has colons."""
-    return cell_id.replace(":", "-")
+    """Pier trial names are filesystem directory names; ``cell_id`` has colons.
+
+    A local reimplementation of ``assay.pier_protocol.trial_name_for``, and
+    injective for the same reason: a plain ``cell_id.replace(":", "-")`` is
+    not, because an identifier may itself contain hyphens, so
+    ``("a-b", "c")`` and ``("a", "b-c")`` would both normalize to
+    ``a-b-c-w0`` and two distinct cells would share one trial directory on
+    disk. Doubling every hyphen inside the subject and arm components
+    before joining on a single, un-doubled hyphen keeps a lone hyphen in the
+    result always a field separator.
+
+    The root project pins both implementations to the same expected outputs
+    in ``tests/fixtures/pier_wire_contract.json``.
+    """
+    parts = cell_id.split(":")
+    if len(parts) != 3:
+        raise ValueError(f"cell id is not <subject>:<arm>:w<repeat>: {cell_id}")
+    subject_id, arm_id, repeat = parts
+    return f"{subject_id.replace('-', '--')}-{arm_id.replace('-', '--')}-{repeat}"
 
 
 def build_trial_config(

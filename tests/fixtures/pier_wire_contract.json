@@ -1,0 +1,68 @@
+{
+  "comment": "Cross-project wire-contract fixture. assay computes these values with assay.pier_packaging.manifest_digest and assay.pier_protocol.trial_name_for; assay-pier-bridge reimplements both locally (no import edge back onto assay) as container.package_digest and pier_adapter.sanitized_trial_name. Both test suites assert against this file, so the two implementations cannot drift without a failure on at least one side.",
+  "package_digests": [
+    {
+      "name": "minimal",
+      "package": {
+        "instruction.md": "# Task\n\nsolve it\n"
+      },
+      "digest": "sha256:faa0a2f3296650f9d0a17617641ef000d362b4c04b3f04d4f52bf8845d247360"
+    },
+    {
+      "name": "sealed_package_shape",
+      "package": {
+        "instruction.md": "# Task\n\nImplement solve().\n",
+        "submission/CONTRACT.md": "# Submission contract\n\nWrite to /submission/output.\n",
+        "workspace/solve.py": "def solve():\n    return 42\n",
+        "workspace/pkg/__init__.py": ""
+      },
+      "digest": "sha256:c09563643e1e9876554844bad3bf1dfad52641be70c3868442f3baeaccecea20"
+    },
+    {
+      "name": "unicode_and_ordering",
+      "package": {
+        "workspace/z.py": "z = 'zed'\n",
+        "workspace/a.py": "a = 'unicode: ünïcödé — ✓'\n",
+        "instruction.md": "# Tâche\n\nfaites-le\n"
+      },
+      "digest": "sha256:c55cea8a7498c33b8d72e78c1c9e61f1f6e07be6c631863611d30430415e9a87"
+    }
+  ],
+  "trial_names": [
+    {
+      "subject_id": "s1",
+      "arm_id": "a1",
+      "worker_repeat": 0,
+      "cell_id": "s1:a1:w0",
+      "trial_name": "s1-a1-w0"
+    },
+    {
+      "subject_id": "a-b",
+      "arm_id": "c",
+      "worker_repeat": 0,
+      "cell_id": "a-b:c:w0",
+      "trial_name": "a--b-c-w0"
+    },
+    {
+      "subject_id": "a",
+      "arm_id": "b-c",
+      "worker_repeat": 0,
+      "cell_id": "a:b-c:w0",
+      "trial_name": "a-b--c-w0"
+    },
+    {
+      "subject_id": "sub-ject",
+      "arm_id": "ar-m",
+      "worker_repeat": 12,
+      "cell_id": "sub-ject:ar-m:w12",
+      "trial_name": "sub--ject-ar--m-w12"
+    },
+    {
+      "subject_id": "s.1_x",
+      "arm_id": "A9",
+      "worker_repeat": 7,
+      "cell_id": "s.1_x:A9:w7",
+      "trial_name": "s.1_x-A9-w7"
+    }
+  ]
+}

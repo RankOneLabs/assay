@@ -13,6 +13,8 @@ from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from assay_pier_bridge.paths import safe_relative_path
+
 Sha256Ref = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 Identifier = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
 # Mirrors assay.models.CellCoordinate.id: "<subject_id>:<arm_id>:w<worker_repeat>".
@@ -22,6 +24,13 @@ CellId = Annotated[
 ]
 
 TrialStatus = Literal["succeeded", "failed", "timeout", "cancelled"]
+
+# Mirrors assay.pier_protocol's ceilings. Artifact bytes are bounded here,
+# at the point they are collected, as well as by the consumer: a trial whose
+# submission mount filled up must fail as an oversized result, not stream an
+# unbounded read into the caller's memory first.
+MAX_ARTIFACT_BYTES = 8_000_000
+MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
 
 
 class ClosedModel(BaseModel):
@@ -107,6 +116,24 @@ class EffectiveEnforcement(ClosedModel):
 
 
 class TrialResult(ClosedModel):
+    """One trial's outcome, including whatever evidence bytes it produced.
+
+    ``artifacts`` maps a relative path to the exact bytes the trial wrote --
+    the candidate source at minimum, plus whatever trajectory/result/
+    configuration files a sandboxed agent loop writes alongside it. It is a
+    real part of this contract rather than the caller's problem: the bytes
+    exist only inside the trial's own submission mount, which ``teardown``
+    destroys, so a result that did not carry them out could never be
+    turned into durable evidence.
+
+    What this contract still does not carry is an artifact *manifest*
+    binding those bytes to the authorized exchange. ``assay``'s
+    ``PierAdapter`` requires one before it will settle a cell as a success,
+    and nothing here produces it yet -- recorded as a known gap rather than
+    papered over with a manifest the consumer would only be attesting to
+    itself.
+    """
+
     cell_id: CellId
     status: TrialStatus
     submission_ref: Sha256Ref | None = None
@@ -114,6 +141,19 @@ class TrialResult(ClosedModel):
     error_type: str | None = None
     error_message: str | None = None
     effective: EffectiveEnforcement
+    artifacts: dict[str, bytes] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def bounded_artifacts(self) -> TrialResult:
+        total = 0
+        for path, data in self.artifacts.items():
+            safe_relative_path(path)
+            if len(data) > MAX_ARTIFACT_BYTES:
+                raise ValueError(f"artifact exceeds the per-artifact byte limit: {path}")
+            total += len(data)
+        if total > MAX_AGGREGATE_ARTIFACT_BYTES:
+            raise ValueError("artifacts exceed the aggregate byte limit")
+        return self
 
     @model_validator(mode="after")
     def consistent_status(self) -> TrialResult:

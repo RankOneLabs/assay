@@ -85,17 +85,19 @@ class BridgeTrialResult:
     (``status``/``submission_ref``/``usage``/``error_type``/``error_message``),
     plus this adapter's own exchange binding.
 
-    ``artifacts`` (path -> bytes) is NOT part of the real wire contract: as
-    of this writing, ``integrations/pier``'s ``TrialHandle``/``TrialResult``
-    expose no way at all to retrieve raw trajectory/candidate/configuration/
-    manifest bytes -- only a bare ``submission_ref`` digest (see
-    ``assay_pier_bridge.protocol.TrialResult`` and
-    ``host_driver.GuardedCompletionTrialHandle``, which writes the submitted
-    source only to a host-local temp file, never returned to the caller).
-    This is a documented, flagged extension this adapter requires; a real
-    ``PierBridgeClient`` implementation will need to grow a way to surface
-    these bytes before this adapter can run against it for real -- recorded
-    as a known gap, not invented as if it already existed.
+    ``artifacts`` (path -> bytes) mirrors the real contract's own
+    ``TrialResult.artifacts``: both of ``integrations/pier``'s handles read
+    their submission mount back before ``teardown`` destroys it and carry
+    the bytes out on the result.
+
+    What is still missing is the *manifest*. ``_settle`` will not settle a
+    cell as a success without an ``ArtifactManifest`` binding those bytes to
+    the authorized exchange, and nothing on the bridge side produces one
+    yet, so a real dispatch still ends in ``MissingManifest``. A manifest
+    built here, from the same bytes this adapter just received, would only
+    be the consumer attesting to itself -- which is exactly what
+    ``verify_artifact_bytes`` exists to prevent -- so the gap is recorded
+    rather than closed from this side.
     """
 
     exchange: PierExchange

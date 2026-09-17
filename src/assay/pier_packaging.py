@@ -56,8 +56,26 @@ class SealedPackage:
         return dict(self.files)
 
 
-def _manifest_digest(files: Mapping[str, str]) -> str:
-    entries = [[path, digest_bytes(content.encode("utf-8"))] for path, content in files.items()]
+def manifest_digest(files: Mapping[str, str]) -> str:
+    """The sealed package's content identity, mirrored byte-for-byte by the bridge.
+
+    Both sides of the wire contract compute this value independently --
+    ``integrations/pier``'s ``container.package_digest`` reimplements it
+    locally, because that project has no import edge back onto ``assay`` --
+    and ``TrialRequest.package_digest`` is only meaningful if the two agree
+    exactly. ``tests/fixtures/pier_wire_contract.json`` pins the expected
+    output for a fixed set of packages and is asserted from both test
+    suites; changing this function without changing the bridge's copy (or
+    the fixture) fails on both sides.
+
+    Entries are sorted here rather than inherited from the caller's mapping
+    order: ``canonical_json`` preserves array order, so an unsorted mapping
+    would hash differently from the same content sorted, and the bridge
+    receives a materialized package with no memory of how it was built.
+    """
+    entries = [
+        [path, digest_bytes(content.encode("utf-8"))] for path, content in sorted(files.items())
+    ]
     return digest_bytes(canonical_json(entries))
 
 
@@ -93,7 +111,7 @@ def build_package(
     return SealedPackage(
         cell_id=cell_id,
         files=tuple(sorted(files.items())),
-        manifest_digest=_manifest_digest(files),
+        manifest_digest=manifest_digest(files),
     )
 
 
@@ -128,7 +146,7 @@ def gate_package(
     current_files = dict(package.files)
     if len(current_files) != len(package.files):
         raise ValueError("package entries contain a duplicate path")
-    actual_digest = _manifest_digest(dict(sorted(current_files.items())))
+    actual_digest = manifest_digest(current_files)
     if actual_digest != package.manifest_digest or actual_digest != expected_digest:
         raise ValueError("package digest does not match the digest being authorized")
     prefix = f"{WORKSPACE_PREFIX}/"
