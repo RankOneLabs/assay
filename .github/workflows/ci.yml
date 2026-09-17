@@ -92,3 +92,23 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - working-directory: web
         run: bun run test:browser
+
+  pier-qualification:
+    # Deterministic offline, local-Docker, and fake-HTTP coverage only -- this
+    # job never sets OPENROUTER_API_KEY or ASSAY_ALLOW_PAID_PIER, so every
+    # paid-profile and paid-marker test in tests/test_pier_acceptance.py stays
+    # gated and skipped, and qualify_local.py's own probes never dial out.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.10.2"
+          python-version: '3.13'
+      - run: uv sync --locked --extra review --extra legacy
+      - run: uv run ruff check integrations/pier/scripts
+      - name: mypy over the qualification script (needs both projects' sources on MYPYPATH)
+        run: MYPYPATH=integrations/pier/src uv run mypy integrations/pier/scripts/qualify_local.py
+      - run: uv run pytest -q tests/test_pier_acceptance.py
