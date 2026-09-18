@@ -10,11 +10,12 @@ dependencies = [
   "openai>=2,<3",
   "pydantic>=2.7",
   "jsonschema>=4.23",
+  "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
 review = ["fastapi>=0.115", "uvicorn>=0.32"]
-typesafe = ["typesafe-sdk~=0.6.0", "PyYAML>=6.0"]
+typesafe = ["typesafe-sdk~=0.6.0"]
 
 [project.scripts]
 assay = "assay.cli:main"
