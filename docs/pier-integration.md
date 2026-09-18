@@ -308,6 +308,13 @@ cases to special-case away in a report:
   `UnpublishedEvidence` if any required kind resolves to no ref, rather than
   emitting a `WorkerSuccess` whose `result_ref`/`candidate_ref` are null --
   which downstream cannot distinguish from a trial that produced nothing.
+  `manifest.json` is bounded by the per-artifact ceiling but is not charged to
+  the aggregate one, on either side of the boundary: the aggregate bounds what
+  a manifest may *declare*, so charging the binding document to it would make
+  a manifest at the ceiling impossible to return or to publish in full. Both
+  projects enforce that rule separately and both assert it against
+  `tests/fixtures/pier_wire_contract.json`, since there is no import edge to
+  keep the two copies aligned.
 - **Uncertain billing.** `Accounting(coverage="uncertain")` versus `"measured"`
   is the distinction between "we don't know what this cost" and "we observed
   the cost" -- never collapse the former into a reported zero.

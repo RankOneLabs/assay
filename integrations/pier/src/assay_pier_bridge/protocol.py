@@ -32,6 +32,13 @@ TrialStatus = Literal["succeeded", "failed", "timeout", "cancelled"]
 MAX_ARTIFACT_BYTES = 8_000_000
 MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
 
+# Mirrors assay.pier_protocol.MANIFEST_PATH: the reserved path of the document
+# that binds the artifacts, which is never one of them. Both projects exempt
+# it from the aggregate ceiling and both still bound it per-artifact; the
+# shared fixture asserted by tests/test_wire_contract.py pins that rule, since
+# nothing else connects the two copies.
+MANIFEST_PATH = "manifest.json"
+
 
 class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
@@ -145,12 +152,26 @@ class TrialResult(ClosedModel):
 
     @model_validator(mode="after")
     def bounded_artifacts(self) -> TrialResult:
+        """The per-artifact ceiling applies to every blob; the aggregate one
+        does not apply to ``manifest.json``.
+
+        ``MAX_AGGREGATE_ARTIFACT_BYTES`` bounds what a manifest may *declare*,
+        and the manifest is never one of its own entries. Charging the binding
+        document to the budget it bounds would make a manifest declaring the
+        maximum permitted aggregate impossible to return at all: the bytes
+        would fit, and then the few hundred bytes describing them would push
+        the result over and fail the whole trial. An honest bridge at the
+        ceiling would have no way to report what it produced. What a trial can
+        hand back is still bounded, just by ``MAX_AGGREGATE_ARTIFACT_BYTES +
+        MAX_ARTIFACT_BYTES``.
+        """
         total = 0
         for path, data in self.artifacts.items():
             safe_relative_path(path)
             if len(data) > MAX_ARTIFACT_BYTES:
                 raise ValueError(f"artifact exceeds the per-artifact byte limit: {path}")
-            total += len(data)
+            if path != MANIFEST_PATH:
+                total += len(data)
         if total > MAX_AGGREGATE_ARTIFACT_BYTES:
             raise ValueError("artifacts exceed the aggregate byte limit")
         return self

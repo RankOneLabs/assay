@@ -457,7 +457,7 @@ class PierAdapter:
             return WorkerFailure(
                 "IncompleteEvidence",
                 "manifest is missing required raw trajectory/candidate/result/"
-                "configuration/manifest evidence",
+                "configuration evidence",
                 trace=_trace(exchange, refs=refs, reason="incomplete_evidence"),
                 accounting=dispatched_accounting,
             )

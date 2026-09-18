@@ -75,7 +75,10 @@ def _coordinate() -> CellCoordinate:
 
 
 def _manifest_and_artifacts(
-    exchange: PierExchange, *, extras: dict[str, bytes] | None = None
+    exchange: PierExchange,
+    *,
+    extras: dict[str, bytes] | None = None,
+    undeclared: str | None = None,
 ) -> tuple[ArtifactManifest, dict[str, bytes]]:
     entries = tuple(
         ArtifactEntry(
@@ -86,6 +89,7 @@ def _manifest_and_artifacts(
             utf8=True,
         )
         for path, kind in _KINDS.items()
+        if kind != undeclared
     )
     manifest = ArtifactManifest(
         exchange=exchange, entries=entries, aggregate_bytes=sum(e.size_bytes for e in entries)
@@ -114,11 +118,16 @@ class _Handle:
 class _Bridge:
     """Returns a well-formed success, plus whatever extra artifacts a test names."""
 
-    def __init__(self, extras: dict[str, bytes] | None = None) -> None:
+    def __init__(
+        self, extras: dict[str, bytes] | None = None, undeclared: str | None = None
+    ) -> None:
         self.extras = extras
+        self.undeclared = undeclared
 
     def create(self, *, exchange: PierExchange, package: dict[str, str]) -> PierBridgeHandle:
-        _, artifacts = _manifest_and_artifacts(exchange, extras=self.extras)
+        _, artifacts = _manifest_and_artifacts(
+            exchange, extras=self.extras, undeclared=self.undeclared
+        )
         return _Handle(
             BridgeTrialResult(
                 exchange=exchange,
@@ -268,3 +277,36 @@ def test_every_required_kind_has_an_output_ref_field(kind: str) -> None:
     """The failure this module guards is only meaningful while each required
     kind actually surfaces as a ref a downstream consumer reads."""
     assert kind in REQUIRED_REF_FIELDS
+
+
+# "result" is excluded deliberately: an undeclared result artifact means no
+# result bytes, so mini's "Submitted" sentinel cannot be read and
+# ``bridge_reports_failure`` rejects the cell before the evidence check is
+# reached. The test below pins that ordering so this exclusion stays a fact
+# about ``_settle`` rather than an assumption about it.
+@pytest.mark.parametrize("omitted", sorted(REQUIRED_SUCCESS_KINDS - {"result"}))
+async def test_a_manifest_missing_a_required_kind_names_that_contract(
+    tmp_path: Path, omitted: str
+) -> None:
+    """The message a caller reads has to name the kinds actually required.
+
+    It is parsed back into the set here rather than compared to a literal:
+    this path had no test at all, which is how the message went on naming
+    ``manifest`` as a required kind after the manifest stopped being one.
+    """
+    result = await _run(_adapter(tmp_path, _Bridge(undeclared=omitted)))
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == "IncompleteEvidence"
+    named = result.message.split("required ", 1)[1].removesuffix(" evidence").split("/")
+    assert {name.replace(" ", "_") for name in named} == REQUIRED_SUCCESS_KINDS
+
+
+async def test_an_undeclared_result_fails_on_the_missing_submitted_sentinel(
+    tmp_path: Path,
+) -> None:
+    """Without result bytes there is no ``exit_status`` to read, and an
+    unreadable sentinel is conservatively a failure -- so this one required
+    kind is caught before the evidence check rather than by it."""
+    result = await _run(_adapter(tmp_path, _Bridge(undeclared="result")))
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == "BridgeReportedFailure"

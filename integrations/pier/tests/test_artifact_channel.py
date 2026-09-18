@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 from assay_pier_bridge.paths import collect_artifacts
 from assay_pier_bridge.protocol import (
+    MANIFEST_PATH,
+    MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
     EffectiveEnforcement,
     TrialResult,
@@ -66,6 +68,34 @@ def test_an_oversized_artifact_is_rejected_by_the_type() -> None:
 def test_an_unsafe_artifact_path_is_rejected_by_the_type() -> None:
     with pytest.raises(ValidationError, match="unsafe path"):
         _result(artifacts={"../escaped": b"x"})
+
+
+def _blobs(count: int) -> dict[str, bytes]:
+    return {f"declared-{index}.bin": b"\x00" * MAX_ARTIFACT_BYTES for index in range(count)}
+
+
+def test_artifacts_past_the_aggregate_limit_are_rejected_by_the_type() -> None:
+    artifacts = _blobs(MAX_AGGREGATE_ARTIFACT_BYTES // MAX_ARTIFACT_BYTES)
+    artifacts["declared-over.bin"] = b"\x00"
+    with pytest.raises(ValidationError, match="aggregate byte limit"):
+        _result(artifacts=artifacts)
+
+
+def test_the_manifest_is_not_charged_to_the_aggregate_limit() -> None:
+    """``MAX_AGGREGATE_ARTIFACT_BYTES`` bounds what a manifest may declare,
+    and the manifest is never one of its own entries. Charging the binding
+    document to the budget it bounds would fail an honest trial that filled
+    the ceiling exactly, on the bytes that say what it produced."""
+    artifacts = _blobs(MAX_AGGREGATE_ARTIFACT_BYTES // MAX_ARTIFACT_BYTES)
+    artifacts[MANIFEST_PATH] = b'{"schema_version": "assay-pier-artifact-manifest/0.1.0"}'
+    assert _result(artifacts=artifacts).artifacts[MANIFEST_PATH] == artifacts[MANIFEST_PATH]
+
+
+def test_the_manifest_is_still_bounded_per_artifact() -> None:
+    """Exempt from the aggregate ceiling is not exempt from every ceiling:
+    what a trial can hand back stays bounded by the sum of the two."""
+    with pytest.raises(ValidationError, match="per-artifact byte limit"):
+        _result(artifacts={MANIFEST_PATH: b"\x00" * (MAX_ARTIFACT_BYTES + 1)})
 
 
 def test_collect_artifacts_reads_regular_files_relative_to_the_root(tmp_path: Path) -> None:

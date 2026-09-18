@@ -33,12 +33,12 @@ ArtifactKind = Literal["raw_trajectory", "candidate", "result", "configuration",
 # The manifest is what binds artifacts; it is never one of them. A "manifest"
 # kind used to be required here and no honest bridge could satisfy it: the
 # entry would have to declare the checksum of the very bytes containing that
-# checksum. Both writers that existed hit the wall and worked around it the
-# same way -- pointing the kind at a decoy file -- so the "required manifest
-# evidence" a success was gated on was reliably satisfied by something that
-# was not the manifest. ``manifest.json``'s integrity comes from parsing it
-# and binding it to the authorized exchange, not from a self-checksum, so the
-# kind is gone and the path is reserved instead.
+# checksum. Every writer that satisfied the requirement hit the wall and
+# worked around it the same way -- pointing the kind at a decoy file -- so the
+# "required manifest evidence" a success was gated on was reliably satisfied
+# by something that was not the manifest. ``manifest.json``'s integrity comes
+# from parsing it and binding it to the authorized exchange, not from a
+# self-checksum, so the kind is gone and the path is reserved instead.
 MANIFEST_PATH: Final = "manifest.json"
 
 # The four checked artifacts a success is bound to; "transcript" (ATIF) is an
