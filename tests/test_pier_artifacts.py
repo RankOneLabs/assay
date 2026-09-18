@@ -8,8 +8,10 @@ from pydantic import ValidationError
 from assay.canonical import digest_bytes
 from assay.models import CellCoordinate
 from assay.pier_protocol import (
+    MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
+    REQUIRED_SUCCESS_KINDS,
     ArtifactEntry,
     ArtifactManifest,
     ManifestRejected,
@@ -40,6 +42,30 @@ def _entry(path: str, data: bytes, kind: str = "candidate", utf8: bool = True) -
     return ArtifactEntry(
         path=path, kind=kind, size_bytes=len(data), checksum=digest_bytes(data), utf8=utf8
     )  # type: ignore[arg-type]
+
+
+def test_the_manifest_is_not_one_of_the_artifacts_it_binds() -> None:
+    """``manifest`` was a required success kind that nothing could honestly
+    satisfy: the entry would have had to declare the checksum of the bytes
+    carrying that checksum. Every fixture author who met the requirement met
+    it with a decoy file, so the "manifest evidence" a success was gated on
+    was reliably not the manifest."""
+    assert "manifest" not in REQUIRED_SUCCESS_KINDS
+    assert {"raw_trajectory", "candidate", "result", "configuration"} == REQUIRED_SUCCESS_KINDS
+
+
+def test_an_entry_cannot_claim_the_manifests_own_path() -> None:
+    """Reserving the path turns the fixed point into a typed rejection at the
+    boundary rather than something each writer rediscovers by trial and
+    error -- and stops an entry from describing a decoy that merely sits
+    where the manifest belongs."""
+    with pytest.raises(ValidationError, match="cannot declare itself"):
+        _entry(MANIFEST_PATH, b"{}", kind="result")
+
+
+def test_manifest_kind_is_no_longer_a_declarable_kind() -> None:
+    with pytest.raises(ValidationError):
+        _entry("manifest-evidence.json", b"{}", kind="manifest")
 
 
 def test_oversized_artifact_is_rejected_by_the_type() -> None:
@@ -124,7 +150,7 @@ def test_configuration_entry_claiming_non_utf8_is_rejected_by_the_type() -> None
         _entry("configuration.json", b'{"model": "x"}', kind="configuration", utf8=False)
 
 
-@pytest.mark.parametrize("kind", ["raw_trajectory", "result", "configuration", "manifest"])
+@pytest.mark.parametrize("kind", ["raw_trajectory", "result", "configuration"])
 def test_structured_kinds_reject_non_utf8_declaration(kind: str) -> None:
     with pytest.raises(ValidationError, match="utf8=True"):
         _entry(f"{kind}.json", b"{}", kind=kind, utf8=False)
@@ -170,7 +196,7 @@ def test_atif_unavailable_is_recorded_not_treated_as_missing_evidence() -> None:
     no transcript still reports complete required-success evidence."""
 
     exchange = bind_exchange(coordinate=_coordinate(), binding=RuntimeBinding(**_binding()))
-    kinds = ["raw_trajectory", "candidate", "result", "configuration", "manifest"]
+    kinds = ["raw_trajectory", "candidate", "result", "configuration"]
     entries = tuple(
         _entry(f"{kind}.json", f'{{"kind": "{kind}"}}'.encode(), kind=kind) for kind in kinds
     )

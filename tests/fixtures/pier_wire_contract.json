@@ -64,5 +64,60 @@
       "cell_id": "s.1_x:A9:w7",
       "trial_name": "s.1_x-A9-w7"
     }
-  ]
+  ],
+  "artifact_budget": {
+    "comment": "The artifact byte ceilings and the manifest's exemption from the aggregate one. Sizes are byte counts, not contents: each side synthesizes blobs of these sizes and asserts its own enforcement point agrees with within_budget -- assay that _publish_available_artifacts publishes every path, the bridge that TrialResult accepts the result. The manifest is bounded per-artifact but never charged to the aggregate, because max_aggregate_artifact_bytes bounds what a manifest may declare and the manifest is never one of its own entries; charging the binding document to the budget it bounds would make a manifest declaring the maximum permitted aggregate impossible to carry or to publish in full.",
+    "max_artifact_bytes": 8000000,
+    "max_aggregate_artifact_bytes": 32000000,
+    "manifest_path": "manifest.json",
+    "cases": [
+      {
+        "name": "maximal_manifest_at_the_aggregate_ceiling",
+        "artifacts": {
+          "declared-0.bin": 8000000,
+          "declared-1.bin": 8000000,
+          "declared-2.bin": 8000000,
+          "declared-3.bin": 8000000,
+          "manifest.json": 2048
+        },
+        "within_budget": true
+      },
+      {
+        "name": "declared_bytes_alone_over_the_aggregate_ceiling",
+        "artifacts": {
+          "declared-0.bin": 8000000,
+          "declared-1.bin": 8000000,
+          "declared-2.bin": 8000000,
+          "declared-3.bin": 8000000,
+          "declared-over.bin": 1
+        },
+        "within_budget": false
+      },
+      {
+        "name": "one_artifact_over_the_per_artifact_ceiling",
+        "artifacts": {
+          "candidate.txt": 8000001
+        },
+        "within_budget": false
+      },
+      {
+        "name": "manifest_over_the_per_artifact_ceiling",
+        "artifacts": {
+          "manifest.json": 8000001
+        },
+        "within_budget": false
+      },
+      {
+        "name": "manifest_alone_is_not_charged_to_the_aggregate",
+        "artifacts": {
+          "declared-0.bin": 8000000,
+          "declared-1.bin": 8000000,
+          "declared-2.bin": 8000000,
+          "declared-3.bin": 8000000,
+          "manifest.json": 8000000
+        },
+        "within_budget": true
+      }
+    ]
+  }
 }

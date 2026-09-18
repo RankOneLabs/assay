@@ -99,13 +99,31 @@ def _canonical_json(value: object) -> bytes:
 
 
 def _mount_paths(package: Mapping[str, str]) -> dict[str, str]:
-    """Project a sealed package's entries onto real, unprefixed /workspace paths."""
+    """Project a sealed package's entries onto real, unprefixed /workspace paths.
+
+    Stripping the prefix makes the projection non-injective: a repository
+    that contains a file named ``instruction.md`` is packaged as
+    ``workspace/instruction.md`` and lands on the same mounted path as the
+    sealed ``instruction.md``. Silently keeping one of them would let a
+    repository replace the instruction the model is given -- and since the
+    package arrives sorted, it is the repository file that wins. A collision
+    is a terminal error here, not a merge. ``assay``'s ``gate_package``
+    rejects the same packages before dispatch; this side repeats the check
+    because the bridge must not depend on any particular producer having run
+    it (the two projects share no import edge -- see ``README.md``).
+    """
     mounted: dict[str, str] = {}
+    origin: dict[str, str] = {}
     for path, content in package.items():
         if path.startswith(_WORKSPACE_PACKAGE_PREFIX):
             rel = path[len(_WORKSPACE_PACKAGE_PREFIX) :]
         else:
             rel = path
+        if rel in mounted:
+            raise ValueError(
+                f"package entries {origin[rel]!r} and {path!r} collide at the mounted path {rel!r}"
+            )
+        origin[rel] = path
         mounted[rel] = content
     return mounted
 

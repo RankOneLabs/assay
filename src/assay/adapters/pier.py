@@ -20,14 +20,12 @@ three things around that boundary:
    never a bare/unbounded hang, never silently zero cost, and never treating
    an unverified cleanup the same as a confirmed one.
 
-Known gap (see the module's ``BridgeTrialResult`` docstring): the real bridge
-integration as it exists today (``assay_pier_bridge.protocol.TrialResult``,
-``host_driver.GuardedCompletionTrialHandle``) has no mechanism to return raw
-trajectory/candidate/configuration/manifest bytes at all -- only a bare
-``submission_ref`` digest. This adapter's ``artifacts`` field on
-``BridgeTrialResult`` is therefore a documented, flagged extension beyond the
-real wire contract, not something grounded in a real API a bridge client
-implements today.
+Known gap (see the module's ``BridgeTrialResult`` docstring): artifact bytes
+now cross the real wire contract, but no bridge writes the ``manifest.json``
+that binds them to the authorized exchange, so a real dispatch still settles
+as ``MissingManifest``. That manifest has to be produced by the side that
+observed the trial; building one here, from the bytes this adapter was just
+handed, would be the consumer attesting to itself.
 """
 
 from __future__ import annotations
@@ -46,8 +44,10 @@ from assay.execution import Accounting, WorkerFailure, WorkerResult, WorkerSucce
 from assay.models import CellCoordinate
 from assay.pier_packaging import build_package, gate_package
 from assay.pier_protocol import (
+    MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
+    REQUIRED_SUCCESS_KINDS,
     ArtifactManifest,
     ManifestRejected,
     PierExchange,
@@ -91,13 +91,13 @@ class BridgeTrialResult:
     the bytes out on the result.
 
     What is still missing is the *manifest*. ``_settle`` will not settle a
-    cell as a success without an ``ArtifactManifest`` binding those bytes to
-    the authorized exchange, and nothing on the bridge side produces one
-    yet, so a real dispatch still ends in ``MissingManifest``. A manifest
-    built here, from the same bytes this adapter just received, would only
-    be the consumer attesting to itself -- which is exactly what
-    ``verify_artifact_bytes`` exists to prevent -- so the gap is recorded
-    rather than closed from this side.
+    cell as a success without an ``ArtifactManifest`` at ``MANIFEST_PATH``
+    binding those bytes to the authorized exchange, and nothing on the
+    bridge side writes one yet, so a real dispatch still ends in
+    ``MissingManifest``. A manifest built here, from the same bytes this
+    adapter just received, would only be the consumer attesting to itself --
+    which is exactly what ``verify_artifact_bytes`` exists to prevent -- so
+    the gap is recorded rather than closed from this side.
     """
 
     exchange: PierExchange
@@ -157,7 +157,7 @@ def _repository_dir(stack: contextlib.ExitStack, repository: Mapping[str, str]) 
 
 
 def _publish_available_artifacts(
-    store: ObjectStore, artifacts: Mapping[str, bytes]
+    store: ObjectStore, artifacts: Mapping[str, bytes], *, priority: frozenset[str] = frozenset()
 ) -> dict[str, str]:
     """Publish every artifact byte blob independently, regardless of manifest validity.
 
@@ -184,19 +184,41 @@ def _publish_available_artifacts(
     ceilings the manifest's own entries are bound by) are therefore enforced
     here too, before anything is written to the store: an oversized artifact,
     or one that would push the running total over the aggregate ceiling, is
-    never published. A skipped artifact simply has no ref -- if it was a
-    declared manifest entry, ``verify_artifact_bytes`` rejects the manifest
-    for the resulting missing bytes; if it was an undeclared extra, it is
-    silently bounded rather than trusted or stored.
+    never published.
+
+    Which artifacts lose that race is not the bridge's choice. ``priority``
+    -- the manifest plus the entries it declares -- is published first, and
+    both groups are published in sorted path order, so a bridge cannot crowd
+    the evidence a success is gated on out of the store by returning one
+    large undeclared extra under an earlier key. A skipped artifact simply
+    has no ref, and ``_settle`` refuses to settle a success whose required
+    evidence went unpublished rather than reporting a null ref for it.
+
+    ``manifest.json`` is bounded by the per-artifact ceiling but deliberately
+    excluded from the aggregate one. ``MAX_AGGREGATE_ARTIFACT_BYTES`` bounds
+    what a manifest may *declare*, and the manifest is never one of its own
+    entries; charging it to that same budget would make a manifest declaring
+    the maximum permitted aggregate impossible to publish in full, evicting
+    a declared entry to make room for the document declaring it. The total
+    a hostile bridge can put in the store is still bounded, just by
+    ``MAX_AGGREGATE_ARTIFACT_BYTES + MAX_ARTIFACT_BYTES``.
+
+    ``verify_artifact_bytes`` cannot stand in for that check. It is handed
+    the raw bytes that crossed the boundary, where a skipped entry is present
+    either way; publication is a separate step, and ``_settle``'s missing-ref
+    check is the only thing that observes whether it happened.
     """
     refs: dict[str, str] = {}
     aggregate_bytes = 0
-    for path, data in artifacts.items():
+    ordered = sorted(artifacts, key=lambda path: (path not in priority, path))
+    for path in ordered:
+        data = artifacts[path]
         if len(data) > MAX_ARTIFACT_BYTES:
             continue
-        if aggregate_bytes + len(data) > MAX_AGGREGATE_ARTIFACT_BYTES:
-            continue
-        aggregate_bytes += len(data)
+        if path != MANIFEST_PATH:
+            if aggregate_bytes + len(data) > MAX_AGGREGATE_ARTIFACT_BYTES:
+                continue
+            aggregate_bytes += len(data)
         envelope = {
             "schema_version": "assay-pier-raw-artifact/0.1.0",
             "path": path,
@@ -378,7 +400,11 @@ class PierAdapter:
     def _settle(
         self, exchange: PierExchange, bridge_result: BridgeTrialResult, *, cleanup_incomplete: bool
     ) -> WorkerResult:
-        refs = _publish_available_artifacts(self.store, bridge_result.artifacts)
+        refs = _publish_available_artifacts(
+            self.store,
+            bridge_result.artifacts,
+            priority=_declared_paths(bridge_result.artifacts.get(MANIFEST_PATH)),
+        )
         dispatched_accounting = _accounting_from_usage(bridge_result.usage)
 
         if bridge_result.exchange != exchange:
@@ -389,7 +415,7 @@ class PierAdapter:
                 accounting=dispatched_accounting,
             )
 
-        manifest_bytes = bridge_result.artifacts.get("manifest.json")
+        manifest_bytes = bridge_result.artifacts.get(MANIFEST_PATH)
         if manifest_bytes is None:
             return WorkerFailure(
                 "MissingManifest",
@@ -431,7 +457,7 @@ class PierAdapter:
             return WorkerFailure(
                 "IncompleteEvidence",
                 "manifest is missing required raw trajectory/candidate/result/"
-                "configuration/manifest evidence",
+                "configuration evidence",
                 trace=_trace(exchange, refs=refs, reason="incomplete_evidence"),
                 accounting=dispatched_accounting,
             )
@@ -456,6 +482,28 @@ class PierAdapter:
             path = _path_for(manifest, kind)
             return refs.get(path) if path is not None else None
 
+        # Declaring evidence and publishing it are separate steps, and only
+        # this check observes the difference. ``_publish_available_artifacts``
+        # skips anything that would breach the byte ceilings, so a manifest
+        # can verify perfectly against the bytes that crossed the boundary
+        # while the bytes backing a required kind never reached the store. A
+        # success whose ``result_ref``/``candidate_ref``/... is null is not a
+        # success: downstream evaluation would read a missing reference as an
+        # absent result rather than as evidence that was dropped in transit.
+        # ``manifest.json`` is the binding document and is never one of the
+        # manifest's own entries, so its ref is resolved by reserved path.
+        manifest_ref = refs.get(MANIFEST_PATH)
+        unpublished = sorted(kind for kind in REQUIRED_SUCCESS_KINDS if _ref_for(kind) is None)
+        if manifest_ref is None:
+            unpublished = [*unpublished, "manifest"]
+        if unpublished:
+            return WorkerFailure(
+                "UnpublishedEvidence",
+                "required evidence was declared but never published: " + ", ".join(unpublished),
+                trace=_trace(exchange, refs=refs, reason="unpublished_evidence"),
+                accounting=dispatched_accounting,
+            )
+
         transcript_ref = _ref_for("transcript")
         output = {
             "cell_id": exchange.coordinate.id,
@@ -463,7 +511,7 @@ class PierAdapter:
             "result_ref": _ref_for("result"),
             "raw_trajectory_ref": _ref_for("raw_trajectory"),
             "configuration_ref": _ref_for("configuration"),
-            "manifest_ref": _ref_for("manifest"),
+            "manifest_ref": manifest_ref,
             "transcript_ref": transcript_ref,
             "transcript_status": "available" if transcript_ref is not None else "unavailable",
         }
@@ -475,6 +523,25 @@ class PierAdapter:
             trace=trace,
             accounting=dispatched_accounting,
         )
+
+
+def _declared_paths(manifest_bytes: bytes | None) -> frozenset[str]:
+    """The paths a returned manifest declares, for publication priority only.
+
+    This runs before the manifest is validated or bound to the exchange --
+    its answer decides only *ordering* under the byte ceilings, never
+    whether anything is trusted. A manifest that is absent, unparseable, or
+    outright hostile therefore costs nothing here: priority falls back to
+    sorted path order, and every real check still happens below. The
+    manifest's own path is always included, since it is the one artifact
+    that is never a declared entry and is still required to be reachable.
+    """
+    paths = {MANIFEST_PATH}
+    if manifest_bytes is not None:
+        with contextlib.suppress(Exception):
+            declared = ArtifactManifest.model_validate_json(manifest_bytes).entries
+            paths.update(entry.path for entry in declared)
+    return frozenset(paths)
 
 
 def _path_for(manifest: ArtifactManifest, kind: str) -> str | None:

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import Field, model_validator
 
@@ -28,14 +28,23 @@ from assay.models import CellCoordinate, NonEmpty, Sha256Ref, WireModel
 MAX_ARTIFACT_BYTES = 8_000_000
 MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
 
-ArtifactKind = Literal[
-    "raw_trajectory", "candidate", "result", "configuration", "manifest", "transcript"
-]
+ArtifactKind = Literal["raw_trajectory", "candidate", "result", "configuration", "transcript"]
 
-# The five checked artifacts a success is bound to; "transcript" (ATIF) is an
+# The manifest is what binds artifacts; it is never one of them. A "manifest"
+# kind used to be required here and no honest bridge could satisfy it: the
+# entry would have to declare the checksum of the very bytes containing that
+# checksum. Every writer that satisfied the requirement hit the wall and
+# worked around it the same way -- pointing the kind at a decoy file -- so the
+# "required manifest evidence" a success was gated on was reliably satisfied
+# by something that was not the manifest. ``manifest.json``'s integrity comes
+# from parsing it and binding it to the authorized exchange, not from a
+# self-checksum, so the kind is gone and the path is reserved instead.
+MANIFEST_PATH: Final = "manifest.json"
+
+# The four checked artifacts a success is bound to; "transcript" (ATIF) is an
 # optional derived view and is deliberately excluded from this set.
 REQUIRED_SUCCESS_KINDS: frozenset[str] = frozenset(
-    {"raw_trajectory", "candidate", "result", "configuration", "manifest"}
+    {"raw_trajectory", "candidate", "result", "configuration"}
 )
 
 
@@ -97,7 +106,7 @@ def exchanges_match(expected: PierExchange, actual: PierExchange) -> bool:
 # never required to parse as anything. "transcript" (ATIF) is an optional
 # derived view with the same latitude as "candidate".
 JSON_STRUCTURED_ARTIFACT_KINDS: frozenset[str] = frozenset(
-    {"raw_trajectory", "result", "configuration", "manifest"}
+    {"raw_trajectory", "result", "configuration"}
 )
 
 
@@ -113,6 +122,13 @@ class ArtifactEntry(WireModel):
         parts = PurePosixPath(self.path).parts
         if PurePosixPath(self.path).is_absolute() or any(part in {"", ".", ".."} for part in parts):
             raise ValueError(f"artifact path is unsafe: {self.path}")
+        if self.path == MANIFEST_PATH:
+            # Not merely redundant: an entry here would be checked against
+            # whatever bytes arrive at ``manifest.json``, so declaring it is
+            # either impossible (a self-referential checksum) or a claim
+            # about a decoy. Reserving the path makes that a typed rejection
+            # rather than something a writer discovers by trial and error.
+            raise ValueError(f"the manifest cannot declare itself as an artifact: {self.path}")
         return self
 
     @model_validator(mode="after")
@@ -120,7 +136,7 @@ class ArtifactEntry(WireModel):
         """The UTF-8 declaration is not a free per-entry choice for every kind.
 
         A structured JSON kind (``raw_trajectory``/``result``/
-        ``configuration``/``manifest``) cannot declare ``utf8=False`` --
+        ``configuration``) cannot declare ``utf8=False`` --
         nothing about those kinds is ever legitimately binary. ``candidate``
         and ``transcript`` are unconstrained here: whether they happen to be
         UTF-8 is a fact about the trial's own output, not something this
@@ -283,6 +299,7 @@ def bridge_reports_failure(
 
 __all__ = [
     "JSON_STRUCTURED_ARTIFACT_KINDS",
+    "MANIFEST_PATH",
     "MAX_AGGREGATE_ARTIFACT_BYTES",
     "MAX_ARTIFACT_BYTES",
     "REQUIRED_SUCCESS_KINDS",
