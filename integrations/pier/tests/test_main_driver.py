@@ -59,14 +59,17 @@ def test_run_one_cell_writes_the_submitted_source(
     )
     output = tmp_path / "submission" / "output"
 
-    source = run_one_cell(
+    response = run_one_cell(
         instruction="do the thing",
         system_prompt="sys",
         api_key="test-key",
         submission_output=output,
     )
 
-    assert source == "answer = 42"
+    assert response.submission.source == "answer = 42"
+    assert response.usage.prompt_tokens == 10
+    assert response.usage.completion_tokens == 5
+    assert response.usage.cost_usd == 0.0021
     assert output.read_text(encoding="utf-8") == "answer = 42"
 
 

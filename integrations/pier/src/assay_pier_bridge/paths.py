@@ -49,7 +49,14 @@ def materialize_under(root: Path, files: Mapping[str, str]) -> None:
         full.write_text(content, encoding="utf-8")
 
 
-def collect_artifacts(root: Path, *, max_bytes: int) -> dict[str, bytes]:
+def collect_artifacts(
+    root: Path,
+    *,
+    max_bytes: int,
+    max_aggregate_bytes: int,
+    max_entries: int,
+    aggregate_exempt_path: str,
+) -> dict[str, bytes]:
     """Read every regular file under ``root`` into a path -> bytes mapping.
 
     The trial's own output is the least trustworthy directory this project
@@ -63,15 +70,35 @@ def collect_artifacts(root: Path, *, max_bytes: int) -> dict[str, bytes]:
     Paths are returned relative to ``root``, POSIX-style and sorted, so two
     runs over identical content produce identical mappings.
     """
+    paths: list[Path] = []
+    for path in root.rglob("*"):
+        paths.append(path)
+        if len(paths) > max_entries:
+            raise ValueError("trial submission exceeds the filesystem entry limit")
+
     artifacts: dict[str, bytes] = {}
-    for path in sorted(root.rglob("*")):
+    aggregate_bytes = 0
+    for path in sorted(paths):
         if path.is_symlink() or not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
         if path.lstat().st_size > max_bytes:
             raise ValueError(f"trial artifact exceeds the byte limit: {relative}")
         safe_relative_path(relative)
-        artifacts[relative] = path.read_bytes()
+        remaining = (
+            max_bytes
+            if relative == aggregate_exempt_path
+            else min(max_bytes, max_aggregate_bytes - aggregate_bytes)
+        )
+        with path.open("rb") as artifact_file:
+            data = artifact_file.read(remaining + 1)
+        if len(data) > remaining:
+            if relative == aggregate_exempt_path or remaining == max_bytes:
+                raise ValueError(f"trial artifact exceeds the byte limit: {relative}")
+            raise ValueError("trial artifacts exceed the aggregate byte limit")
+        artifacts[relative] = data
+        if relative != aggregate_exempt_path:
+            aggregate_bytes += len(data)
     return artifacts
 
 

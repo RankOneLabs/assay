@@ -22,6 +22,7 @@ from assay_pier_bridge.protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
+    MAX_ARTIFACT_COUNT,
     EffectiveEnforcement,
     TrialResult,
 )
@@ -87,11 +88,12 @@ def _effective() -> EffectiveEnforcement:
 
 
 def test_artifact_ceilings_match_the_shared_fixture() -> None:
-    """``assay`` pins the same three values from the same file. Changing a
+    """``assay`` pins the same limits from the same file. Changing a
     ceiling on one side alone fails there, where the other copy lives."""
     budget = _fixture()["artifact_budget"]
     assert budget["max_artifact_bytes"] == MAX_ARTIFACT_BYTES
     assert budget["max_aggregate_artifact_bytes"] == MAX_AGGREGATE_ARTIFACT_BYTES
+    assert budget["max_artifact_count"] == MAX_ARTIFACT_COUNT
     assert budget["manifest_path"] == MANIFEST_PATH
 
 

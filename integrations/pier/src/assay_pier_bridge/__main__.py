@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 from typing import Final
 
-from assay_pier_bridge.provider import GuardedOpenRouterClient, GuardedRouteError
+from assay_pier_bridge.provider import GuardedOpenRouterClient, GuardedRouteError, RouteResponse
 
 WORKSPACE_INSTRUCTION: Final = Path("/workspace/instruction.md")
 SUBMISSION_OUTPUT: Final = Path("/submission/output")
@@ -45,17 +45,17 @@ def run_one_cell(
     system_prompt: str,
     api_key: str,
     submission_output: Path,
-) -> str:
+) -> RouteResponse:
     """Make exactly one guarded model call and write the submitted source.
 
-    Returns the submitted source. Raises ``GuardedRouteError`` on any
+    Returns the validated route response. Raises ``GuardedRouteError`` on any
     protocol violation — the caller must not retry or fall back.
     """
     with GuardedOpenRouterClient(api_key=api_key) as client:
         response = client.complete(system_prompt=system_prompt, user_message=instruction)
     submission_output.parent.mkdir(parents=True, exist_ok=True)
     submission_output.write_text(response.submission.source, encoding="utf-8")
-    return response.submission.source
+    return response
 
 
 def main() -> int:

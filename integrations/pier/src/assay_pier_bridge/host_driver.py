@@ -20,21 +20,26 @@ thing, they cover different halves of the eventual design.
 
 from __future__ import annotations
 
-import hashlib
 import shutil
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 
 from assay_pier_bridge.__main__ import FALLBACK_SYSTEM_PROMPT, run_one_cell
+from assay_pier_bridge.identity import digest_bytes, package_digest
 from assay_pier_bridge.paths import collect_artifacts
 from assay_pier_bridge.protocol import (
+    MANIFEST_PATH,
+    MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
+    MAX_SUBMISSION_ENTRIES,
     EffectiveEnforcement,
     TrialLimits,
     TrialRequest,
     TrialResult,
+    TrialUsage,
 )
 
 INSTRUCTION_PATH = "instruction.md"
@@ -48,8 +53,14 @@ def _default_system_prompt() -> str:
     return FALLBACK_SYSTEM_PROMPT
 
 
-def _digest(data: bytes) -> str:
-    return f"sha256:{hashlib.sha256(data).hexdigest()}"
+def _validated_snapshot(request: TrialRequest, package: Mapping[str, str]) -> Mapping[str, str]:
+    snapshot = dict(package)
+    instruction = snapshot.get(INSTRUCTION_PATH)
+    if not isinstance(instruction, str) or not instruction.strip():
+        raise ValueError(f"sealed package is missing a nonblank {INSTRUCTION_PATH!r}")
+    if package_digest(snapshot) != request.package_digest:
+        raise ValueError("sealed package does not match the authorized package_digest")
+    return MappingProxyType(snapshot)
 
 
 def _host_enforcement(limits: TrialLimits) -> EffectiveEnforcement:
@@ -83,11 +94,12 @@ class GuardedCompletionTrialHandle:
     submission_dir: Path
     system_prompt: str = field(default_factory=_default_system_prompt)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "package", _validated_snapshot(self.request, self.package))
+
     def run(self) -> TrialResult:
-        instruction = self.package.get(INSTRUCTION_PATH)
-        if not instruction:
-            raise ValueError(f"sealed package is missing {INSTRUCTION_PATH!r}")
-        source = run_one_cell(
+        instruction = self.package[INSTRUCTION_PATH]
+        response = run_one_cell(
             instruction=instruction,
             system_prompt=self.system_prompt,
             api_key=self.api_key,
@@ -97,11 +109,26 @@ class GuardedCompletionTrialHandle:
         # directly, so this client's artifact paths are keyed exactly like
         # ``DockerTrialHandle``'s: both read back the same /submission
         # contract, and a consumer must not have to know which one ran.
-        artifacts = collect_artifacts(self.submission_dir, max_bytes=MAX_ARTIFACT_BYTES)
+        artifacts = collect_artifacts(
+            self.submission_dir,
+            max_bytes=MAX_ARTIFACT_BYTES,
+            max_aggregate_bytes=MAX_AGGREGATE_ARTIFACT_BYTES,
+            max_entries=MAX_SUBMISSION_ENTRIES,
+            aggregate_exempt_path=MANIFEST_PATH,
+        )
+        output = artifacts.get("output")
+        if output is None:
+            raise RuntimeError("guarded route wrote no collectable submission")
         return TrialResult(
             cell_id=self.request.cell_id,
             status="succeeded",
-            submission_ref=_digest(source.encode("utf-8")),
+            submission_ref=digest_bytes(output),
+            usage=TrialUsage(
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                cost_usd=response.usage.cost_usd,
+                requests=1,
+            ),
             effective=self.effective_enforcement(),
             artifacts=artifacts,
         )
@@ -124,11 +151,12 @@ class GuardedCompletionTrialClient:
     system_prompt: str = field(default_factory=_default_system_prompt)
 
     def create(self, request: TrialRequest) -> GuardedCompletionTrialHandle:
+        package = _validated_snapshot(request, self.package)
         submission_dir = self.runs_root / f"guarded-{uuid.uuid4().hex[:12]}"
         submission_dir.mkdir(parents=True, exist_ok=True)
         return GuardedCompletionTrialHandle(
             request=request,
-            package=self.package,
+            package=package,
             api_key=self.api_key,
             submission_dir=submission_dir,
             system_prompt=self.system_prompt,

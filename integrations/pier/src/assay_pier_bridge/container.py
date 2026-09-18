@@ -11,7 +11,7 @@ built from an already-locked image.
 
 from __future__ import annotations
 
-import hashlib
+import contextlib
 import json
 import os
 import re
@@ -24,9 +24,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from assay_pier_bridge.identity import digest_bytes as _digest
+from assay_pier_bridge.identity import package_digest as package_digest
 from assay_pier_bridge.paths import collect_artifacts, materialize_under, safe_relative_path
 from assay_pier_bridge.protocol import (
+    MANIFEST_PATH,
+    MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
+    MAX_SUBMISSION_ENTRIES,
     EffectiveEnforcement,
     TrialLimits,
     TrialRequest,
@@ -63,39 +68,6 @@ def docker_available() -> bool:
 
 def _run(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
-
-
-def _digest(data: bytes) -> str:
-    return f"sha256:{hashlib.sha256(data).hexdigest()}"
-
-
-def package_digest(package: Mapping[str, str]) -> str:
-    """The bridge's identity check for a materialized package's content.
-
-    A local reimplementation of ``assay.pier_packaging.manifest_digest``,
-    not an independent algorithm: this project has no import edge back onto
-    ``assay`` (see README.md), but ``DockerTrialHandle`` rejects any request
-    whose ``package_digest`` does not match what it computes here, so a
-    genuinely independent algorithm would reject every real dispatch. The
-    two implementations are pinned to the same expected outputs by
-    ``tests/fixtures/pier_wire_contract.json`` in the root project, asserted
-    from both test suites.
-
-    Entries are hashed as ``[path, sha256(content)]`` pairs rather than as
-    raw content so the digest never buffers the whole package, and they are
-    sorted because the JSON encoding preserves array order.
-    """
-    entries = [
-        [path, _digest(content.encode("utf-8"))] for path, content in sorted(package.items())
-    ]
-    return _digest(_canonical_json(entries))
-
-
-def _canonical_json(value: object) -> bytes:
-    """``assay.canonical.canonical_json``'s encoding, mirrored locally."""
-    return json.dumps(
-        value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _mount_paths(package: Mapping[str, str]) -> dict[str, str]:
@@ -146,6 +118,27 @@ class ContainerObservation:
     memory_limit_mb: int
     pids_limit: int
     storage_limit_mb: int
+
+
+def _usable_observation(observation: ContainerObservation | None) -> ContainerObservation | None:
+    """Reject partial/malformed observations before they reach the strict result model."""
+    if observation is None:
+        return None
+    positive_ints = (
+        observation.memory_limit_mb,
+        observation.pids_limit,
+        observation.storage_limit_mb,
+    )
+    if (
+        isinstance(observation.cpu_limit, bool)
+        or not isinstance(observation.cpu_limit, (int, float))
+        or observation.cpu_limit <= 0
+        or any(type(value) is not int or value <= 0 for value in positive_ints)
+        or not isinstance(observation.network_mode, str)
+        or not isinstance(observation.workspace_mount_read_only, (bool, type(None)))
+    ):
+        return None
+    return observation
 
 
 def _tmpfs_storage_limit_mb(host_config: Mapping[str, object]) -> int:
@@ -329,21 +322,43 @@ class DockerTrialHandle:
             or not submission_file.is_file()
         ):
             raise RuntimeError("trial container exited nonzero or wrote no submission")
-        submission_source = submission_file.read_text(encoding="utf-8")
         # Read the submission mount before teardown removes it: these bytes
         # exist nowhere else, and the caller cannot go back for them.
-        artifacts = collect_artifacts(self._submission, max_bytes=MAX_ARTIFACT_BYTES)
+        artifacts = collect_artifacts(
+            self._submission,
+            max_bytes=MAX_ARTIFACT_BYTES,
+            max_aggregate_bytes=MAX_AGGREGATE_ARTIFACT_BYTES,
+            max_entries=MAX_SUBMISSION_ENTRIES,
+            aggregate_exempt_path=MANIFEST_PATH,
+        )
+        submission = artifacts.get("output")
+        if submission is None:
+            raise RuntimeError("trial container wrote no collectable submission")
+        # Preserve the existing source-text contract, but validate only after
+        # the byte read has been bounded and hash the exact collected bytes.
+        submission.decode("utf-8", errors="strict")
         return TrialResult(
             cell_id=self._request.cell_id,
             status="succeeded",
-            submission_ref=_digest(submission_source.encode("utf-8")),
+            submission_ref=_digest(submission),
             effective=self.effective_enforcement(),
             artifacts=artifacts,
         )
 
     def effective_enforcement(self) -> EffectiveEnforcement:
-        observation = _inspect(self._name)
-        count = _container_count(self._name)
+        try:
+            observation = _usable_observation(_inspect(self._name))
+        except Exception:
+            observation = None
+        try:
+            count = _container_count(self._name)
+        except Exception:
+            count = None
+        return self._effective_enforcement(observation, count)
+
+    def _effective_enforcement(
+        self, observation: ContainerObservation | None, count: int | None
+    ) -> EffectiveEnforcement:
         containers_remaining = count if count is not None else 1
         limits = self._request.limits
         return EffectiveEnforcement(
@@ -367,30 +382,18 @@ class DockerTrialHandle:
     def teardown(self) -> EffectiveEnforcement:
         # Observe before destroying: once removed, docker inspect can no
         # longer report what the container actually enforced.
-        observation = _inspect(self._name)
-        removed = _force_remove(self._name)
+        try:
+            observation = _usable_observation(_inspect(self._name))
+        except Exception:
+            observation = None
+        with contextlib.suppress(Exception):
+            _force_remove(self._name)
         shutil.rmtree(self._workdir, ignore_errors=True)
-        count = _container_count(self._name)
-        confirmed_removed = removed and count == 0
-        containers_remaining = 0 if confirmed_removed else (count if count is not None else 1)
-        limits = self._request.limits
-        return EffectiveEnforcement(
-            uid=_UID,
-            gid=_GID,
-            workspace_read_only=bool(observation.workspace_mount_read_only)
-            if observation and observation.workspace_mount_read_only is not None
-            else False,
-            submission_mount="/submission",
-            scratch_mount="/scratch",
-            network_policy=_network_policy_label(observation.network_mode if observation else None),
-            cpu_limit=observation.cpu_limit if observation else limits.cpu,
-            memory_limit_mb=observation.memory_limit_mb if observation else limits.memory_mb,
-            pids_limit=observation.pids_limit if observation else limits.pids,
-            storage_limit_mb=observation.storage_limit_mb if observation else limits.storage_mb,
-            containers_remaining=containers_remaining,
-            child_processes_remaining=0,
-            teardown_completed=containers_remaining == 0,
-        )
+        try:
+            count = _container_count(self._name)
+        except Exception:
+            count = None
+        return self._effective_enforcement(observation, count)
 
 
 class DockerTrialClient:

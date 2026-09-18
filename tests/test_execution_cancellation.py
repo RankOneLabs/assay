@@ -144,6 +144,106 @@ async def test_self_cancelled_worker_propagates_instead_of_reporting_success(
     assert manifest["missing_coordinates"]
 
 
+async def test_self_cancelled_worker_drains_a_blocked_peer_without_watchdog_cancellation(
+    tmp_path: Any,
+) -> None:
+    fixture = execution_fixture(
+        ObjectStore(tmp_path), subject_ids=("ok",), worker_repeats=1, concurrency=2
+    )
+    arguments = fixture.arguments
+    blocked_started = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release = asyncio.Event()
+
+    class CoordinatedWorker(FakeWorker):
+        async def run(self, *, input_value: Any, arm_id: str) -> WorkerSuccess:
+            if arm_id == "reference":
+                blocked_started.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    cleanup_started.set()
+                    raise
+                raise AssertionError("blocked peer was released before cancellation")
+            await blocked_started.wait()
+            raise asyncio.CancelledError("self-cancelled worker")
+
+    arguments["workers"] = {arm.id: CoordinatedWorker() for arm in fixture.snapshot.arms}
+    running = asyncio.create_task(execute_plan(**arguments))
+    try:
+        done, _pending = await asyncio.wait({running}, timeout=1)
+        assert running in done, "self-cancellation must finish without the watchdog cancelling it"
+        assert cleanup_started.is_set()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+    finally:
+        release.set()
+        if not running.done():
+            running.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await running
+
+
+async def test_self_cancelled_worker_records_cleanup_timeout_for_a_resistant_peer(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(execution_module, "CANCELLATION_CLEANUP_TIMEOUT", 0.05)
+    fixture = execution_fixture(
+        ObjectStore(tmp_path), subject_ids=("ok",), worker_repeats=1, concurrency=2
+    )
+    arguments = fixture.arguments
+    blocked_started = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    class ResistantWorker(FakeWorker):
+        async def run(self, *, input_value: Any, arm_id: str) -> WorkerSuccess:
+            if arm_id == "candidate":
+                await blocked_started.wait()
+                raise asyncio.CancelledError("self-cancelled worker")
+            blocked_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cleanup_started.set()
+                await release.wait()
+                raise
+            finally:
+                finished.set()
+
+    arguments["workers"] = {arm.id: ResistantWorker() for arm in fixture.snapshot.arms}
+    running = asyncio.create_task(execute_plan(**arguments))
+    try:
+        done, _pending = await asyncio.wait({running}, timeout=1)
+        assert running in done, "cleanup timeout must bound self-cancellation drainage"
+        assert cleanup_started.is_set()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+
+        manifests = []
+        for path in fixture.store.objects.iterdir():
+            with contextlib.suppress(OSError, ValueError):
+                value = json.loads(path.read_bytes())
+                if (
+                    isinstance(value, dict)
+                    and value.get("schema_version") == "assay-run-manifest/0.1.0"
+                ):
+                    manifests.append(value)
+        assert len(manifests) == 1
+        interruption_ref = manifests[0]["interruption_ref"]
+        assert interruption_ref is not None
+        interruption = json.loads(fixture.store.read_bytes(interruption_ref))
+        assert interruption["reason"] == "cleanup_timeout"
+    finally:
+        if not running.done():
+            running.cancel()
+        release.set()
+        await asyncio.wait_for(finished.wait(), timeout=1)
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+
 async def test_no_later_cell_starts_after_typed_admission_halt(tmp_path: Any) -> None:
     fixture = execution_fixture(
         ObjectStore(tmp_path), subject_ids=("ok", "fails"), worker_repeats=1, concurrency=1
