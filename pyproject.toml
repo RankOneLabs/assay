@@ -56,3 +56,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
+
+[[tool.mypy.overrides]]
+module = ["msgspec", "typesafe_sdk"]
+ignore_missing_imports = true
