@@ -31,7 +31,15 @@ SUBMISSION_CONTRACT = (
 
 
 def render_instruction(task: str) -> str:
-    """Deterministic instruction text: no arm id, digest, or object metadata."""
+    """Deterministic instruction text: no arm id, digest, or object metadata.
+
+    The workspace sentence describes the layout the model actually sees, not
+    the package's own path scheme. ``WORKSPACE_PREFIX`` namespaces repository
+    entries *inside the package*; the bridge strips it when materializing the
+    mount, so the repository lands beside this instruction rather than in a
+    ``workspace/`` subdirectory. Naming the prefix here sent the model
+    looking in a directory that does not exist in the container.
+    """
     stripped = task.strip()
     if not stripped:
         raise ValueError("task instruction must be nonblank")
@@ -39,7 +47,8 @@ def render_instruction(task: str) -> str:
         "# Task\n\n"
         f"{stripped}\n\n"
         "## Workspace\n\n"
-        f"Your repository is mounted read-only under `{WORKSPACE_PREFIX}/`. "
+        "Your repository is mounted read-only at the workspace root: the files "
+        "beside this instruction are the repository itself. "
         f"See `{SUBMISSION_CONTRACT_PATH}` for how to submit your answer.\n"
     )
 
@@ -138,7 +147,8 @@ def gate_package(
     the package was rebuilt or tampered with between build and dispatch), a
     duplicate path, a path outside the fixed allowlist or containing a
     traversal segment (the workspace prefix plus the instruction and
-    submission contract), or any forbidden substring appearing in file
+    submission contract), two entries that collide once the workspace prefix
+    is stripped for the mount, or any forbidden substring appearing in file
     content — a sentinel audit hook a caller can use to check content
     against hidden tests, other arms, evaluator fixtures, or object-store
     metadata it holds out of band.
@@ -150,12 +160,30 @@ def gate_package(
     if actual_digest != package.manifest_digest or actual_digest != expected_digest:
         raise ValueError("package digest does not match the digest being authorized")
     prefix = f"{WORKSPACE_PREFIX}/"
+    # The bridge mounts the package with the workspace prefix stripped, so
+    # the repository sits beside the instruction rather than under it. That
+    # projection is only safe while it is injective: a repository that
+    # happens to contain a file named ``instruction.md`` would otherwise
+    # arrive at the same mounted path as the sealed instruction, and the
+    # loser is decided by nothing more principled than iteration order. The
+    # repository file wins, which means an arm's own content can replace the
+    # task the model is given -- the one substitution this whole sealed
+    # boundary exists to prevent. Unmountable is the safe answer; there is no
+    # ordering that makes the result unambiguous.
+    mounted: dict[str, str] = {}
     for path, content in package.files:
         if path not in _ALLOWED_NON_REPOSITORY_PATHS and not path.startswith(prefix):
             raise ValueError(f"package entry is outside the allowlist: {path}")
         parts = PurePosixPath(path).parts
         if PurePosixPath(path).is_absolute() or any(part in {"", ".", ".."} for part in parts):
             raise ValueError(f"package entry has an unsafe path: {path}")
+        relative = path[len(prefix) :] if path.startswith(prefix) else path
+        if relative in mounted:
+            raise ValueError(
+                f"package entries {mounted[relative]!r} and {path!r} collide at the "
+                f"mounted path {relative!r}"
+            )
+        mounted[relative] = path
         for sentinel in forbidden_substrings:
             if sentinel in content:
                 raise ValueError(f"package entry carries a forbidden sentinel: {path}")

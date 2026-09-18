@@ -206,7 +206,7 @@ def test_verify_artifact_bytes_rejects_non_utf8_when_declared_utf8() -> None:
 
 def test_manifest_reports_required_success_kinds() -> None:
     exchange = bind_exchange(coordinate=_coordinate(), binding=_binding())
-    kinds = ["raw_trajectory", "candidate", "result", "configuration", "manifest"]
+    kinds = ["raw_trajectory", "candidate", "result", "configuration"]
     entries = tuple(
         _entry(f"{kind}.json", f'{{"kind": "{kind}"}}'.encode(), kind=kind) for kind in kinds
     )

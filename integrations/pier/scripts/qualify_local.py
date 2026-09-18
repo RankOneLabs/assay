@@ -502,13 +502,16 @@ def _artifact_entries_and_bytes(
     candidate = b"x = 1\n"
     result = json.dumps({"exit_status": "Submitted"}).encode()
     configuration = json.dumps({"config": True}).encode()
-    manifest_evidence = json.dumps({"kind": "manifest"}).encode()
+    # No entry for the manifest itself: it is the document that binds these
+    # artifacts, not one of them. (This probe used to declare a decoy
+    # "manifest-evidence.json" to satisfy a required "manifest" kind that
+    # nothing could honestly satisfy -- the entry would have had to carry the
+    # checksum of the bytes carrying that checksum.)
     specs: tuple[tuple[str, ArtifactKind, bytes], ...] = (
         ("raw_trajectory.json", "raw_trajectory", raw_trajectory),
         ("candidate.py", "candidate", candidate),
         ("result.json", "result", result),
         ("configuration.json", "configuration", configuration),
-        ("manifest-evidence.json", "manifest", manifest_evidence),
     )
     entries = tuple(
         ArtifactEntry(

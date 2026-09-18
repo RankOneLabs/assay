@@ -99,14 +99,12 @@ class _RehearsalHandle:
             "candidate.py": b"def solve():\n    return 42\n",
             "result.json": b'{"exit_status": "Submitted"}',
             "configuration.json": b'{"model": "anthropic/claude-3-haiku"}',
-            "manifest_marker.json": b'{"manifest": "committed"}',
         }
         kinds: dict[str, Any] = {
             "raw_trajectory.json": "raw_trajectory",
             "candidate.py": "candidate",
             "result.json": "result",
             "configuration.json": "configuration",
-            "manifest_marker.json": "manifest",
         }
         entries = tuple(
             ArtifactEntry(

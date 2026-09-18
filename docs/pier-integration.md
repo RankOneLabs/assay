@@ -295,11 +295,19 @@ cases to special-case away in a report:
   succeeded, so a bridge claiming success with a failing embedded exit status
   is still a failure.
 - **Missing or invalid required artifact evidence.** `has_required_success_evidence`
-  and `verify_artifact_bytes` gate every success on all five required kinds
-  (`raw_trajectory`, `candidate`, `result`, `configuration`, `manifest`) being
-  present, correctly sized, checksum-matched, and (where declared) valid
-  UTF-8/JSON -- a plausible-looking manifest with one wrong byte is a
-  `ManifestRejected` failure, not a warning.
+  and `verify_artifact_bytes` gate every success on all four required kinds
+  (`raw_trajectory`, `candidate`, `result`, `configuration`) being present,
+  correctly sized, checksum-matched, and (where declared) valid UTF-8/JSON --
+  a plausible-looking manifest with one wrong byte is a `ManifestRejected`
+  failure, not a warning. The manifest is what binds those kinds and is never
+  one of them: an entry for `manifest.json` would have to declare the checksum
+  of the bytes carrying that checksum, so `ArtifactEntry` reserves the path.
+- **Declared evidence that was never published.** Verifying the manifest and
+  publishing the bytes it declares are separate steps, and the artifact byte
+  ceilings apply to the second. `_settle` fails the cell with
+  `UnpublishedEvidence` if any required kind resolves to no ref, rather than
+  emitting a `WorkerSuccess` whose `result_ref`/`candidate_ref` are null --
+  which downstream cannot distinguish from a trial that produced nothing.
 - **Uncertain billing.** `Accounting(coverage="uncertain")` versus `"measured"`
   is the distinction between "we don't know what this cost" and "we observed
   the cost" -- never collapse the former into a reported zero.

@@ -49,24 +49,24 @@ def _binding(package_digest: str) -> RuntimeBinding:
 def _manifest_and_artifacts(exchange: PierExchange) -> tuple[ArtifactManifest, dict[str, bytes]]:
     """Build a manifest plus every declared artifact's bytes.
 
-    The "manifest" kind entry points at a small, independent marker file --
-    not the wire ``ArtifactManifest`` object's own serialized bytes, which
-    would make the manifest describe itself (a checksum-of-itself fixed
-    point with no stable solution).
+    There is no entry for the manifest itself. ``manifest.json`` is the
+    binding document, not a piece of the evidence it binds -- an entry for
+    it would have to declare the checksum of the bytes containing that
+    checksum, which is why ``ArtifactEntry`` now rejects ``MANIFEST_PATH``
+    outright rather than leaving each fixture author to discover the fixed
+    point and invent a decoy marker file.
     """
     contents = {
         "raw_trajectory.json": b'{"steps": []}',
         "candidate.txt": b"final answer",
         "result.json": b'{"passed": true, "exit_status": "Submitted"}',
         "configuration.json": b'{"model": "x"}',
-        "manifest_marker.json": b'{"manifest": "committed"}',
     }
     kinds = {
         "raw_trajectory.json": "raw_trajectory",
         "candidate.txt": "candidate",
         "result.json": "result",
         "configuration.json": "configuration",
-        "manifest_marker.json": "manifest",
     }
     entries = tuple(
         ArtifactEntry(

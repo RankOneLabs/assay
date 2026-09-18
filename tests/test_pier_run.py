@@ -77,14 +77,12 @@ def _manifest_and_artifacts(exchange: PierExchange) -> tuple[ArtifactManifest, d
         "candidate.txt": b"def solve():\n    return 42\n",
         "result.json": b'{"passed": true, "exit_status": "Submitted"}',
         "configuration.json": b'{"model": "anthropic/claude-3-haiku"}',
-        "manifest_marker.json": b'{"manifest": "committed"}',
     }
     kinds = {
         "raw_trajectory.json": "raw_trajectory",
         "candidate.txt": "candidate",
         "result.json": "result",
         "configuration.json": "configuration",
-        "manifest_marker.json": "manifest",
     }
     entries = tuple(
         ArtifactEntry(
