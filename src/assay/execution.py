@@ -621,19 +621,26 @@ async def execute_plan(
             # internal waiter is cancelled immediately instead, so our own
             # cancellation reaches us right away and _drain gets a genuine
             # chance to bound however long the children take to react to it.
-            await asyncio.wait(tasks)
-            # asyncio.wait() never raises for a child that finishes cancelled
-            # or errored on its own -- e.g. a worker's internal timeout
-            # self-cancelling without any external task.cancel(). Surface
-            # that here so it still reaches the drain/interruption path
-            # below instead of letting execute_plan silently report success
-            # with the unfinished work dropped.
-            for task in tasks:
-                if task.cancelled():
+            pending = set(tasks)
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                # Retrieve every exception in the completed batch before
+                # propagating one of them. Otherwise a second child that
+                # failed concurrently could produce an unobserved-task
+                # warning while the first failure drains the remaining pool.
+                cancelled = False
+                first_error: BaseException | None = None
+                for task in done:
+                    if task.cancelled():
+                        cancelled = True
+                        continue
+                    error = task.exception()
+                    if error is not None and first_error is None:
+                        first_error = error
+                if cancelled:
                     raise asyncio.CancelledError()
-                error = task.exception()
-                if error is not None:
-                    raise error
+                if first_error is not None:
+                    raise first_error
         except BaseException:
             record = await _drain(tasks)
             if record is not None and interruption is None:

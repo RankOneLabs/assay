@@ -27,6 +27,7 @@ from assay.models import CellCoordinate, NonEmpty, Sha256Ref, WireModel
 
 MAX_ARTIFACT_BYTES = 8_000_000
 MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
+MAX_ARTIFACT_COUNT = 1_024
 
 ArtifactKind = Literal["raw_trajectory", "candidate", "result", "configuration", "transcript"]
 
@@ -166,6 +167,8 @@ class ArtifactManifest(WireModel):
 
     @model_validator(mode="after")
     def bounded_and_unique(self) -> ArtifactManifest:
+        if len(self.entries) > MAX_ARTIFACT_COUNT:
+            raise ValueError("artifact manifest exceeds the artifact count limit")
         paths = [entry.path for entry in self.entries]
         if len(set(paths)) != len(paths):
             raise ValueError("duplicate artifact path in manifest")
@@ -302,6 +305,7 @@ __all__ = [
     "MANIFEST_PATH",
     "MAX_AGGREGATE_ARTIFACT_BYTES",
     "MAX_ARTIFACT_BYTES",
+    "MAX_ARTIFACT_COUNT",
     "REQUIRED_SUCCESS_KINDS",
     "SUCCEEDED_EXIT_STATUS",
     "ArtifactEntry",

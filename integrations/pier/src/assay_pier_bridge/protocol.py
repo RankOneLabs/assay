@@ -31,6 +31,10 @@ TrialStatus = Literal["succeeded", "failed", "timeout", "cancelled"]
 # unbounded read into the caller's memory first.
 MAX_ARTIFACT_BYTES = 8_000_000
 MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
+# This also bounds filesystem-entry enumeration in ``collect_artifacts``.
+# A byte-only budget would still permit an untrusted submission mount to
+# exhaust host memory with an arbitrary number of empty files/directories.
+MAX_ARTIFACT_COUNT = 1_024
 
 # Mirrors assay.pier_protocol.MANIFEST_PATH: the reserved path of the document
 # that binds the artifacts, which is never one of them. Both projects exempt
@@ -165,6 +169,8 @@ class TrialResult(ClosedModel):
         hand back is still bounded, just by ``MAX_AGGREGATE_ARTIFACT_BYTES +
         MAX_ARTIFACT_BYTES``.
         """
+        if len(self.artifacts) > MAX_ARTIFACT_COUNT:
+            raise ValueError("artifacts exceed the artifact count limit")
         total = 0
         for path, data in self.artifacts.items():
             safe_relative_path(path)

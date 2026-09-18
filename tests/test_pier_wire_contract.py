@@ -26,6 +26,7 @@ from assay.pier_protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
+    MAX_ARTIFACT_COUNT,
     trial_name_for,
 )
 from assay.store import ObjectStore
@@ -80,11 +81,12 @@ def test_fixture_trial_names_are_distinct() -> None:
 
 
 def test_artifact_ceilings_match_the_shared_fixture() -> None:
-    """The bridge pins the same three values from the same file. Changing a
+    """The bridge pins the same limits from the same file. Changing a
     ceiling on one side alone fails there, where the other copy lives."""
     budget = _fixture()["artifact_budget"]
     assert budget["max_artifact_bytes"] == MAX_ARTIFACT_BYTES
     assert budget["max_aggregate_artifact_bytes"] == MAX_AGGREGATE_ARTIFACT_BYTES
+    assert budget["max_artifact_count"] == MAX_ARTIFACT_COUNT
     assert budget["manifest_path"] == MANIFEST_PATH
 
 
@@ -115,3 +117,9 @@ def test_the_fixture_budget_cases_cover_both_verdicts() -> None:
     that had no ceilings at all."""
     verdicts = {case["within_budget"] for case in _fixture()["artifact_budget"]["cases"]}
     assert verdicts == {True, False}
+
+
+def test_publication_refuses_an_unbounded_number_of_empty_artifacts(tmp_path: Path) -> None:
+    artifacts = {f"empty-{index}": b"" for index in range(MAX_ARTIFACT_COUNT + 1)}
+    refs = _publish_available_artifacts(ObjectStore(tmp_path / ".assay"), artifacts)
+    assert refs == {}
