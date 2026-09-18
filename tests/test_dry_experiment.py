@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import paa_contracts
 import pytest
@@ -601,3 +602,41 @@ async def test_prepare_and_run_full_offline_acceptance(tmp_path: Path) -> None:
     assert correctness["comparisons"][0]["candidate_distribution"] == {"correct": 12}
     assert correctness["comparisons"][0]["p_value"] == 1.0
     assert correctness["comparisons"][0]["decision"] == "no_detected_difference"
+
+
+async def test_run_dry_experiment_reports_a_missing_legacy_extra_before_reading_jig_metadata(
+    tmp_path: Path,
+) -> None:
+    """A Jig-free install must see the actionable assay[legacy] error, not a raw
+    PackageNotFoundError from installed_jig_revision's importlib.metadata lookup.
+    """
+    store = ObjectStore(tmp_path / "store")
+    factory = FakeFactory()
+    runner = PassingRunner()
+    prepared = prepare_dry_experiment(
+        store,
+        factory=factory,
+        settings=haiku_dry_settings(),
+        schemas=contracts(),
+        runner=runner,
+    )
+    assert isinstance(prepared, DryExperimentPrepared), prepared
+    with (
+        patch(
+            "assay.investigations.dry_experiment._import_legacy_worker_stack",
+            side_effect=ModuleNotFoundError("assay[legacy]"),
+        ),
+        patch(
+            "assay.investigations.dry_experiment.installed_jig_revision",
+            side_effect=AssertionError("installed_jig_revision must not run first"),
+        ),
+    ):
+        result = await run_dry_experiment(
+            store,
+            plan_ref=prepared.plan_ref,
+            authorization=prepared.plan_ref,
+            factory=factory,
+            runner=runner,
+        )
+    assert isinstance(result, DryExperimentFailed)
+    assert result.error_type == "ModuleNotFoundError" and "assay[legacy]" in result.message

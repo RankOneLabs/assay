@@ -9,9 +9,18 @@ from pathlib import Path
 
 import pytest
 from review_fixture import ReviewFixture, materialize_review_fixture
+from test_execution import execution_fixture
 
+from assay.models import RuntimeProfile
+from assay.planning import compile_plan_v2
 from assay.review import index as review_index
-from assay.review.index import CACHE_VERSION, IndexedOpaque, build_index, classify_object
+from assay.review.index import (
+    CACHE_VERSION,
+    IndexedOpaque,
+    IndexedPlan,
+    build_index,
+    classify_object,
+)
 from assay.review.model import ReadIssue
 from assay.store import ObjectRef, ObjectStore
 from assay.verify import verify_bundle
@@ -226,7 +235,7 @@ def test_indexing_bundle_preserves_verification(review_fixture: ReviewFixture) -
     build_index(store)
     build_index(store, refresh=True)
     assert set(store.objects.iterdir()) == before
-    assert verify_bundle(store, review_fixture.manifest_ref) == ()
+    assert [f.code for f in verify_bundle(store, review_fixture.manifest_ref)] == ["incomplete_run"]
 
 
 def test_loose_accounting_requires_unique_schema_valid_attribution(
@@ -277,6 +286,40 @@ def test_loose_accounting_requires_unique_schema_valid_attribution(
         issue.ref == invalid_ref and issue.code == "record_schema_validation"
         for issue in run.issues
     )
+
+
+def test_uncertain_accounting_is_accepted_and_never_reads_as_measured_zero(
+    review_fixture: ReviewFixture,
+    tmp_path: Path,
+) -> None:
+    """An attempt that failed before usage/price was ever observed must index
+
+    as "uncertain" coverage with no amount -- not as an invalid_accounting
+    issue, and never as a silently-summed zero cost.
+    """
+    store = ObjectStore(tmp_path / "uncertain-index")
+    shutil.copytree(review_fixture.bundle.root, store.root)
+    manifest_dict = review_fixture.result.manifest.model_dump(mode="json")
+    attempt, original_ref = next(iter(manifest_dict["operating_records"].items()))
+    record = json.loads(store.read_bytes(original_ref))
+    for position, source in enumerate(record["source_references"]):
+        detail = json.loads(store.read_bytes(source))
+        if isinstance(detail, dict) and "coverage" in detail and "attempt" in detail:
+            detail["coverage"] = "uncertain"
+            record["source_references"][position] = str(store.publish_json(detail))
+            break
+    record["price"] = None
+    (store.objects / original_ref.removeprefix("sha256:")).unlink()
+    uncertain_ref = str(store.publish_json(record))
+    manifest_dict["operating_records"][attempt] = uncertain_ref
+    manifest_ref = str(store.publish_json(manifest_dict))
+
+    index = build_index(store, refresh=True)
+    run = next(r for r in index.runs if r.manifest_ref == manifest_ref)
+    assert uncertain_ref in run.operating_records
+    assert not any(issue.ref == uncertain_ref for issue in run.summary.cost.issues)
+    assert run.summary.cost.coverage_counts.get("uncertain") == 1
+    assert 0.0 not in run.summary.cost.amounts.values()
 
 
 def test_loose_cost_cannot_use_manifested_terminal_as_second_source(
@@ -336,7 +379,9 @@ def test_fixture_index_groups_manifest_and_reports(review_fixture: ReviewFixture
     manifested = [run for run in index.runs if run.manifest_ref == review_fixture.manifest_ref]
     assert len(manifested) == 1
     assert manifested[0].run_key == review_fixture.manifest_ref
-    assert manifested[0].status == "complete"
+    # The fixture's one injected execution failure leaves its own evaluation
+    # genuinely unavailable, so the manifest is honestly incomplete.
+    assert manifested[0].status == "incomplete"
     assert manifested[0].execution_records == {
         key: (ref,) for key, ref in sorted(review_fixture.result.manifest.execution_records.items())
     }
@@ -389,6 +434,54 @@ def test_unmanifested_records_group_by_run_and_full_plan_ref(tmp_path: Path) -> 
     assert any(issue.code == "missing_accounting" for issue in index.issues)
 
 
+def test_v2_plan_discovers_with_generic_runtime_identity_and_no_jig_revision(
+    tmp_path: Path,
+) -> None:
+    store = ObjectStore(tmp_path / "store")
+    study = execution_fixture(store, subject_ids=("ok",), worker_repeats=1).snapshot
+    snapshot_ref = str(store.publish_json(study.model_dump(mode="json")))
+    for declaration in (*study.arms, *study.evaluators):
+        store.publish_json(declaration.model_dump(mode="json"))
+    store.publish_json([arm.conditions for arm in sorted(study.arms, key=lambda item: item.id)])
+    runtime = RuntimeProfile(
+        id="pier", version="1.0.0", configuration_ref=str(store.publish_json({"pier": True}))
+    )
+    plan = compile_plan_v2(
+        study, snapshot_ref=snapshot_ref, worker_repeats=1, runtime=runtime
+    )
+    plan_ref = str(store.publish_json(plan.model_dump(mode="json")))
+
+    plan_item = classify_object(plan_ref, store.read_bytes(plan_ref))
+    assert isinstance(plan_item, IndexedPlan)
+    assert plan_item.value == plan
+
+    input_ref = "sha256:" + "3" * 64
+    outcome = {
+        "schema_version": "assay-execution-outcome/0.1.0",
+        "run_id": "pier-run",
+        "plan_ref": plan_ref,
+        "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:00:01Z",
+        "coordinate": {
+            "subject_id": "ok",
+            "arm_id": "reference",
+            "worker_repeat": 0,
+            "realization_ref": input_ref,
+        },
+        "status": "failed",
+        "input_ref": input_ref,
+        "error_type": "FixtureFailure",
+        "error_message": "expected",
+    }
+    store.publish_json(outcome)
+
+    index = build_index(store, refresh=True)
+    run = next(run for run in index.runs if run.plan_ref == plan_ref)
+    assert run.summary.runtime_id == "pier"
+    assert run.summary.runtime_version == "1.0.0"
+    assert run.summary.jig_revision is None
+
+
 def test_cache_is_disposable_and_stays_outside_object_namespace(
     review_fixture: ReviewFixture,
 ) -> None:
@@ -405,7 +498,9 @@ def test_cache_is_disposable_and_stays_outside_object_namespace(
     cache.write_text(json.dumps({"version": CACHE_VERSION + 1, "key": {}, "objects": []}))
     assert build_index(review_fixture.store) == first
     assert {path.name for path in review_fixture.store.objects.iterdir()} == before_entries
-    assert verify_bundle(review_fixture.bundle, review_fixture.manifest_ref) == ()
+    assert [f.code for f in verify_bundle(review_fixture.bundle, review_fixture.manifest_ref)] == [
+        "incomplete_run"
+    ]
 
 
 def test_warm_cache_hit_preserves_discovered_values(

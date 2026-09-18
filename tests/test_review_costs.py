@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 from review_fixture import ReviewFixture, materialize_review_fixture
 
+from assay.report_engine import summarize_operating
 from assay.review.index import build_index
 from assay.review.model import JSONObject
 from assay.review.read import ReviewReader, _persisted_cost
@@ -17,6 +18,39 @@ from assay.store import ObjectStore
 @pytest.fixture(scope="module")
 async def fixture(tmp_path_factory: pytest.TempPathFactory) -> ReviewFixture:
     return await materialize_review_fixture(tmp_path_factory.mktemp("cost-layer"))
+
+
+def test_uncertain_accounting_is_never_summed_or_confused_with_measured_zero(
+    tmp_path: Path,
+) -> None:
+    store = ObjectStore(tmp_path / "uncertain-store")
+    detail_ref = str(
+        store.publish_json(
+            {
+                "run_id": "run-1",
+                "attempt": "worker:s:a:w0",
+                "coverage": "uncertain",
+                "pricing_catalog_ref": "sha256:" + "b" * 64,
+                "pricing_assumptions": {},
+                "configuration_ref": "sha256:" + "c" * 64,
+            }
+        )
+    )
+    operating_ref = str(
+        store.publish_json(
+            {
+                "record_schema": "paa-operating-record/0.1.0-draft",
+                "record_id": "run-1:worker:s:a:w0",
+                "usage": {"input_tokens": 3},
+                "price": None,
+                "source_references": [detail_ref],
+            }
+        )
+    )
+    summary = summarize_operating(store, [operating_ref])
+    assert summary["coverage"] == "uncertain"
+    assert summary["amounts"] == {}
+    assert summary["attempts"] == 1
 
 
 def test_unavailable_accounting_never_becomes_zero(fixture: ReviewFixture) -> None:

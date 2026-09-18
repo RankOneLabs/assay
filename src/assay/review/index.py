@@ -26,12 +26,15 @@ from assay.models import (
     EvaluationFailure,
     ExecutionOutcome,
     ExecutionPlan,
+    ExecutionPlanV2,
     ReportConfig,
     RunManifest,
     StudySnapshot,
+    plan_runtime_identity,
 )
 from assay.references import object_edges
 from assay.review.model import (
+    CostCoverage,
     CostView,
     ExclusionView,
     JSONObject,
@@ -59,7 +62,7 @@ class IndexedManifest:
 class IndexedPlan:
     kind: Literal["plan"]
     ref: str
-    value: ExecutionPlan
+    value: ExecutionPlan | ExecutionPlanV2
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +221,7 @@ type IndexedObject = (
 _WIRE_SCHEMAS = {
     "assay-run-manifest/0.1.0",
     "assay-execution-plan/0.1.0",
+    "assay-execution-plan/0.2.0",
     "assay-study-snapshot/0.1.0",
     "assay-execution-outcome/0.1.0",
     "assay-evaluation-failure/0.1.0",
@@ -241,6 +245,8 @@ def _parse_wire(ref: str, schema: str, value: dict[str, Any]) -> IndexedObject |
             return IndexedManifest("manifest", ref, RunManifest.model_validate(value))
         if schema == "assay-execution-plan/0.1.0":
             return IndexedPlan("plan", ref, ExecutionPlan.model_validate(value))
+        if schema == "assay-execution-plan/0.2.0":
+            return IndexedPlan("plan", ref, ExecutionPlanV2.model_validate(value))
         if schema == "assay-study-snapshot/0.1.0":
             return IndexedSnapshot("snapshot", ref, StudySnapshot.model_validate(value))
         if schema == "assay-execution-outcome/0.1.0":
@@ -370,9 +376,9 @@ def _cost(
             named_terminals = set(sources) & set(terminal_refs.values())
             if named_terminals != {terminal_refs[attempt]}:
                 raise ValueError("accounting requires exactly one terminal source")
-            if coverage not in ("measured", "estimated", "mixed", "unavailable"):
+            if coverage not in ("measured", "estimated", "mixed", "unavailable", "uncertain"):
                 raise ValueError("invalid accounting coverage")
-            if (price is None) != (coverage == "unavailable"):
+            if (price is None) != (coverage in ("unavailable", "uncertain")):
                 raise ValueError("accounting price and coverage disagree")
             amount = 0.0
             currency: str | None = None
@@ -428,14 +434,14 @@ def _cost(
         if attempt not in accounted
     )
     observed = set(counts)
-    coverage_value: Literal["measured", "estimated", "unavailable", "mixed"]
+    coverage_value: CostCoverage
     if not observed:
         coverage_value = "unavailable"
     elif len(observed) > 1:
         coverage_value = "mixed"
     else:
         only = next(iter(observed))
-        coverage_value = cast(Literal["measured", "estimated", "unavailable", "mixed"], only)
+        coverage_value = cast(CostCoverage, only)
     missing = len(terminal_refs) - attempts
     return CostView(
         coverage_value,
@@ -516,7 +522,7 @@ def _maps(
 def _context(
     plan_ref: str,
     by_ref: dict[str, IndexedObject],
-) -> tuple[ExecutionPlan | None, StudySnapshot | None, tuple[ReadIssue, ...]]:
+) -> tuple[ExecutionPlan | ExecutionPlanV2 | None, StudySnapshot | None, tuple[ReadIssue, ...]]:
     plan_item = by_ref.get(plan_ref)
     if not isinstance(plan_item, IndexedPlan):
         return None, None, (_issue(plan_ref, "run plan is unavailable", code="missing_plan"),)
@@ -539,7 +545,7 @@ def _run_summary(
     manifest_ref: str | None,
     plan_ref: str,
     status: Literal["complete", "incomplete", "unmanifested"],
-    plan: ExecutionPlan | None,
+    plan: ExecutionPlan | ExecutionPlanV2 | None,
     snapshot: StudySnapshot | None,
     execution: dict[str, tuple[str, ...]],
     evaluation: dict[str, tuple[str, ...]],
@@ -644,6 +650,7 @@ def _run_summary(
         for item in terminal_values
         if isinstance(item, IndexedExecution | IndexedEvaluationFailure)
     )
+    _runtime_projection = plan_runtime_identity(plan)
     return RunSummary(
         run_key=run_key,
         run_id=run_id,
@@ -655,7 +662,9 @@ def _run_summary(
         arms=tuple(arm.id for arm in snapshot.arms) if snapshot is not None else None,
         worker_repeats=plan.worker_repeats if plan is not None else None,
         concurrency=plan.concurrency if plan is not None else None,
-        jig_revision=plan.jig_revision if plan is not None else None,
+        jig_revision=_runtime_projection[0],
+        runtime_id=_runtime_projection[1],
+        runtime_version=_runtime_projection[2],
         assay_version=plan.assay_version if plan is not None else None,
         started_at=started[0] if started else None,
         completed_at=completed[-1] if completed else None,
@@ -757,7 +766,7 @@ def manifest_run(
 def _validate_paa_records(
     records: list[IndexedObject],
     operating: Sequence[IndexedOperating],
-    plan: ExecutionPlan | None,
+    plan: ExecutionPlan | ExecutionPlanV2 | None,
     snapshot: StudySnapshot | None,
     store: ObjectStore,
 ) -> tuple[ReadIssue, ...]:

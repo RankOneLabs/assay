@@ -1,17 +1,18 @@
-"""Governed four-repository qualification pilot for realistic context handling."""
+"""Governed four-repository qualification pilot for realistic context handling.
+
+The Jig/OpenRouter worker stack this module wires up requires the
+``assay[legacy]`` extra. Importing this module never requires Jig; only
+calling the ``prepare_*``/``run_*`` entry points does, and a missing extra
+fails with an actionable error at that point rather than at import time.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings
-from assay.adapters.openrouter import (
-    GPT_OSS_120B_COREWEAVE,
-    HAIKU_BEDROCK,
-    OpenRouterFactory,
-)
 from assay.canonical import canonical_json
 from assay.investigations.consistency import (
     CodingTask,
@@ -19,11 +20,11 @@ from assay.investigations.consistency import (
     materialize_consistency,
 )
 from assay.investigations.correctness import DockerPythonRunner, FunctionalCorrectnessEvaluator
+from assay.investigations.dry_common import publish_plan_dependencies
 from assay.investigations.dry_experiment import (
     DryExperimentFailed,
     DryExperimentPrepared,
     DryExperimentSucceeded,
-    publish_plan_dependencies,
     run_consistency_experiment,
 )
 from assay.investigations.pilot import installed_jig_revision
@@ -39,9 +40,23 @@ from assay.planning import compile_plan
 from assay.store import ObjectStore
 from assay.verify import reference_closure, verify_snapshot
 
+if TYPE_CHECKING:
+    from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings
+
+
+def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSettings], Any]:
+    try:
+        from assay.adapters.consistency import ConsistencyWorker, PilotSettings, render_input
+    except ModuleNotFoundError as error:
+        from assay.adapters import missing_legacy_extra
+
+        raise missing_legacy_extra("assay.investigations.realistic_pilot", error) from error
+    return ConsistencyWorker, PilotSettings, render_input
+
 
 def realistic_haiku_settings() -> PilotSettings:
     """Sixteen one-call cells with room for the generated 1,225-line repositories."""
+    _, PilotSettings, _ = _import_legacy_worker_stack()
     return PilotSettings(
         mode="paid",
         max_input_bytes=64_000,
@@ -61,6 +76,7 @@ def realistic_haiku_settings() -> PilotSettings:
 
 def realistic_gpt_oss_smoke_settings() -> PilotSettings:
     """Four one-call cells for a low-cost end-to-end repository smoke run."""
+    _, PilotSettings, _ = _import_legacy_worker_stack()
     return PilotSettings(
         mode="paid",
         max_input_bytes=64_000,
@@ -79,6 +95,8 @@ def realistic_gpt_oss_smoke_settings() -> PilotSettings:
 
 
 def _validate_realistic_profile(factory: ClientFactory, settings: PilotSettings) -> None:
+    from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
+
     if settings != realistic_haiku_settings():
         raise ValueError("realistic pilot settings differ from the governed Haiku profile")
     if canonical_json(factory.configuration()) != canonical_json(
@@ -88,6 +106,8 @@ def _validate_realistic_profile(factory: ClientFactory, settings: PilotSettings)
 
 
 def _validate_realistic_smoke_profile(factory: ClientFactory, settings: PilotSettings) -> None:
+    from assay.adapters.openrouter import GPT_OSS_120B_COREWEAVE, OpenRouterFactory
+
     if settings != realistic_gpt_oss_smoke_settings():
         raise ValueError("realistic smoke settings differ from the governed GPT-OSS profile")
     if canonical_json(factory.configuration()) != canonical_json(
@@ -134,6 +154,7 @@ def _prepare_realistic(
         profile_validator(factory, settings)
         for fixture in fixtures:
             validate_repository_fixture(fixture)
+        ConsistencyWorker, _, _ = _import_legacy_worker_stack()
         worker = ConsistencyWorker(factory, settings)
         snapshot = materialize_consistency(
             store,

@@ -1,0 +1,220 @@
+"""Closed wire contracts for the Pier bridge: exactly one trial per cell.
+
+This module never imports a real Pier SDK. ``PierTrialClient`` is the local
+boundary contract a real client must satisfy; the bridge is injected with an
+implementation, never bound to one at import time, so the isolated bridge
+project has no dependency on Pier's own package (see integrations/pier/README.md
+for why that dependency cannot be pinned from this environment today).
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Literal, Protocol
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+from assay_pier_bridge.paths import safe_relative_path
+
+Sha256Ref = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+Identifier = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
+# Mirrors assay.models.CellCoordinate.id: "<subject_id>:<arm_id>:w<worker_repeat>".
+CellId = Annotated[
+    str,
+    StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*:w[0-9]+$"),
+]
+
+TrialStatus = Literal["succeeded", "failed", "timeout", "cancelled"]
+
+# Mirrors assay.pier_protocol's ceilings. Artifact bytes are bounded here,
+# at the point they are collected, as well as by the consumer: a trial whose
+# submission mount filled up must fail as an oversized result, not stream an
+# unbounded read into the caller's memory first.
+MAX_ARTIFACT_BYTES = 8_000_000
+MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
+# The reserved manifest is the document binding the artifacts, not one of
+# the artifacts it declares, so it is excluded from this count just as it is
+# excluded from the aggregate byte limit.
+MAX_ARTIFACT_COUNT = 1_024
+# Filesystem enumeration needs a separate ceiling because directories are
+# not artifacts but still consume host memory before collection can sort the
+# paths. Keep this local operational bound distinct from the wire artifact
+# count so directories never consume advertised artifact slots.
+MAX_SUBMISSION_ENTRIES = 4_096
+
+# Mirrors assay.pier_protocol.MANIFEST_PATH: the reserved path of the document
+# that binds the artifacts, which is never one of them. Both projects exempt
+# it from the aggregate ceiling and both still bound it per-artifact; the
+# shared fixture asserted by tests/test_wire_contract.py pins that rule, since
+# nothing else connects the two copies.
+MANIFEST_PATH = "manifest.json"
+
+
+class ClosedModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+class ModelRoute(ClosedModel):
+    """The exact guarded OpenRouter route a trial is authorized to call.
+
+    Exact ``Literal`` values, not permissive patterns: this is the only
+    route ``GuardedOpenRouterClient`` (provider.py) ever calls, so a caller
+    must not be able to authorize a route that execution then silently
+    ignores in favor of a different one.
+    """
+
+    endpoint: Literal["https://openrouter.ai/api/v1"] = "https://openrouter.ai/api/v1"
+    model: Literal["anthropic/claude-3-haiku"] = "anthropic/claude-3-haiku"
+    provider: Literal["amazon-bedrock"] = "amazon-bedrock"
+
+
+class TrialLimits(ClosedModel):
+    cpu: float = Field(gt=0, le=8, allow_inf_nan=False)
+    memory_mb: int = Field(ge=64, le=8192)
+    pids: int = Field(ge=1, le=256)
+    timeout_s: float = Field(gt=0, le=1800, allow_inf_nan=False)
+    # /scratch is a size-capped tmpfs (container.py), never an unbounded
+    # host bind mount -- a trial that fills it hits a real ENOSPC, not a
+    # declared-but-unenforced ceiling.
+    storage_mb: int = Field(ge=16, le=8192)
+
+
+class BridgeIdentity(ClosedModel):
+    """Runtime identity inputs pinned for a bridge sync; never mutated at serve time."""
+
+    pier_revision: str = Field(min_length=1)
+    mini_swe_agent_revision: str = Field(min_length=1)
+    lock_digest: Sha256Ref
+    bridge_image_digest: Sha256Ref
+
+
+class TrialRequest(ClosedModel):
+    """One authorized cell. ``verify`` is always disabled: Assay is the authority."""
+
+    cell_id: CellId
+    package_digest: Sha256Ref
+    model_route: ModelRoute
+    limits: TrialLimits
+    verify: Literal[False] = False
+    network_policy: Literal["egress-openrouter-only"] = "egress-openrouter-only"
+
+
+class TrialUsage(ClosedModel):
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    cost_usd: float = Field(ge=0, allow_inf_nan=False)
+    requests: int = Field(ge=0)
+
+
+class EffectiveEnforcement(ClosedModel):
+    """Observed, not declared: what the trial's execution boundary actually did."""
+
+    uid: int = Field(ge=1)
+    gid: int = Field(ge=1)
+    workspace_read_only: bool
+    submission_mount: str = Field(pattern=r"^/submission$")
+    scratch_mount: str = Field(pattern=r"^/scratch$")
+    network_policy: str = Field(min_length=1)
+    cpu_limit: float = Field(gt=0, allow_inf_nan=False)
+    memory_limit_mb: int = Field(ge=1)
+    pids_limit: int = Field(ge=1)
+    storage_limit_mb: int = Field(ge=1)
+    containers_remaining: int = Field(ge=0)
+    child_processes_remaining: int = Field(ge=0)
+    teardown_completed: bool
+
+    @model_validator(mode="after")
+    def clean_teardown(self) -> EffectiveEnforcement:
+        if self.teardown_completed and (
+            self.containers_remaining != 0 or self.child_processes_remaining != 0
+        ):
+            raise ValueError("teardown cannot be complete with resources still remaining")
+        return self
+
+
+class TrialResult(ClosedModel):
+    """One trial's outcome, including whatever evidence bytes it produced.
+
+    ``artifacts`` maps a relative path to the exact bytes the trial wrote --
+    the candidate source at minimum, plus whatever trajectory/result/
+    configuration files a sandboxed agent loop writes alongside it. It is a
+    real part of this contract rather than the caller's problem: the bytes
+    exist only inside the trial's own submission mount, which ``teardown``
+    destroys, so a result that did not carry them out could never be
+    turned into durable evidence.
+
+    What this contract still does not carry is an artifact *manifest*
+    binding those bytes to the authorized exchange. ``assay``'s
+    ``PierAdapter`` requires one before it will settle a cell as a success,
+    and nothing here produces it yet -- recorded as a known gap rather than
+    papered over with a manifest the consumer would only be attesting to
+    itself.
+    """
+
+    cell_id: CellId
+    status: TrialStatus
+    submission_ref: Sha256Ref | None = None
+    usage: TrialUsage | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+    effective: EffectiveEnforcement
+    artifacts: dict[str, bytes] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def bounded_artifacts(self) -> TrialResult:
+        """The per-artifact ceiling applies to every blob; the aggregate one
+        does not apply to ``manifest.json``.
+
+        ``MAX_AGGREGATE_ARTIFACT_BYTES`` bounds what a manifest may *declare*,
+        and the manifest is never one of its own entries. Charging the binding
+        document to the budget it bounds would make a manifest declaring the
+        maximum permitted aggregate impossible to return at all: the bytes
+        would fit, and then the few hundred bytes describing them would push
+        the result over and fail the whole trial. An honest bridge at the
+        ceiling would have no way to report what it produced. What a trial can
+        hand back is still bounded, just by ``MAX_AGGREGATE_ARTIFACT_BYTES +
+        MAX_ARTIFACT_BYTES``.
+        """
+        artifact_count = sum(path != MANIFEST_PATH for path in self.artifacts)
+        if artifact_count > MAX_ARTIFACT_COUNT:
+            raise ValueError("artifacts exceed the artifact count limit")
+        total = 0
+        for path, data in self.artifacts.items():
+            safe_relative_path(path)
+            if len(data) > MAX_ARTIFACT_BYTES:
+                raise ValueError(f"artifact exceeds the per-artifact byte limit: {path}")
+            if path != MANIFEST_PATH:
+                total += len(data)
+        if total > MAX_AGGREGATE_ARTIFACT_BYTES:
+            raise ValueError("artifacts exceed the aggregate byte limit")
+        return self
+
+    @model_validator(mode="after")
+    def consistent_status(self) -> TrialResult:
+        if self.status == "succeeded":
+            if self.submission_ref is None or self.error_type is not None:
+                raise ValueError("a succeeded trial needs a submission and no error")
+        elif self.submission_ref is not None or not self.error_type:
+            raise ValueError("a non-succeeded trial needs an error and no submission")
+        return self
+
+
+class TrialHandle(Protocol):
+    """One created trial. Every method after ``teardown`` must be a no-op-safe read."""
+
+    def run(self) -> TrialResult: ...
+
+    def effective_enforcement(self) -> EffectiveEnforcement: ...
+
+    def teardown(self) -> EffectiveEnforcement: ...
+
+
+class PierTrialClient(Protocol):
+    """The local contract a real Pier SDK client must satisfy.
+
+    ``create`` is called exactly once per bridge request (see runtime.py); a
+    client that resolves dependencies, installs packages, or mutates a
+    pricing map inside ``create``/``run`` violates the locked-runtime
+    decision and must fail the lifecycle tests.
+    """
+
+    def create(self, request: TrialRequest) -> TrialHandle: ...

@@ -251,7 +251,7 @@ async def test_http_errors_are_not_retried_or_leaked(wire: Wire, status: int) ->
     assert isinstance(result, WorkerFailure)
     assert len(wire.requests) == 1
     assert wire.closed == wire.transports
-    assert result.accounting.coverage == "unavailable"
+    assert result.accounting.coverage == "uncertain"
     assert result.trace["billing_uncertain"]
     assert "sensitive-provider-error-body" not in repr(result)
     assert "test-secret" not in repr(result)
@@ -279,7 +279,10 @@ async def test_raw_usage_rejected_before_sdk_coercion(wire: Wire, field: str, va
         result = await worker.run(input_value=realization(), arm_id="clean")
         assert isinstance(result, WorkerFailure)
         assert result.error_type == ("InvalidUsage" if index == 0 else "BudgetHalted")
-        assert result.accounting.coverage == "unavailable"
+        # index 0 dispatched a request and failed before usage could be
+        # confirmed (uncertain); index 1 never sent a request at all, having
+        # already been halted (unavailable).
+        assert result.accounting.coverage == ("uncertain" if index == 0 else "unavailable")
     assert len(wire.requests) == 1  # Uncertain billing halts subsequent attempts.
 
 
@@ -298,7 +301,7 @@ async def test_incomplete_or_mismatched_responses_fail(wire: Wire, mutation: str
         input_value=realization(), arm_id="clean"
     )
     assert isinstance(result, WorkerFailure)
-    assert result.accounting.coverage == "unavailable" and len(wire.requests) == 1
+    assert result.accounting.coverage == "uncertain" and len(wire.requests) == 1
 
 
 @pytest.mark.parametrize(
@@ -488,7 +491,7 @@ async def test_cost_bound_violation_halts_later_requests(wire: Wire) -> None:
     second = await worker.run(input_value=realization(), arm_id="clean")
     assert isinstance(first, WorkerFailure) and isinstance(second, WorkerFailure)
     assert first.trace["provider_usage"][0]["cost"] == 0.03
-    assert first.accounting.coverage == "unavailable"
+    assert first.accounting.coverage == "uncertain"
     assert second.error_type == "BudgetHalted" and len(wire.requests) == 1
 
 
@@ -766,7 +769,7 @@ async def test_failure_diagnostics_survive_without_weakening_billing(wire: Wire,
     worker = ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True)
     result = await worker.run(input_value=realization(), arm_id="clean")
     assert isinstance(result, WorkerFailure)
-    assert result.accounting.coverage == "unavailable" and result.trace["billing_uncertain"]
+    assert result.accounting.coverage == "uncertain" and result.trace["billing_uncertain"]
     diagnostics = result.trace["provider_diagnostics"]
     event = diagnostics["requests"][0]
     assert event["response_received"] == (case != "transport")

@@ -596,6 +596,35 @@ async def test_unpinned_runtime_fails_prepare_and_run_before_provider_calls(tmp_
     assert factory.created == 0 and factory.calls == []
 
 
+@pytest.mark.asyncio
+async def test_run_pilot_reports_a_missing_legacy_extra_before_reading_jig_metadata(
+    tmp_path: Path,
+) -> None:
+    """A Jig-free install must see the actionable assay[legacy] error, not a raw
+    PackageNotFoundError from installed_jig_revision's importlib.metadata lookup.
+    """
+    store, factory = ObjectStore(tmp_path), FakeFactory()
+    prepared = prepare(store, factory, PilotSettings())
+    with (
+        patch(
+            "assay.investigations.pilot._import_legacy_worker_stack",
+            side_effect=ModuleNotFoundError("assay[legacy]"),
+        ),
+        patch(
+            "assay.investigations.pilot.installed_jig_revision",
+            side_effect=AssertionError("installed_jig_revision must not run first"),
+        ),
+    ):
+        result = await run_pilot(
+            store,
+            plan_ref=prepared.plan_ref,
+            authorization=prepared.plan_ref,
+            factory=factory,
+        )
+    assert isinstance(result, PilotFailed)
+    assert result.error_type == "ModuleNotFoundError" and "assay[legacy]" in result.message
+
+
 def test_worker_policy_cannot_diverge_from_ledger() -> None:
     worker = ConsistencyWorker(FakeFactory(), PilotSettings())
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -666,7 +695,12 @@ async def test_pilot_missingness_and_post_execution_failure_refs(
         export_destination=destination,
     )
     assert result.manifest_ref is not None
-    assert verify_manifest(store, result.manifest_ref) == ()
+    # A provider failure fails every worker, so every planned evaluation is
+    # genuinely unavailable and the manifest is honestly incomplete; the
+    # other failure modes leave the worker succeeding, so their manifest
+    # stays complete and verification is clean.
+    expected_codes = ["incomplete_run"] if failure == "provider" else []
+    assert [f.code for f in verify_manifest(store, result.manifest_ref)] == expected_codes
     if failure == "export":
         assert isinstance(result, PilotFailed) and result.report_ref is not None
         assert (destination / "keep.txt").read_text() == "existing user data"

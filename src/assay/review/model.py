@@ -11,12 +11,10 @@ type JSONValue = None | bool | int | float | str | list[JSONValue] | JSONObject
 type JSONObject = dict[str, JSONValue]
 
 type RunStatus = Literal["complete", "incomplete", "unmanifested"]
-type CellStatus = Literal[
-    "succeeded", "failed", "missing", "excluded", "invalid", "conflicted"
-]
+type CellStatus = Literal["succeeded", "failed", "missing", "excluded", "invalid", "conflicted"]
 type EvaluationStatus = Literal["succeeded", "failed", "missing", "invalid", "conflicted"]
 type ReportMetric = Literal["scalar", "ordinal", "classification"]
-type CostCoverage = Literal["measured", "estimated", "unavailable", "mixed"]
+type CostCoverage = Literal["measured", "estimated", "unavailable", "mixed", "uncertain"]
 type PreviewKind = Literal["json", "text", "binary", "unavailable"]
 type InputKind = Literal["consistency", "generic", "unavailable"]
 type ComparisonKind = Literal["numeric", "ordinal", "classification", "unknown"]
@@ -69,6 +67,8 @@ class RunSummary:
     worker_repeats: int | None
     concurrency: int | None
     jig_revision: str | None
+    runtime_id: str | None
+    runtime_version: str | None
     assay_version: str | None
     started_at: str | None
     completed_at: str | None

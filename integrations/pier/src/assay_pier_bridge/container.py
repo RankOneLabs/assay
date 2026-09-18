@@ -1,0 +1,427 @@
+"""A real-Docker ``PierTrialClient``: one container per trial, no Pier SDK.
+
+This is the concrete stand-in the "Known gap" in README.md describes: until a
+real Pier client is reachable from this environment, ``DockerTrialClient``
+drives the locked bridge image directly through the ``docker`` CLI so the
+lifecycle, mount, and resource-limit guarantees in ``protocol.py`` can be
+proven against a real container instead of only a fake. It never installs a
+package or resolves a dependency itself — it only starts/stops a container
+built from an already-locked image.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import threading
+import time
+import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+
+from assay_pier_bridge.identity import digest_bytes as _digest
+from assay_pier_bridge.identity import package_digest as package_digest
+from assay_pier_bridge.paths import collect_artifacts, materialize_under, safe_relative_path
+from assay_pier_bridge.protocol import (
+    MANIFEST_PATH,
+    MAX_AGGREGATE_ARTIFACT_BYTES,
+    MAX_ARTIFACT_BYTES,
+    MAX_SUBMISSION_ENTRIES,
+    EffectiveEnforcement,
+    TrialLimits,
+    TrialRequest,
+    TrialResult,
+)
+from assay_pier_bridge.runtime import TrialCancelledError, TrialTimeoutError
+
+_UID = 1000
+_GID = 1000
+_POLL_INTERVAL_S = 0.2
+# Every docker CLI invocation is bounded so a hung daemon/CLI cannot block a
+# trial past its own deadline, and so teardown itself cannot hang forever.
+_START_TIMEOUT_S = 30.0
+_POLL_TIMEOUT_S = 5.0
+_REMOVE_TIMEOUT_S = 15.0
+_PS_TIMEOUT_S = 10.0
+# A Docker daemon reachable only through a VM/remote context (Docker Desktop,
+# a rootless context, etc.) may not have the OS temp directory in its shared
+# mount allowlist. Trial working directories live under the project instead,
+# which is always within whatever the daemon can already bind-mount for a
+# build context.
+_DEFAULT_RUNS_ROOT = Path(__file__).resolve().parents[2] / ".trial-runs"
+# Package entries name repository files with a "workspace/" prefix to
+# distinguish them, inside the sealed package, from instruction.md and
+# submission/CONTRACT.md (see assay.pier_packaging). Once mounted at the
+# container's own /workspace, that prefix must be stripped, or the
+# repository lands doubly-nested at /workspace/workspace/....
+_WORKSPACE_PACKAGE_PREFIX = "workspace/"
+
+
+def docker_available() -> bool:
+    return shutil.which("docker") is not None
+
+
+def _run(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def _mount_paths(package: Mapping[str, str]) -> dict[str, str]:
+    """Project a sealed package's entries onto real, unprefixed /workspace paths.
+
+    Stripping the prefix can make the projection non-injective: a repository
+    that contains a file named ``instruction.md`` is packaged as
+    ``workspace/instruction.md`` and lands on the same mounted path as the
+    sealed ``instruction.md``. Silently keeping one of them would let a
+    repository replace the instruction the model is given -- and since the
+    package arrives sorted, it is the repository file that wins. A collision
+    is a terminal error here, not a merge. ``assay``'s ``gate_package``
+    rejects the same packages before dispatch; this side repeats the check
+    because the bridge must not depend on any particular producer having run
+    it (the two projects share no import edge -- see ``README.md``). Paths
+    must also use their canonical POSIX spelling before comparison: otherwise
+    raw keys such as ``instruction.md`` and ``./instruction.md`` look distinct
+    here but name the same file when materialized.
+    """
+    mounted: dict[str, str] = {}
+    origin: dict[str, str] = {}
+    for path, content in package.items():
+        safe_relative_path(path)
+        if path.startswith(_WORKSPACE_PACKAGE_PREFIX):
+            rel = path[len(_WORKSPACE_PACKAGE_PREFIX) :]
+        else:
+            rel = path
+        mounted_path = safe_relative_path(rel).as_posix()
+        if mounted_path in mounted:
+            raise ValueError(
+                f"package entries {origin[mounted_path]!r} and {path!r} collide at the "
+                f"mounted path {mounted_path!r}"
+            )
+        origin[mounted_path] = path
+        mounted[mounted_path] = content
+    return mounted
+
+
+@dataclass(frozen=True, slots=True)
+class ContainerObservation:
+    """What ``docker inspect`` actually reported for a running trial container."""
+
+    read_only_root: bool
+    workspace_mount_read_only: bool | None
+    uid: int
+    network_mode: str
+    cpu_limit: float
+    memory_limit_mb: int
+    pids_limit: int
+    storage_limit_mb: int
+
+
+def _usable_observation(observation: ContainerObservation | None) -> ContainerObservation | None:
+    """Reject partial/malformed observations before they reach the strict result model."""
+    if observation is None:
+        return None
+    positive_ints = (
+        observation.memory_limit_mb,
+        observation.pids_limit,
+        observation.storage_limit_mb,
+    )
+    if (
+        isinstance(observation.cpu_limit, bool)
+        or not isinstance(observation.cpu_limit, (int, float))
+        or observation.cpu_limit <= 0
+        or any(type(value) is not int or value <= 0 for value in positive_ints)
+        or not isinstance(observation.network_mode, str)
+        or not isinstance(observation.workspace_mount_read_only, (bool, type(None)))
+    ):
+        return None
+    return observation
+
+
+def _tmpfs_storage_limit_mb(host_config: Mapping[str, object]) -> int:
+    """Parse the size this container's ``/scratch`` tmpfs was actually declared with.
+
+    ``docker inspect``'s ``HostConfig.Tmpfs`` map echoes back the exact
+    ``--tmpfs`` option string this process passed (see
+    ``_docker_run_args``), not a derived or rounded value -- a missing or
+    unparsable entry is reported as 0, never silently substituted with the
+    limit this process asked for, so a caller cannot mistake "docker did not
+    confirm this" for "docker confirmed this."
+    """
+    tmpfs = host_config.get("Tmpfs")
+    options = tmpfs.get("/scratch", "") if isinstance(tmpfs, Mapping) else ""
+    match = re.search(r"size=(\d+)m", options)
+    return int(match.group(1)) if match else 0
+
+
+def _inspect(name: str) -> ContainerObservation | None:
+    result = _run(["docker", "inspect", name], timeout=_POLL_TIMEOUT_S)
+    if result.returncode != 0:
+        return None
+    (data,) = json.loads(result.stdout)
+    host_config = data["HostConfig"]
+    workspace_ro = None
+    for mount in data.get("Mounts", []):
+        if mount.get("Destination") == "/workspace":
+            workspace_ro = not mount.get("RW", True)
+            break
+    return ContainerObservation(
+        read_only_root=bool(host_config.get("ReadonlyRootfs")),
+        workspace_mount_read_only=workspace_ro,
+        uid=_UID,
+        network_mode=host_config.get("NetworkMode", ""),
+        cpu_limit=(host_config.get("NanoCpus") or 0) / 1_000_000_000,
+        memory_limit_mb=(host_config.get("Memory") or 0) // (1024 * 1024),
+        pids_limit=host_config.get("PidsLimit") or 0,
+        storage_limit_mb=_tmpfs_storage_limit_mb(host_config),
+    )
+
+
+def _network_policy_label(network_mode: str | None) -> str:
+    if network_mode == "none":
+        return "network-none-no-egress-allowlist"
+    if not network_mode:
+        return "unknown"
+    return network_mode
+
+
+def _container_count(name: str) -> int | None:
+    """The number of containers matching ``name``, or ``None`` if ``docker ps`` itself failed."""
+    result = _run(
+        ["docker", "ps", "-a", "--filter", f"name=^{name}$", "--format", "{{.ID}}"],
+        timeout=_PS_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        return None
+    return len([line for line in result.stdout.splitlines() if line.strip()])
+
+
+def _force_remove(name: str) -> bool:
+    result = _run(["docker", "rm", "-f", name], timeout=_REMOVE_TIMEOUT_S)
+    return result.returncode == 0
+
+
+class DockerTrialHandle:
+    """One real container for one trial. ``teardown`` always removes it."""
+
+    def __init__(
+        self,
+        *,
+        image: str,
+        name: str,
+        request: TrialRequest,
+        package: Mapping[str, str],
+        command: list[str],
+        runs_root: Path = _DEFAULT_RUNS_ROOT,
+        openrouter_api_key: str | None = None,
+    ) -> None:
+        actual_digest = package_digest(package)
+        if actual_digest != request.package_digest:
+            raise ValueError(
+                "materialized package does not match the request's authorized package_digest"
+            )
+        self._image = image
+        self._name = name
+        self._request = request
+        self._command = command
+        self._openrouter_api_key = (
+            openrouter_api_key
+            if openrouter_api_key is not None
+            else os.environ.get("OPENROUTER_API_KEY")
+        )
+        runs_root.mkdir(parents=True, exist_ok=True)
+        self._workdir = runs_root / name
+        self._workspace = self._workdir / "workspace"
+        self._submission = self._workdir / "submission"
+        for directory in (self._workspace, self._submission):
+            directory.mkdir(parents=True, exist_ok=True)
+        # /submission is writable by the container's uid 1000, which will
+        # not equal the runner's own uid on most real hosts. /scratch is a
+        # size-capped tmpfs (below), not a host directory -- there is
+        # nothing on the host to create or clean up for it.
+        self._submission.chmod(0o777)
+        materialize_under(self._workspace, _mount_paths(package))
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        """Operator-initiated cancellation, observable by an in-flight ``run()``."""
+        self._cancel.set()
+
+    def _docker_run_args(self, limits: TrialLimits) -> list[str]:
+        args = [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            self._name,
+            "--user",
+            f"{_UID}:{_GID}",
+            "--network",
+            "none",
+            "--read-only",
+            "--tmpfs",
+            "/tmp",
+            "--tmpfs",
+            f"/scratch:size={limits.storage_mb}m,uid={_UID},gid={_GID}",
+            "--cpus",
+            str(limits.cpu),
+            "--memory",
+            f"{limits.memory_mb}m",
+            "--pids-limit",
+            str(limits.pids),
+        ]
+        if self._openrouter_api_key:
+            # An env file (not --env on the command line) so the key never
+            # appears in this host's process listing.
+            env_file = self._workdir / "env"
+            env_file.write_text(
+                f"OPENROUTER_API_KEY={self._openrouter_api_key}\n", encoding="utf-8"
+            )
+            env_file.chmod(0o600)
+            args += ["--env-file", str(env_file)]
+        args += [
+            "-v",
+            f"{self._workspace}:/workspace:ro",
+            "-v",
+            f"{self._submission}:/submission:rw",
+            "--entrypoint",
+            self._command[0],
+            self._image,
+            *self._command[1:],
+        ]
+        return args
+
+    def run(self) -> TrialResult:
+        start_result = _run(self._docker_run_args(self._request.limits), timeout=_START_TIMEOUT_S)
+        if start_result.returncode != 0:
+            raise RuntimeError(f"container failed to start: {start_result.stderr.strip()}")
+        deadline = time.monotonic() + self._request.limits.timeout_s
+        while True:
+            if self._cancel.is_set():
+                raise TrialCancelledError("operator cancelled the trial")
+            inspect = _run(
+                ["docker", "inspect", "--format", "{{.State.Running}}", self._name],
+                timeout=_POLL_TIMEOUT_S,
+            )
+            if inspect.returncode == 0 and inspect.stdout.strip() == "false":
+                break
+            if time.monotonic() >= deadline:
+                raise TrialTimeoutError(f"trial exceeded {self._request.limits.timeout_s}s")
+            time.sleep(_POLL_INTERVAL_S)
+        exit_code = _run(
+            ["docker", "inspect", "--format", "{{.State.ExitCode}}", self._name],
+            timeout=_POLL_TIMEOUT_S,
+        )
+        submission_file = self._submission / "output"
+        if (
+            exit_code.stdout.strip() != "0"
+            or submission_file.is_symlink()
+            or not submission_file.is_file()
+        ):
+            raise RuntimeError("trial container exited nonzero or wrote no submission")
+        # Read the submission mount before teardown removes it: these bytes
+        # exist nowhere else, and the caller cannot go back for them.
+        artifacts = collect_artifacts(
+            self._submission,
+            max_bytes=MAX_ARTIFACT_BYTES,
+            max_aggregate_bytes=MAX_AGGREGATE_ARTIFACT_BYTES,
+            max_entries=MAX_SUBMISSION_ENTRIES,
+            aggregate_exempt_path=MANIFEST_PATH,
+        )
+        submission = artifacts.get("output")
+        if submission is None:
+            raise RuntimeError("trial container wrote no collectable submission")
+        # Preserve the existing source-text contract, but validate only after
+        # the byte read has been bounded and hash the exact collected bytes.
+        submission.decode("utf-8", errors="strict")
+        return TrialResult(
+            cell_id=self._request.cell_id,
+            status="succeeded",
+            submission_ref=_digest(submission),
+            effective=self.effective_enforcement(),
+            artifacts=artifacts,
+        )
+
+    def effective_enforcement(self) -> EffectiveEnforcement:
+        try:
+            observation = _usable_observation(_inspect(self._name))
+        except Exception:
+            observation = None
+        try:
+            count = _container_count(self._name)
+        except Exception:
+            count = None
+        return self._effective_enforcement(observation, count)
+
+    def _effective_enforcement(
+        self, observation: ContainerObservation | None, count: int | None
+    ) -> EffectiveEnforcement:
+        containers_remaining = count if count is not None else 1
+        limits = self._request.limits
+        return EffectiveEnforcement(
+            uid=_UID,
+            gid=_GID,
+            workspace_read_only=bool(observation.workspace_mount_read_only)
+            if observation and observation.workspace_mount_read_only is not None
+            else False,
+            submission_mount="/submission",
+            scratch_mount="/scratch",
+            network_policy=_network_policy_label(observation.network_mode if observation else None),
+            cpu_limit=observation.cpu_limit if observation else limits.cpu,
+            memory_limit_mb=observation.memory_limit_mb if observation else limits.memory_mb,
+            pids_limit=observation.pids_limit if observation else limits.pids,
+            storage_limit_mb=observation.storage_limit_mb if observation else limits.storage_mb,
+            containers_remaining=containers_remaining,
+            child_processes_remaining=0,
+            teardown_completed=containers_remaining == 0,
+        )
+
+    def teardown(self) -> EffectiveEnforcement:
+        # Observe before destroying: once removed, docker inspect can no
+        # longer report what the container actually enforced.
+        try:
+            observation = _usable_observation(_inspect(self._name))
+        except Exception:
+            observation = None
+        with contextlib.suppress(Exception):
+            _force_remove(self._name)
+        shutil.rmtree(self._workdir, ignore_errors=True)
+        try:
+            count = _container_count(self._name)
+        except Exception:
+            count = None
+        return self._effective_enforcement(observation, count)
+
+
+class DockerTrialClient:
+    """Creates exactly one ``DockerTrialHandle`` per ``create`` call."""
+
+    def __init__(
+        self,
+        *,
+        image: str,
+        package: Mapping[str, str],
+        command: list[str],
+        runs_root: Path = _DEFAULT_RUNS_ROOT,
+        openrouter_api_key: str | None = None,
+    ) -> None:
+        self._image = image
+        self._package = package
+        self._command = command
+        self._runs_root = runs_root
+        self._openrouter_api_key = openrouter_api_key
+
+    def create(self, request: TrialRequest) -> DockerTrialHandle:
+        name = f"assay-pier-{uuid.uuid4().hex[:12]}"
+        return DockerTrialHandle(
+            image=self._image,
+            name=name,
+            request=request,
+            package=self._package,
+            command=self._command,
+            runs_root=self._runs_root,
+            openrouter_api_key=self._openrouter_api_key,
+        )

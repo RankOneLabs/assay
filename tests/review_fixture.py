@@ -177,14 +177,21 @@ async def materialize_review_fixture(root: Path) -> ReviewFixture:
     )
     if not isinstance(outcome, RunSucceeded):
         raise AssertionError(f"review fixture run failed: {outcome}")
-    if outcome.manifest.status != "complete":
-        raise AssertionError("review fixture manifest is incomplete")
-    if verify_manifest(store, str(outcome.manifest_ref)):
-        raise AssertionError("review fixture manifest does not verify")
+    # The one injected execution failure leaves its own evaluation genuinely
+    # unavailable, so the manifest is honestly incomplete — that is the
+    # scenario this fixture exists to exercise, not a defect in the fixture.
+    if outcome.manifest.status != "incomplete" or len(outcome.manifest.missing_coordinates) != 1:
+        raise AssertionError("review fixture manifest must have exactly one unavailable evaluation")
+    manifest_failures = [
+        failure.code for failure in verify_manifest(store, str(outcome.manifest_ref))
+    ]
+    if manifest_failures != ["incomplete_run"]:
+        raise AssertionError(f"review fixture manifest does not verify: {manifest_failures}")
 
     bundle = export_bundle(store, str(outcome.manifest_ref), root / "bundle")
-    if verify_bundle(bundle, str(outcome.manifest_ref)):
-        raise AssertionError("review fixture bundle does not verify")
+    bundle_failures = [failure.code for failure in verify_bundle(bundle, str(outcome.manifest_ref))]
+    if bundle_failures != ["incomplete_run"]:
+        raise AssertionError(f"review fixture bundle does not verify: {bundle_failures}")
     damaged = _damaged_bundle_variants(bundle, outcome, root / "damaged")
     from review_fixture_studies import materialize_review_studies
 

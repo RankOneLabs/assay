@@ -296,7 +296,9 @@ class _BoundedClient(LLMClient):
             raise
         except Exception as error:
             self.uncertain = self.admission.halted = True
-            return WorkerFailure(type(error).__name__, str(error))
+            return WorkerFailure(
+                type(error).__name__, str(error), accounting=Accounting(coverage="uncertain")
+            )
 
     async def complete(self, params: CompletionParams) -> LLMResponse:
         # Jig's LLM protocol requires exceptions. Keep that translation at this
@@ -313,8 +315,12 @@ class _BoundedClient(LLMClient):
             "output_tokens": sum(item["output_tokens"] for item in self.usages),
         }
         if self.uncertain:
-            # Do not present partial token totals as complete attempt usage.
-            return Accounting(usage={"llm_calls": self.requests - self.not_sent})
+            # Do not present partial token totals as complete attempt usage;
+            # the attempt was dispatched but failed before its cost could be
+            # observed, so it is uncertain, not a confirmed zero-cost miss.
+            return Accounting(
+                usage={"llm_calls": self.requests - self.not_sent}, coverage="uncertain"
+            )
         if self.not_sent and self.not_sent == self.requests:
             return Accounting(
                 usage=usage,

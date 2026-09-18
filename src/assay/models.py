@@ -11,6 +11,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    TypeAdapter,
     WithJsonSchema,
     field_validator,
     model_validator,
@@ -36,9 +37,7 @@ class WireModel(BaseModel):
             object.__setattr__(self, name, freeze(getattr(self, name)))
         return self
 
-    def model_copy(
-        self, *, update: Mapping[str, Any] | None = None, deep: bool = False
-    ) -> Self:
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
         # Preserve Pydantic's unvalidated-copy semantics, but never introduce
         # mutable JSON containers through a copy's updates.
         return super().model_copy(update=update, deep=deep)._freeze_payloads()
@@ -214,6 +213,21 @@ class EvaluationCoordinate(WireModel):
         return f"{self.cell_id}:{self.evaluator_id}:e{self.evaluator_repeat}"
 
 
+def _validate_unique_coordinates(
+    cells: tuple[CellCoordinate, ...],
+    evaluations: tuple[EvaluationCoordinate, ...],
+    worker_repeats: int,
+) -> None:
+    cell_ids = {cell.id for cell in cells}
+    evaluation_ids = {item.id for item in evaluations}
+    if len(cell_ids) != len(cells) or len(evaluation_ids) != len(evaluations):
+        raise ValueError("duplicate plan coordinates")
+    if any(item.cell_id not in cell_ids for item in evaluations):
+        raise ValueError("evaluation references unknown cell")
+    if any(cell.worker_repeat >= worker_repeats for cell in cells):
+        raise ValueError("worker repeat exceeds declared count")
+
+
 class ExecutionPlan(WireModel):
     schema_version: Literal["assay-execution-plan/0.1.0"] = "assay-execution-plan/0.1.0"
     snapshot_ref: Sha256Ref
@@ -232,15 +246,56 @@ class ExecutionPlan(WireModel):
 
     @model_validator(mode="after")
     def unique_coordinates(self) -> ExecutionPlan:
-        cells = {cell.id for cell in self.cells}
-        evaluations = {item.id for item in self.evaluations}
-        if len(cells) != len(self.cells) or len(evaluations) != len(self.evaluations):
-            raise ValueError("duplicate plan coordinates")
-        if any(item.cell_id not in cells for item in self.evaluations):
-            raise ValueError("evaluation references unknown cell")
-        if any(cell.worker_repeat >= self.worker_repeats for cell in self.cells):
-            raise ValueError("worker repeat exceeds declared count")
+        _validate_unique_coordinates(self.cells, self.evaluations, self.worker_repeats)
         return self
+
+
+class RuntimeProfile(WireModel):
+    """A backend-neutral runtime identity bound to its complete configuration.
+
+    ``id``/``version`` name the runtime (e.g. a future Pier backend); the
+    configuration itself is never inlined, only referenced by content address,
+    so authorization always binds the complete, closed configuration object.
+    """
+
+    id: Identifier
+    version: NonEmpty
+    configuration_ref: Sha256Ref
+
+
+class ExecutionPlanV2(WireModel):
+    schema_version: Literal["assay-execution-plan/0.2.0"] = "assay-execution-plan/0.2.0"
+    snapshot_ref: Sha256Ref
+    preparation_mode: Literal["none", "authorized"] = "none"
+    worker_repeats: int = Field(ge=1)
+    concurrency: int = Field(default=4, ge=1, strict=True)
+    exclusions: tuple[Exclusion, ...] = ()
+    cells: tuple[CellCoordinate, ...]
+    evaluations: tuple[EvaluationCoordinate, ...]
+    declaration_hashes: tuple[Sha256Ref, ...]
+    execution_conditions_ref: Sha256Ref
+    cost_estimate: PriceEstimate
+    arm_cost_estimates: dict[Identifier, PriceEstimate]
+    runtime: RuntimeProfile
+    assay_version: str
+
+    @model_validator(mode="after")
+    def unique_coordinates(self) -> ExecutionPlanV2:
+        _validate_unique_coordinates(self.cells, self.evaluations, self.worker_repeats)
+        return self
+
+
+AnyExecutionPlan = Annotated[ExecutionPlan | ExecutionPlanV2, Field(discriminator="schema_version")]
+_plan_adapter: TypeAdapter[ExecutionPlan | ExecutionPlanV2] = TypeAdapter(AnyExecutionPlan)
+
+
+def parse_execution_plan(value: Any) -> ExecutionPlan | ExecutionPlanV2:
+    """Select the exact 0.1.0/0.2.0 model from ``schema_version`` before parsing.
+
+    Never falls back to normalizing one version's bytes through the other's
+    model: an unrecognized or missing schema_version is rejected outright.
+    """
+    return _plan_adapter.validate_python(value)
 
 
 class RunRecord(WireModel):
@@ -301,6 +356,7 @@ class RunManifest(WireModel):
     evaluation_records: dict[str, Sha256Ref]
     operating_records: dict[str, Sha256Ref] = Field(default_factory=dict)
     missing_coordinates: tuple[str, ...]
+    interruption_ref: Sha256Ref | None = None
 
     @model_validator(mode="after")
     def unique_addresses(self) -> RunManifest:
@@ -376,3 +432,19 @@ class ReportConfig(WireModel):
         if self.ordinal_mapping is not None and set(self.ordinal_mapping) != set(self.categories):
             raise ValueError("ordinal mapping must cover all categories")
         return self
+
+
+def plan_runtime_identity(
+    plan: ExecutionPlan | ExecutionPlanV2 | None,
+) -> tuple[str | None, str | None, str | None]:
+    """Project a plan's runtime onto ``(jig_revision, runtime_id, runtime_version)``.
+
+    ``jig_revision`` is populated only for the legacy 0.1.0 wire shape; the
+    generic ``runtime_id``/``runtime_version`` pair is populated for every
+    plan, projecting 0.1.0's Jig identity as ``("jig", jig_revision)``.
+    """
+    if plan is None:
+        return None, None, None
+    if isinstance(plan, ExecutionPlanV2):
+        return None, plan.runtime.id, plan.runtime.version
+    return plan.jig_revision, "jig", plan.jig_revision

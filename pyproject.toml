@@ -5,16 +5,24 @@ description = "Reproducible paired experiments for agent systems"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-  "jig[openrouter] @ git+https://github.com/RankOneLabs/jig.git@5932f7237a369fe705512915ef4033da0ca27c74",
-  "httpx>=0.27",
-  "openai>=2,<3",
   "pydantic>=2.7",
   "jsonschema>=4.23",
   "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
-review = ["fastapi>=0.115", "uvicorn>=0.32"]
+# httpx is not imported by assay.review itself; it is pulled in here only so
+# packaging tests can drive the ASGI app as a client outside the checkout,
+# without resurrecting httpx as a core dependency.
+review = ["fastapi>=0.115", "uvicorn>=0.32", "httpx>=0.27"]
+# The pinned Jig/OpenRouter stack used by the legacy consistency pilot and DRY
+# experiment investigations. The clean core wheel never requires this extra;
+# only the legacy investigation modules import it, and lazily.
+legacy = [
+  "jig[openrouter] @ git+https://github.com/RankOneLabs/jig.git@5932f7237a369fe705512915ef4033da0ca27c74",
+  "httpx>=0.27",
+  "openai>=2,<3",
+]
 typesafe = ["typesafe-sdk~=0.6.0"]
 
 [project.scripts]
@@ -46,6 +54,9 @@ required-version = "==0.10.2"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "paid: requires ASSAY_ALLOW_PAID_PIER=1 and a real OPENROUTER_API_KEY; skips otherwise, never dispatches for real",
+]
 
 [tool.ruff]
 line-length = 100
@@ -57,6 +68,18 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
+
+# These modules subclass Jig/OpenRouter base classes at module scope, so they
+# cannot be fully typed without the "legacy" extra installed. CI type-checks
+# the core wheel's dependency set only; the legacy extra is exercised by tests
+# through lazy imports (assay.adapters, assay.investigations.*), not by mypy.
+[[tool.mypy.overrides]]
+module = ["assay.adapters.jig", "assay.adapters.consistency", "assay.adapters.openrouter"]
+disallow_subclassing_any = false
+
+# ignore_missing_imports must target the *imported* module, not the importer.
+[[tool.mypy.overrides]]
+module = ["jig", "jig.*"]
 
 [[tool.mypy.overrides]]
 module = ["msgspec", "sklearn", "sklearn.*", "typesafe_sdk"]

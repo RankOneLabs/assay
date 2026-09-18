@@ -15,6 +15,10 @@ from assay.store import ObjectRef, ObjectStore, verification_session
 
 type Edge = tuple[str, str]
 
+# Plan-referring fields never know in advance which wire version they point at;
+# the discriminator on the referenced document itself selects the concrete path set.
+_PLAN_VERSIONS = ("assay-execution-plan/0.1.0", "assay-execution-plan/0.2.0")
+
 # Paths are relative to a governed document. '*' visits collection values.
 # Roles come from the referring field, never from arbitrary artifact contents.
 _PATHS: dict[str, dict[str, str]] = {
@@ -37,21 +41,29 @@ _PATHS: dict[str, dict[str, str]] = {
         "execution_conditions_ref": "data",
         "cells.*.realization_ref": "data",
     },
+    "assay-execution-plan/0.2.0": {
+        "snapshot_ref": "assay-study-snapshot/0.1.0",
+        "declaration_hashes.*": "data",
+        "execution_conditions_ref": "data",
+        "cells.*.realization_ref": "data",
+        "runtime.configuration_ref": "data",
+    },
     "assay-run-manifest/0.1.0": {
-        "plan_ref": "assay-execution-plan/0.1.0",
+        "plan_ref": "assay-execution-plan",
         "execution_records.*": "assay-execution-outcome/0.1.0",
         "evaluation_records.*": "evaluation",
         "operating_records.*": "operating",
+        "interruption_ref": "data",
     },
     "assay-execution-outcome/0.1.0": {
-        "plan_ref": "assay-execution-plan/0.1.0",
+        "plan_ref": "assay-execution-plan",
         "input_ref": "data",
         "output_ref": "data",
         "trace_ref": "data",
         "coordinate.realization_ref": "data",
     },
     "assay-evaluation-failure/0.1.0": {
-        "plan_ref": "assay-execution-plan/0.1.0",
+        "plan_ref": "assay-execution-plan",
         "trace_ref": "data",
     },
     "evidence": {
@@ -59,11 +71,17 @@ _PATHS: dict[str, dict[str, str]] = {
         "boundary.input_ref": "data",
         "boundary.output_ref": "data",
         "worker.configuration_ref": "data",
-        "payload.plan_ref": "assay-execution-plan/0.1.0",
+        "payload.plan_ref": "assay-execution-plan",
         "payload.base_subject_ref": "data",
         "payload.detail_refs.*": "data",
     },
     "operating": {"source_references.*": "data", "worker.configuration_ref": "data"},
+    # A Pier artifact manifest is content-addressed like every other governed
+    # document; its own binding/configuration references must be walkable so
+    # an outcome's evidence closure includes the exact runtime it was bound to.
+    "assay-pier-artifact-manifest/0.1.0": {
+        "exchange.binding.configuration_ref": "data",
+    },
     "assay-report-config/0.1.0": {
         "manifest_refs.*": "assay-run-manifest/0.1.0",
         "record_refs.*": "evaluation",
@@ -145,6 +163,11 @@ def object_edges(value: Any, role: str = "auto") -> set[Edge]:
                 if value.get("schema_version") == "assay-evaluation-failure/0.1.0"
                 else "evidence"
             )
+        if role == "assay-execution-plan":
+            version = value.get("schema_version")
+            if version not in _PLAN_VERSIONS:
+                raise ValueError(f"unsupported plan schema_version: {version!r}")
+            role = version
     edges = _extensions(value)
     for path, target_role in _PATHS.get(role, {}).items():
         edges.update((str(ObjectRef(ref)), target_role) for ref in _at(value, path.split(".")))

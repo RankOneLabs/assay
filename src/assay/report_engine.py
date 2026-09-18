@@ -11,7 +11,13 @@ from typing import Any
 
 from assay._version import __version__
 from assay.canonical import canonical_json, digest_bytes
-from assay.models import ExecutionPlan, ReportConfig, RunManifest, StudySnapshot
+from assay.models import (
+    ExecutionPlanV2,
+    ReportConfig,
+    RunManifest,
+    StudySnapshot,
+    parse_execution_plan,
+)
 from assay.reporting import _holm, bootstrap_paired, paired_effect
 from assay.store import ObjectRef, ObjectStore, verification_session
 
@@ -115,17 +121,29 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
     compatibility: bytes | None = None
     numeric = config.metric == "scalar" or config.ordinal_mapping is not None
     for manifest_ref in sorted(config.manifest_refs):
-        problems = verify_manifest(store, manifest_ref)
+        # An "incomplete_run" flag alone means every coordinate whose worker
+        # failed has an honest, terminal, accounted record (the manifest's
+        # own missingness bookkeeping) -- exactly what this report's own
+        # missingness/exclusion accounting is built to describe. Any other
+        # verification failure, or a planned cell/evaluation with no
+        # terminal record at all, is a real gap and blocks the report.
+        problems = [p for p in verify_manifest(store, manifest_ref) if p.code != "incomplete_run"]
         if problems:
             raise ReportError(f"invalid manifest: {problems[0].code}")
         manifest = RunManifest.model_validate(_read(store, manifest_ref))
-        if manifest.status != "complete":
-            raise ReportError("reports require complete manifests")
-        plan = ExecutionPlan.model_validate(_read(store, manifest.plan_ref))
+        plan = parse_execution_plan(_read(store, manifest.plan_ref))
+        if {cell.id for cell in plan.cells} != set(manifest.execution_records):
+            raise ReportError("reports require every planned cell to have an execution record")
+        if {item.id for item in plan.evaluations} != set(manifest.evaluation_records):
+            raise ReportError("reports require every planned evaluation to have a terminal record")
         snapshot = StudySnapshot.model_validate(_read(store, plan.snapshot_ref))
         # Populations, exclusions and cost estimates can differ across shards;
-        # task semantics and authorized execution settings cannot.
-        fingerprint = canonical_json({
+        # task semantics and authorized execution settings cannot. The 0.1.0
+        # fingerprint is kept field-for-field identical (including
+        # jig_revision) so historical reports never move; 0.2.0 binds the
+        # generic runtime identity/configuration instead, so legacy and
+        # generic (or cross-profile) shards can never pool by coincidence.
+        common_fingerprint = {
             "task_ref": snapshot.paa_task_ref,
             "scope": snapshot.paa_scope,
             "task_schema_ref": snapshot.task_schema_ref,
@@ -136,9 +154,23 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
             "worker_repeats": plan.worker_repeats,
             "preparation_mode": plan.preparation_mode,
             "concurrency": plan.concurrency,
-            "jig_revision": plan.jig_revision,
-            "assay_version": plan.assay_version,
-        })
+        }
+        if isinstance(plan, ExecutionPlanV2):
+            fingerprint = canonical_json(
+                {
+                    **common_fingerprint,
+                    "runtime": plan.runtime.model_dump(mode="json"),
+                    "assay_version": plan.assay_version,
+                }
+            )
+        else:
+            fingerprint = canonical_json(
+                {
+                    **common_fingerprint,
+                    "jig_revision": plan.jig_revision,
+                    "assay_version": plan.assay_version,
+                }
+            )
         if compatibility is not None and fingerprint != compatibility:
             raise ReportError("run compatibility drift across selected manifests")
         compatibility = fingerprint
@@ -376,7 +408,7 @@ def summarize_operating(store: ObjectStore, refs: list[str]) -> dict[str, Any]:
             raise ReportError("overlapping operating attempt sources")
         seen.add(key)
         state = detail["coverage"]
-        if state not in ("measured", "estimated", "unavailable", "mixed"):
+        if state not in ("measured", "estimated", "unavailable", "mixed", "uncertain"):
             raise ReportError("unknown operating coverage")
         coverage[state] += 1
         stage, _subject, arm, *_rest = detail["attempt"].split(":")
@@ -386,11 +418,11 @@ def summarize_operating(store: ObjectStore, refs: list[str]) -> dict[str, Any]:
         if record.get("components"):
             raise ReportError("component operating prices are not supported")
         if price is None:
-            if state != "unavailable":
+            if state not in ("unavailable", "uncertain"):
                 raise ReportError("missing price cannot claim measured or estimated coverage")
             continue
-        if state == "unavailable":
-            raise ReportError("priced attempt cannot claim unavailable coverage")
+        if state in ("unavailable", "uncertain"):
+            raise ReportError("priced attempt cannot claim unavailable or uncertain coverage")
         currency = price["currency"]
         amount = Decimal(str(price["amount"]))
         totals[currency] += amount
