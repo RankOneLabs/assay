@@ -1,0 +1,1432 @@
+{
+  "adoption_gate": false,
+  "cases": [
+    {
+      "evaluation_id": 45433,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.6234814653473245,
+        0.597626341132018,
+        0.6258652604626653
+      ]
+    },
+    {
+      "evaluation_id": 45439,
+      "fitted_decision": false,
+      "fold": 0,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.46618358761181294,
+        0.48143905285538696,
+        0.4835665999203719
+      ]
+    },
+    {
+      "evaluation_id": 45443,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7711487841958176,
+        0.7799864430721467,
+        0.7658905169769996
+      ]
+    },
+    {
+      "evaluation_id": 46102,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.5313709243246088,
+        0.5238589205644832,
+        0.5070757317425244
+      ]
+    },
+    {
+      "evaluation_id": 46865,
+      "fitted_decision": false,
+      "fold": 4,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.44801550690735215,
+        0.448177259738443,
+        0.43009767187884285
+      ]
+    },
+    {
+      "evaluation_id": 46877,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.6273072353106005,
+        0.6307581549846923,
+        0.6278228607976395
+      ]
+    },
+    {
+      "evaluation_id": 47054,
+      "fitted_decision": false,
+      "fold": 3,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        true,
+        false
+      ],
+      "repeat_probabilities": [
+        0.49339504528903255,
+        0.5120281562375092,
+        0.4798544935162787
+      ]
+    },
+    {
+      "evaluation_id": 47067,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7996856738640635,
+        0.8195457882757268,
+        0.8382874762486761
+      ]
+    },
+    {
+      "evaluation_id": 47090,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7375346560100036,
+        0.7326984247899551,
+        0.7388199301128384
+      ]
+    },
+    {
+      "evaluation_id": 47133,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.8864334886651444,
+        0.8806156008996636,
+        0.8862485301246678
+      ]
+    },
+    {
+      "evaluation_id": 47138,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.8211967370106191,
+        0.8271153559515231,
+        0.8289667608377856
+      ]
+    },
+    {
+      "evaluation_id": 47151,
+      "fitted_decision": true,
+      "fold": 1,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.9503574120903788,
+        0.9519276139330353,
+        0.9534196131840807
+      ]
+    },
+    {
+      "evaluation_id": 47159,
+      "fitted_decision": false,
+      "fold": 1,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.3160334483491277,
+        0.3218737406084896,
+        0.34219154179142375
+      ]
+    },
+    {
+      "evaluation_id": 47200,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.9733643074556095,
+        0.9700953687316806,
+        0.9723500768759485
+      ]
+    },
+    {
+      "evaluation_id": 47204,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.8829542468603777,
+        0.8920462920690212,
+        0.8881892065214668
+      ]
+    },
+    {
+      "evaluation_id": 47209,
+      "fitted_decision": false,
+      "fold": 2,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.4873287360869272,
+        0.48911625048110624,
+        0.48905603365990596
+      ]
+    },
+    {
+      "evaluation_id": 47212,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.6916973433383493,
+        0.7495908164727818,
+        0.7122259292638674
+      ]
+    },
+    {
+      "evaluation_id": 47263,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.6920882673836523,
+        0.6821265674400053,
+        0.6858292373708571
+      ]
+    },
+    {
+      "evaluation_id": 47267,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.8290305392167383,
+        0.8455218897414145,
+        0.8457867632186575
+      ]
+    },
+    {
+      "evaluation_id": 47281,
+      "fitted_decision": true,
+      "fold": 1,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.976014847340228,
+        0.9765866131160824,
+        0.9766491562671078
+      ]
+    },
+    {
+      "evaluation_id": 47301,
+      "fitted_decision": false,
+      "fold": 1,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.10319927241978533,
+        0.09629834581875454,
+        0.09886694930744873
+      ]
+    },
+    {
+      "evaluation_id": 47319,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.5768652304478225,
+        0.5770983269976228,
+        0.5713534013833724
+      ]
+    },
+    {
+      "evaluation_id": 47320,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.5529159616079079,
+        0.5644129662762323,
+        0.5494961905454939
+      ]
+    },
+    {
+      "evaluation_id": 47357,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.9770217218818794,
+        0.973325693667106,
+        0.9768257001325946
+      ]
+    },
+    {
+      "evaluation_id": 47386,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.8791270579560199,
+        0.8653981986834968,
+        0.865368309837478
+      ]
+    },
+    {
+      "evaluation_id": 47390,
+      "fitted_decision": false,
+      "fold": 1,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.41599860935429256,
+        0.3538547726668112,
+        0.3810508199350037
+      ]
+    },
+    {
+      "evaluation_id": 47392,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.9503752821958761,
+        0.9508963165901313,
+        0.9503435826352923
+      ]
+    },
+    {
+      "evaluation_id": 47395,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.9399193871408694,
+        0.9414916180529476,
+        0.9425871652585117
+      ]
+    },
+    {
+      "evaluation_id": 47396,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7775806998859949,
+        0.7764478312316097,
+        0.7731206427618512
+      ]
+    },
+    {
+      "evaluation_id": 47397,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.5046089666495552,
+        0.5333059473254513,
+        0.5254449204901173
+      ]
+    },
+    {
+      "evaluation_id": 47399,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.6244484284726629,
+        0.6401084805668784,
+        0.6293187177080444
+      ]
+    },
+    {
+      "evaluation_id": 47403,
+      "fitted_decision": true,
+      "fold": 1,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.6810797982155481,
+        0.6811517984533259,
+        0.6564563618309288
+      ]
+    },
+    {
+      "evaluation_id": 47406,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7296808042047731,
+        0.7121660828468358,
+        0.7126118298074118
+      ]
+    },
+    {
+      "evaluation_id": 47411,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.9620557362525827,
+        0.9617620036951878,
+        0.9624008499016727
+      ]
+    },
+    {
+      "evaluation_id": 47416,
+      "fitted_decision": true,
+      "fold": 1,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.6146019336108497,
+        0.6304307658219137,
+        0.6168731012090019
+      ]
+    },
+    {
+      "evaluation_id": 47432,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7925668173211972,
+        0.7739684982055987,
+        0.7781409503167246
+      ]
+    },
+    {
+      "evaluation_id": 47447,
+      "fitted_decision": false,
+      "fold": 1,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.4454154073984765,
+        0.4393603204898704,
+        0.4445580669395383
+      ]
+    },
+    {
+      "evaluation_id": 47458,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7351927701354898,
+        0.7223173767127171,
+        0.7482405791602152
+      ]
+    },
+    {
+      "evaluation_id": 47461,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.8693211191978513,
+        0.8606766279857367,
+        0.8644616416593207
+      ]
+    },
+    {
+      "evaluation_id": 47477,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.5185826135330259,
+        0.5245898604704117,
+        0.5192250361574884
+      ]
+    },
+    {
+      "evaluation_id": 47481,
+      "fitted_decision": true,
+      "fold": 1,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.6842592851313587,
+        0.6702859117214899,
+        0.6699227923915549
+      ]
+    },
+    {
+      "evaluation_id": 47554,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.9025439529055497,
+        0.8983749815553232,
+        0.9087311807209955
+      ]
+    },
+    {
+      "evaluation_id": 47559,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.9411928149239814,
+        0.9466469239625098,
+        0.950571342301868
+      ]
+    },
+    {
+      "evaluation_id": 47629,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7552380016788472,
+        0.7593195490069845,
+        0.7536858754775032
+      ]
+    },
+    {
+      "evaluation_id": 47726,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.8988372983495311,
+        0.8964644293532823,
+        0.8976699662912321
+      ]
+    },
+    {
+      "evaluation_id": 47737,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.6534634818310151,
+        0.6651332324313198,
+        0.6590988081463401
+      ]
+    },
+    {
+      "evaluation_id": 47753,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7143643603022072,
+        0.698561890482204,
+        0.7055423536926301
+      ]
+    },
+    {
+      "evaluation_id": 48124,
+      "fitted_decision": true,
+      "fold": 1,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7753885814595479,
+        0.7881753076066702,
+        0.7835275403034481
+      ]
+    },
+    {
+      "evaluation_id": 48293,
+      "fitted_decision": true,
+      "fold": 1,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.5807186269338945,
+        0.5735811537053991,
+        0.57628584420059
+      ]
+    },
+    {
+      "evaluation_id": 48303,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.970106965804965,
+        0.9699821127068212,
+        0.9693965935033367
+      ]
+    },
+    {
+      "evaluation_id": 48349,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7863280512524266,
+        0.812421099599851,
+        0.8097560420578297
+      ]
+    },
+    {
+      "evaluation_id": 48355,
+      "fitted_decision": false,
+      "fold": 3,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.43318628310941193,
+        0.4261796233953107,
+        0.4345175837119907
+      ]
+    },
+    {
+      "evaluation_id": 48396,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7819252469009745,
+        0.7707391243278053,
+        0.7744160703341681
+      ]
+    },
+    {
+      "evaluation_id": 48718,
+      "fitted_decision": true,
+      "fold": 2,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.5769185351516661,
+        0.5694927520844955,
+        0.59018467377272
+      ]
+    },
+    {
+      "evaluation_id": 48720,
+      "fitted_decision": false,
+      "fold": 2,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.3523218319063592,
+        0.3542445473618901,
+        0.3496866976844903
+      ]
+    },
+    {
+      "evaluation_id": 48741,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.5173583981852332,
+        0.5341674865015408,
+        0.5595319375733122
+      ]
+    },
+    {
+      "evaluation_id": 48742,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7590085897121767,
+        0.7569013961720387,
+        0.7570295606748836
+      ]
+    },
+    {
+      "evaluation_id": 48765,
+      "fitted_decision": false,
+      "fold": 1,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.16461511234912213,
+        0.16724509318264452,
+        0.1624814965582576
+      ]
+    },
+    {
+      "evaluation_id": 48782,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": true,
+      "production_decision": false,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.8546797789597362,
+        0.86907320530804,
+        0.8646116530029032
+      ]
+    },
+    {
+      "evaluation_id": 48789,
+      "fitted_decision": false,
+      "fold": 2,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.17562535942918386,
+        0.17546842589492054,
+        0.18216444241168414
+      ]
+    },
+    {
+      "evaluation_id": 48793,
+      "fitted_decision": false,
+      "fold": 0,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.45285119157579684,
+        0.4413214164329872,
+        0.42208238679729215
+      ]
+    },
+    {
+      "evaluation_id": 48807,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7124785965157985,
+        0.721308970476818,
+        0.7216524090620854
+      ]
+    },
+    {
+      "evaluation_id": 48820,
+      "fitted_decision": false,
+      "fold": 1,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.0822389159665492,
+        0.08586659561156339,
+        0.08571989627150746
+      ]
+    },
+    {
+      "evaluation_id": 48844,
+      "fitted_decision": false,
+      "fold": 1,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.10188758158790545,
+        0.09574965463797502,
+        0.09699813620061376
+      ]
+    },
+    {
+      "evaluation_id": 48856,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.5711083622095522,
+        0.5909284619918068,
+        0.5949940369687305
+      ]
+    },
+    {
+      "evaluation_id": 48859,
+      "fitted_decision": false,
+      "fold": 0,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.43500767148456243,
+        0.4491411990742969,
+        0.43901384904947793
+      ]
+    },
+    {
+      "evaluation_id": 48860,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.9223622935699465,
+        0.9223974154826878,
+        0.9201717677494822
+      ]
+    },
+    {
+      "evaluation_id": 48866,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.7254030815995967,
+        0.7342646634682374,
+        0.7470379741572868
+      ]
+    },
+    {
+      "evaluation_id": 48891,
+      "fitted_decision": false,
+      "fold": 0,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.3705857079802433,
+        0.42194942297596233,
+        0.40144398832841205
+      ]
+    },
+    {
+      "evaluation_id": 48905,
+      "fitted_decision": false,
+      "fold": 0,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.2231644975736056,
+        0.2284019665167921,
+        0.23117990866885005
+      ]
+    },
+    {
+      "evaluation_id": 48917,
+      "fitted_decision": false,
+      "fold": 4,
+      "human_label": true,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.2338518200733839,
+        0.23173943662501806,
+        0.22249326829989657
+      ]
+    },
+    {
+      "evaluation_id": 48921,
+      "fitted_decision": false,
+      "fold": 4,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.1409905585689521,
+        0.14603713295694107,
+        0.14714298280197002
+      ]
+    },
+    {
+      "evaluation_id": 48922,
+      "fitted_decision": true,
+      "fold": 4,
+      "human_label": true,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.9038247245979595,
+        0.9028693805415171,
+        0.9061075579014055
+      ]
+    },
+    {
+      "evaluation_id": 48927,
+      "fitted_decision": false,
+      "fold": 3,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.12543629196273914,
+        0.12515450024527613,
+        0.12654651873512973
+      ]
+    },
+    {
+      "evaluation_id": 48931,
+      "fitted_decision": false,
+      "fold": 1,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.33178680488610046,
+        0.33129468575138105,
+        0.31672221153649943
+      ]
+    },
+    {
+      "evaluation_id": 48934,
+      "fitted_decision": true,
+      "fold": 0,
+      "human_label": false,
+      "production_decision": false,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.5444998134122285,
+        0.5298087472665387,
+        0.5267023753032706
+      ]
+    },
+    {
+      "evaluation_id": 48936,
+      "fitted_decision": true,
+      "fold": 3,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.596941637257977,
+        0.5943849783322348,
+        0.5874434155783823
+      ]
+    },
+    {
+      "evaluation_id": 48944,
+      "fitted_decision": false,
+      "fold": 3,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        false,
+        false,
+        false
+      ],
+      "repeat_probabilities": [
+        0.3820418754842358,
+        0.36223575393178054,
+        0.38671920003406274
+      ]
+    },
+    {
+      "evaluation_id": 48954,
+      "fitted_decision": true,
+      "fold": 1,
+      "human_label": false,
+      "production_decision": true,
+      "repeat_decisions": [
+        true,
+        true,
+        true
+      ],
+      "repeat_probabilities": [
+        0.8126137881167287,
+        0.8339829065022228,
+        0.8266176127929254
+      ]
+    }
+  ],
+  "catalogue_version": "019c2b2ad3872710e0324d190a918bdfd5030612b013a8d6885186d261366e46",
+  "feature_keys": [
+    "band/0",
+    "band/1",
+    "band/2",
+    "band/3",
+    "exclusion",
+    "general_building",
+    "on_topic_pointer",
+    "operational_claim",
+    "operational_question",
+    "point_in_own_text",
+    "reasoned_practice",
+    "topic_approval_audit_deploy",
+    "topic_cost_capacity",
+    "topic_evals_vs_deployment",
+    "topic_guardrails_credentials",
+    "topic_observability",
+    "topic_orchestration_state",
+    "topic_production_failures",
+    "topic_unreliable_tools"
+  ],
+  "format": "assay.typesafe-relevance-fitted-rerun/v1",
+  "metrics": {
+    "mcnemar_production_vs_fitted": {
+      "candidate_only_correct": 4,
+      "p_value": 0.0192108154296875,
+      "reference_only_correct": 15
+    },
+    "production": {
+      "accuracy": 0.8227848101265823,
+      "confusion": {
+        "fn": 2,
+        "fp": 12,
+        "tn": 18,
+        "tp": 47
+      },
+      "precision": 0.7966101694915254,
+      "recall": 0.9591836734693877
+    },
+    "typesafe_argmax": {
+      "accuracy": 0.620253164556962,
+      "confusion": {
+        "fn": 20,
+        "fp": 10,
+        "tn": 20,
+        "tp": 29
+      },
+      "precision": 0.7435897435897436,
+      "recall": 0.5918367346938775
+    },
+    "typesafe_fitted_oof": {
+      "accuracy": 0.6835443037974683,
+      "confusion": {
+        "fn": 9,
+        "fp": 16,
+        "tn": 14,
+        "tp": 40
+      },
+      "precision": 0.7142857142857143,
+      "recall": 0.8163265306122449
+    }
+  },
+  "protocol": {
+    "feature_extractor": "scout-pr40/extract_features",
+    "fitter": "scout-pr40/l2-logistic-liblinear",
+    "fold_split": "StratifiedKFold(shuffle=True, random_state=0)",
+    "folds": 5,
+    "grouping": "all three repeats for an evaluation stay in the same fold",
+    "repeat_aggregation": "majority vote at probability >= 0.5",
+    "sklearn_version": "1.9.0",
+    "threshold": 0.5,
+    "threshold_tuned": false
+  },
+  "selection_rule": {
+    "requires_accuracy_at_least_production": true,
+    "requires_precision_at_least_production": true,
+    "typesafe_won": false
+  },
+  "source_case_count": 79,
+  "source_format": "assay.typesafe-relevance-primary/v1",
+  "source_repeat_count": 237,
+  "source_sha256": "0c760d3d77c0016d696bd78a9005bb1d9ffbd6e8717b907266106520e5af3af4",
+  "status": "exploratory_retrospective"
+}
