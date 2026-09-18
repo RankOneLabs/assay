@@ -168,22 +168,31 @@ def gate_package(
     # loser is decided by nothing more principled than iteration order. The
     # repository file wins, which means an arm's own content can replace the
     # task the model is given -- the one substitution this whole sealed
-    # boundary exists to prevent. Unmountable is the safe answer; there is no
-    # ordering that makes the result unambiguous.
+    # boundary exists to prevent. Every path must also already use its
+    # canonical POSIX spelling. PurePosixPath and the filesystem normalize
+    # aliases such as ``workspace/./instruction.md`` only after a raw-string
+    # collision check, which would otherwise let the alias overwrite the
+    # sealed instruction during materialization. Unmountable is the safe
+    # answer; there is no ordering that makes the result unambiguous.
     mounted: dict[str, str] = {}
     for path, content in package.files:
         if path not in _ALLOWED_NON_REPOSITORY_PATHS and not path.startswith(prefix):
             raise ValueError(f"package entry is outside the allowlist: {path}")
-        parts = PurePosixPath(path).parts
-        if PurePosixPath(path).is_absolute() or any(part in {"", ".", ".."} for part in parts):
+        parsed_path = PurePosixPath(path)
+        if (
+            parsed_path.is_absolute()
+            or any(part in {"", ".", ".."} for part in parsed_path.parts)
+            or parsed_path.as_posix() != path
+        ):
             raise ValueError(f"package entry has an unsafe path: {path}")
         relative = path[len(prefix) :] if path.startswith(prefix) else path
-        if relative in mounted:
+        mounted_path = PurePosixPath(relative).as_posix()
+        if mounted_path in mounted:
             raise ValueError(
-                f"package entries {mounted[relative]!r} and {path!r} collide at the "
-                f"mounted path {relative!r}"
+                f"package entries {mounted[mounted_path]!r} and {path!r} collide at the "
+                f"mounted path {mounted_path!r}"
             )
-        mounted[relative] = path
+        mounted[mounted_path] = path
         for sentinel in forbidden_substrings:
             if sentinel in content:
                 raise ValueError(f"package entry carries a forbidden sentinel: {path}")
