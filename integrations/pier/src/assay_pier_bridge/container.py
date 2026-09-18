@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from assay_pier_bridge.identity import digest_bytes as _digest
-from assay_pier_bridge.identity import package_digest
+from assay_pier_bridge.identity import package_digest as package_digest
 from assay_pier_bridge.paths import collect_artifacts, materialize_under, safe_relative_path
 from assay_pier_bridge.protocol import (
     MANIFEST_PATH,
