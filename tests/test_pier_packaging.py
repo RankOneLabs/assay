@@ -9,9 +9,9 @@ from assay.pier_packaging import (
     INSTRUCTION_PATH,
     SUBMISSION_CONTRACT_PATH,
     WORKSPACE_PREFIX,
-    _manifest_digest,
     build_package,
     gate_package,
+    manifest_digest,
     non_repository_entries,
     render_instruction,
     repository_only_entries,
@@ -175,7 +175,7 @@ def test_gate_package_rejects_a_non_allowlisted_entry(tmp_path: Path) -> None:
     root = _write_tree(tmp_path / "arm", {"solution.py": "print('hi')\n"})
     package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
     tampered_files = (*package.files, ("evaluator/rubric.json", "{}"))
-    digest = _manifest_digest(dict(sorted(tampered_files)))
+    digest = manifest_digest(dict(tampered_files))
     tampered = replace(package, files=tampered_files, manifest_digest=digest)
     with pytest.raises(ValueError, match="outside the allowlist"):
         gate_package(tampered, expected_digest=tampered.manifest_digest)
@@ -189,7 +189,7 @@ def test_gate_package_rejects_a_traversal_segment_inside_the_workspace_prefix(
     root = _write_tree(tmp_path / "arm", {"solution.py": "print('hi')\n"})
     package = build_package(cell_id="s1:a1:w0", task="Do the thing.", repository_root=root)
     tampered_files = (*package.files, (f"{WORKSPACE_PREFIX}/../evaluator/rubric.json", "{}"))
-    digest = _manifest_digest(dict(sorted(tampered_files)))
+    digest = manifest_digest(dict(tampered_files))
     tampered = replace(package, files=tampered_files, manifest_digest=digest)
     with pytest.raises(ValueError, match="unsafe path"):
         gate_package(tampered, expected_digest=tampered.manifest_digest)

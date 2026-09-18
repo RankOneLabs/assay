@@ -1,6 +1,7 @@
-"""Path safety shared by every writer that materializes a package/repository
-mapping onto a real directory (``pier_adapter.write_task_directory`` and
-``container._materialize``).
+"""Filesystem boundary shared by every handle that materializes a package
+onto a real directory (``pier_adapter.write_task_directory`` and
+``container._materialize``) or reads a trial's output back off one
+(``collect_artifacts``).
 
 Deliberately local rather than imported from ``assay.repository``: this
 bridge project has no dependency edge back onto ``assay`` (see README.md).
@@ -40,4 +41,30 @@ def materialize_under(root: Path, files: Mapping[str, str]) -> None:
         full.write_text(content, encoding="utf-8")
 
 
-__all__ = ["materialize_under", "safe_relative_path"]
+def collect_artifacts(root: Path, *, max_bytes: int) -> dict[str, bytes]:
+    """Read every regular file under ``root`` into a path -> bytes mapping.
+
+    The trial's own output is the least trustworthy directory this project
+    reads: a model with write access to /submission can plant a symlink, a
+    fifo, or a file larger than any manifest would ever declare. Only
+    regular files are read, symlinks are skipped at every level rather than
+    followed, and a file whose size exceeds ``max_bytes`` raises instead of
+    being read -- the size is checked via ``lstat`` before any content is
+    pulled into memory, so an oversized artifact never costs its own size.
+
+    Paths are returned relative to ``root``, POSIX-style and sorted, so two
+    runs over identical content produce identical mappings.
+    """
+    artifacts: dict[str, bytes] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if path.lstat().st_size > max_bytes:
+            raise ValueError(f"trial artifact exceeds the byte limit: {relative}")
+        safe_relative_path(relative)
+        artifacts[relative] = path.read_bytes()
+    return artifacts
+
+
+__all__ = ["collect_artifacts", "materialize_under", "safe_relative_path"]
