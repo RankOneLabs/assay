@@ -31,6 +31,7 @@ def _effective() -> EffectiveEnforcement:
         cpu_limit=1.0,
         memory_limit_mb=512,
         pids_limit=64,
+        storage_limit_mb=64,
         containers_remaining=0,
         child_processes_remaining=0,
         teardown_completed=True,
