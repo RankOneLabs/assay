@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from assay_pier_bridge.paths import collect_artifacts, materialize_under
+from assay_pier_bridge.paths import collect_artifacts, materialize_under, safe_relative_path
 from assay_pier_bridge.protocol import (
     MAX_ARTIFACT_BYTES,
     EffectiveEnforcement,
@@ -101,7 +101,7 @@ def _canonical_json(value: object) -> bytes:
 def _mount_paths(package: Mapping[str, str]) -> dict[str, str]:
     """Project a sealed package's entries onto real, unprefixed /workspace paths.
 
-    Stripping the prefix makes the projection non-injective: a repository
+    Stripping the prefix can make the projection non-injective: a repository
     that contains a file named ``instruction.md`` is packaged as
     ``workspace/instruction.md`` and lands on the same mounted path as the
     sealed ``instruction.md``. Silently keeping one of them would let a
@@ -110,21 +110,27 @@ def _mount_paths(package: Mapping[str, str]) -> dict[str, str]:
     is a terminal error here, not a merge. ``assay``'s ``gate_package``
     rejects the same packages before dispatch; this side repeats the check
     because the bridge must not depend on any particular producer having run
-    it (the two projects share no import edge -- see ``README.md``).
+    it (the two projects share no import edge -- see ``README.md``). Paths
+    must also use their canonical POSIX spelling before comparison: otherwise
+    raw keys such as ``instruction.md`` and ``./instruction.md`` look distinct
+    here but name the same file when materialized.
     """
     mounted: dict[str, str] = {}
     origin: dict[str, str] = {}
     for path, content in package.items():
+        safe_relative_path(path)
         if path.startswith(_WORKSPACE_PACKAGE_PREFIX):
             rel = path[len(_WORKSPACE_PACKAGE_PREFIX) :]
         else:
             rel = path
-        if rel in mounted:
+        mounted_path = safe_relative_path(rel).as_posix()
+        if mounted_path in mounted:
             raise ValueError(
-                f"package entries {origin[rel]!r} and {path!r} collide at the mounted path {rel!r}"
+                f"package entries {origin[mounted_path]!r} and {path!r} collide at the "
+                f"mounted path {mounted_path!r}"
             )
-        origin[rel] = path
-        mounted[rel] = content
+        origin[mounted_path] = path
+        mounted[mounted_path] = content
     return mounted
 
 

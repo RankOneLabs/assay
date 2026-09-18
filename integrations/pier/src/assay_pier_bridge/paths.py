@@ -14,7 +14,14 @@ from pathlib import Path, PurePosixPath
 
 
 def safe_relative_path(raw_path: str) -> PurePosixPath:
-    """Reject anything that is not a plain, traversal-free relative path."""
+    """Reject anything that is not a canonical, traversal-free relative path.
+
+    Materialization joins the parsed ``PurePosixPath`` to a real directory,
+    so accepting two spellings that parse to the same path (for example
+    ``instruction.md`` and ``./instruction.md``) would make a caller's path
+    mapping non-injective. Require the wire spelling to already be canonical
+    rather than silently choosing which entry wins on disk.
+    """
     path = PurePosixPath(raw_path)
     if (
         not raw_path
@@ -22,6 +29,7 @@ def safe_relative_path(raw_path: str) -> PurePosixPath:
         or path.is_absolute()
         or not path.parts
         or any(part in {"", ".", ".."} for part in path.parts)
+        or path.as_posix() != raw_path
     ):
         raise ValueError(f"unsafe path: {raw_path}")
     return path
