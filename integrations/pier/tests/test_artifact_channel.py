@@ -18,6 +18,7 @@ from assay_pier_bridge.protocol import (
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
+    MAX_SUBMISSION_ENTRIES,
     EffectiveEnforcement,
     TrialResult,
 )
@@ -58,7 +59,7 @@ def _collect(
     *,
     max_bytes: int = MAX_ARTIFACT_BYTES,
     max_aggregate_bytes: int = MAX_AGGREGATE_ARTIFACT_BYTES,
-    max_entries: int = MAX_ARTIFACT_COUNT,
+    max_entries: int = MAX_SUBMISSION_ENTRIES,
 ) -> dict[str, bytes]:
     return collect_artifacts(
         root,
@@ -103,6 +104,12 @@ def test_too_many_empty_artifacts_are_rejected_by_the_type() -> None:
     artifacts = {f"empty-{index}": b"" for index in range(MAX_ARTIFACT_COUNT + 1)}
     with pytest.raises(ValidationError, match="artifact count limit"):
         _result(artifacts=artifacts)
+
+
+def test_maximum_artifact_count_plus_manifest_is_accepted_by_the_type() -> None:
+    artifacts = {f"empty-{index}": b"" for index in range(MAX_ARTIFACT_COUNT)}
+    artifacts[MANIFEST_PATH] = b"{}"
+    assert _result(artifacts=artifacts).artifacts.keys() == artifacts.keys()
 
 
 def test_the_manifest_is_not_charged_to_the_aggregate_limit() -> None:
@@ -182,9 +189,22 @@ def test_collect_artifacts_rejects_too_many_filesystem_entries(tmp_path: Path) -
         _collect(tmp_path, max_entries=2)
 
 
-def test_collect_artifacts_enforces_aggregate_bytes_while_reading(tmp_path: Path) -> None:
+def test_collect_artifacts_enforces_aggregate_bytes_while_reading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "a").write_bytes(b"1234")
     (tmp_path / "b").write_bytes(b"5678")
+    original_lstat = Path.lstat
+
+    def stale_lstat(path: Path, *args: object, **kwargs: object) -> os.stat_result:
+        result = original_lstat(path, *args, **kwargs)
+        if path == tmp_path / "b":
+            values = list(result)
+            values[6] = 1
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(Path, "lstat", stale_lstat)
     with pytest.raises(ValueError, match="aggregate byte limit"):
         _collect(tmp_path, max_bytes=8, max_aggregate_bytes=7)
 

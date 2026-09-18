@@ -34,7 +34,7 @@ from assay_pier_bridge.protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
-    MAX_ARTIFACT_COUNT,
+    MAX_SUBMISSION_ENTRIES,
     EffectiveEnforcement,
     TrialLimits,
     TrialRequest,
@@ -113,7 +113,7 @@ class GuardedCompletionTrialHandle:
             self.submission_dir,
             max_bytes=MAX_ARTIFACT_BYTES,
             max_aggregate_bytes=MAX_AGGREGATE_ARTIFACT_BYTES,
-            max_entries=MAX_ARTIFACT_COUNT,
+            max_entries=MAX_SUBMISSION_ENTRIES,
             aggregate_exempt_path=MANIFEST_PATH,
         )
         output = artifacts.get("output")

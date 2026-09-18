@@ -66,7 +66,7 @@
     }
   ],
   "artifact_budget": {
-    "comment": "The artifact byte/count ceilings and the manifest's exemption from the aggregate byte ceiling. Sizes are byte counts, not contents: each side synthesizes blobs of these sizes and asserts its own enforcement point agrees with within_budget -- assay that _publish_available_artifacts publishes every path, the bridge that TrialResult accepts the result. The manifest is bounded per-artifact but never charged to the aggregate, because max_aggregate_artifact_bytes bounds what a manifest may declare and the manifest is never one of its own entries; charging the binding document to the budget it bounds would make a manifest declaring the maximum permitted aggregate impossible to carry or to publish in full.",
+    "comment": "The artifact byte/count ceilings and the manifest's exemption from the aggregate byte and artifact-count ceilings. Sizes are byte counts, not contents: each side synthesizes blobs of these sizes and asserts its own enforcement point agrees with within_budget -- assay that _publish_available_artifacts publishes every path, the bridge that TrialResult accepts the result. The manifest is bounded per-artifact but never charged to aggregate bytes or artifact count, because those limits bound what a manifest may declare and the manifest is never one of its own entries; charging the binding document to the budgets it describes would make an honest maximal manifest impossible to carry or publish in full.",
     "max_artifact_bytes": 8000000,
     "max_aggregate_artifact_bytes": 32000000,
     "max_artifact_count": 1024,

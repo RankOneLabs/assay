@@ -210,7 +210,8 @@ def _publish_available_artifacts(
     check is the only thing that observes whether it happened.
     """
     refs: dict[str, str] = {}
-    if len(artifacts) > MAX_ARTIFACT_COUNT:
+    artifact_count = sum(path != MANIFEST_PATH for path in artifacts)
+    if artifact_count > MAX_ARTIFACT_COUNT:
         return refs
     aggregate_bytes = 0
     ordered = sorted(artifacts, key=lambda path: (path not in priority, path))

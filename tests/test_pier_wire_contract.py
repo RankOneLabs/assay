@@ -123,3 +123,12 @@ def test_publication_refuses_an_unbounded_number_of_empty_artifacts(tmp_path: Pa
     artifacts = {f"empty-{index}": b"" for index in range(MAX_ARTIFACT_COUNT + 1)}
     refs = _publish_available_artifacts(ObjectStore(tmp_path / ".assay"), artifacts)
     assert refs == {}
+
+
+def test_publication_does_not_charge_the_manifest_to_the_artifact_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("assay.adapters.pier.MAX_ARTIFACT_COUNT", 2)
+    artifacts = {"a": b"", "b": b"", MANIFEST_PATH: b"{}"}
+    refs = _publish_available_artifacts(ObjectStore(tmp_path / ".assay"), artifacts)
+    assert refs.keys() == artifacts.keys()
