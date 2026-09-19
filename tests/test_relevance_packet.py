@@ -13,6 +13,7 @@ from assay.investigations.relevance.catalogue import load_catalogue
 from assay.investigations.relevance.mappings import decide_argmax
 from assay.investigations.relevance.packet import (
     BAND_NAMES,
+    DISPOSITIONS,
     PacketError,
     blind_case,
     eligibility_gate,
@@ -20,11 +21,18 @@ from assay.investigations.relevance.packet import (
     human_decision,
     plan_digest,
     rubric_card,
+    select_census,
     select_packet,
     stratify,
 )
 from assay.investigations.relevance.packet_html import render_packet_html
-from assay.investigations.relevance.run_packet import PLAN, READING, score
+from assay.investigations.relevance.run_packet import (
+    CENSUS_READING,
+    PLAN,
+    READING,
+    packet_digest,
+    score,
+)
 
 CATALOGUE = Path("src/assay/investigations/relevance/catalogues/agent-ops-relevance.v2.yaml")
 
@@ -279,3 +287,90 @@ def test_plan_digest_changes_when_the_reading_changes() -> None:
 
 def test_declared_plan_draws_thirty_cases() -> None:
     assert sum(take for _, take in PLAN) == 30
+
+
+# --- census -----------------------------------------------------------------
+
+
+def test_census_covers_every_case_exactly_once() -> None:
+    packet = select_census(_document(), "c", "seed-a")
+    ids = [case.evaluation_id for case in packet.cases]
+    assert sorted(ids) == [1, 2, 3, 4, 5, 6]
+
+
+def test_census_keeps_the_stratum_tag_for_reporting() -> None:
+    packet = select_census(_document(), "c", "seed-a")
+    by_id = {case.evaluation_id: case.stratum for case in packet.cases}
+    assert by_id[1] == "crux"
+
+
+def test_census_display_order_is_not_evaluation_order() -> None:
+    packet = select_census(_document(), "c", "seed-a")
+    assert [case.evaluation_id for case in packet.cases] != [1, 2, 3, 4, 5, 6]
+
+
+def test_census_reading_digest_differs_from_the_sampled_reading() -> None:
+    assert plan_digest(CENSUS_READING) != plan_digest(READING)
+
+
+def test_disposition_offers_exactly_three_outcomes() -> None:
+    assert [name for name, _ in DISPOSITIONS] == ["respond", "review", "drop"]
+
+
+# --- packet identity --------------------------------------------------------
+
+
+def _blind() -> list[dict]:
+    return [{"case_id": 1, "text": "a"}, {"case_id": 2, "text": "b"}]
+
+
+def test_a_second_sitting_over_the_same_cases_is_a_different_packet(questions: dict) -> None:
+    """The load-bearing one.
+
+    The browser keys its saved draft on this digest. If a repeat reading of the
+    same cases hashed the same, the previous sitting's answers would hydrate into
+    the form and the retest would report perfect agreement having measured nothing.
+    """
+    rubric = rubric_card(questions)
+    assert packet_digest(_blind(), rubric, "one") != packet_digest(_blind(), rubric, "two")
+
+
+def test_changing_the_questions_is_a_different_packet(questions: dict) -> None:
+    """Answers to one question set must not be restored into another."""
+    altered = {**questions, "band": {**questions["band"], "criteria": []}}
+    assert packet_digest(_blind(), rubric_card(questions), "one") != packet_digest(
+        _blind(), rubric_card(altered), "one"
+    )
+
+
+def test_rebuilding_the_same_sitting_is_the_same_packet(questions: dict) -> None:
+    """A draft in progress must survive a rebuild of the packet it belongs to."""
+    rubric = rubric_card(questions)
+    assert packet_digest(_blind(), rubric, "one") == packet_digest(_blind(), rubric, "one")
+
+
+def test_rubric_card_carries_the_disposition_question(questions: dict) -> None:
+    options = rubric_card(questions)["disposition"]["options"]
+    assert [option["name"] for option in options] == ["respond", "review", "drop"]
+
+
+def test_rendered_page_asks_the_disposition_question(questions: dict) -> None:
+    page = render_packet_html("p", "d", "pd", [{"case_id": 1, "text": "x"}], rubric_card(questions))
+    assert 'name="disposition:1"' in page
+    assert page.count('type="radio"') == 4 + 7 + 3
+
+
+def test_score_reports_the_disposition_distribution(questions: dict) -> None:
+    labels = _labels([3, 2, 0])
+    for entry, disposition in zip(labels["cases"], ["respond", "review", "drop"], strict=True):
+        entry["disposition"] = disposition
+    report = score(labels, _key(), questions)
+    assert report["disposition_distribution"] == {"respond": 1, "review": 1, "drop": 1}
+
+
+def test_score_cross_tabs_band_against_disposition(questions: dict) -> None:
+    labels = _labels([2, 2, 3])
+    for entry, disposition in zip(labels["cases"], ["review", "drop", "respond"], strict=True):
+        entry["disposition"] = disposition
+    report = score(labels, _key(), questions)
+    assert report["band_by_disposition"]["pointer"] == {"respond": 0, "review": 1, "drop": 1}

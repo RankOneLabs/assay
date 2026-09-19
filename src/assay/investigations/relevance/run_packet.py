@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ from typing import Any
 from assay.investigations.relevance.catalogue import load_catalogue
 from assay.investigations.relevance.packet import (
     BAND_NAMES,
+    DISPOSITIONS,
     Packet,
     PacketError,
     arm_decisions,
@@ -27,6 +29,7 @@ from assay.investigations.relevance.packet import (
     human_decision,
     plan_digest,
     rubric_card,
+    select_census,
     select_packet,
     stratify,
 )
@@ -34,6 +37,9 @@ from assay.investigations.relevance.packet_html import render_packet_html
 
 PACKET_NAME = "relevance-rubric-2026-09"
 SEED = "assay-relevance-rubric-2026-09/v1"
+
+CENSUS_NAME = "relevance-census-2026-09"
+CENSUS_SEED = "assay-relevance-census-2026-09/v1"
 
 #: Enriched for the crux stratum on purpose. Counts are reported per stratum;
 #: the pooled agreement rate is not a population estimate.
@@ -83,6 +89,49 @@ READING: dict[str, Any] = {
     ),
 }
 
+CENSUS_READING: dict[str, Any] = {
+    "purpose": (
+        "Produce an adoption-grade label set for all 79 frozen evaluations under the "
+        "agent-ops four-band rule, plus the three-way disposition the decision mapping "
+        "now has to produce. These labels replace the stored ones, which answer the "
+        "older and broader 'relevant in general' question."
+    ),
+    "primary": {
+        "statistic": (
+            "the reviewer's `disposition`, which is ground truth for the three-way "
+            "outcome; `band` and `exclusion` are recorded alongside it so the rule's "
+            "own gate can be scored against what the reviewer actually wanted"
+        )
+    },
+    "declared_before_labelling": [
+        {
+            "name": "deterministic link rule",
+            "claim": (
+                "`pointer` + the post text contains a link approximates "
+                "`disposition == review`. Reported as precision and recall against the "
+                "reviewer's disposition. This is a measurement, not a threshold to pass."
+            ),
+        },
+        {
+            "name": "logistic fit",
+            "claim": (
+                "19 features over 79 rows is 4.2 rows per feature, so any fitted weight "
+                "set is reported out-of-fold and is diagnostic only. No adoption claim "
+                "may rest on an in-sample fit."
+            ),
+        },
+        {
+            "name": "test-retest",
+            "claim": (
+                "30 of these cases were labelled in `relevance-rubric-2026-09`. Their "
+                "band agreement across the two sittings is the label noise floor and is "
+                "reported before any model comparison. A low floor invalidates the "
+                "comparison rather than the labels."
+            ),
+        },
+    ],
+}
+
 
 def read_population(paths: Sequence[Path]) -> dict[int, dict[str, Any]]:
     records: dict[int, dict[str, Any]] = {}
@@ -100,21 +149,59 @@ def _digest(payload: Any) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+@dataclass(frozen=True, slots=True)
+class PacketIdentity:
+    """What names one reading of one set of cases.
+
+    Travels together everywhere a packet is written, so a second sitting over the
+    same cases is never mistaken for the first.
+    """
+
+    sitting: str
+    digest: str
+    plan_digest: str
+
+
+def packet_digest(
+    blind: Sequence[Mapping[str, Any]], rubric: Mapping[str, Any], sitting: str
+) -> str:
+    """Identify a packet by what the reviewer is asked, not by how the page looks.
+
+    Covers the questions and the sitting as well as the cases, both deliberately.
+    A second reading of the same cases is a different packet: without ``sitting``
+    a rebuild is byte-identical, and since the browser draft is keyed on this
+    digest, the previous sitting's answers hydrate into the form and the retest
+    reports perfect agreement having measured nothing.
+
+    Just as deliberately excludes the rendered HTML, so that re-rendering the page
+    with different JavaScript does not invalidate a draft already in progress.
+    """
+    return _digest({"cases": list(blind), "questions": rubric, "sitting": sitting})
+
+
 def build(
     document: Mapping[str, Any],
     population: Mapping[int, Mapping[str, Any]],
     questions: Mapping[str, Any],
     output: Path,
+    *,
+    sitting: str,
+    packet: Packet | None = None,
+    reading: Mapping[str, Any] | None = None,
 ) -> Packet:
-    packet = select_packet(document, PACKET_NAME, SEED, PLAN)
+    packet = packet or select_packet(document, PACKET_NAME, SEED, PLAN)
     missing = [case.evaluation_id for case in packet.cases if case.evaluation_id not in population]
     if missing:
         raise PacketError(f"population is missing evaluations: {missing}")
 
     blind = [blind_case(case.case_id, population[case.evaluation_id]) for case in packet.cases]
-    digest = _digest(blind)
-    reading_digest = plan_digest(READING)
     rubric = rubric_card(questions)
+    identity = PacketIdentity(
+        sitting=sitting,
+        digest=packet_digest(blind, rubric, sitting),
+        plan_digest=plan_digest(dict(reading or READING)),
+    )
+    digest, reading_digest = identity.digest, identity.plan_digest
 
     output.mkdir(parents=True, exist_ok=True)
     (output / "packet.json").write_text(
@@ -122,6 +209,7 @@ def build(
             {
                 "format": "assay.label-packet/v1",
                 "name": packet.name,
+                "sitting": sitting,
                 "digest": digest,
                 "plan_digest": reading_digest,
                 "cases": blind,
@@ -141,6 +229,7 @@ def build(
             {
                 "format": "assay.label-packet-key/v1",
                 "name": packet.name,
+                "sitting": sitting,
                 "digest": digest,
                 "plan_digest": reading_digest,
                 "seed": packet.seed,
@@ -175,13 +264,74 @@ def build(
         + "\n",
         encoding="utf-8",
     )
-    (output / "PLAN.md").write_text(
-        _plan_markdown(packet, digest, reading_digest), encoding="utf-8"
+    markdown = (
+        _census_markdown(packet, identity)
+        if reading is not None
+        else _plan_markdown(packet, identity)
     )
+    (output / "PLAN.md").write_text(markdown, encoding="utf-8")
     return packet
 
 
-def _plan_markdown(packet: Packet, digest: str, reading_digest: str) -> str:
+def _census_markdown(packet: Packet, identity: PacketIdentity) -> str:
+    strata = "\n".join(f"| `{key}` | {count} |" for key, count in packet.strata.items())
+    declared = "\n".join(
+        f"- **{item['name']}** — {item['claim']}"
+        for item in CENSUS_READING["declared_before_labelling"]
+    )
+    return f"""# {packet.name} — blind relabel census
+
+Written {datetime.now(UTC).isoformat(timespec="seconds")}, before any label exists.
+
+Sitting: `{identity.sitting}`
+
+Packet digest: `{identity.digest}`
+
+Reading digest: `{identity.plan_digest}`
+
+Seed: `{packet.seed}`
+
+## Purpose
+
+{CENSUS_READING["purpose"]}
+
+## Instrument
+
+Every one of the {len(packet.cases)} frozen evaluations, in seeded display order.
+Blind: post text and parent text only — no author, no URL, no stored label, no
+production decision, no arm decision, and no indication that a case was seen in
+an earlier packet.
+
+Three questions per case. `exclusion` and `band` are the catalogue's own gating
+questions in its own unedited words. `disposition` is new and is the ground truth
+for the three-way outcome: **respond**, **review**, **drop**. It is asked directly
+rather than derived from the band, because whether a post earns a human's glance
+is a judgment about value, not about where its substance sits — and because the
+band rule cannot be measured against a target derived from itself.
+
+## Population shape
+
+Strata are how the five arms behaved, carried for reporting only. They are not
+shown to the reviewer and do not affect selection: this is a census, not a sample.
+
+| stratum | cases |
+| --- | ---: |
+{strata}
+
+## Declared before labelling
+
+{declared}
+
+## What these labels replace
+
+The stored `human_label` on each evaluation answers "relevant in general" and is
+retained for comparison only. After this census, `disposition` is the label of
+record for the agent-ops project, and any figure scored against the stored labels
+must say so explicitly.
+"""
+
+
+def _plan_markdown(packet: Packet, identity: PacketIdentity) -> str:
     strata = "\n".join(f"| `{key}` | {take} |" for key, take in packet.strata.items())
     thresholds = "\n".join(
         f"- **{'at least' if 'at_least' in t else 'at most'} "
@@ -192,9 +342,11 @@ def _plan_markdown(packet: Packet, digest: str, reading_digest: str) -> str:
 
 Written {datetime.now(UTC).isoformat(timespec="seconds")}, before any label exists.
 
-Packet digest: `{digest}`
+Sitting: `{identity.sitting}`
 
-Reading digest: `{reading_digest}`
+Packet digest: `{identity.digest}`
+
+Reading digest: `{identity.plan_digest}`
 
 Seed: `{packet.seed}`
 
@@ -259,6 +411,7 @@ def score(
                 "stratum": record["stratum"],
                 "reviewer_band": BAND_NAMES[band_index],
                 "reviewer_exclusion": entry["exclusion"],
+                "reviewer_disposition": entry.get("disposition"),
                 "reviewer_decision": decision,
                 "stored_label": record["stored_label"],
                 "production_decision": record["production_decision"],
@@ -306,6 +459,21 @@ def score(
         "band_distribution": {
             name: sum(1 for row in rows if row["reviewer_band"] == name) for name in BAND_NAMES
         },
+        "disposition_distribution": {
+            name: sum(1 for row in rows if row["reviewer_disposition"] == name)
+            for name, _ in DISPOSITIONS
+        },
+        "band_by_disposition": {
+            band: {
+                name: sum(
+                    1
+                    for row in rows
+                    if row["reviewer_band"] == band and row["reviewer_disposition"] == name
+                )
+                for name, _ in DISPOSITIONS
+            }
+            for band in BAND_NAMES
+        },
         "cases": rows,
     }
 
@@ -319,6 +487,24 @@ def main() -> None:
     builder.add_argument("--population", type=Path, nargs="+", required=True)
     builder.add_argument("--catalogue", type=Path, required=True)
     builder.add_argument("--output", type=Path, required=True)
+    builder.add_argument(
+        "--sitting",
+        required=True,
+        help="names this reading of the cases; a repeat sitting must use a new name "
+        "or it inherits the previous sitting's saved draft",
+    )
+
+    census = sub.add_parser("census", help="relabel the whole population")
+    census.add_argument("--run", type=Path, required=True)
+    census.add_argument("--population", type=Path, nargs="+", required=True)
+    census.add_argument("--catalogue", type=Path, required=True)
+    census.add_argument("--output", type=Path, required=True)
+    census.add_argument(
+        "--sitting",
+        required=True,
+        help="names this reading of the cases; a repeat sitting must use a new name "
+        "or it inherits the previous sitting's saved draft",
+    )
 
     scorer = sub.add_parser("score")
     scorer.add_argument("--labels", type=Path, required=True)
@@ -329,12 +515,23 @@ def main() -> None:
     args = parser.parse_args()
     questions = load_catalogue(args.catalogue).questions
 
-    if args.command == "build":
+    if args.command in ("build", "census"):
         document = json.loads(args.run.read_text(encoding="utf-8"))
-        packet = build(document, read_population(args.population), questions, args.output)
+        is_census = args.command == "census"
+        packet = build(
+            document,
+            read_population(args.population),
+            questions,
+            args.output,
+            sitting=args.sitting,
+            packet=(
+                select_census(document, CENSUS_NAME, CENSUS_SEED) if is_census else None
+            ),
+            reading=CENSUS_READING if is_census else None,
+        )
         counts = stratify(document)
-        print(f"available strata: {({k: len(v) for k, v in sorted(counts.items())})}")
-        print(f"selected {len(packet.cases)} cases into {args.output}")
+        print(f"strata: {({k: len(v) for k, v in sorted(counts.items())})}")
+        print(f"{len(packet.cases)} cases into {args.output}")
         print(f"  open {args.output / 'packet.html'}")
         return
 
@@ -344,9 +541,17 @@ def main() -> None:
         questions,
     )
     primary = report["primary"]
-    print(f"crux: reviewer sides with the arms on {primary['reviewer_sides_with_arms']}"
-          f"/{primary['n']}")
-    print(f"\n{primary['conclusion']}\n")
+    if primary["n"]:
+        print(f"crux: reviewer sides with the arms on {primary['reviewer_sides_with_arms']}"
+              f"/{primary['n']}")
+        print(f"\n{primary['conclusion']}\n")
+    print(f"band:        {report['band_distribution']}")
+    print(f"disposition: {report['disposition_distribution']}")
+    print("\nband x disposition:")
+    for band, counts in report["band_by_disposition"].items():
+        if any(counts.values()):
+            print(f"  {band:14s} {counts}")
+    print()
     for stratum, counts in sorted(report["strata"].items()):
         print(f"  {stratum:24s} n={counts['n']:2d} "
               f"agrees-with-stored={counts['agrees_with_stored']:2d} "

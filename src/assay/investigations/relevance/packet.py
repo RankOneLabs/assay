@@ -28,6 +28,27 @@ from typing import Any, cast
 
 BAND_NAMES = ("out_of_scope", "building", "pointer", "substantive")
 
+#: The three-way outcome the decision mapping now has to produce. Asked of the
+#: reviewer directly rather than derived from the band, because whether a post is
+#: worth a human's glance is a judgment about value, not about where its substance
+#: sits. Keeping it separate is what lets the report score the deterministic
+#: `pointer + has_link -> review` rule against what a human actually wanted.
+DISPOSITIONS: tuple[tuple[str, str], ...] = (
+    (
+        "respond",
+        "Worth replying to. The post gives you something specific to engage with.",
+    ),
+    (
+        "review",
+        "Worth a look, but not directly answerable — it points somewhere that may "
+        "carry the substance, and you would want to click before deciding.",
+    ),
+    (
+        "drop",
+        "Not worth surfacing. Nothing here and nothing behind it.",
+    ),
+)
+
 #: Fields that must never survive the blind projection, whatever the policy says.
 DENYLIST = (
     "human_label",
@@ -126,6 +147,33 @@ def stratify(document: Mapping[str, Any]) -> dict[str, list[int]]:
     return buckets
 
 
+def select_census(document: Mapping[str, Any], name: str, seed: str) -> Packet:
+    """Take every case in the population, shuffled for display.
+
+    A census needs no sampling plan, but it keeps the stratum tag so the report
+    can still break results down by how the arms behaved — and so a repeat of an
+    earlier packet's cases can be read as test-retest rather than new evidence.
+    """
+    buckets = stratify(document)
+    stratum_of = {
+        evaluation_id: key for key, ids in buckets.items() for evaluation_id in ids
+    }
+    shown = sorted(stratum_of, key=lambda e: _order_hash(seed, "display", e))
+    return Packet(
+        name=name,
+        seed=seed,
+        cases=tuple(
+            PacketCase(
+                case_id=index + 1,
+                evaluation_id=evaluation_id,
+                stratum=stratum_of[evaluation_id],
+            )
+            for index, evaluation_id in enumerate(shown)
+        ),
+        strata={key: len(ids) for key, ids in sorted(buckets.items())},
+    )
+
+
 def select_packet(
     document: Mapping[str, Any], name: str, seed: str, plan: Sequence[tuple[str, int]]
 ) -> Packet:
@@ -211,6 +259,15 @@ def rubric_card(questions: Mapping[str, Any]) -> dict[str, Any]:
                 }
                 for name, item in exclusion["criteria"].items()
             ],
+        },
+        "disposition": {
+            "question": "What should Scout do with this post?",
+            "judge": (
+                "Answer for what you would actually want, not what the band rule "
+                "implies. This is the question the band rule is being measured "
+                "against, so it has to be able to disagree with it."
+            ),
+            "options": [{"name": name, "what": what} for name, what in DISPOSITIONS],
         },
     }
 
