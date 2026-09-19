@@ -104,3 +104,28 @@ survive this run.
 four-band rule. Until the labels and the decision rule ask the same question, no
 number computed against these labels means what it appears to mean, and the ceiling
 for every arm including production is unknown.
+
+---
+
+## Follow-up: the relabel ran, and it did not unblock the number
+
+Added 2026-09-19, after
+[`../typesafe-relevance-census-2026-09/RESULTS.md`](../typesafe-relevance-census-2026-09/RESULTS.md).
+
+All 79 cases were relabelled blind under `agent-ops-relevance/v2`. The rubric
+mismatch above is **confirmed** — on the 15 `crux` cases the reviewer sided with
+the arms on 12, so the arms were applying the rule correctly and the stored labels
+were answering a broader question.
+
+The adoption number still does not follow. 30 of the 79 cases were re-presented
+unmarked from the earlier packet, and the band question reproduces against itself
+at only **19/30 = 63%**, with 6 of the 11 disagreements two rungs apart. `exclusion`
+holds at 90% on the same cases, so this is specific to the band question rather than
+general reviewer noise. The census PLAN.md declared before labelling that a low floor
+invalidates the comparison rather than the labels, and it is a low floor: the gap
+between the arms in the table above is smaller than the gap between one reviewer and
+the same reviewer a day later.
+
+Do not read an adoption verdict out of any band-mediated figure in this document.
+The measured advantages of Jev that do **not** route through the band — latency and
+the shape of its probability outputs — are unaffected.

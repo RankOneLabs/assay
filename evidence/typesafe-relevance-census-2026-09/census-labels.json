@@ -1,0 +1,1046 @@
+{
+  "band_by_disposition": {
+    "building": {
+      "drop": 12,
+      "respond": 0,
+      "review": 4
+    },
+    "out_of_scope": {
+      "drop": 12,
+      "respond": 0,
+      "review": 0
+    },
+    "pointer": {
+      "drop": 11,
+      "respond": 0,
+      "review": 8
+    },
+    "substantive": {
+      "drop": 0,
+      "respond": 22,
+      "review": 10
+    }
+  },
+  "band_distribution": {
+    "building": 16,
+    "out_of_scope": 12,
+    "pointer": 19,
+    "substantive": 32
+  },
+  "cases": [
+    {
+      "band": "pointer",
+      "disposition": "review",
+      "evaluation_id": 45433,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "building",
+      "disposition": "review",
+      "evaluation_id": 45439,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "pointer",
+      "disposition": "review",
+      "evaluation_id": 45443,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "substantive",
+      "disposition": "review",
+      "evaluation_id": 46102,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 46865,
+      "exclusion": "hype",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "pointer",
+      "disposition": "review",
+      "evaluation_id": 46877,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47054,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47067,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "review",
+      "evaluation_id": 47090,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": false,
+      "stratum": "mirror"
+    },
+    {
+      "band": "pointer",
+      "disposition": "review",
+      "evaluation_id": 47133,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47138,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "review",
+      "evaluation_id": 47151,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 47159,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "hype",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "pointer",
+      "disposition": "review",
+      "evaluation_id": 47200,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 47204,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47209,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "building",
+      "disposition": "review",
+      "evaluation_id": 47212,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 47263,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 47267,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47281,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 47301,
+      "exclusion": "hype",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 47319,
+      "exclusion": "non_english",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "out_of_scope",
+        "exclusion": "non_english",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 47320,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 47357,
+      "exclusion": "non_english",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": false,
+      "stratum": "split_negative"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47386,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "review",
+      "evaluation_id": 47390,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47392,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 47395,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 47396,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "building",
+      "disposition": "review",
+      "evaluation_id": 47397,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47399,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "retest": {
+        "band": "building",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47403,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47406,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "review",
+      "evaluation_id": 47411,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 47416,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 47432,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "substantive",
+      "disposition": "review",
+      "evaluation_id": 47447,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "substantive",
+      "disposition": "review",
+      "evaluation_id": 47458,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 47461,
+      "exclusion": "non_english",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": false,
+      "stratum": "split_negative"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 47477,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47481,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "review",
+      "evaluation_id": 47554,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "pointer",
+      "disposition": "review",
+      "evaluation_id": 47559,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "building",
+      "disposition": "review",
+      "evaluation_id": 47629,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47726,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 47737,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 47753,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 48124,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": false,
+      "stratum": "split_negative"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 48293,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 48303,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "substantive",
+      "disposition": "review",
+      "evaluation_id": 48349,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": false,
+      "stratum": "mirror"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 48355,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "building",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 48396,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 48718,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "split_negative"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 48720,
+      "exclusion": "hype",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "split_negative"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 48741,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": false,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": false,
+      "stratum": "split_negative"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 48742,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 48765,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": false,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "event_promo",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 48782,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": false,
+      "stored_label": true,
+      "stratum": "split_positive"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 48789,
+      "exclusion": "coding_assistant",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 48793,
+      "exclusion": "hype",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 48807,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "split_negative"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 48820,
+      "exclusion": "hardware",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 48844,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 48856,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 48859,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": false,
+      "retest": {
+        "band": "substantive",
+        "exclusion": "none",
+        "gate_decision": true,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 48860,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 48866,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": false,
+      "retest": {
+        "band": "building",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": false,
+      "stratum": "split_negative"
+    },
+    {
+      "band": "pointer",
+      "disposition": "review",
+      "evaluation_id": 48891,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 48905,
+      "exclusion": "event_promo",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 48917,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": false,
+      "retest": {
+        "band": "building",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": true,
+      "stratum": "crux"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 48921,
+      "exclusion": "non_english",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "substantive",
+      "disposition": "respond",
+      "evaluation_id": 48922,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": true,
+      "stratum": "unanimous_yes_positive"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 48927,
+      "exclusion": "hype",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "pointer",
+      "disposition": "review",
+      "evaluation_id": 48931,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "split_negative"
+    },
+    {
+      "band": "out_of_scope",
+      "disposition": "drop",
+      "evaluation_id": 48934,
+      "exclusion": "event_promo",
+      "gate_decision": false,
+      "production_decision": false,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "building",
+      "disposition": "drop",
+      "evaluation_id": 48936,
+      "exclusion": "hype",
+      "gate_decision": false,
+      "production_decision": true,
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "pointer",
+      "disposition": "drop",
+      "evaluation_id": 48944,
+      "exclusion": "none",
+      "gate_decision": false,
+      "production_decision": true,
+      "retest": {
+        "band": "pointer",
+        "exclusion": "none",
+        "gate_decision": false,
+        "packet": "relevance-rubric-2026-09"
+      },
+      "stored_label": false,
+      "stratum": "unanimous_no_negative"
+    },
+    {
+      "band": "substantive",
+      "disposition": "review",
+      "evaluation_id": 48954,
+      "exclusion": "none",
+      "gate_decision": true,
+      "production_decision": true,
+      "stored_label": false,
+      "stratum": "split_negative"
+    }
+  ],
+  "disposition_distribution": {
+    "drop": 35,
+    "respond": 22,
+    "review": 22
+  },
+  "format": "assay.label-census-export/v1",
+  "note": "Reviewer labels for all 79 frozen evaluations under agent-ops-relevance/v2. No post text, author, or URL: those stay in the private run receipt, as do the reviewer's free-text notes. `retest` is present on the 30 cases that were also labelled in the earlier `relevance-rubric-2026-09` packet, and is the source of the label noise floor.",
+  "packet": "relevance-census-2026-09",
+  "packet_digest": "11b4c1e11fdbb3b7859fa91767294e92e2791a2528e49e5b2c44c37647f0f97a",
+  "plan_digest": "0354f67a39e24e2120e005ab2e14e461c57483af82bab52ebd5a7da0e5394e81",
+  "reviewer": "steve",
+  "saved_at": "2026-09-19T16:02:43.068Z",
+  "strata": {
+    "crux": {
+      "agrees_with_arms": 12,
+      "agrees_with_stored": 3,
+      "n": 15
+    },
+    "mirror": {
+      "agrees_with_arms": 2,
+      "agrees_with_stored": 0,
+      "n": 2
+    },
+    "split_negative": {
+      "agrees_with_arms": 9,
+      "agrees_with_stored": 8,
+      "n": 10
+    },
+    "split_positive": {
+      "agrees_with_arms": 7,
+      "agrees_with_stored": 9,
+      "n": 16
+    },
+    "unanimous_no_negative": {
+      "agrees_with_arms": 17,
+      "agrees_with_stored": 17,
+      "n": 18
+    },
+    "unanimous_yes_positive": {
+      "agrees_with_arms": 15,
+      "agrees_with_stored": 15,
+      "n": 18
+    }
+  }
+}
