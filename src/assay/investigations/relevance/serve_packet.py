@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
@@ -32,8 +32,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from assay.investigations.relevance.packet import BAND_NAMES, DISPOSITIONS
-from assay.investigations.relevance.packet_html import Endpoints, render_packet_html
+from assay.investigations.relevance.packet import is_asked
+from assay.investigations.relevance.packet_html import (
+    FORMATS_V1,
+    FORMATS_V2,
+    Endpoints,
+    Formats,
+    render_packet_html,
+)
 
 #: Where a finished sitting is submitted.
 POST_BACK = "/labels"
@@ -68,7 +74,9 @@ class ServedPacket:
     digest: str
     plan_digest: str
     case_ids: frozenset[int]
-    exclusions: frozenset[str]
+    allowed: Mapping[str, frozenset[Any]]
+    questions: tuple[Mapping[str, Any], ...]
+    formats: Formats
     page: str
 
 
@@ -90,6 +98,30 @@ class Draft:
     answered: int
 
 
+def _coerce(value_type: str, raw: str) -> Any:
+    """The page's ``coerce``, server-side. The two must agree or nothing validates."""
+    if value_type == "int":
+        return int(raw)
+    if value_type == "bool":
+        return raw == "true"
+    return raw
+
+
+def _allowed_answers(rubric: Sequence[Mapping[str, Any]]) -> dict[str, frozenset[Any]]:
+    """Every value the packet will accept, per question, read off its own rubric.
+
+    Derived rather than declared, so a packet asking a question this module has
+    never heard of still validates, and a question that is retired stops being
+    accepted without an edit here.
+    """
+    return {
+        question["key"]: frozenset(
+            _coerce(question["value_type"], str(option["value"])) for option in question["options"]
+        )
+        for question in rubric
+    }
+
+
 def load_packet(path: Path, *, endpoints: Endpoints = SERVED_ENDPOINTS) -> ServedPacket:
     """Read a built ``packet.json`` and render its page against the endpoints."""
     document = json.loads(path.read_text(encoding="utf-8"))
@@ -97,12 +129,15 @@ def load_packet(path: Path, *, endpoints: Endpoints = SERVED_ENDPOINTS) -> Serve
         raise ServeError(f"{path} is not a label packet")
     cases = document["cases"]
     rubric = document["rubric"]
+    formats = FORMATS_V2 if any(q["key"] == "substance" for q in rubric) else FORMATS_V1
     return ServedPacket(
         name=document["name"],
         digest=document["digest"],
         plan_digest=document["plan_digest"],
         case_ids=frozenset(int(case["case_id"]) for case in cases),
-        exclusions=frozenset(option["name"] for option in rubric["exclusion"]["options"]),
+        allowed=_allowed_answers(rubric),
+        questions=tuple(rubric),
+        formats=formats,
         page=render_packet_html(
             document["name"],
             document["digest"],
@@ -110,6 +145,7 @@ def load_packet(path: Path, *, endpoints: Endpoints = SERVED_ENDPOINTS) -> Serve
             cases,
             rubric,
             endpoints=endpoints,
+            formats=formats,
         ),
     )
 
@@ -117,21 +153,28 @@ def load_packet(path: Path, *, endpoints: Endpoints = SERVED_ENDPOINTS) -> Serve
 def _validate_answer(
     case_id: int, entry: Mapping[str, Any], packet: ServedPacket, *, partial: bool
 ) -> None:
-    """Check one case's answers. ``partial`` allows a field to be unanswered yet."""
+    """Check one case's answers against the packet's own question set.
 
-    def given(name: str) -> bool:
-        """A draft may leave a field unanswered; a submission may not."""
-        return not (partial and entry.get(name) is None)
+    ``partial`` allows a field to be unanswered yet, because a draft is scratch.
+    A submission may not: every question the packet asks must carry a value the
+    packet offered.
 
-    band = entry.get("band")
-    if given("band") and (not isinstance(band, int) or not 0 <= band < len(BAND_NAMES)):
-        raise ServeError(f"case {case_id}: band out of range")
-    exclusion = entry.get("exclusion")
-    if given("exclusion") and exclusion not in packet.exclusions:
-        raise ServeError(f"case {case_id}: unknown exclusion {exclusion!r}")
-    disposition = entry.get("disposition")
-    if given("disposition") and disposition not in {name for name, _ in DISPOSITIONS}:
-        raise ServeError(f"case {case_id}: unknown disposition {disposition!r}")
+    A question whose ``asked_when`` is unmet must be ``None`` in both cases. That
+    is the check that keeps `exclusion: hype` beside `substance: in_post` out of
+    the record — the page prunes it, and this is what makes the page's pruning a
+    guarantee rather than a hope.
+    """
+    for question in packet.questions:
+        key = question["key"]
+        value = entry.get(key)
+        if not is_asked(question, entry):
+            if value is not None:
+                raise ServeError(f"case {case_id}: {key} answered but not asked: {value!r}")
+            continue
+        if partial and value is None:
+            continue
+        if value not in packet.allowed[key]:
+            raise ServeError(f"case {case_id}: bad {key} {value!r}")
 
 
 def _check_provenance(payload: Mapping[str, Any], packet: ServedPacket, fmt: str) -> None:
@@ -145,7 +188,7 @@ def _check_provenance(payload: Mapping[str, Any], packet: ServedPacket, fmt: str
 
 def validate_draft(payload: Mapping[str, Any], packet: ServedPacket) -> Draft:
     """Check a partial draft. Unlike a submission, incompleteness is the norm."""
-    _check_provenance(payload, packet, "assay.label-packet-draft/v1")
+    _check_provenance(payload, packet, packet.formats.draft)
     answers = payload.get("answers")
     if not isinstance(answers, Mapping):
         raise ServeError("answers must be an object")
@@ -157,7 +200,15 @@ def validate_draft(payload: Mapping[str, Any], packet: ServedPacket) -> Draft:
         if not isinstance(entry, Mapping):
             raise ServeError(f"case {case_id}: answers must be an object")
         _validate_answer(case_id, entry, packet, partial=True)
-        if all(entry.get(field) is not None for field in ("band", "exclusion", "disposition")):
+        #: A question the chain did not reach is not owed an answer, so an
+        #: excluded post is complete at one answer. Counting every question
+        #: unconditionally would leave the progress figure permanently short of
+        #: the case count and the submit button permanently disabled.
+        if all(
+            entry.get(question["key"]) is not None
+            for question in packet.questions
+            if is_asked(question, entry)
+        ):
             answered += 1
     return Draft(
         reviewer=str(payload.get("reviewer") or "unknown"),
@@ -199,7 +250,7 @@ def validate_submission(payload: Mapping[str, Any], packet: ServedPacket) -> Sub
     Rejects rather than repairs. A submission that does not match is far more
     likely to be a stale tab than a near-miss worth salvaging.
     """
-    _check_provenance(payload, packet, "assay.label-packet-labels/v1")
+    _check_provenance(payload, packet, packet.formats.labels)
 
     reviewer = str(payload.get("reviewer") or "").strip()
     if not reviewer:
@@ -342,14 +393,31 @@ def serve(packet: ServedPacket, output: Path, host: str, port: int) -> None:
         server.server_close()
 
 
+def labels_path(output: Path) -> Path:
+    """Where ``labels.json`` goes, given what was passed on the command line.
+
+    ``--output`` is a file, and pointing it at a directory used to be accepted:
+    the draft then synced to the directory's *parent*, and the submission failed
+    on ``IsADirectoryError`` — at the end of the sitting, after every case had
+    been answered. Naming the file is cheap; discovering this at that moment is
+    not.
+    """
+    return output / "labels.json" if output.is_dir() else output
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve a blind label packet and take labels back.")
     parser.add_argument("--packet", type=Path, required=True, help="a built packet.json")
-    parser.add_argument("--output", type=Path, required=True, help="where labels.json is written")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="where labels.json is written; a directory is taken to mean labels.json inside it",
+    )
     parser.add_argument("--host", default="127.0.0.1", help="bind address (default: loopback)")
     parser.add_argument("--port", type=int, default=8099)
     args = parser.parse_args()
-    serve(load_packet(args.packet), args.output, args.host, args.port)
+    serve(load_packet(args.packet), labels_path(args.output), args.host, args.port)
 
 
 if __name__ == "__main__":

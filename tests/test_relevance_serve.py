@@ -11,13 +11,18 @@ from pathlib import Path
 import pytest
 
 from assay.investigations.relevance.catalogue import load_catalogue
-from assay.investigations.relevance.packet import rubric_card
+from assay.investigations.relevance.packet import (
+    as_questions,
+    rubric_card,
+    substance_rubric_card,
+)
 from assay.investigations.relevance.packet_html import Endpoints, render_packet_html
 from assay.investigations.relevance.serve_packet import (
     DRAFT_BACK,
     POST_BACK,
     ServedPacket,
     ServeError,
+    labels_path,
     load_packet,
     make_server,
     merge_drafts,
@@ -47,7 +52,7 @@ def packet_file(tmp_path: Path, questions: dict) -> Path:
             {"case_id": 1, "text": "a post by Grafana", "parent_text": None},
             {"case_id": 2, "text": "another post", "parent_text": "a parent"},
         ],
-        "rubric": rubric_card(questions),
+        "rubric": as_questions(rubric_card(questions)),
     }
     path = tmp_path / "packet.json"
     path.write_text(json.dumps(document), encoding="utf-8")
@@ -80,14 +85,21 @@ def _labels(**overrides: object) -> dict:
 
 def test_default_page_makes_no_network_call(questions: dict) -> None:
     """The property the file:// packet is supposed to have, checked by grep."""
-    page = render_packet_html("p", "d", "pd", [{"case_id": 1, "text": "x"}], rubric_card(questions))
+    page = render_packet_html(
+        "p", "d", "pd", [{"case_id": 1, "text": "x"}], as_questions(rubric_card(questions))
+    )
     for network in ("fetch(", "XMLHttpRequest", "EventSource", "navigator.sendBeacon"):
         assert network not in page
 
 
 def test_served_page_posts_to_the_given_urls(questions: dict) -> None:
     page = render_packet_html(
-        "p", "d", "pd", [{"case_id": 1, "text": "x"}], rubric_card(questions), endpoints=SERVED
+        "p",
+        "d",
+        "pd",
+        [{"case_id": 1, "text": "x"}],
+        as_questions(rubric_card(questions)),
+        endpoints=SERVED,
     )
     assert 'const POST_BACK = "/labels"' in page
     assert 'const DRAFT_BACK = "/draft"' in page
@@ -96,7 +108,12 @@ def test_served_page_posts_to_the_given_urls(questions: dict) -> None:
 
 def test_served_page_still_hides_the_answer_key_fields(questions: dict) -> None:
     page = render_packet_html(
-        "p", "d", "pd", [{"case_id": 1, "text": "x"}], rubric_card(questions), endpoints=SERVED
+        "p",
+        "d",
+        "pd",
+        [{"case_id": 1, "text": "x"}],
+        as_questions(rubric_card(questions)),
+        endpoints=SERVED,
     )
     for leaked in ("human_label", "production_decision", "stratum", "evaluation_id"):
         assert leaked not in page
@@ -154,28 +171,28 @@ def test_validate_refuses_a_duplicated_case(packet: ServedPacket) -> None:
 def test_validate_refuses_a_band_out_of_range(packet: ServedPacket) -> None:
     labels = _labels()
     labels["cases"][0]["band"] = 4
-    with pytest.raises(ServeError, match="band out of range"):
+    with pytest.raises(ServeError, match="bad band"):
         validate_submission(labels, packet)
 
 
 def test_validate_refuses_an_unknown_exclusion(packet: ServedPacket) -> None:
     labels = _labels()
     labels["cases"][0]["exclusion"] = "not_a_category"
-    with pytest.raises(ServeError, match="unknown exclusion"):
+    with pytest.raises(ServeError, match="bad exclusion"):
         validate_submission(labels, packet)
 
 
 def test_validate_refuses_an_unknown_disposition(packet: ServedPacket) -> None:
     labels = _labels()
     labels["cases"][0]["disposition"] = "maybe"
-    with pytest.raises(ServeError, match="unknown disposition"):
+    with pytest.raises(ServeError, match="bad disposition"):
         validate_submission(labels, packet)
 
 
 def test_validate_refuses_a_missing_disposition(packet: ServedPacket) -> None:
     labels = _labels()
     del labels["cases"][0]["disposition"]
-    with pytest.raises(ServeError, match="unknown disposition"):
+    with pytest.raises(ServeError, match="bad disposition"):
         validate_submission(labels, packet)
 
 
@@ -221,7 +238,7 @@ def test_draft_refuses_an_unknown_case(packet: ServedPacket) -> None:
 
 
 def test_draft_refuses_a_bad_value_even_when_partial(packet: ServedPacket) -> None:
-    with pytest.raises(ServeError, match="band out of range"):
+    with pytest.raises(ServeError, match="bad band"):
         validate_draft(_draft({"1": {"band": 9}}), packet)
 
 
@@ -358,3 +375,133 @@ def test_a_synced_draft_never_becomes_the_scored_labels(running: tuple[str, Path
     _post(f"{base}{DRAFT_BACK}", _draft({"1": {"band": 3}}))
     assert not output.exists()
     assert output.with_name("draft.json").exists()
+
+
+# --- the substance rule over the wire ---
+
+V3 = Path("src/assay/investigations/relevance/catalogues/agent-ops-relevance.v3.yaml")
+
+
+@pytest.fixture
+def substance_packet(tmp_path: Path) -> ServedPacket:
+    document = {
+        "format": "assay.label-packet/v1",
+        "name": "substance-packet",
+        "digest": "packet-digest",
+        "plan_digest": "plan-digest",
+        "cases": [{"case_id": 1, "text": "a post", "parent_text": None}],
+        "rubric": substance_rubric_card(load_catalogue(V3).questions),
+    }
+    path = tmp_path / "packet.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return load_packet(path)
+
+
+def _substance_submission(**answer: object) -> dict:
+    return {
+        "format": "assay.label-packet-labels/v2",
+        "packet": "substance-packet",
+        "packet_digest": "packet-digest",
+        "plan_digest": "plan-digest",
+        "reviewer": "steve",
+        "saved_at": "2026-09-19T00:00:00Z",
+        "cases": [{"case_id": 1, "exclusion": "none", "substance": "in_post", **answer}],
+    }
+
+
+def test_the_server_accepts_a_substance_sitting(substance_packet: ServedPacket) -> None:
+    assert validate_submission(_substance_submission(), substance_packet).case_count == 1
+
+
+def test_the_server_accepts_an_excluded_post_with_no_substance_answer(
+    substance_packet: ServedPacket,
+) -> None:
+    """The chain, over the wire. An excluded post is one decision, not two."""
+    payload = _substance_submission(exclusion="hype", substance=None)
+    assert validate_submission(payload, substance_packet).case_count == 1
+
+
+def test_the_server_refuses_a_substance_answer_on_an_excluded_post(
+    substance_packet: ServedPacket,
+) -> None:
+    """The page prunes it; this is what makes the pruning a guarantee.
+
+    `exclusion: hype` beside `substance: in_post` is a contradiction, and letting
+    it through would put one in the labels of record.
+    """
+    payload = _substance_submission(exclusion="hype")
+    with pytest.raises(ServeError, match="substance answered but not asked"):
+        validate_submission(payload, substance_packet)
+
+
+def test_the_server_refuses_an_unknown_substance(substance_packet: ServedPacket) -> None:
+    with pytest.raises(ServeError, match="bad substance"):
+        validate_submission(_substance_submission(substance="in-post"), substance_packet)
+
+
+def test_the_server_refuses_a_v1_payload_against_a_v2_packet(
+    substance_packet: ServedPacket,
+) -> None:
+    """A stale tab from the census must not land in sitting two's labels."""
+    stale = _substance_submission()
+    stale["format"] = "assay.label-packet-labels/v1"
+    with pytest.raises(ServeError, match="not a label-packet-labels/v2 payload"):
+        validate_submission(stale, substance_packet)
+
+
+def test_the_server_refuses_a_sitting_still_missing_a_question(
+    substance_packet: ServedPacket,
+) -> None:
+    incomplete = _substance_submission()
+    del incomplete["cases"][0]["substance"]
+    with pytest.raises(ServeError, match="bad substance"):
+        validate_submission(incomplete, substance_packet)
+
+
+def _substance_draft(answers: dict) -> dict:
+    return {
+        "format": "assay.label-packet-draft/v2",
+        "packet": "substance-packet",
+        "packet_digest": "packet-digest",
+        "plan_digest": "plan-digest",
+        "reviewer": "steve",
+        "saved_at": "2026-09-19T00:00:00Z",
+        "answers": answers,
+    }
+
+
+def test_a_draft_case_is_complete_once_the_chain_ends(
+    substance_packet: ServedPacket,
+) -> None:
+    """An excluded post is complete at one answer.
+
+    Counting every question unconditionally would hold the progress figure below
+    the case count forever, and with it the submit button.
+    """
+    assert (
+        validate_draft(_substance_draft({"1": {"exclusion": "hype"}}), substance_packet).answered
+        == 1
+    )
+
+
+def test_a_draft_case_still_needing_substance_is_not_complete(
+    substance_packet: ServedPacket,
+) -> None:
+    assert (
+        validate_draft(_substance_draft({"1": {"exclusion": "none"}}), substance_packet).answered
+        == 0
+    )
+
+
+def test_a_directory_output_becomes_labels_json_inside_it(tmp_path: Path) -> None:
+    """Caught while starting sitting two.
+
+    Passing the sitting's directory put the draft in its *parent* and left the
+    submission to fail on IsADirectoryError after all 79 cases were answered.
+    """
+    assert labels_path(tmp_path) == tmp_path / "labels.json"
+
+
+def test_a_file_output_is_left_alone(tmp_path: Path) -> None:
+    named = tmp_path / "labels.json"
+    assert labels_path(named) == named

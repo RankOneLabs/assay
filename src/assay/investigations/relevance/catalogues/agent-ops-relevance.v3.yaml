@@ -1,0 +1,190 @@
+id: agent-ops-relevance
+decide: agent_ops_relevance/v2
+description: >-
+  Where is the substance. Two questions, asked as a chain: `exclusion` names a
+  hard disqualifier and ends the case, and only a post that clears it is asked
+  `substance` — whether a reply can be written from the post's own words
+  (`in_post`), whether the post only points somewhere (`pointer`), or whether
+  there is nothing either way (`none`). Those route to respond / review / drop.
+  The v1/v2 four-level `band` question is retired: it reproduced against itself
+  at only 63% across two sittings by one reviewer, because its rungs fused two
+  independent axes — what the post is about, and where its point sits — onto one
+  column, and because its `pointer` rung claimed "announces" three lines below a
+  `substantive` rung that an announcement with a claim also satisfies. Scope
+  (building versus operating) is deliberately not asked: it is unanswerable on a
+  bare link, which is precisely the case the rule has to get right.
+  `exclusion` is carried over from v2 unedited: it retests at 90% and was never
+  the defect. No `agent_ops_relevance/v2` entry exists in the decide registry —
+  this catalogue is the human labelling instrument, and adding a model mapping
+  would mean editing `mappings.py`, whose SHA-256 is pinned in published evidence.
+  The packet is blind to the author, so `review` here can only ever mean "follow
+  the pointer". The other reason to review a post — wanting to know who posted it
+  — is out of this instrument's reach by construction; see `account_type` in v2.
+state:
+  post: [platform, channel, url, text]
+  parent_context_only: [author_name, text]
+  author: [name, handle]
+  project: [key, name, description]
+questions:
+  exclusion:
+    type: choice
+    instructions:
+      question: Does the post's own text fall under a hard exclusion?
+      judge: >-
+        Judge the post's actual subject, not a matching word. Workload cost is an
+        operations topic, not funding news. A post being thin, vague, off-topic or
+        unoriginal is not a hard exclusion; only the categories below are.
+    criteria:
+      non_english:
+        what: The post's text is mainly in a language other than English.
+        not_for: >-
+          English text quoting a foreign phrase, or English text containing code,
+          identifiers, or non-English product names.
+        examples:
+          - Un hilo sobre cómo desplegamos agentes en producción
+          - 本番環境でエージェントを運用した話
+      coding_assistant:
+        what: >-
+          Personal productivity with a coding assistant — how well it writes,
+          completes or refactors code for the author at their keyboard.
+        not_for: >-
+          Operating an agent that runs unattended, even when that agent writes code.
+        examples:
+          - Copilot saved me two hours refactoring this module
+          - Comparing Cursor and Windsurf for day-to-day editing
+      hardware:
+        what: Chips, GPUs, devices or datacenter hardware as the post's subject.
+        not_for: >-
+          The cost or capacity of running a workload, which is an operations topic.
+        examples:
+          - The new accelerator ships with 192GB of memory
+          - Benchmarks across two GPU generations
+      funding_or_market:
+        what: >-
+          Funding rounds, valuations, acquisitions, share prices, or market-size
+          commentary.
+        not_for: >-
+          What it costs to run a workload, which is an operations topic rather than
+          market news.
+        examples:
+          - Series B closed at a $2B valuation
+          - The agent tooling market will be worth $40B by 2030
+      event_promo:
+        what: >-
+          Promotion of a conference, meetup, webinar, livestream, workshop or course.
+        not_for: >-
+          A post that reports a specific finding that happened to be presented at an
+          event.
+        examples:
+          - Join our webinar on agent reliability, Thursday 2pm
+          - Early-bird tickets close Friday
+      hype:
+        what: >-
+          Enthusiasm, slogans, predictions or vibes carrying no specific claim,
+          number, mechanism or result.
+        not_for: >-
+          A short post that still names a specific behaviour, number or failure. Also
+          not an on-topic link, announcement or agreement that makes no point of its
+          own — that is not a hard exclusion.
+        examples:
+          - Agents are going to change everything
+          - 2026 is the year of the agent
+      none:
+        what: >-
+          No hard exclusion applies. Choose this whenever the post is in English and
+          its subject is none of the categories above — including posts that are
+          thin, off-topic, unoriginal, or make no point at all.
+        examples:
+          - A bare link to someone else's post about tracing agents
+          - A detailed thread about retry policy in production
+  substance:
+    type: choice
+    asked_when:
+      question: exclusion
+      equals: none
+    instructions:
+      question: Where is the substance?
+      judge: >-
+        Apply in order and stop at the first that fits. (1) Could you write a
+        pointed reply about agent work from the post's own words alone? Then
+        `in_post`. (2) No, but it points at something you could open — a link, a
+        named paper, a quoted claim? Then `pointer`. (3) No, and nothing to open?
+        Then `none`.
+        "About agent work" is doing real work in step 1 and is not a topic
+        question asked separately: a post can be detailed, correct and completely
+        answerable and still be a thread about attention variants or a job ad,
+        and there is no reply *you* would post under it. That is `none`, not
+        `in_post`. The hard exclusions above catch most off-topic posts; this
+        catches the rest, and it is the only place topic is judged.
+        A link does not make a post a `pointer`. A post that states a claim and
+        links to the writeup is `in_post`, because the reply answers the claim and
+        nobody expects the responder to have read the article. `pointer` does not
+        mean "there is a URL" — it means the post's own words are not enough, so
+        somebody has to go and look before this can be answered. That is the whole
+        distinction, and it is the one the retired `band` question buried in its
+        precedence note.
+        The test is "is there enough here to respond to without opening the link",
+        not "is the bulk of the information behind the link". Those come apart on
+        the link-forward post that still names specifics — an announcement whose
+        description of the thing it links lists real mechanisms, or a headline that
+        states its claim before promising the detail. Most of the substance may
+        well be at the link; that does not matter. If the words on screen give a
+        reply purchase, it is `in_post`. Judge the text that is there, not the
+        post's framing of itself as a signpost.
+        This sharpening is recorded because it moved between sittings: the first
+        reading asked where the bulk of the information lived, the second asked
+        whether the post alone was answerable, and the two disagree on exactly
+        this class of post.
+    criteria:
+      in_post:
+        what: >-
+          The post's own words state a specific claim, number, mechanism, failure,
+          tradeoff or practice — or ask a concrete question — such that you could
+          write a pointed reply about agent work without opening any link, image
+          or parent.
+        not_for: >-
+          A post whose only specific content is the title of the thing it links
+          to. Also not a detailed post about something else entirely — however
+          answerable it is, if the reply would not be about agent work, it is not
+          this.
+        examples:
+          - we cut stalled runs from 8% to 1% by lowering the tool timeout — writeup here
+          - new paper — agents degrade after about 40 turns of context
+          - how are people handling secret rotation for long-lived agent sessions?
+          #: Link-forward framing, but the description names mechanisms that are
+          #: themselves answerable. The signpost wording does not decide it.
+          - >-
+            found a great library for agent checkpointing — durable state,
+            replayable steps, and a review queue between runs. link below
+          - >-
+            Retries Make Idempotency Bugs Worse: agents that retry a half-applied
+            write corrupt state silently. three invariants that catch it
+      pointer:
+        what: >-
+          Nothing in the post's own words to answer, but it points somewhere that
+          would have something: a bare link, an endorsement of someone else's work,
+          a named paper or repo with no claim attached, a quoted post with no
+          comment of your own to engage.
+        not_for: >-
+          A post that makes its own point and happens to include a link. The link
+          is not what decides this. Nor is a post that describes what it links to
+          in enough specific terms to answer — naming the mechanisms is making a
+          point, whatever the surrounding "go read this" framing suggests.
+        examples:
+          - great writeup on agent reliability
+          - our new paper is out!
+          - this is worth reading
+      none:
+        what: >-
+          No reply about agent work to write and nothing to open. Either the post
+          is empty — an announcement with no claim, a status update, a bare
+          agreement — or it is about something else entirely, in which case it
+          does not matter how much it says.
+        not_for: >-
+          A post that is pure slogan or falls under one of the categories above.
+          Those are exclusions, and this question is never reached.
+        examples:
+          - LangChain v2 is out now
+          - day 3 of building my agent
+          - agreed, this matches what we saw
+          - a detailed thread on attention variants, with no agent work in it

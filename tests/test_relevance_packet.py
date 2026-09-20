@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -15,17 +17,22 @@ from assay.investigations.relevance.packet import (
     BAND_NAMES,
     DISPOSITIONS,
     PacketError,
+    as_questions,
     blind_case,
     eligibility_gate,
     human_answers,
     human_decision,
+    is_asked,
     plan_digest,
+    route,
     rubric_card,
     select_census,
     select_packet,
     stratify,
+    substance_rubric_card,
+    surfaced,
 )
-from assay.investigations.relevance.packet_html import render_packet_html
+from assay.investigations.relevance.packet_html import FORMATS_V2, render_packet_html
 from assay.investigations.relevance.run_packet import (
     CENSUS_READING,
     PLAN,
@@ -139,13 +146,15 @@ def test_blind_case_tolerates_a_post_with_no_parent() -> None:
 
 def test_rendered_page_contains_no_author_or_label(questions: dict) -> None:
     cases = [{"case_id": 1, "text": "a post by Grafana", "parent_text": None}]
-    page = render_packet_html("p", "d", "pd", cases, rubric_card(questions))
+    page = render_packet_html("p", "d", "pd", cases, as_questions(rubric_card(questions)))
     for leaked in ("human_label", "production_decision", "author_name", "stratum", "evaluation_id"):
         assert leaked not in page
 
 
 def test_rendered_page_uses_the_catalogue_wording_verbatim(questions: dict) -> None:
-    page = render_packet_html("p", "d", "pd", [{"case_id": 1, "text": "x"}], rubric_card(questions))
+    page = render_packet_html(
+        "p", "d", "pd", [{"case_id": 1, "text": "x"}], as_questions(rubric_card(questions))
+    )
     assert html.escape(questions["band"]["instructions"]["note"]) in page
     for level in questions["band"]["criteria"]:
         assert html.escape(level["summary"]) in page
@@ -355,7 +364,9 @@ def test_rubric_card_carries_the_disposition_question(questions: dict) -> None:
 
 
 def test_rendered_page_asks_the_disposition_question(questions: dict) -> None:
-    page = render_packet_html("p", "d", "pd", [{"case_id": 1, "text": "x"}], rubric_card(questions))
+    page = render_packet_html(
+        "p", "d", "pd", [{"case_id": 1, "text": "x"}], as_questions(rubric_card(questions))
+    )
     assert 'name="disposition:1"' in page
     assert page.count('type="radio"') == 4 + 7 + 3
 
@@ -374,3 +385,243 @@ def test_score_cross_tabs_band_against_disposition(questions: dict) -> None:
         entry["disposition"] = disposition
     report = score(labels, _key(), questions)
     assert report["band_by_disposition"]["pointer"] == {"respond": 0, "review": 1, "drop": 1}
+
+
+# --- published evidence integrity ---
+
+CENSUS_EVIDENCE = Path("evidence/typesafe-relevance-census-2026-09")
+
+
+def _manifest() -> dict:
+    return json.loads((CENSUS_EVIDENCE / "checksums.json").read_text(encoding="utf-8"))
+
+
+def test_census_evidence_files_match_the_working_tree() -> None:
+    """The labels behind every published number, pinned for good.
+
+    These must validate at any commit. If this fails, a figure in RESULTS.md no
+    longer has the data under it that produced it.
+    """
+    for name, digest in sorted(_manifest()["evidence_files"].items()):
+        blob = (CENSUS_EVIDENCE / name).read_bytes()
+        assert hashlib.sha256(blob).hexdigest() == digest, name
+
+
+def test_census_source_pins_are_checked_against_their_commit_not_head() -> None:
+    """Provenance, not a freeze.
+
+    Unlike the arms run, the labelling instrument is still being developed, so
+    these digests are expected to stop matching the working tree. They record what
+    produced the labels, which means they are checked against the commit they name.
+    The first version of this manifest pinned them against HEAD, which would have
+    broken the moment the next sitting's code landed.
+    """
+    manifest = _manifest()
+    commit = manifest["source_commit"]
+    for name, digest in sorted(manifest["source_files_at_commit"].items()):
+        found = subprocess.run(
+            ["git", "show", f"{commit}:{name}"], capture_output=True, check=False
+        )
+        if found.returncode != 0:
+            pytest.skip(f"commit {commit} is not in this clone")
+        assert hashlib.sha256(found.stdout).hexdigest() == digest, name
+
+
+def test_census_manifest_does_not_pin_source_files_as_evidence() -> None:
+    """The bug this file is guarding against, stated directly."""
+    assert not [name for name in _manifest()["evidence_files"] if name.startswith("src/")]
+
+
+# --- the substance rule ---
+
+V3 = Path("src/assay/investigations/relevance/catalogues/agent-ops-relevance.v3.yaml")
+
+
+@pytest.fixture
+def v3_questions() -> dict:
+    return load_catalogue(V3).questions
+
+
+def _substance_labels(rows: list[tuple[str, str | None]]) -> dict:
+    return {
+        "format": "assay.label-packet-labels/v2",
+        "plan_digest": plan_digest(READING),
+        "reviewer": "test",
+        "saved_at": "2026-09-19T00:00:00Z",
+        "cases": [
+            {"case_id": index + 1, "exclusion": exclusion, "substance": substance}
+            for index, (exclusion, substance) in enumerate(rows)
+        ],
+    }
+
+
+def test_the_rule_routes_each_substance_answer_to_its_outcome() -> None:
+    """The whole rule. If this passes there is no other branch to test."""
+    assert route("none", "in_post") == "respond"
+    assert route("none", "pointer") == "review"
+    assert route("none", "none") == "drop"
+    assert route("hype", None) == "drop"
+
+
+def test_an_exclusion_ends_the_case_without_a_substance_answer() -> None:
+    """The chain, which is the whole reason the two questions are not a flat form.
+
+    An excluded post is one decision. A substance answer arriving beside an
+    exclusion means the page failed to prune, and that must fail loudly rather
+    than quietly land a contradiction in the labels of record.
+    """
+    assert route("non_english", None) == "drop"
+    with pytest.raises(PacketError, match="substance answered on excluded post"):
+        route("hype", "in_post")
+
+
+def test_the_rule_rejects_an_answer_it_does_not_recognise() -> None:
+    """A typo must fail loudly rather than silently dropping a post."""
+    with pytest.raises(PacketError, match="unknown substance"):
+        route("none", "in-post")
+    with pytest.raises(PacketError, match="unknown exclusion"):
+        route("nonw", "in_post")
+    with pytest.raises(PacketError, match="unknown substance"):
+        route("none", None)
+
+
+def test_both_non_drop_routes_surface_because_scout_has_no_review_state() -> None:
+    """`review` is the outcome being studied; `surfaced` is what scout can do.
+
+    Kept apart so that adding a review status later changes one function.
+    """
+    assert surfaced("none", "in_post")
+    assert surfaced("none", "pointer")
+    assert not surfaced("none", "none")
+    assert not surfaced("hype", None)
+
+
+def test_sitting_two_asks_two_questions_and_not_the_band(v3_questions: dict) -> None:
+    card = substance_rubric_card(v3_questions)
+    assert [question["key"] for question in card] == ["exclusion", "substance"]
+
+
+def test_substance_is_only_asked_of_a_post_that_cleared_the_exclusions(
+    v3_questions: dict,
+) -> None:
+    """The condition lives in the packet, so page and server cannot drift apart."""
+    card = substance_rubric_card(v3_questions)
+    exclusion, substance = card
+    assert exclusion["asked_when"] is None
+    assert substance["asked_when"] == {"question": "exclusion", "equals": "none"}
+    assert is_asked(substance, {"exclusion": "none"})
+    assert not is_asked(substance, {"exclusion": "hype"})
+    assert not is_asked(substance, {})
+
+
+def test_the_substance_options_are_offered_in_the_order_their_tests_apply(
+    v3_questions: dict,
+) -> None:
+    """`in_post` before `pointer` is the tie-break a link post turns on.
+
+    A post that states a claim and links to the writeup is `in_post`; only a post
+    you cannot answer without opening the link is `pointer`. Order is how the
+    page communicates that, so it is pinned.
+    """
+    card = substance_rubric_card(v3_questions)
+    substance = next(q for q in card if q["key"] == "substance")
+    assert [option["value"] for option in substance["options"]] == [
+        "in_post",
+        "pointer",
+        "none",
+    ]
+
+
+def test_the_substance_page_asks_substance_and_never_band(v3_questions: dict) -> None:
+    page = render_packet_html(
+        "p", "d", "pd", [{"case_id": 1, "text": "x"}], substance_rubric_card(v3_questions)
+    )
+    assert 'name="substance:1"' in page
+    assert 'name="band:1"' not in page
+    assert 'name="scope:1"' not in page
+
+
+def test_a_conditional_question_renders_hidden_so_it_is_not_answered_first(
+    v3_questions: dict,
+) -> None:
+    """Rendered but hidden, so the page stays static HTML with no templating."""
+    page = render_packet_html(
+        "p", "d", "pd", [{"case_id": 1, "text": "x"}], substance_rubric_card(v3_questions)
+    )
+    assert 'id="q-substance-1" class="disp hidden"' in page
+    assert 'id="q-exclusion-1"' in page
+
+
+def test_the_substance_page_stamps_the_v2_label_format(v3_questions: dict) -> None:
+    """A reader must be able to tell which questions a label file answers."""
+    page = render_packet_html(
+        "p",
+        "d",
+        "pd",
+        [{"case_id": 1, "text": "x"}],
+        substance_rubric_card(v3_questions),
+        formats=FORMATS_V2,
+    )
+    assert '"labels_format": "assay.label-packet-labels/v2"' in page
+
+
+def test_scoring_dispatches_on_the_label_format(questions: dict) -> None:
+    """v2 labels must not be scored through the band gate, which would KeyError."""
+    labels = _substance_labels([("none", "in_post")] * 3)
+    report = score(labels, _key(), questions)
+    assert report["format"] == "assay.label-packet-report/v2"
+
+
+def test_the_band_path_still_scores_v1_labels(questions: dict) -> None:
+    """The census must stay reproducible after its question is retired."""
+    labels = _labels([3, 2, 0])
+    for entry, disposition in zip(labels["cases"], ["respond", "review", "drop"], strict=True):
+        entry["disposition"] = disposition
+    assert score(labels, _key(), questions)["format"] == "assay.label-packet-report/v1"
+
+
+def test_the_surfaced_rate_counts_only_posts_the_rule_admits(questions: dict) -> None:
+    labels = _substance_labels([("none", "in_post"), ("none", "none"), ("hype", None)])
+    report = score(labels, _key(), questions)
+    assert report["surfaced"] == {"surfaced": 1, "n": 3, "rate": 0.3333}
+
+
+def test_the_route_distribution_separates_respond_from_review(questions: dict) -> None:
+    """The split scout cannot act on yet is still the thing being measured."""
+    labels = _substance_labels([("none", "in_post"), ("none", "pointer"), ("hype", None)])
+    report = score(labels, _key(), questions)
+    assert report["route_distribution"] == {"respond": 1, "review": 1, "drop": 1}
+
+
+def test_posts_an_exclusion_ended_are_counted_rather_than_dropped(questions: dict) -> None:
+    """The substance counts and the exclusion counts must reconcile to n."""
+    labels = _substance_labels([("none", "in_post"), ("hype", None), ("non_english", None)])
+    report = score(labels, _key(), questions)
+    assert report["substance_distribution"]["null"] == 2
+    assert sum(report["substance_distribution"].values()) == 3
+
+
+def test_the_census_crosswalk_scores_only_the_bands_that_map(questions: dict) -> None:
+    """`building` absorbed both kinds under apply_in_order, so it cannot be scored.
+
+    Leaving it out of the primary and still tabulating it is what keeps the
+    excluded cases visible rather than silently missing.
+    """
+    labels = _substance_labels([("none", "in_post"), ("none", "none"), ("none", "pointer")])
+    census = {
+        "cases": [
+            {"evaluation_id": 100, "band": "substantive"},
+            {"evaluation_id": 101, "band": "building"},
+            {"evaluation_id": 102, "band": "pointer"},
+        ]
+    }
+    report = score(labels, _key(), questions, census=census)
+    walk = report["census_crosswalk"]
+    assert walk == {
+        "n": 2,
+        "agree": 2,
+        "rate": 1.0,
+        "matched_cases": 3,
+        "by_band": walk["by_band"],
+    }
+    assert walk["by_band"]["building"]["none"] == 1

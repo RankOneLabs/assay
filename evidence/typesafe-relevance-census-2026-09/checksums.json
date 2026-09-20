@@ -1,15 +1,18 @@
 {
   "algorithm": "sha256",
-  "files": {
+  "evidence_files": {
     "PLAN.md": "166c8c5c3c23c38d8a13c0d6703fae6943b6bc22ddb3e4db2c8e5252e358dba7",
-    "census-labels.json": "cec98e52715d50d6c4cb1abc56da41fca154ca9463e2a301e8f9b10244d9eaa5",
-    "src/assay/investigations/relevance/catalogues/agent-ops-relevance.v2.yaml": "21f24df00c4befcad7e2572490610f7634557f4860007cd4cc8b3c888c47a613",
-    "src/assay/investigations/relevance/packet.py": "61d45d3bdc969c0618fde9c5f5f28db3ca4415ce09fe5669726fa853895647f0",
-    "src/assay/investigations/relevance/run_packet.py": "909724054926a1cee0961041b0b6694cd784fc527c25e503cf1b7b87399ce7d0"
+    "census-labels.json": "cec98e52715d50d6c4cb1abc56da41fca154ca9463e2a301e8f9b10244d9eaa5"
   },
-  "note": "packet_digest identifies the cases and questions as presented; plan_digest identifies the canonical pre-registered reading. Both are recorded in PLAN.md, which was written before any label existed. The packet digest predates the sitting-aware digest scheme and does not cover a sitting name.",
+  "note": "evidence_files are frozen and must validate against the working tree at any commit. source_files_at_commit are provenance only: they record what the instrument looked like when these labels were produced, and they are expected to stop matching the working tree, because unlike the arms run the labelling instrument is still being developed. Validate them with `git show e7bff53592ca4f80857e687f806079fd438a2edb:<path>`, not against HEAD. packet_digest identifies the cases and questions as presented; plan_digest identifies the canonical pre-registered reading; both are recorded in PLAN.md, written before any label existed. The packet digest predates the sitting-aware digest scheme and does not cover a sitting name.",
   "packet_digest": "11b4c1e11fdbb3b7859fa91767294e92e2791a2528e49e5b2c44c37647f0f97a",
   "plan_digest": "0354f67a39e24e2120e005ab2e14e461c57483af82bab52ebd5a7da0e5394e81",
   "population_export_sha256": "6c3d18de02e35f33a432be9f9bda57d36d22478a69fad94c42d924d4ccc9782a",
-  "private_run_receipt": "run-receipts/typesafe-relevance-2026-09/label-census/"
+  "private_run_receipt": "run-receipts/typesafe-relevance-2026-09/label-census/",
+  "source_commit": "e7bff53592ca4f80857e687f806079fd438a2edb",
+  "source_files_at_commit": {
+    "src/assay/investigations/relevance/catalogues/agent-ops-relevance.v2.yaml": "21f24df00c4befcad7e2572490610f7634557f4860007cd4cc8b3c888c47a613",
+    "src/assay/investigations/relevance/packet.py": "61d45d3bdc969c0618fde9c5f5f28db3ca4415ce09fe5669726fa853895647f0",
+    "src/assay/investigations/relevance/run_packet.py": "909724054926a1cee0961041b0b6694cd784fc527c25e503cf1b7b87399ce7d0"
+  }
 }
