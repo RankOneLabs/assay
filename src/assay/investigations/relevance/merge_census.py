@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
-
-from collections.abc import Mapping, Sequence
 
 from assay.investigations.relevance.packet import BAND_NAMES
 
