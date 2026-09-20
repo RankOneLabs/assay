@@ -36,6 +36,26 @@ class Endpoints:
     labels: str
     draft: str
 
+
+@dataclass(frozen=True, slots=True)
+class Formats:
+    """What the page stamps on what it sends back.
+
+    The version tracks the question set, not the page. ``/v1`` carries `band`;
+    ``/v2`` carries `scope` and `has_substance` instead. A reader must be able to
+    tell which questions a label file answers without inspecting its rows.
+    """
+
+    labels: str
+    draft: str
+
+
+#: The band-era question set: `exclusion`, `band`, `disposition`.
+FORMATS_V1 = Formats(labels="assay.label-packet-labels/v1", draft="assay.label-packet-draft/v1")
+
+#: The substance rule: `exclusion`, `scope`, `has_substance`, `disposition`.
+FORMATS_V2 = Formats(labels="assay.label-packet-labels/v2", draft="assay.label-packet-draft/v2")
+
 _STYLE = """
 :root { color-scheme: light dark; }
 body {
@@ -90,6 +110,9 @@ button {
   color: inherit; cursor: pointer;
 }
 button:disabled { opacity: .45; cursor: default; }
+/* A question whose `asked_when` is unmet. Rendered so the page stays static
+   HTML, hidden so it is not answered; its stored answer is pruned separately. */
+fieldset.hidden { display: none; }
 code { background: rgba(127,127,127,.15); padding: .1em .35em; border-radius: 3px; }
 """
 
@@ -104,14 +127,51 @@ function caseState(id) { return answers[id] || (answers[id] = {}); }
    this device look newer than one that has genuinely moved further on. */
 function touch() { localStorage.setItem(STAMP, new Date().toISOString()); }
 
+/* Whether a question applies given the answers so far. Mirrors `is_asked` in
+   packet.py and `_is_asked` in serve_packet.py — all three read the same
+   `asked_when` off the packet rather than knowing which question gates which. */
+function isAsked(q, a) {
+  if (!q.asked_when) return true;
+  return a && a[q.asked_when.question] === q.asked_when.equals;
+}
+
+/* Every question the packet *asks* has to be answered. A question whose
+   condition is unmet is not asked, so it does not hold the case open. Driven by
+   PACKET.questions rather than a hardcoded list, so changing the rubric is a
+   change to the catalogue and not to this file. */
 function answered(a) {
-  return a && a.band !== undefined && a.exclusion !== undefined && a.disposition !== undefined;
+  return !!a && PACKET.questions.every(q => !isAsked(q, a) || a[q.key] !== undefined);
+}
+
+/* An answer that is no longer asked is deleted, not left in place. Otherwise
+   picking `hype` after having answered `substance` leaves a stale value in the
+   record, the server rejects the submit, and it does so at the end of a sitting
+   rather than at the click that caused it. */
+function prune(id, a) {
+  for (const q of PACKET.questions) {
+    if (isAsked(q, a) || a[q.key] === undefined) continue;
+    delete a[q.key];
+    const el = document.querySelector(`input[name="${q.key}:${id}"]:checked`);
+    if (el) el.checked = false;
+  }
+}
+
+function coerce(question, raw) {
+  if (question.value_type === 'int') return parseInt(raw, 10);
+  if (question.value_type === 'bool') return raw === 'true';
+  return raw;
 }
 
 function refresh() {
   let done = 0;
   for (const c of PACKET.cases) {
-    const complete = answered(answers[c.case_id]);
+    const a = answers[c.case_id];
+    if (a) prune(c.case_id, a);
+    for (const q of PACKET.questions) {
+      const fs = document.getElementById(`q-${q.key}-${c.case_id}`);
+      if (fs) fs.classList.toggle('hidden', !isAsked(q, a));
+    }
+    const complete = answered(a);
     if (complete) done++;
     document.getElementById('case-' + c.case_id).classList.toggle('done', complete);
   }
@@ -125,9 +185,9 @@ document.addEventListener('change', (e) => {
   const el = e.target;
   if (!el.name) return;
   const [kind, id] = el.name.split(':');
-  if (kind === 'band') caseState(id).band = parseInt(el.value, 10);
-  else if (kind === 'exclusion') caseState(id).exclusion = el.value;
-  else if (kind === 'disposition') caseState(id).disposition = el.value;
+  const question = PACKET.questions.find(q => q.key === kind);
+  if (!question) return;
+  caseState(id)[kind] = coerce(question, el.value);
   touch();
   refresh();
 });
@@ -143,19 +203,23 @@ document.addEventListener('input', (e) => {
 
 function collect() {
   return {
-    format: 'assay.label-packet-labels/v1',
+    format: PACKET.labels_format,
     packet: PACKET.name,
     packet_digest: PACKET.digest,
     plan_digest: PACKET.plan_digest,
     reviewer: document.getElementById('reviewer').value || 'unknown',
     saved_at: new Date().toISOString(),
-    cases: PACKET.cases.map(c => ({
-      case_id: c.case_id,
-      band: answers[c.case_id].band,
-      exclusion: answers[c.case_id].exclusion,
-      disposition: answers[c.case_id].disposition,
-      note: answers[c.case_id].note || null,
-    })),
+    cases: PACKET.cases.map(c => {
+      const a = answers[c.case_id];
+      const row = {case_id: c.case_id, note: a.note || null};
+      /* Explicit null for a question that was not asked. Leaving it undefined
+         would have JSON.stringify drop the key, so "not asked" and "renderer
+         forgot to ask" would arrive at the server looking identical. */
+      for (const q of PACKET.questions) {
+        row[q.key] = isAsked(q, a) ? a[q.key] : null;
+      }
+      return row;
+    }),
   };
 }
 
@@ -173,17 +237,10 @@ document.getElementById('save').addEventListener('click', () => deliver(collect(
 
 function restore() {
   for (const [id, a] of Object.entries(answers)) {
-    if (a.band !== undefined) {
-      const el = document.querySelector(`input[name="band:${id}"][value="${a.band}"]`);
-      if (el) el.checked = true;
-    }
-    if (a.exclusion !== undefined) {
-      const el = document.querySelector(`input[name="exclusion:${id}"][value="${a.exclusion}"]`);
-      if (el) el.checked = true;
-    }
-    if (a.disposition !== undefined) {
+    for (const q of PACKET.questions) {
+      if (a[q.key] === undefined) continue;
       const el = document.querySelector(
-        `input[name="disposition:${id}"][value="${a.disposition}"]`);
+        `input[name="${q.key}:${id}"][value="${String(a[q.key])}"]`);
       if (el) el.checked = true;
     }
     if (a.note) {
@@ -242,7 +299,7 @@ function syncDraft(done) {
         method: 'POST',
         headers: {'content-type': 'application/json'},
         body: JSON.stringify({
-          format: 'assay.label-packet-draft/v1',
+          format: PACKET.draft_format,
           packet: PACKET.name,
           packet_digest: PACKET.digest,
           plan_digest: PACKET.plan_digest,
@@ -282,49 +339,33 @@ function hydrate() {
 """
 
 
-def _rubric_html(rubric: Mapping[str, Any]) -> str:
-    band, exclusion = rubric["band"], rubric["exclusion"]
-    order = "".join(f"<li>{html.escape(step)}</li>" for step in band["apply_in_order"])
-    levels = "".join(
-        f'<div class="lvl"><b>{html.escape(level["name"])}</b> — '
-        f'{html.escape(level["summary"])}</div>'
-        for level in band["levels"]
-    )
-    options = "".join(
-        f"<li><b>{html.escape(option['name'])}</b> — {html.escape(option['what'])}"
-        + (
-            f"<br><em>Not for:</em> {html.escape(option['not_for'])}"
-            if option.get("not_for")
-            else ""
+def _rubric_html(rubric: Sequence[Mapping[str, Any]]) -> str:
+    """The reference panel: every question's full wording, collapsed by default.
+
+    The last question is left open because it is the one being measured and the
+    one a reviewer is least likely to have memorised.
+    """
+    blocks = []
+    for index, question in enumerate(rubric):
+        options = "".join(
+            f"<li><b>{html.escape(option['name'])}</b> — {html.escape(option['what'])}"
+            + (
+                f"<br><em>Not for:</em> {html.escape(option['not_for'])}"
+                if option.get("not_for")
+                else ""
+            )
+            + "</li>"
+            for option in question["options"]
         )
-        + "</li>"
-        for option in exclusion["options"]
-    )
-    disposition = rubric["disposition"]
-    dispositions = "".join(
-        f"<li><b>{html.escape(option['name'])}</b> — {html.escape(option['what'])}</li>"
-        for option in disposition["options"]
-    )
-    return f"""
-<div class="rubric">
-  <h2>{html.escape(band["question"])}</h2>
-  <ol>{order}</ol>
-  <p><strong>Note.</strong> {html.escape(band["note"])}</p>
-  {levels}
-  <details>
-    <summary>Hard exclusions — {html.escape(exclusion["question"])}</summary>
-    <p>{html.escape(exclusion["judge"])}</p>
-    <ul>{options}</ul>
-  </details>
-  <details open>
-    <summary>{html.escape(disposition["question"])}</summary>
-    <p>{html.escape(disposition["judge"])}</p>
-    <ul>{dispositions}</ul>
-  </details>
-</div>"""
+        open_attr = " open" if index == len(rubric) - 1 else ""
+        blocks.append(
+            f"<details{open_attr}><summary>{html.escape(question['prompt'])}</summary>"
+            f"<p>{html.escape(question['judge'])}</p><ul>{options}</ul></details>"
+        )
+    return f'<div class="rubric">{"".join(blocks)}</div>'
 
 
-def _case_html(case: Mapping[str, Any], rubric: Mapping[str, Any]) -> str:
+def _case_html(case: Mapping[str, Any], rubric: Sequence[Mapping[str, Any]]) -> str:
     case_id = case["case_id"]
     parent = case.get("parent_text")
     parent_block = (
@@ -332,37 +373,32 @@ def _case_html(case: Mapping[str, Any], rubric: Mapping[str, Any]) -> str:
         if parent
         else ""
     )
-    bands = "".join(
-        f'<label class="opt"><input type="radio" name="band:{case_id}" value="{level["index"]}"> '
-        f'<span class="n">{html.escape(level["name"])}</span> '
-        f'<span class="d">— {html.escape(level["summary"])}</span></label>'
-        for level in rubric["band"]["levels"]
-    )
-    exclusions = "".join(
-        f'<label class="opt"><input type="radio" name="exclusion:{case_id}" '
-        f'value="{html.escape(option["name"])}"> '
-        f'<span class="n">{html.escape(option["name"])}</span> '
-        f'<span class="d">— {html.escape(option["what"])}</span></label>'
-        for option in rubric["exclusion"]["options"]
-    )
-    dispositions = "".join(
-        f'<label class="opt"><input type="radio" name="disposition:{case_id}" '
-        f'value="{html.escape(option["name"])}"> '
-        f'<span class="n">{html.escape(option["name"])}</span> '
-        f'<span class="d">— {html.escape(option["what"])}</span></label>'
-        for option in rubric["disposition"]["options"]
-    )
+    fieldsets = []
+    for index, question in enumerate(rubric):
+        options = "".join(
+            f'<label class="opt"><input type="radio" '
+            f'name="{html.escape(question["key"])}:{case_id}" '
+            f'value="{html.escape(str(option["value"]))}"> '
+            f'<span class="n">{html.escape(option["name"])}</span> '
+            f'<span class="d">— {html.escape(option["what"])}</span></label>'
+            for option in question["options"]
+        )
+        classes = ["disp"] if index == len(rubric) - 1 else []
+        if question.get("asked_when"):
+            classes.append("hidden")
+        css = f' class="{" ".join(classes)}"' if classes else ""
+        key = html.escape(question["key"])
+        fieldsets.append(
+            f'<fieldset id="q-{key}-{case_id}"{css}>'
+            f"<legend>{html.escape(question['prompt'])}</legend>"
+            f"{options}</fieldset>"
+        )
     return f"""
 <div class="case" id="case-{case_id}">
   <h3>Case {case_id}</h3>
   {parent_block}
   <div class="text">{html.escape(case["text"])}</div>
-  <fieldset><legend>Hard exclusion?</legend>{exclusions}</fieldset>
-  <fieldset><legend>Which situation best describes this post?</legend>{bands}</fieldset>
-  <fieldset class="disp">
-    <legend>{html.escape(rubric["disposition"]["question"])}</legend>
-    {dispositions}
-  </fieldset>
+  {"".join(fieldsets)}
   <textarea name="note:{case_id}" rows="2" placeholder="Note (optional)"></textarea>
 </div>"""
 
@@ -372,11 +408,15 @@ def render_packet_html(
     digest: str,
     plan_digest: str,
     cases: Sequence[Mapping[str, Any]],
-    rubric: Mapping[str, Any],
+    rubric: Sequence[Mapping[str, Any]],
     *,
     endpoints: Endpoints | None = None,
+    formats: Formats = FORMATS_V1,
 ) -> str:
     """One self-contained blind packet page.
+
+    ``rubric`` is an ordered question list; the page asks exactly the questions it
+    holds, in that order, and nothing in this module names any of them.
 
     ``endpoints`` makes the page submit to a server and sync its draft. Left
     unset, the page downloads and makes no network call of any kind.
@@ -385,6 +425,16 @@ def render_packet_html(
         "name": name,
         "digest": digest,
         "plan_digest": plan_digest,
+        "labels_format": formats.labels,
+        "draft_format": formats.draft,
+        "questions": [
+            {
+                "key": question["key"],
+                "value_type": question["value_type"],
+                "asked_when": question.get("asked_when"),
+            }
+            for question in rubric
+        ],
         "cases": [{"case_id": case["case_id"]} for case in cases],
     }
     body = "".join(_case_html(case, rubric) for case in cases)
@@ -404,7 +454,7 @@ def render_packet_html(
 <body>
 <h1>{html.escape(name)}</h1>
 <p>Blind packet. You are seeing each post's own text and its parent, and nothing else
-— no author, no prior label, no model decision. Answer the three questions from the
+— no author, no prior label, no model decision. Answer every question from the
 wording below; it is the catalogue's own text, unedited. Progress saves as you go.</p>
 {_rubric_html(rubric)}
 {body}
