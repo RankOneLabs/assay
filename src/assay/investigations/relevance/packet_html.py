@@ -42,8 +42,8 @@ class Formats:
     """What the page stamps on what it sends back.
 
     The version tracks the question set, not the page. ``/v1`` carries `band`;
-    ``/v2`` carries `scope` and `has_substance` instead. A reader must be able to
-    tell which questions a label file answers without inspecting its rows.
+    ``/v2`` carries `substance` instead. A reader must be able to tell which
+    questions a label file answers without inspecting its rows.
     """
 
     labels: str
@@ -53,7 +53,7 @@ class Formats:
 #: The band-era question set: `exclusion`, `band`, `disposition`.
 FORMATS_V1 = Formats(labels="assay.label-packet-labels/v1", draft="assay.label-packet-draft/v1")
 
-#: The substance rule: `exclusion`, `scope`, `has_substance`, `disposition`.
+#: The substance rule: `exclusion`, then `substance` when nothing was excluded.
 FORMATS_V2 = Formats(labels="assay.label-packet-labels/v2", draft="assay.label-packet-draft/v2")
 
 _STYLE = """

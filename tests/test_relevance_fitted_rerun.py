@@ -49,6 +49,11 @@ def _mismatches(actual: Any, expected: Any, path: str = "") -> list[str]:
             for index, (left, right) in enumerate(zip(actual, expected, strict=True))
             for mismatch in _mismatches(left, right, f"{path}[{index}]")
         ]
+    #: Both sides are JSON-native, so the types are stable and worth insisting on:
+    #: plain equality would let a bool regress to 1 in adoption_gate or human_label
+    #: and still compare equal.
+    if type(actual) is not type(expected):
+        return [f"{path}: {type(actual).__name__} != {type(expected).__name__}"]
     if actual != expected:
         return [f"{path}: {actual!r} != {expected!r}"]
     return []
