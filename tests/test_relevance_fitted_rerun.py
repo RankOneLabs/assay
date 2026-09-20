@@ -2,21 +2,64 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
-from assay.investigations.relevance.fitted_rerun import build_fitted_report, canonical_bytes
+from assay.investigations.relevance.fitted_rerun import build_fitted_report
 
 ROOT = Path(__file__).parents[1]
 SOURCE = ROOT / "evidence/typesafe-relevance-primary-2026-09/exported-answers.json"
 REPORT = ROOT / "evidence/typesafe-relevance-fitted-rerun-2026-09/fitted-oof-results.json"
 CHECKSUMS = ROOT / "evidence/typesafe-relevance-fitted-rerun-2026-09/checksums.json"
 
+#: The fit runs liblinear over an OpenBLAS built DYNAMIC_ARCH, which selects a kernel
+#: per CPU, so the stored probabilities only reproduce to the last couple of bits on a
+#: machine other than the one that wrote them. Measured spread across kernels is 1.4e-15
+#: over 185 leaves, and no count, metric or flag moves with it. Everything that is not a
+#: float is still compared exactly, and test_fitted_report_checksums pins the published
+#: bytes, so a byte assertion here would only buy a CPU-dependent failure.
+FLOAT_TOLERANCE = 1e-9
+
+
+def _is_sequence(value: Any) -> bool:
+    return isinstance(value, Sequence) and not isinstance(value, str | bytes)
+
+
+def _mismatches(actual: Any, expected: Any, path: str = "") -> list[str]:
+    """Every leaf where a recomputed report departs from the stored one."""
+    if isinstance(expected, float) and isinstance(actual, float):
+        if math.isclose(actual, expected, rel_tol=FLOAT_TOLERANCE, abs_tol=FLOAT_TOLERANCE):
+            return []
+        return [f"{path}: {actual!r} != {expected!r}"]
+    if isinstance(expected, Mapping) and isinstance(actual, Mapping):
+        if actual.keys() != expected.keys():
+            return [f"{path}: keys {sorted(actual)} != {sorted(expected)}"]
+        return [
+            mismatch
+            for key in expected
+            for mismatch in _mismatches(actual[key], expected[key], f"{path}.{key}")
+        ]
+    if _is_sequence(expected) and _is_sequence(actual):
+        if len(actual) != len(expected):
+            return [f"{path}: length {len(actual)} != {len(expected)}"]
+        return [
+            mismatch
+            for index, (left, right) in enumerate(zip(actual, expected, strict=True))
+            for mismatch in _mismatches(left, right, f"{path}[{index}]")
+        ]
+    if actual != expected:
+        return [f"{path}: {actual!r} != {expected!r}"]
+    return []
+
 
 def test_fitted_report_recomputes_from_retained_answers() -> None:
     source_bytes = SOURCE.read_bytes()
     actual = build_fitted_report(json.loads(source_bytes))
     actual["source_sha256"] = hashlib.sha256(source_bytes).hexdigest()
-    assert canonical_bytes(actual) == REPORT.read_bytes()
+    expected = json.loads(REPORT.read_text(encoding="utf-8"))
+    assert _mismatches(actual, expected) == []
 
 
 def test_fitted_rerun_is_exploratory_and_does_not_win() -> None:
