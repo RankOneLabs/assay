@@ -1,10 +1,10 @@
 # Typesafe relevance primary study
 
-The reference implementation lives in `assay.investigations.relevance`. Its
+The reference implementation lives in `typesafe_relevance`. Its
 catalogue loader computes a canonical-JSON version, `state.build_state` is the pure
 state projection copied by consumers, and `mappings` contains the pure decision
-functions. The primary report and answer-only reproduction bundle are under
-`evidence/typesafe-relevance-primary-2026-09/`.
+functions. Published reproduction bundles live in the
+`RankOneLabs/run-receipts` repository and are selected with `ASSAY_RUN_RECEIPTS`.
 
 The private population is not repository material. To reproduce provider calls,
 export the two pinned Scout snapshots, exclude the agent-evals `GAIA` route, verify

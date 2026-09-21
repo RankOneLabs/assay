@@ -9,15 +9,14 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-
-from assay.investigations.relevance.catalogue import load_catalogue
-from assay.investigations.relevance.packet import (
+from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.packet import (
     as_questions,
     rubric_card,
     substance_rubric_card,
 )
-from assay.investigations.relevance.packet_html import Endpoints, render_packet_html
-from assay.investigations.relevance.serve_packet import (
+from typesafe_relevance.packet_html import Endpoints, render_packet_html
+from typesafe_relevance.serve_packet import (
     DRAFT_BACK,
     POST_BACK,
     ServedPacket,
@@ -33,7 +32,8 @@ from assay.investigations.relevance.serve_packet import (
 
 SERVED = Endpoints(labels="/labels", draft="/draft")
 
-CATALOGUE = Path("src/assay/investigations/relevance/catalogues/agent-ops-relevance.v2.yaml")
+MODULE_ROOT = Path(__file__).resolve().parents[1]
+CATALOGUE = MODULE_ROOT / "catalogues/agent-ops-relevance.v2.yaml"
 
 
 @pytest.fixture
@@ -379,7 +379,7 @@ def test_a_synced_draft_never_becomes_the_scored_labels(running: tuple[str, Path
 
 # --- the substance rule over the wire ---
 
-V3 = Path("src/assay/investigations/relevance/catalogues/agent-ops-relevance.v3.yaml")
+V3 = MODULE_ROOT / "catalogues/agent-ops-relevance.v3.yaml"
 
 
 @pytest.fixture

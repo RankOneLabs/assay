@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from assay.investigations.relevance.packet import BAND_NAMES
+from typesafe_relevance.packet import BAND_NAMES
 
 
 class MergeError(Exception):

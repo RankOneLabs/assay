@@ -32,8 +32,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from assay.investigations.relevance.packet import is_asked
-from assay.investigations.relevance.packet_html import (
+from typesafe_relevance.packet import is_asked
+from typesafe_relevance.packet_html import (
     FORMATS_V1,
     FORMATS_V2,
     Endpoints,

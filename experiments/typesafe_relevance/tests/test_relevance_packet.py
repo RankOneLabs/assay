@@ -9,10 +9,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-from assay.investigations.relevance.catalogue import load_catalogue
-from assay.investigations.relevance.mappings import decide_argmax
-from assay.investigations.relevance.packet import (
+from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.mappings import decide_argmax
+from typesafe_relevance.packet import (
     BAND_NAMES,
     DISPOSITIONS,
     PacketError,
@@ -31,8 +30,8 @@ from assay.investigations.relevance.packet import (
     substance_rubric_card,
     surfaced,
 )
-from assay.investigations.relevance.packet_html import FORMATS_V2, render_packet_html
-from assay.investigations.relevance.run_packet import (
+from typesafe_relevance.packet_html import FORMATS_V2, render_packet_html
+from typesafe_relevance.run_packet import (
     CENSUS_READING,
     PLAN,
     READING,
@@ -40,8 +39,9 @@ from assay.investigations.relevance.run_packet import (
     score,
 )
 
-CATALOGUE = Path("src/assay/investigations/relevance/catalogues/agent-ops-relevance.v2.yaml")
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+MODULE_ROOT = Path(__file__).resolve().parents[1]
+CATALOGUE = MODULE_ROOT / "catalogues/agent-ops-relevance.v2.yaml"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture
@@ -436,7 +436,7 @@ def test_census_manifest_does_not_pin_source_files_as_evidence(census_evidence: 
 
 # --- the substance rule ---
 
-V3 = Path("src/assay/investigations/relevance/catalogues/agent-ops-relevance.v3.yaml")
+V3 = MODULE_ROOT / "catalogues/agent-ops-relevance.v3.yaml"
 
 
 @pytest.fixture

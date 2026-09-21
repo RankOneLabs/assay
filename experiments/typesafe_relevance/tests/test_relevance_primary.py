@@ -4,13 +4,12 @@ import json
 from pathlib import Path
 
 import pytest
+from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.mappings import DECIDE_REGISTRY, derive_band
+from typesafe_relevance.state import build_state
 
-from assay.investigations.relevance.catalogue import load_catalogue
-from assay.investigations.relevance.mappings import DECIDE_REGISTRY, derive_band
-from assay.investigations.relevance.state import build_state
-
-ROOT = Path(__file__).parents[1]
-CATALOGUE = ROOT / "src/assay/investigations/relevance/catalogues/agent-ops-relevance.v1.yaml"
+ROOT = Path(__file__).resolve().parents[1]
+CATALOGUE = ROOT / "catalogues/agent-ops-relevance.v1.yaml"
 
 
 @pytest.fixture(autouse=True)

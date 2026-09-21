@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EVIDENCE_ROOT = REPOSITORY_ROOT / "evidence"
 
 

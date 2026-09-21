@@ -31,15 +31,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from assay.investigations.relevance.backends import (
+from typesafe_relevance.backends import (
     Backend,
     BackendError,
     OpenRouterBackend,
     TypesafeBackend,
 )
-from assay.investigations.relevance.catalogue import Catalogue, load_catalogue
-from assay.investigations.relevance.mappings import DECIDE_REGISTRY
-from assay.investigations.relevance.state import build_state
+from typesafe_relevance.catalogue import Catalogue, load_catalogue
+from typesafe_relevance.mappings import DECIDE_REGISTRY
+from typesafe_relevance.state import build_state
 
 PROJECTS: dict[str, dict[str, str]] = {
     "agent-ops": {

@@ -18,8 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from assay.investigations.relevance.catalogue import load_catalogue
-from assay.investigations.relevance.packet import (
+from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.packet import (
     BAND_NAMES,
     DISPOSITIONS,
     EXCLUSION_NAMES,
@@ -38,7 +38,7 @@ from assay.investigations.relevance.packet import (
     stratify,
     substance_rubric_card,
 )
-from assay.investigations.relevance.packet_html import (
+from typesafe_relevance.packet_html import (
     FORMATS_V1,
     FORMATS_V2,
     render_packet_html,

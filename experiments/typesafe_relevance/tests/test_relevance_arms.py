@@ -6,18 +6,17 @@ import json
 from pathlib import Path
 
 import pytest
-
-from assay.investigations.relevance.catalogue import load_catalogue
-from assay.investigations.relevance.mappings import decide_argmax
-from assay.investigations.relevance.render import (
+from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.mappings import decide_argmax
+from typesafe_relevance.render import (
     RenderError,
     answer_schema,
     normalize_answers,
     render_prompt,
 )
-from assay.investigations.relevance.run_arms import build_arms, load_prior_cells, score_arm
+from typesafe_relevance.run_arms import build_arms, load_prior_cells, score_arm
 
-CATALOGUES = Path("src/assay/investigations/relevance/catalogues")
+CATALOGUES = Path(__file__).resolve().parents[1] / "catalogues"
 V1 = CATALOGUES / "agent-ops-relevance.v1.yaml"
 V2 = CATALOGUES / "agent-ops-relevance.v2.yaml"
 
@@ -232,7 +231,7 @@ def _arms_document() -> dict:
 
 
 def test_arm_predictions_returns_none_when_an_arm_is_incomplete() -> None:
-    from assay.investigations.relevance.report_arms import arm_predictions
+    from typesafe_relevance.report_arms import arm_predictions
 
     document = _arms_document()
     document["cases"][0]["arms"]["arm:a"]["complete"] = False
@@ -240,21 +239,21 @@ def test_arm_predictions_returns_none_when_an_arm_is_incomplete() -> None:
 
 
 def test_band_distribution_splits_by_human_label() -> None:
-    from assay.investigations.relevance.report_arms import band_distribution
+    from typesafe_relevance.report_arms import band_distribution
 
     counts = band_distribution(_arms_document(), "arm:a")
     assert counts == {"positive": {"substantive": 1}, "negative": {"pointer": 1}}
 
 
 def test_question_discrimination_ranks_by_absolute_gap() -> None:
-    from assay.investigations.relevance.report_arms import question_discrimination
+    from typesafe_relevance.report_arms import question_discrimination
 
     rows = question_discrimination(_arms_document(), "arm:a")
     assert rows[0][0] == "operational_claim"
 
 
 def test_public_export_drops_no_answer_data_but_carries_no_state() -> None:
-    from assay.investigations.relevance.report_arms import public_export
+    from typesafe_relevance.report_arms import public_export
 
     exported = public_export(_arms_document())
     case = exported["cases"][0]

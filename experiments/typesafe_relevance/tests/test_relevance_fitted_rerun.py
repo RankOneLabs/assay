@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from assay.investigations.relevance.fitted_rerun import build_fitted_report
+from typesafe_relevance.fitted_rerun import build_fitted_report
 
 
 @pytest.fixture(autouse=True)

@@ -1,6 +1,6 @@
 """Render a blind label packet as one self-contained HTML file.
 
-The hosted packet page in ``scout/comms/label-packets-spec.md`` is the eventual
+The hosted packet page in the Scout label-packets specification is the eventual
 home for this. That page is unbuilt, and standing it up is disproportionate for
 one 30-case packet, so this renders a single file the reviewer opens locally
 from the private receipts directory.

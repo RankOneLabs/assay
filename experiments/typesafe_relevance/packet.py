@@ -6,7 +6,7 @@ an older and broader question than the four-band rule the catalogue encodes.
 Only a human reading the rule can separate those, so this module builds the
 instrument for one to do it.
 
-Design follows ``scout/comms/label-packets-spec.md``: seeded selection, a blind
+Design follows the Scout label-packets specification: seeded selection, a blind
 projection checked against a field denylist on every case, a private answer key
 the blind file never sees, and a reading declared and hashed before any label
 exists.

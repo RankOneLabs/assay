@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
-from assay.investigations.relevance.render import (
+from typesafe_relevance.render import (
     answer_schema,
     normalize_answers,
     render_prompt,

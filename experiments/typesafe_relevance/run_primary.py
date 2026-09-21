@@ -15,9 +15,9 @@ from typing import Any, cast
 import msgspec
 from typesafe_sdk import JSONContent, Question, RetryPolicy, TypeSafeClient
 
-from assay.investigations.relevance.catalogue import load_catalogue
-from assay.investigations.relevance.mappings import DECIDE_REGISTRY
-from assay.investigations.relevance.state import build_state
+from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.mappings import DECIDE_REGISTRY
+from typesafe_relevance.state import build_state
 
 PROJECTS = {
     "agent-ops": {
