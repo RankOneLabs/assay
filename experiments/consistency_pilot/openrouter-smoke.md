@@ -135,13 +135,14 @@ its fees are outside the run's `usage.cost` accounting.
 ## Prepare without credentials or paid calls
 
 Run `uv sync --locked`, then use the library API in a Python session launched
-with `uv run python`. Preparation does not read the API key or create a client:
+with `cd experiments && uv run python -m consistency_pilot.openrouter_smoke`.
+Preparation does not read the API key or create a client:
 
 ```python
 import paa_contracts
 from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
-from assay.investigations.openrouter_smoke import haiku_smoke_settings
-from assay.investigations.pilot import PilotPrepared, prepare_pilot
+from consistency_pilot.openrouter_smoke import haiku_smoke_settings
+from consistency_pilot.pilot import PilotPrepared, prepare_pilot
 from assay.store import ObjectStore
 
 store = ObjectStore(".assay/haiku-smoke")
@@ -183,7 +184,7 @@ In a separate operator step, supply the independently inspected plan hash:
 import asyncio
 from pathlib import Path
 from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
-from assay.investigations.pilot import run_pilot
+from consistency_pilot.pilot import run_pilot
 from assay.store import ObjectStore
 
 # approved_plan_ref must be supplied from the independent inspection/approval.
@@ -206,7 +207,8 @@ paid runs in an unattended retry loop.
 
 ## Offline acceptance
 
-`uv run pytest -q tests/test_openrouter.py` runs the real Jig adapter, SDK and
+`cd experiments && uv run pytest -q consistency_pilot/tests/test_openrouter.py`
+runs the real Jig adapter, SDK and
 HTTP hooks against an intercepted transport. It covers exact requests, credential
 isolation, malformed billing/identity, no retries, cancellation and closure,
 authorization gates, and two complete mocked pilots with offline bundle checks.

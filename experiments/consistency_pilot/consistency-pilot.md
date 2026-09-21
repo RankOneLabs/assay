@@ -1,5 +1,8 @@
 # Single-file consistency pilot
 
+From the repository root, run with
+`cd experiments && uv run python -m consistency_pilot.pilot`.
+
 This pilot asks a real provider, through Jig, to produce an `implement` function
 for a supplied one-file repository. It does **not** run generated code, edit a
 checkout, supply shell tools, or measure functional correctness. The three built-in
@@ -63,7 +66,7 @@ introduced. With your `factory` defined, materialize using the pinned schema cor
 ```python
 import paa_contracts
 from assay.adapters.consistency import PilotSettings
-from assay.investigations.pilot import PilotPrepared, prepare_pilot
+from consistency_pilot.pilot import PilotPrepared, prepare_pilot
 from assay.store import ObjectStore
 
 store = ObjectStore("pilot-store")
@@ -100,7 +103,7 @@ automatically approve whatever a new preparation invocation produces.
 
 ```python
 from pathlib import Path
-from assay.investigations.pilot import PilotSucceeded, run_pilot
+from consistency_pilot.pilot import PilotSucceeded, run_pilot
 
 result = await run_pilot(
     store,
@@ -164,7 +167,8 @@ and decorators are excluded from the return-expression analysis. The pilot has n
 ambiguity judge: these cases remain `AmbiguousStructure` failures. Straight-line
 syntactic call detection remains a proxy, not name resolution or correctness proof.
 
-Run `uv run pytest -q tests/test_consistency_pilot.py`. Tests call the **real Jig
+Run `cd experiments && uv run pytest -q consistency_pilot/tests/test_consistency_pilot.py`.
+Tests call the **real Jig
 runner** with an in-memory fake provider, covering isolation, typed failures,
 authorization/configuration drift, output validation, cancellation/cleanup,
 concurrent budget admission, missingness, and report export/offline verification.

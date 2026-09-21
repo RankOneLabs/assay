@@ -12,6 +12,14 @@ from unittest.mock import patch
 import httpx
 import paa_contracts
 import pytest
+from consistency_pilot.openrouter_smoke import haiku_smoke_settings, qwen_smoke_settings
+from consistency_pilot.pilot import (
+    PilotFailed,
+    PilotPrepared,
+    PilotSucceeded,
+    prepare_pilot,
+    run_pilot,
+)
 from jig.core.types import CompletionParams, LLMResponse, Message, Role
 
 from assay.adapters.consistency import CompletionNotSent, ConsistencyWorker
@@ -26,14 +34,6 @@ from assay.adapters.openrouter_diagnostics import ResponseDiagnostics
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import WorkerFailure, WorkerSuccess
 from assay.investigations.consistency import TASKS
-from assay.investigations.openrouter_smoke import haiku_smoke_settings, qwen_smoke_settings
-from assay.investigations.pilot import (
-    PilotFailed,
-    PilotPrepared,
-    PilotSucceeded,
-    prepare_pilot,
-    run_pilot,
-)
 from assay.models import StudySnapshot
 from assay.store import ObjectStore
 from assay.verify import verify_bundle

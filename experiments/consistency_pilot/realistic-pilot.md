@@ -1,5 +1,8 @@
 # Realistic repository qualification pilot
 
+From the repository root, run with
+`cd experiments && uv run python -m consistency_pilot.realistic_pilot`.
+
 This pilot qualifies Assay's multi-file repository path before a larger
 12-subject experiment. It is intentionally descriptive: four subjects are not
 enough for the preregistered inferential floor used by the full DRY study.
@@ -51,7 +54,7 @@ import paa_contracts
 
 from assay.adapters.openrouter import GPT_OSS_120B_COREWEAVE, OpenRouterFactory
 from assay.investigations.correctness import DockerPythonRunner
-from assay.investigations.realistic_pilot import (
+from consistency_pilot.realistic_pilot import (
     prepare_realistic_smoke,
     realistic_gpt_oss_smoke_settings,
 )
@@ -99,7 +102,7 @@ import paa_contracts
 
 from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
 from assay.investigations.correctness import DockerPythonRunner
-from assay.investigations.realistic_pilot import (
+from consistency_pilot.realistic_pilot import (
     prepare_realistic_pilot,
     realistic_haiku_settings,
 )
@@ -129,7 +132,7 @@ the per-arm and total ceilings are recorded as estimated plan costs.
 ```python
 from pathlib import Path
 
-from assay.investigations.realistic_pilot import run_realistic_pilot
+from consistency_pilot.realistic_pilot import run_realistic_pilot
 
 result = await run_realistic_pilot(
     store,

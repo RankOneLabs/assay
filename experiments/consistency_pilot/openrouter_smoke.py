@@ -19,7 +19,7 @@ def _pilot_settings() -> type["PilotSettings"]:
     except ModuleNotFoundError as error:
         from assay.adapters import missing_legacy_extra
 
-        raise missing_legacy_extra("assay.investigations.openrouter_smoke", error) from error
+        raise missing_legacy_extra("consistency_pilot.openrouter_smoke", error) from error
     return PilotSettings
 
 

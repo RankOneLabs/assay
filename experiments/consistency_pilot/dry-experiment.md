@@ -1,5 +1,8 @@
 # DRY consistency experiment
 
+From the repository root, run with
+`cd experiments && uv run python -m consistency_pilot.dry_experiment`.
+
 This experiment asks whether an agent is more likely to reuse an existing
 abstraction when the surrounding repository consistently reuses it than when an
 otherwise equivalent repository duplicates the primitive operation.
@@ -124,7 +127,7 @@ import paa_contracts
 
 from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
 from assay.investigations.correctness import DockerPythonRunner
-from assay.investigations.dry_experiment import haiku_dry_settings, prepare_dry_experiment
+from consistency_pilot.dry_experiment import haiku_dry_settings, prepare_dry_experiment
 from assay.store import ObjectStore
 
 store = ObjectStore(".assay/dry-haiku-v1")
@@ -155,7 +158,7 @@ and a new empty export destination:
 ```python
 from pathlib import Path
 
-from assay.investigations.dry_experiment import run_dry_experiment
+from consistency_pilot.dry_experiment import run_dry_experiment
 
 result = await run_dry_experiment(
     store,

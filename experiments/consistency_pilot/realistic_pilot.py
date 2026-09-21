@@ -21,13 +21,6 @@ from assay.investigations.consistency import (
 )
 from assay.investigations.correctness import DockerPythonRunner, FunctionalCorrectnessEvaluator
 from assay.investigations.dry_common import publish_plan_dependencies
-from assay.investigations.dry_experiment import (
-    DryExperimentFailed,
-    DryExperimentPrepared,
-    DryExperimentSucceeded,
-    run_consistency_experiment,
-)
-from assay.investigations.pilot import installed_jig_revision
 from assay.investigations.realistic_fixtures import (
     REALISTIC_PILOT_FIXTURES,
     REALISTIC_PILOT_TASKS,
@@ -39,6 +32,13 @@ from assay.models import PriceEstimate
 from assay.planning import compile_plan
 from assay.store import ObjectStore
 from assay.verify import reference_closure, verify_snapshot
+from consistency_pilot.dry_experiment import (
+    DryExperimentFailed,
+    DryExperimentPrepared,
+    DryExperimentSucceeded,
+    run_consistency_experiment,
+)
+from consistency_pilot.pilot import installed_jig_revision
 
 if TYPE_CHECKING:
     from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings
@@ -50,7 +50,7 @@ def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSe
     except ModuleNotFoundError as error:
         from assay.adapters import missing_legacy_extra
 
-        raise missing_legacy_extra("assay.investigations.realistic_pilot", error) from error
+        raise missing_legacy_extra("consistency_pilot.realistic_pilot", error) from error
     return ConsistencyWorker, PilotSettings, render_input
 
 

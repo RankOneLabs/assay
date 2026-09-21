@@ -11,6 +11,14 @@ from unittest.mock import patch
 
 import paa_contracts
 import pytest
+from consistency_pilot.pilot import (
+    PilotFailed,
+    PilotPrepared,
+    PilotSucceeded,
+    installed_jig_revision,
+    prepare_pilot,
+    run_pilot,
+)
 from jig.core.types import CompletionParams, LLMResponse, ToolCall, Usage
 
 from assay.adapters.consistency import (
@@ -22,14 +30,6 @@ from assay.adapters.consistency import (
 from assay.canonical import canonical_json
 from assay.execution import EvaluationFailed, WorkerFailure, WorkerSuccess
 from assay.investigations.consistency import TASKS, StructuralEvaluator
-from assay.investigations.pilot import (
-    PilotFailed,
-    PilotPrepared,
-    PilotSucceeded,
-    installed_jig_revision,
-    prepare_pilot,
-    run_pilot,
-)
 from assay.models import EvaluationCoordinate
 from assay.store import ObjectStore
 from assay.verify import verify_bundle, verify_manifest
@@ -550,7 +550,7 @@ def jig_metadata(**overrides: Any) -> dict[str, Any]:
     ],
 )
 def test_installed_jig_rejects_unpinned_or_invalid_metadata(direct: str | None) -> None:
-    with patch("assay.investigations.pilot.distribution") as distribution:
+    with patch("consistency_pilot.pilot.distribution") as distribution:
         distribution.return_value.read_text.return_value = direct
         with pytest.raises(ValueError):
             installed_jig_revision()
@@ -560,7 +560,7 @@ def test_installed_jig_rejects_unpinned_or_invalid_metadata(direct: str | None) 
 def test_installed_jig_accepts_exact_commit_pin(requested: str) -> None:
     metadata = jig_metadata()
     metadata["vcs_info"]["requested_revision"] = requested
-    with patch("assay.investigations.pilot.distribution") as distribution:
+    with patch("consistency_pilot.pilot.distribution") as distribution:
         distribution.return_value.read_text.return_value = json.dumps(metadata)
         assert installed_jig_revision() == "a" * 40
         distribution.assert_called_once_with("jig")
@@ -573,7 +573,7 @@ async def test_unpinned_runtime_fails_prepare_and_run_before_provider_calls(tmp_
     prepared = prepare(store, factory, PilotSettings())
     metadata = jig_metadata()
     metadata["vcs_info"]["requested_revision"] = "main"
-    with patch("assay.investigations.pilot.distribution") as distribution:
+    with patch("consistency_pilot.pilot.distribution") as distribution:
         distribution.return_value.read_text.return_value = json.dumps(metadata)
         failed_prepare = prepare_pilot(
             store,
@@ -607,11 +607,11 @@ async def test_run_pilot_reports_a_missing_legacy_extra_before_reading_jig_metad
     prepared = prepare(store, factory, PilotSettings())
     with (
         patch(
-            "assay.investigations.pilot._import_legacy_worker_stack",
+            "consistency_pilot.pilot._import_legacy_worker_stack",
             side_effect=ModuleNotFoundError("assay[legacy]"),
         ),
         patch(
-            "assay.investigations.pilot.installed_jig_revision",
+            "consistency_pilot.pilot.installed_jig_revision",
             side_effect=AssertionError("installed_jig_revision must not run first"),
         ),
     ):

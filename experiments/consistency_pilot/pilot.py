@@ -39,7 +39,7 @@ def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSe
     except ModuleNotFoundError as error:
         from assay.adapters import missing_legacy_extra
 
-        raise missing_legacy_extra("assay.investigations.pilot", error) from error
+        raise missing_legacy_extra("consistency_pilot.pilot", error) from error
     return ConsistencyWorker, PilotSettings, render_input
 
 

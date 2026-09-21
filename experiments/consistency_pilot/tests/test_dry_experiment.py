@@ -10,6 +10,14 @@ from unittest.mock import patch
 
 import paa_contracts
 import pytest
+from consistency_pilot.dry_experiment import (
+    DryExperimentFailed,
+    DryExperimentPrepared,
+    DryExperimentSucceeded,
+    haiku_dry_settings,
+    prepare_dry_experiment,
+    run_dry_experiment,
+)
 from jig.core.types import CompletionParams, LLMResponse, ToolCall, Usage
 from pydantic import ValidationError
 
@@ -23,14 +31,6 @@ from assay.investigations.correctness import (
     FunctionalCorrectnessEvaluator,
     SandboxFailure,
     SandboxResult,
-)
-from assay.investigations.dry_experiment import (
-    DryExperimentFailed,
-    DryExperimentPrepared,
-    DryExperimentSucceeded,
-    haiku_dry_settings,
-    prepare_dry_experiment,
-    run_dry_experiment,
 )
 from assay.models import EvaluationCoordinate, ExecutionPlan, StudySnapshot
 from assay.store import ObjectStore
@@ -623,11 +623,11 @@ async def test_run_dry_experiment_reports_a_missing_legacy_extra_before_reading_
     assert isinstance(prepared, DryExperimentPrepared), prepared
     with (
         patch(
-            "assay.investigations.dry_experiment._import_legacy_worker_stack",
+            "consistency_pilot.dry_experiment._import_legacy_worker_stack",
             side_effect=ModuleNotFoundError("assay[legacy]"),
         ),
         patch(
-            "assay.investigations.dry_experiment.installed_jig_revision",
+            "consistency_pilot.dry_experiment.installed_jig_revision",
             side_effect=AssertionError("installed_jig_revision must not run first"),
         ),
     ):

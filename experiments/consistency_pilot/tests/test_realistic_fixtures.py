@@ -9,6 +9,19 @@ from typing import Any
 
 import paa_contracts
 import pytest
+from consistency_pilot.dry_experiment import (
+    DryExperimentFailed,
+    DryExperimentPrepared,
+    DryExperimentSucceeded,
+)
+from consistency_pilot.realistic_pilot import (
+    prepare_realistic_pilot,
+    prepare_realistic_smoke,
+    realistic_gpt_oss_smoke_settings,
+    realistic_haiku_settings,
+    run_realistic_pilot,
+    run_realistic_smoke,
+)
 from jig.core.types import CompletionParams, LLMResponse, ToolCall, Usage
 
 from assay.adapters.consistency import SYSTEM_PROMPT, DescribedClient, render_input
@@ -26,25 +39,12 @@ from assay.investigations.consistency import (
     parse_candidate_source,
 )
 from assay.investigations.correctness import DockerPythonRunner, SandboxFailure, SandboxResult
-from assay.investigations.dry_experiment import (
-    DryExperimentFailed,
-    DryExperimentPrepared,
-    DryExperimentSucceeded,
-)
 from assay.investigations.realistic_fixtures import (
     REALISTIC_PILOT_FIXTURES,
     REALISTIC_PILOT_TASKS,
     realistic_repository_variants,
     repository_lines,
     validate_repository_fixture,
-)
-from assay.investigations.realistic_pilot import (
-    prepare_realistic_pilot,
-    prepare_realistic_smoke,
-    realistic_gpt_oss_smoke_settings,
-    realistic_haiku_settings,
-    run_realistic_pilot,
-    run_realistic_smoke,
 )
 from assay.models import StudySnapshot
 from assay.repository import validate_repository

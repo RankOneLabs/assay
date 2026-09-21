@@ -36,12 +36,12 @@ from assay.investigations.dry_common import (
     repository_for,
     validate_experiment_shape,
 )
-from assay.investigations.pilot import installed_jig_revision
 from assay.models import ExecutionPlan, ReportConfig, StatisticalProfile, StudySnapshot
 from assay.planning import authorize, compile_plan, validate_plan_snapshot
 from assay.report_engine import persist_report
 from assay.store import ObjectStore
 from assay.verify import export_bundle, reference_closure, verify_bundle, verify_snapshot
+from consistency_pilot.pilot import installed_jig_revision
 
 if TYPE_CHECKING:
     from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings
@@ -77,7 +77,7 @@ def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSe
     except ModuleNotFoundError as error:
         from assay.adapters import missing_legacy_extra
 
-        raise missing_legacy_extra("assay.investigations.dry_experiment", error) from error
+        raise missing_legacy_extra("consistency_pilot.dry_experiment", error) from error
     return ConsistencyWorker, PilotSettings, render_input
 
 
