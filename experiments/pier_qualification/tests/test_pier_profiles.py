@@ -149,6 +149,7 @@ def test_evaluator_and_paired_v2_report_declarations_are_unchanged() -> None:
 
     source = inspect.getsource(pier_experiment)
     assert "consistency_pilot.dry_experiment" not in source
+    assert "import dry_experiment" not in source
     assert StatisticalProfile.model_fields["name"].annotation is not None
     profile = StatisticalProfile(seed=1, bootstrap_samples=100)
     assert profile.name == "paired-v2"

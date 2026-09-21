@@ -1,7 +1,7 @@
 # Realistic repository qualification pilot
 
-From the repository root, run with
-`cd experiments && uv run python -m consistency_pilot.realistic_pilot`.
+From the repository root, start a Python session with
+`cd experiments && uv run python`, then use the library API below.
 
 This pilot qualifies Assay's multi-file repository path before a larger
 12-subject experiment. It is intentionally descriptive: four subjects are not

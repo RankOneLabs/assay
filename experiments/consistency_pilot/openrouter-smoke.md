@@ -135,7 +135,7 @@ its fees are outside the run's `usage.cost` accounting.
 ## Prepare without credentials or paid calls
 
 Run `uv sync --locked`, then use the library API in a Python session launched
-with `cd experiments && uv run python -m consistency_pilot.openrouter_smoke`.
+with `cd experiments && uv run python`.
 Preparation does not read the API key or create a client:
 
 ```python

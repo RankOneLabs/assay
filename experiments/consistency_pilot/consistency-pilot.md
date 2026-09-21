@@ -1,7 +1,7 @@
 # Single-file consistency pilot
 
-From the repository root, run with
-`cd experiments && uv run python -m consistency_pilot.pilot`.
+From the repository root, start a Python session with
+`cd experiments && uv run python`, then use the library API below.
 
 This pilot asks a real provider, through Jig, to produce an `implement` function
 for a supplied one-file repository. It does **not** run generated code, edit a

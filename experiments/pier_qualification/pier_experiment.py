@@ -6,14 +6,15 @@ for one profile can never be silently substituted for another's. Costs are
 never hand-typed: every ceiling in this module is
 ``deterministic_cell_price_estimate``'s output for that profile's exact cell
 count at ``PIER_COST_PER_CELL_USD``, checked against the literal numbers this
-cohort was specified against in ``tests/test_pier_profiles.py``.
+cohort was specified against in ``pier_qualification/tests/test_pier_profiles.py``.
 
 Preparation (``prepare_*``) never touches a client, a container, or the
 network -- it only compiles and publishes a plan from already-declared
 subjects/arms/realizations. Execution (``run_*``) additionally requires
 ``allow_paid=True`` and revalidates the plan's runtime/route/price against
 the live adapter immediately before dispatch, mirroring the gating already
-established in ``assay.adapters.openrouter_policy``/``dry_experiment``.
+established in ``assay.adapters.openrouter_policy`` and the moved DRY
+experiment runner.
 """
 
 from __future__ import annotations
@@ -245,7 +246,7 @@ PIER_TRIAL_LIMITS: Mapping[str, float | int] = {
 ARM_IDS = ("clean", "inconsistent")
 
 # Cost ceilings this cohort was specified against -- literal numbers, checked
-# in tests/test_pier_profiles.py against deterministic_cell_price_estimate's
+# in pier_qualification/tests/test_pier_profiles.py against deterministic_cell_price_estimate's
 # derivation from PIER_COST_PER_CELL_USD, never hardcoded independently here.
 PIER_FULL_TOTAL_USD = "34.56"
 PIER_FULL_PER_ARM_USD = "17.28"

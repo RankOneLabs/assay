@@ -56,7 +56,7 @@ passing a small test suite does not waive a missing acceptance requirement.
 ## Implemented boundaries
 
 The local consistency investigation and full offline acceptance pipeline are
-implemented. The [single-file pilot adapter](consistency-pilot.md) now renders
+implemented. The [single-file pilot adapter](../experiments/consistency_pilot/consistency-pilot.md) now renders
 repository/task inputs and extracts structured source through Jig, with fresh
 attempt state and explicit authorization/billing limits. Provider factories and
 optional ambiguity judges remain caller-supplied. A repository-editing coding

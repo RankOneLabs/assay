@@ -1,7 +1,7 @@
 # DRY consistency experiment
 
-From the repository root, run with
-`cd experiments && uv run python -m consistency_pilot.dry_experiment`.
+From the repository root, start a Python session with
+`cd experiments && uv run python`, then use the library API below.
 
 This experiment asks whether an agent is more likely to reuse an existing
 abstraction when the surrounding repository consistently reuses it than when an

@@ -5,29 +5,30 @@ setup remains documented in [`docs/pier-integration.md`](../../docs/pier-integra
 
 ## Clean build, both projects
 
-The root project and the isolated `integrations/pier` bridge each carry their
-own lock and are checked independently -- this is the exact, reproducible
-sequence `.github/workflows/ci.yml`'s `pier-qualification` job runs, in this
-order, from a clean checkout:
+The root project, experiments project, and isolated `integrations/pier` bridge
+each carry their own lock and are checked independently -- this is the exact,
+reproducible sequence `.github/workflows/ci.yml`'s `pier-qualification` job
+runs, in this order, from a clean checkout:
 
 ```sh
 uv sync --locked --extra review --extra legacy
 uv run ruff check integrations/pier
-MYPYPATH=integrations/pier/src uv run mypy integrations/pier/scripts/qualify_local.py
+MYPYPATH=integrations/pier/src:experiments uv run mypy integrations/pier/scripts/qualify_local.py
+uv run --extra review --extra legacy python integrations/pier/scripts/qualify_local.py --help
 cd experiments
-uv run pytest -q pier_qualification/tests/test_pier_acceptance.py
+uv run --locked pytest -q pier_qualification/tests/test_pier_acceptance.py
 
-cd integrations/pier
+cd ../integrations/pier
 uv sync --locked --group dev
 uv run mypy src
 uv run pytest -q
 cd -
 ```
 
-The first block lints/type-checks/tests the qualification script and the
-credential-free acceptance matrix against the root project's own locked
-environment (root `ruff`/`mypy` already cover `src`/`tests` themselves --
-see `README.md`'s "Install and check"). The second block syncs, type-checks,
+The first block lints and type-checks the qualification script against the root
+lock, then tests the credential-free acceptance matrix against the experiments
+project's lock (root `ruff`/`mypy` already cover `src`/`tests` themselves -- see
+`README.md`'s "Install and check"). The second block syncs, type-checks,
 and runs the bridge's full pytest suite (protocol, provider, host-driver,
 container-lifecycle, and trial-lifecycle tests) against the bridge's own
 separate lock -- no shared virtualenv, no shared dependency resolution. Every
@@ -333,10 +334,10 @@ cases to special-case away in a report:
 
 Before relying on any of the above for a real decision, rehearse it end to
 end -- automated and re-run on every pull request by
-`tests/test_pier_final_rehearsal.py::test_final_rehearsal_verifies_the_legacy_bundle_and_a_fresh_pier_bundle`:
+`pier_qualification/tests/test_pier_final_rehearsal.py::test_final_rehearsal_verifies_the_legacy_bundle_and_a_fresh_pier_bundle`:
 
 ```sh
-uv run pytest -q tests/test_pier_final_rehearsal.py
+cd experiments && uv run --locked pytest -q pier_qualification/tests/test_pier_final_rehearsal.py
 ```
 
 It verifies the fixed legacy bundle recorded in this checkout (the same

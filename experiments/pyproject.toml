@@ -5,7 +5,7 @@ description = "Non-shipping experiments and qualification runners for Assay"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-  "assay[review]",
+  "assay[review,legacy]",
   "jig[openrouter] @ git+https://github.com/RankOneLabs/jig.git@5932f7237a369fe705512915ef4033da0ca27c74",
   "typesafe-sdk==0.6.0",
   "scikit-learn==1.9.0",

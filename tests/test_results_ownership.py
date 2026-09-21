@@ -17,7 +17,6 @@ RUN_RECEIPTS_PROSE = {
     PurePosixPath("experiments/README.md"),
     PurePosixPath("experiments/typesafe_relevance/README.md"),
     PurePosixPath("experiments/typesafe_relevance/run_packet.py"),
-    PurePosixPath("tests/conftest.py"),
     PurePosixPath("experiments/conftest.py"),
     PurePosixPath("tests/test_results_ownership.py"),
 }
@@ -49,9 +48,7 @@ def test_results_are_owned_by_the_receipts_repository() -> None:
     for path in paths:
         bundle = allowed_bundle(path)
         result_directory = any(part in RESULT_DIRECTORY_NAMES for part in path.parts[:-1])
-        beneath_checksums = any(
-            parent == path.parent or parent in path.parents for parent in checksum_parents
-        )
+        beneath_checksums = any(parent in path.parents for parent in checksum_parents)
         if (result_directory or beneath_checksums) and bundle is None:
             violations.append(f"result material outside allowlist: {path}")
 

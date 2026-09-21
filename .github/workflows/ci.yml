@@ -94,8 +94,13 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - working-directory: web
         run: bun run test:browser
-      # web/scripts/build.ts writes the browser bundle into this tracked directory.
-      - run: git diff --exit-code src/assay/review/static
+      # web/scripts/build.ts writes into this tracked directory; status also catches new files.
+      - run: |
+          static_status="$(git status --porcelain --untracked-files=all -- src/assay/review/static)"
+          if [ -n "$static_status" ]; then
+            printf '%s\n' "$static_status"
+            exit 1
+          fi
 
   experiments:
     runs-on: ubuntu-latest
@@ -139,8 +144,10 @@ jobs:
         run: uv run ruff check integrations/pier
       - name: mypy over the qualification script (needs both projects' sources on MYPYPATH)
         run: MYPYPATH=integrations/pier/src:experiments uv run mypy integrations/pier/scripts/qualify_local.py
+      - name: Verify the documented root qualification command resolves experiment imports
+        run: uv run --extra review --extra legacy python integrations/pier/scripts/qualify_local.py --help
       - working-directory: experiments
-        run: uv run pytest -q pier_qualification/tests/test_pier_acceptance.py
+        run: uv run --locked pytest -q pier_qualification/tests/test_pier_acceptance.py
       # The bridge is a deliberately separate uv workspace with its own
       # pyproject.toml/uv.lock (integrations/pier/README.md) -- synced,
       # type-checked, and tested against its own lock here, independent of

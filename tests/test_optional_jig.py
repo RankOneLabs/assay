@@ -57,6 +57,25 @@ print("ok")
     assert "ok" in result.stdout
 
 
+def test_jig_worker_fails_actionably_without_the_legacy_extra(
+    installed_wheel: InstalledWheel,  # noqa: F811
+) -> None:
+    program = """
+import assay.adapters
+try:
+    assay.adapters.JigWorker
+except ModuleNotFoundError as error:
+    print(error)
+"""
+    result = _run(
+        [installed_wheel.python, "-c", program],
+        cwd=installed_wheel.outside,
+        env=_installed_environment(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "assay[legacy]" in result.stdout
+
+
 def test_fixed_legacy_bundle_verifies_in_a_jig_free_install(
     installed_wheel: InstalledWheel,  # noqa: F811
 ) -> None:

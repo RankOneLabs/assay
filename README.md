@@ -174,11 +174,11 @@ an exclusion, an injected failure, ordinal reporting, and offline export.
 Its synthetic worker tests the machinery; its results are not experimental
 evidence about a real coding agent.
 
-The [OpenRouter smoke integration](docs/openrouter-smoke.md) provides the initial
+The [OpenRouter smoke integration](experiments/consistency_pilot/openrouter-smoke.md) provides the initial
 Qwen/Novita factory, with fixed routing, explicit rate caps, and offline transport
 tests. Live runs still require independent plan and spending approval.
 
-The [single-file pilot workflow](docs/consistency-pilot.md) adds a
+The [single-file pilot workflow](experiments/consistency_pilot/consistency-pilot.md) adds a
 `ConsistencyWorker` that renders repository/task inputs, calls Jig with isolated
 attempt state, and extracts structured source output. Provider factories and any
 ambiguity judges remain caller-supplied. The generic `JigWorker` accepts
@@ -193,14 +193,14 @@ aggregation are not supported; they are rejected explicitly. No paid or
 production-agent experiment is included in acceptance testing. The pilot's tests
 exercise the real Jig runner with a fake provider; they do not run generated code.
 
-The [full DRY experiment](docs/dry-experiment.md) adds a 12-subject balanced
+The [full DRY experiment](experiments/consistency_pilot/dry-experiment.md) adds a 12-subject balanced
 population, a declared counterbalanced schedule, and separate abstraction and
 finite-case correctness reports. Generated code is evaluated only inside a
 digest-pinned, resource-bounded Docker container with no network or host mounts.
 The live experiment still requires review, exact-plan approval, and an explicit
 paid-run decision.
 
-The [realistic repository pilot](docs/realistic-pilot.md) extends the same
+The [realistic repository pilot](experiments/consistency_pilot/realistic-pilot.md) extends the same
 governed path to deterministic 1,225-line multi-file repositories. A four-call
 GPT-OSS smoke gate checks the complete operational path before the four-subject
 Haiku qualification grid validates repository navigation and sandboxed package

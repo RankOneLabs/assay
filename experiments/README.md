@@ -2,7 +2,8 @@
 
 This standalone uv project contains experiment runners and qualification suites
 that are intentionally excluded from the Assay wheel. It depends on the parent
-checkout as an editable `assay[review]` dependency.
+checkout as an editable `assay[review,legacy]` dependency so the pilots use the
+same OpenAI major version as the qualified root legacy stack.
 
 ```console
 uv sync --locked --group dev

@@ -3,7 +3,7 @@
 Golden materialization -- the fixed 12-task population, its repositories, and
 the shape asserted by ``validate_experiment_shape`` -- lives here so it can be
 imported, and tested, without the Jig-coupled worker/runner stack that
-``assay.investigations.dry_experiment`` layers on top of it.
+``consistency_pilot.dry_experiment`` layers on top of it.
 """
 
 from __future__ import annotations

@@ -7,7 +7,7 @@ bridge project. The bridge has its own lock and qualification script:
 ```sh
 uv sync --locked --extra review --extra legacy
 uv run ruff check integrations/pier
-MYPYPATH=integrations/pier/src uv run mypy integrations/pier/scripts/qualify_local.py
+MYPYPATH=integrations/pier/src:experiments uv run mypy integrations/pier/scripts/qualify_local.py
 
 cd integrations/pier
 uv sync --locked --group dev

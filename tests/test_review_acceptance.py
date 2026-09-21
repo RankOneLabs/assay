@@ -22,7 +22,7 @@ FORBIDDEN_REVIEW_CALLS = (
     "persist_report",
     # The review layer must never be able to trigger a paid Pier dispatch
     # either -- these three are the only functions that ever set
-    # allow_paid=True against a real bridge (assay.investigations.pier_experiment).
+    # allow_paid=True against a real bridge (pier_qualification.pier_experiment).
     "run_pier_full",
     "run_pier_smoke",
     "run_pier_qualification",

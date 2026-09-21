@@ -2,7 +2,8 @@
 
 ``execute_plan`` now accepts ``ExecutionPlanV2`` generically (the Pier cohort of
 this epic wires a real backend to it; see ``assay.adapters.pier`` and
-``tests/test_pier_run.py``), so ``test_execution_accepts_v2_plans`` below exercises
+``experiments/pier_qualification/tests/test_pier_run.py``), so
+``test_execution_accepts_v2_plans`` below exercises
 that path directly with the ordinary fixture worker. The remaining tests in this
 module still re-root a real, fully verified v1 run onto an equivalent v2 plan --
 that re-rooting exercises the closure, verification, and report-fingerprint
