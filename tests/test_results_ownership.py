@@ -6,12 +6,7 @@ import subprocess
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
-ALLOWED_BUNDLES = {
-    PurePosixPath("evidence/typesafe-relevance-arms-2026-09"),
-    PurePosixPath("evidence/typesafe-relevance-census-2026-09"),
-    PurePosixPath("evidence/typesafe-relevance-fitted-rerun-2026-09"),
-    PurePosixPath("evidence/typesafe-relevance-primary-2026-09"),
-}
+ALLOWED_BUNDLES: set[PurePosixPath] = set()
 RUN_RECEIPTS_PROSE = {
     PurePosixPath("README.md"),
     PurePosixPath("experiments/README.md"),
