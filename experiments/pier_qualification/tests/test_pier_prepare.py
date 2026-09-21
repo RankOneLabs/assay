@@ -7,9 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-from assay.canonical import canonical_json, digest_bytes
-from assay.investigations.pier_experiment import (
+from pier_qualification.pier_experiment import (
     EXPECTED_BRIDGE_LOCK_DIGEST,
     EXPECTED_DOCKER_VERSION,
     EXPECTED_MINI_SWE_AGENT_REVISION,
@@ -19,6 +17,8 @@ from assay.investigations.pier_experiment import (
     PierExperimentPrepared,
     prepare_pier_smoke,
 )
+
+from assay.canonical import canonical_json, digest_bytes
 from assay.runtime_inventory import (
     QualificationInventory,
     QualificationRejected,

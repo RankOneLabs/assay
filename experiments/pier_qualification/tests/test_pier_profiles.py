@@ -4,9 +4,7 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
-from assay.canonical import canonical_json
-from assay.investigations.dry_common import deterministic_cell_price_estimate
-from assay.investigations.pier_experiment import (
+from pier_qualification.pier_experiment import (
     PIER_COST_PER_CELL_USD,
     PIER_FULL_PER_ARM_USD,
     PIER_FULL_TOTAL_USD,
@@ -19,6 +17,9 @@ from assay.investigations.pier_experiment import (
     prepare_pier_qualification,
     prepare_pier_smoke,
 )
+
+from assay.canonical import canonical_json
+from assay.investigations.dry_common import deterministic_cell_price_estimate
 from assay.models import ExecutionPlanV2, StudySnapshot, parse_execution_plan
 from assay.store import ObjectStore
 
@@ -123,7 +124,7 @@ def test_profiles_share_the_qualified_runtime_but_pin_distinct_configurations(
     profile name), which is why configuration_ref stays distinct per profile
     even though runtime.version is now the shared, exactly-pinned qualified
     identity rather than an invented per-profile version string."""
-    from assay.investigations.pier_experiment import EXPECTED_BRIDGE_LOCK_DIGEST
+    from pier_qualification.pier_experiment import EXPECTED_BRIDGE_LOCK_DIGEST
 
     store = ObjectStore(tmp_path / ".assay")
     full = _plan_for(store, prepare_pier_full(store))
@@ -142,15 +143,12 @@ def test_evaluator_and_paired_v2_report_declarations_are_unchanged() -> None:
     existing DRY experiment's evaluator ids or the paired-v2 statistical profile."""
     import inspect
 
-    from assay import investigations
-    from assay.investigations import pier_experiment
-    from assay.investigations.dry_experiment import EXPERIMENT_TASKS as _unused  # noqa: F401
+    from pier_qualification import pier_experiment
+
     from assay.models import StatisticalProfile
 
     source = inspect.getsource(pier_experiment)
-    assert "import dry_experiment" not in source
-    assert "from assay.investigations.dry_experiment" not in source
+    assert "consistency_pilot.dry_experiment" not in source
     assert StatisticalProfile.model_fields["name"].annotation is not None
     profile = StatisticalProfile(seed=1, bootstrap_samples=100)
     assert profile.name == "paired-v2"
-    assert investigations is not None

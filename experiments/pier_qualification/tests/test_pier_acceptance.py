@@ -38,9 +38,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
-
-from assay.investigations.correctness import DockerPythonRunner
-from assay.investigations.pier_experiment import (
+from pier_qualification.pier_experiment import (
     PIER_PAID_APPROVAL_ENV,
     PIER_PAID_CREDENTIAL_ENV,
     PierExperimentFailed,
@@ -52,10 +50,12 @@ from assay.investigations.pier_experiment import (
     run_pier_qualification,
     run_pier_smoke,
 )
+
+from assay.investigations.correctness import DockerPythonRunner
 from assay.pier_protocol import PierExchange
 from assay.store import ObjectStore
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 QUALIFY_SCRIPT = ROOT / "integrations" / "pier" / "scripts" / "qualify_local.py"
 _PAID_APPROVAL_ENV = PIER_PAID_APPROVAL_ENV
 _PAID_CREDENTIAL_ENV = PIER_PAID_CREDENTIAL_ENV

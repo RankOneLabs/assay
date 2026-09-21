@@ -59,15 +59,7 @@ from assay_pier_bridge.provider import (  # noqa: E402
     GuardedRouteError,
 )
 from assay_pier_bridge.runtime import BridgeRuntime, TrialAlreadyRequestedError  # noqa: E402
-
-from assay.adapters.pier import (  # noqa: E402
-    BridgeEffectiveEnforcement,
-    BridgeTrialResult,
-    PierAdapter,
-)
-from assay.canonical import digest_bytes  # noqa: E402
-from assay.execution import WorkerFailure, WorkerSuccess  # noqa: E402
-from assay.investigations.pier_experiment import (  # noqa: E402
+from pier_qualification.pier_experiment import (  # noqa: E402
     EXPECTED_BRIDGE_LOCK_DIGEST,
     EXPECTED_DOCKER_VERSION,
     EXPECTED_GID,
@@ -78,6 +70,14 @@ from assay.investigations.pier_experiment import (  # noqa: E402
     PIER_MODEL_ROUTE,
     PIER_TRIAL_LIMITS,
 )
+
+from assay.adapters.pier import (  # noqa: E402
+    BridgeEffectiveEnforcement,
+    BridgeTrialResult,
+    PierAdapter,
+)
+from assay.canonical import digest_bytes  # noqa: E402
+from assay.execution import WorkerFailure, WorkerSuccess  # noqa: E402
 from assay.models import CellCoordinate  # noqa: E402
 from assay.pier_protocol import (  # noqa: E402
     ArtifactEntry,

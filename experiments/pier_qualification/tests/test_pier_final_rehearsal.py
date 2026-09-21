@@ -6,7 +6,7 @@ generated Pier bundle in one run, then scans the fresh bundle for a sentinel
 that must never be reachable from it.
 
 "No Jig" here means what it means for Pier specifically: neither
-``assay.adapters.pier`` nor ``assay.investigations.pier_experiment`` import
+``assay.adapters.pier`` nor ``pier_qualification.pier_experiment`` import
 Jig at all (unlike the legacy consistency/DRY investigations, which import it
 lazily behind the ``legacy`` extra) -- this rehearsal proves that by running
 the whole Pier path with no Jig import ever occurring, not by re-installing a
@@ -23,11 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult
-from assay.canonical import digest_bytes
-from assay.investigations.correctness import DockerPythonRunner
-from assay.investigations.pier_experiment import (
+from pier_qualification.pier_experiment import (
     EXPECTED_BRIDGE_LOCK_DIGEST,
     EXPECTED_DOCKER_VERSION,
     EXPECTED_MINI_SWE_AGENT_REVISION,
@@ -40,11 +36,15 @@ from assay.investigations.pier_experiment import (
     prepare_pier_smoke,
     run_pier_smoke,
 )
+
+from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult
+from assay.canonical import digest_bytes
+from assay.investigations.correctness import DockerPythonRunner
 from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange
 from assay.store import ObjectStore
 from assay.verify import verify_bundle, verify_manifest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 LEGACY_FIXTURE_BUNDLE = ROOT / "tests" / "fixtures" / "legacy-0.1.0-bundle" / "bundle"
 LEGACY_FIXTURE_MANIFEST_REF = (
     "sha256:7f60b6946084c4ef35c81fea380daa2c669a1f634e8edc85b11cf79cf97a3803"

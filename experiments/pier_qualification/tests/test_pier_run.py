@@ -5,12 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from test_execution import execution_fixture
-
-from assay._version import __version__
-from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult, PierBridgeHandle
-from assay.canonical import canonical_json, digest_bytes
-from assay.investigations.pier_experiment import (
+from pier_qualification.pier_experiment import (
     EXPECTED_BRIDGE_LOCK_DIGEST,
     EXPECTED_DOCKER_VERSION,
     EXPECTED_MINI_SWE_AGENT_REVISION,
@@ -26,6 +21,11 @@ from assay.investigations.pier_experiment import (
     run_pier_qualification,
     run_pier_smoke,
 )
+from test_execution import execution_fixture
+
+from assay._version import __version__
+from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult, PierBridgeHandle
+from assay.canonical import canonical_json, digest_bytes
 from assay.models import ReportConfig, RunManifest, StatisticalProfile
 from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange
 from assay.references import reference_closure
@@ -36,7 +36,7 @@ from assay.store import ObjectStore
 @pytest.fixture(autouse=True)
 def _paid_gates_satisfied(monkeypatch: pytest.MonkeyPatch) -> None:
     """This module exercises real dispatch given every gate is satisfied --
-    ``tests/test_pier_acceptance.py`` covers each gate's own rejection,
+    ``pier_qualification/tests/test_pier_acceptance.py`` covers each gate's own rejection,
     including this env-level approval/credential pair, independently."""
     monkeypatch.setenv(PIER_PAID_APPROVAL_ENV, "1")
     monkeypatch.setenv(PIER_PAID_CREDENTIAL_ENV, "sk-not-a-real-key")
