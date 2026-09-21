@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import html
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -42,15 +41,7 @@ from assay.investigations.relevance.run_packet import (
 )
 
 CATALOGUE = Path("src/assay/investigations/relevance/catalogues/agent-ops-relevance.v2.yaml")
-
-#: The arms run carries post text, so it lives in the private receipts repo and is
-#: absent in CI. Override with ``ASSAY_ARMS_RUN`` when it sits elsewhere.
-ARMS_RUN = Path(
-    os.environ.get(
-        "ASSAY_ARMS_RUN",
-        str(Path.home() / "codes/rol/run-receipts/typesafe-relevance-2026-09/arms-run.json"),
-    )
-)
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -163,16 +154,17 @@ def test_rendered_page_uses_the_catalogue_wording_verbatim(questions: dict) -> N
 # --- the gate ---------------------------------------------------------------
 
 
-def test_gate_matches_decide_argmax_on_every_stored_answer_vector() -> None:
+def test_gate_matches_decide_argmax_on_every_stored_answer_vector(
+    run_receipts_checkout: Path,
+) -> None:
     """The mirrored gate must agree with the frozen mapping on real data.
 
     `mappings.py` is digest-pinned by published evidence and cannot be
     refactored to share the gate, so equivalence is asserted rather than
     structurally guaranteed.
     """
-    if not ARMS_RUN.exists():
-        pytest.skip("private arms run is not present")
-    document = json.loads(ARMS_RUN.read_text(encoding="utf-8"))
+    arms_run = run_receipts_checkout / "typesafe-relevance-arms-2026-09/exported-answers.json"
+    document = json.loads(arms_run.read_text(encoding="utf-8"))
     compared = 0
     for case in document["cases"]:
         for arm_case in case.get("arms", {}).values():
@@ -389,25 +381,30 @@ def test_score_cross_tabs_band_against_disposition(questions: dict) -> None:
 
 # --- published evidence integrity ---
 
-CENSUS_EVIDENCE = Path("evidence/typesafe-relevance-census-2026-09")
+
+@pytest.fixture
+def census_evidence(run_receipts_checkout: Path) -> Path:
+    return run_receipts_checkout / "typesafe-relevance-census-2026-09"
 
 
-def _manifest() -> dict:
-    return json.loads((CENSUS_EVIDENCE / "checksums.json").read_text(encoding="utf-8"))
+def _manifest(census_evidence: Path) -> dict:
+    return json.loads((census_evidence / "checksums.json").read_text(encoding="utf-8"))
 
 
-def test_census_evidence_files_match_the_working_tree() -> None:
+def test_census_evidence_files_match_the_working_tree(census_evidence: Path) -> None:
     """The labels behind every published number, pinned for good.
 
     These must validate at any commit. If this fails, a figure in RESULTS.md no
     longer has the data under it that produced it.
     """
-    for name, digest in sorted(_manifest()["evidence_files"].items()):
-        blob = (CENSUS_EVIDENCE / name).read_bytes()
+    for name, digest in sorted(_manifest(census_evidence)["evidence_files"].items()):
+        blob = (census_evidence / name).read_bytes()
         assert hashlib.sha256(blob).hexdigest() == digest, name
 
 
-def test_census_source_pins_are_checked_against_their_commit_not_head() -> None:
+def test_census_source_pins_are_checked_against_their_commit_not_head(
+    census_evidence: Path,
+) -> None:
     """Provenance, not a freeze.
 
     Unlike the arms run, the labelling instrument is still being developed, so
@@ -416,20 +413,25 @@ def test_census_source_pins_are_checked_against_their_commit_not_head() -> None:
     The first version of this manifest pinned them against HEAD, which would have
     broken the moment the next sitting's code landed.
     """
-    manifest = _manifest()
+    manifest = _manifest(census_evidence)
     commit = manifest["source_commit"]
     for name, digest in sorted(manifest["source_files_at_commit"].items()):
         found = subprocess.run(
-            ["git", "show", f"{commit}:{name}"], capture_output=True, check=False
+            ["git", "show", f"{commit}:{name}"],
+            cwd=REPOSITORY_ROOT,
+            capture_output=True,
+            check=False,
         )
         if found.returncode != 0:
             pytest.skip(f"commit {commit} is not in this clone")
         assert hashlib.sha256(found.stdout).hexdigest() == digest, name
 
 
-def test_census_manifest_does_not_pin_source_files_as_evidence() -> None:
+def test_census_manifest_does_not_pin_source_files_as_evidence(census_evidence: Path) -> None:
     """The bug this file is guarding against, stated directly."""
-    assert not [name for name in _manifest()["evidence_files"] if name.startswith("src/")]
+    assert not [
+        name for name in _manifest(census_evidence)["evidence_files"] if name.startswith("src/")
+    ]
 
 
 # --- the substance rule ---

@@ -7,12 +7,21 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from assay.investigations.relevance.fitted_rerun import build_fitted_report
 
-ROOT = Path(__file__).parents[1]
-SOURCE = ROOT / "evidence/typesafe-relevance-primary-2026-09/exported-answers.json"
-REPORT = ROOT / "evidence/typesafe-relevance-fitted-rerun-2026-09/fitted-oof-results.json"
-CHECKSUMS = ROOT / "evidence/typesafe-relevance-fitted-rerun-2026-09/checksums.json"
+
+@pytest.fixture(autouse=True)
+def _require_run_receipts(run_receipts_checkout: Path) -> None:
+    pass
+
+
+@pytest.fixture
+def receipt_paths(run_receipts_checkout: Path) -> tuple[Path, Path, Path]:
+    source = run_receipts_checkout / "typesafe-relevance-primary-2026-09/exported-answers.json"
+    bundle = run_receipts_checkout / "typesafe-relevance-fitted-rerun-2026-09"
+    return source, bundle / "fitted-oof-results.json", bundle / "checksums.json"
 
 #: The fit runs liblinear over an OpenBLAS built DYNAMIC_ARCH, which selects a kernel
 #: per CPU, so the stored probabilities only reproduce to the last couple of bits on a
@@ -59,16 +68,22 @@ def _mismatches(actual: Any, expected: Any, path: str = "") -> list[str]:
     return []
 
 
-def test_fitted_report_recomputes_from_retained_answers() -> None:
-    source_bytes = SOURCE.read_bytes()
+def test_fitted_report_recomputes_from_retained_answers(
+    receipt_paths: tuple[Path, Path, Path],
+) -> None:
+    source, report, _ = receipt_paths
+    source_bytes = source.read_bytes()
     actual = build_fitted_report(json.loads(source_bytes))
     actual["source_sha256"] = hashlib.sha256(source_bytes).hexdigest()
-    expected = json.loads(REPORT.read_text(encoding="utf-8"))
+    expected = json.loads(report.read_text(encoding="utf-8"))
     assert _mismatches(actual, expected) == []
 
 
-def test_fitted_rerun_is_exploratory_and_does_not_win() -> None:
-    report = json.loads(REPORT.read_text(encoding="utf-8"))
+def test_fitted_rerun_is_exploratory_and_does_not_win(
+    receipt_paths: tuple[Path, Path, Path],
+) -> None:
+    _, report_path, _ = receipt_paths
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["status"] == "exploratory_retrospective"
     assert report["adoption_gate"] is False
     assert report["source_case_count"] == 79
@@ -82,7 +97,8 @@ def test_fitted_rerun_is_exploratory_and_does_not_win() -> None:
     ]["accuracy"]
 
 
-def test_fitted_report_checksums() -> None:
-    checksums = json.loads(CHECKSUMS.read_text(encoding="utf-8"))
+def test_fitted_report_checksums(receipt_paths: tuple[Path, Path, Path]) -> None:
+    _, _, checksums_path = receipt_paths
+    checksums = json.loads(checksums_path.read_text(encoding="utf-8"))
     for name, digest in checksums.items():
-        assert hashlib.sha256((CHECKSUMS.parent / name).read_bytes()).hexdigest() == digest
+        assert hashlib.sha256((checksums_path.parent / name).read_bytes()).hexdigest() == digest
