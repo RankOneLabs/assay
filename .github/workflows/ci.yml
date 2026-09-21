@@ -27,7 +27,7 @@ jobs:
           uv venv --python 3.13 "$packaging_env/venv"
           wheel_path="$(realpath dist/*.whl)"
           uv pip install --python "$packaging_env/venv/bin/python" "$wheel_path[review]"
-      - run: uv run ruff check src tests
+      - run: uv run ruff check src tests experiments
       - run: uv run mypy src
       - run: uv run python -m assay.schema_export --check
       - run: uv run pytest -q
@@ -94,11 +94,41 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - working-directory: web
         run: bun run test:browser
+      # web/scripts/build.ts writes into this tracked directory; status also catches new files.
+      - run: |
+          static_status="$(git status --porcelain --untracked-files=all -- src/assay/review/static)"
+          if [ -n "$static_status" ]; then
+            printf '%s\n' "$static_status"
+            exit 1
+          fi
+
+  experiments:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.10.2"
+          python-version: '3.13'
+      - name: Lint experiments with the root Ruff configuration
+        run: uv run ruff check experiments
+      - name: Sync the standalone experiments project
+        working-directory: experiments
+        run: uv sync --locked --group dev
+      - name: Type-check experiments
+        working-directory: experiments
+        run: uv run mypy .
+      - name: Test experiments
+        working-directory: experiments
+        run: uv run pytest -q
 
   pier-qualification:
     # Deterministic offline, local-Docker, and fake-HTTP coverage only -- this
     # job never sets OPENROUTER_API_KEY or ASSAY_ALLOW_PAID_PIER, so every
-    # paid-profile and paid-marker test in tests/test_pier_acceptance.py stays
+    # paid-profile and paid-marker test in pier_qualification/tests/test_pier_acceptance.py stays
     # gated and skipped, and qualify_local.py's own probes never dial out.
     runs-on: ubuntu-latest
     steps:
@@ -113,8 +143,11 @@ jobs:
       - name: Lint the isolated bridge project too (root ruff config covers its tree)
         run: uv run ruff check integrations/pier
       - name: mypy over the qualification script (needs both projects' sources on MYPYPATH)
-        run: MYPYPATH=integrations/pier/src uv run mypy integrations/pier/scripts/qualify_local.py
-      - run: uv run pytest -q tests/test_pier_acceptance.py
+        run: MYPYPATH=integrations/pier/src:experiments uv run mypy integrations/pier/scripts/qualify_local.py
+      - name: Verify the documented root qualification command resolves experiment imports
+        run: uv run --extra review --extra legacy python integrations/pier/scripts/qualify_local.py --help
+      - working-directory: experiments
+        run: uv run --locked pytest -q pier_qualification/tests/test_pier_acceptance.py
       # The bridge is a deliberately separate uv workspace with its own
       # pyproject.toml/uv.lock (integrations/pier/README.md) -- synced,
       # type-checked, and tested against its own lock here, independent of

@@ -1,0 +1,57 @@
+[project]
+name = "assay-experiments"
+version = "0.1.0"
+description = "Non-shipping experiments and qualification runners for Assay"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "assay[review,legacy]",
+  "jig[openrouter] @ git+https://github.com/RankOneLabs/jig.git@5932f7237a369fe705512915ef4033da0ca27c74",
+  "typesafe-sdk==0.6.0",
+  "scikit-learn==1.9.0",
+  "paa-contracts @ git+https://github.com/RankOneLabs/paa.git@1e054d02a36d1da832e8a1c9cf10974131b09f5d#subdirectory=packages/paa-contracts",
+  "msgspec==0.21.1",
+]
+
+[tool.uv.sources]
+assay = { path = "..", editable = true }
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "mypy>=1.13",
+  "ruff>=0.8",
+  "types-PyYAML",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["consistency_pilot", "pier_qualification", "typesafe_relevance"]
+include = ["typesafe_relevance/catalogues/*.yaml"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = [
+  "consistency_pilot/tests",
+  "pier_qualification/tests",
+  "typesafe_relevance/tests",
+]
+markers = [
+  "paid: requires ASSAY_ALLOW_PAID_PIER=1 and a real OPENROUTER_API_KEY; skips otherwise, never dispatches for real",
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+exclude = ["(^|/)tests/"]
+
+[[tool.mypy.overrides]]
+module = ["jig", "jig.*", "msgspec", "sklearn", "sklearn.*", "typesafe_sdk"]
+ignore_missing_imports = true

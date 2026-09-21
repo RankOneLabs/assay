@@ -4,8 +4,8 @@ Preparation for the Pier vertical slice is a read of already-recorded,
 already-qualified bytes -- never a live check. This module must never create
 an HTTP client, make a network request, launch Docker, install a dependency,
 or perform any other mutable inspection of the machine it runs on; every
-test in ``tests/test_pier_prepare.py`` exists to catch a regression of that
-rule, not to trust a comment.
+test in ``experiments/pier_qualification/tests/test_pier_prepare.py`` exists to
+catch a regression of that rule, not to trust a comment.
 
 A stale, incomplete, or mismatched inventory fails closed: callers get a
 typed ``QualificationRejected`` value, never an exception escaping past this
