@@ -24,6 +24,24 @@ uv run pytest -q
 uv build
 ```
 
+### Run-receipt tests
+
+Published relevance receipts live in a separate local checkout of
+`RankOneLabs/run-receipts`. Set `ASSAY_RUN_RECEIPTS` to that checkout (the
+directory containing the `typesafe-relevance-*-2026-09` bundles) to run the
+receipt-dependent primary, fitted-rerun, arms, and census tests:
+
+```sh
+ASSAY_RUN_RECEIPTS=/path/to/run-receipts uv run pytest -q \
+  tests/test_evidence_manifests.py \
+  tests/test_relevance_primary.py \
+  tests/test_relevance_fitted_rerun.py \
+  tests/test_relevance_packet.py
+```
+
+Without the variable, receipt-dependent tests skip explicitly. The manifest
+walker still checks the in-tree `evidence/` directory when it is present.
+
 ## Run the review UI
 
 The review UI reads runs and reports from an Assay object store. Install the

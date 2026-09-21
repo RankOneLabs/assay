@@ -45,12 +45,14 @@ def _verify_flat_manifest(manifest_path: Path, manifest: dict[str, object]) -> N
         _assert_digest((manifest_path.parent / name).read_bytes(), digest, name)
 
 
-def test_all_evidence_manifests() -> None:
-    if not EVIDENCE_ROOT.is_dir():
-        pytest.skip("no evidence roots are present")
+def test_all_evidence_manifests(optional_run_receipts_checkout: Path | None) -> None:
+    roots = {root.resolve() for root in (EVIDENCE_ROOT, optional_run_receipts_checkout) if root}
+    roots = {root for root in roots if root.is_dir()}
+    if not roots:
+        pytest.skip("neither in-tree evidence nor ASSAY_RUN_RECEIPTS is present")
 
-    manifests = sorted(EVIDENCE_ROOT.rglob("checksums.json"))
-    assert len(manifests) == 4
+    manifests = sorted(path for root in roots for path in root.rglob("checksums.json"))
+    assert manifests
     for manifest_path in manifests:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if "evidence_files" in manifest:

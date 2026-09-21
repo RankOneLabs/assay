@@ -3,26 +3,37 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from assay.investigations.relevance.catalogue import load_catalogue
 from assay.investigations.relevance.mappings import DECIDE_REGISTRY, derive_band
 from assay.investigations.relevance.state import build_state
 
 ROOT = Path(__file__).parents[1]
 CATALOGUE = ROOT / "src/assay/investigations/relevance/catalogues/agent-ops-relevance.v1.yaml"
-ANSWERS = ROOT / "evidence/typesafe-relevance-primary-2026-09/exported-answers.json"
 
 
-def test_catalogue_version_matches_primary_report() -> None:
+@pytest.fixture(autouse=True)
+def _require_run_receipts(run_receipts_checkout: Path) -> None:
+    pass
+
+
+@pytest.fixture
+def answers_path(run_receipts_checkout: Path) -> Path:
+    return run_receipts_checkout / "typesafe-relevance-primary-2026-09/exported-answers.json"
+
+
+def test_catalogue_version_matches_primary_report(answers_path: Path) -> None:
     catalogue = load_catalogue(CATALOGUE)
-    report = json.loads(ANSWERS.read_text(encoding="utf-8"))
+    report = json.loads(answers_path.read_text(encoding="utf-8"))
     assert catalogue.version == report["catalogue_version"]
     assert len(catalogue.questions) == 17
 
 
-def test_exported_answers_reproduce_every_recorded_decision() -> None:
+def test_exported_answers_reproduce_every_recorded_decision(answers_path: Path) -> None:
     catalogue = load_catalogue(CATALOGUE)
     decide = DECIDE_REGISTRY[catalogue.decide]
-    report = json.loads(ANSWERS.read_text(encoding="utf-8"))
+    report = json.loads(answers_path.read_text(encoding="utf-8"))
     assert len(report["cases"]) == 79
     assert sum(len(case["repeats"]) for case in report["cases"]) == 237
     for case in report["cases"]:
