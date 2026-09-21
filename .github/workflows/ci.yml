@@ -103,6 +103,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.10.2"
@@ -137,7 +138,7 @@ jobs:
       - name: Lint the isolated bridge project too (root ruff config covers its tree)
         run: uv run ruff check integrations/pier
       - name: mypy over the qualification script (needs both projects' sources on MYPYPATH)
-        run: MYPYPATH=integrations/pier/src uv run mypy integrations/pier/scripts/qualify_local.py
+        run: MYPYPATH=integrations/pier/src:experiments uv run mypy integrations/pier/scripts/qualify_local.py
       - working-directory: experiments
         run: uv run pytest -q pier_qualification/tests/test_pier_acceptance.py
       # The bridge is a deliberately separate uv workspace with its own
