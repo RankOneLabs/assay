@@ -5,7 +5,8 @@ Credential-free and paid-execution-free: this script never sets ``OPENROUTER_API
 never dials out to OpenRouter, and never calls ``run_pier_*``. It only builds and runs
 the locked bridge image against the local Docker daemon and exercises the core-side
 Pier adapter/protocol machinery against fakes -- exactly the surfaces the acceptance
-matrix in ``tests/test_pier_acceptance.py`` also exercises without a real provider.
+matrix in ``experiments/pier_qualification/tests/test_pier_acceptance.py`` also
+exercises without a real provider.
 
 Probes run in a fixed order -- lock/image identity, then trial lifecycle/no-reinstall,
 then the fake HTTP boundary, then artifact round trips/accounting/cancellation -- and
@@ -17,8 +18,8 @@ Usage::
 
     uv run --extra review --extra legacy python integrations/pier/scripts/qualify_local.py
 
-See ``docs/pier-integration.md`` for the full operational walkthrough (preparation
-through recovery) this script's output feeds into.
+See ``experiments/pier_qualification/README.md`` for the full operational
+walkthrough (preparation through recovery) this script's output feeds into.
 """
 
 from __future__ import annotations
@@ -38,11 +39,11 @@ from typing import Any, Literal
 
 BRIDGE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BRIDGE_ROOT.parents[1]
-# Both projects are deliberately separate uv workspaces with their own locks
-# (see integrations/pier/README.md); this script crosses that isolation
-# boundary as tooling, not as runtime code, so it can gate a single
-# inventory on probes that touch both sides of the wire contract.
+# The root, experiments, and bridge projects deliberately keep separate locks.
+# This script crosses those isolation boundaries as tooling, not runtime code,
+# so it can gate one inventory on probes that touch both sides of the contract.
 sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "experiments"))
 sys.path.insert(0, str(BRIDGE_ROOT / "src"))
 
 import httpx  # noqa: E402
@@ -59,15 +60,7 @@ from assay_pier_bridge.provider import (  # noqa: E402
     GuardedRouteError,
 )
 from assay_pier_bridge.runtime import BridgeRuntime, TrialAlreadyRequestedError  # noqa: E402
-
-from assay.adapters.pier import (  # noqa: E402
-    BridgeEffectiveEnforcement,
-    BridgeTrialResult,
-    PierAdapter,
-)
-from assay.canonical import digest_bytes  # noqa: E402
-from assay.execution import WorkerFailure, WorkerSuccess  # noqa: E402
-from assay.investigations.pier_experiment import (  # noqa: E402
+from pier_qualification.pier_experiment import (  # noqa: E402
     EXPECTED_BRIDGE_LOCK_DIGEST,
     EXPECTED_DOCKER_VERSION,
     EXPECTED_GID,
@@ -78,6 +71,14 @@ from assay.investigations.pier_experiment import (  # noqa: E402
     PIER_MODEL_ROUTE,
     PIER_TRIAL_LIMITS,
 )
+
+from assay.adapters.pier import (  # noqa: E402
+    BridgeEffectiveEnforcement,
+    BridgeTrialResult,
+    PierAdapter,
+)
+from assay.canonical import digest_bytes  # noqa: E402
+from assay.execution import WorkerFailure, WorkerSuccess  # noqa: E402
 from assay.models import CellCoordinate  # noqa: E402
 from assay.pier_protocol import (  # noqa: E402
     ArtifactEntry,
