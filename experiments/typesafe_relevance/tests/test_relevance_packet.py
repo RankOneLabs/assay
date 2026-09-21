@@ -398,8 +398,19 @@ def test_census_evidence_files_match_the_working_tree(census_evidence: Path) -> 
     longer has the data under it that produced it.
     """
     for name, digest in sorted(_manifest(census_evidence)["evidence_files"].items()):
-        blob = (census_evidence / name).read_bytes()
+        evidence_path = Path(name)
+        assert not evidence_path.is_absolute() and ".." not in evidence_path.parts, name
+        blob = (census_evidence / evidence_path).read_bytes()
         assert hashlib.sha256(blob).hexdigest() == digest, name
+
+
+@pytest.mark.parametrize("name", ["../outside.json", "/outside.json"])
+def test_census_evidence_files_stay_within_the_receipt(tmp_path: Path, name: str) -> None:
+    manifest = {"evidence_files": {name: hashlib.sha256(b"").hexdigest()}}
+    (tmp_path / "checksums.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(AssertionError, match=name):
+        test_census_evidence_files_match_the_working_tree(tmp_path)
 
 
 def test_census_source_pins_are_checked_against_their_commit_not_head(

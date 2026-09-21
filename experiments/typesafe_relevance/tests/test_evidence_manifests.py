@@ -24,7 +24,9 @@ def _verify_census_manifest(manifest_path: Path, manifest: dict[str, object]) ->
 
     for name, digest in sorted(evidence_files.items()):
         assert isinstance(name, str) and isinstance(digest, str)
-        _assert_digest((manifest_path.parent / name).read_bytes(), digest, name)
+        evidence_path = Path(name)
+        assert not evidence_path.is_absolute() and ".." not in evidence_path.parts, name
+        _assert_digest((manifest_path.parent / evidence_path).read_bytes(), digest, name)
 
     commit = manifest["source_commit"]
     assert isinstance(commit, str)
@@ -37,6 +39,21 @@ def _verify_census_manifest(manifest_path: Path, manifest: dict[str, object]) ->
             capture_output=True,
         ).stdout
         _assert_digest(blob, digest, name)
+
+
+@pytest.mark.parametrize("name", ["../outside.json", "/outside.json"])
+def test_census_manifest_evidence_files_stay_within_the_receipt(
+    tmp_path: Path, name: str
+) -> None:
+    manifest = {
+        "algorithm": "sha256",
+        "evidence_files": {name: hashlib.sha256(b"").hexdigest()},
+        "source_files_at_commit": {},
+        "source_commit": "unused",
+    }
+
+    with pytest.raises(AssertionError, match=name):
+        _verify_census_manifest(tmp_path / "checksums.json", manifest)
 
 
 def _verify_flat_manifest(manifest_path: Path, manifest: dict[str, object]) -> None:
