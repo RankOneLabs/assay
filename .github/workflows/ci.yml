@@ -94,6 +94,8 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - working-directory: web
         run: bun run test:browser
+      # web/scripts/build.ts writes the browser bundle into this tracked directory.
+      - run: git diff --exit-code src/assay/review/static
 
   experiments:
     runs-on: ubuntu-latest
