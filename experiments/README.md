@@ -18,7 +18,8 @@ cd ..
 uv run ruff check experiments
 ```
 
-CI runs these commands without paid-service credentials. Receipt-backed tests
-remain gated and require an explicit `ASSAY_RUN_RECEIPTS` checkout. Pruning the
-root `legacy` and `typesafe` extras and their development dependencies is a
-separate follow-up.
+CI lints this tree from the repository root, then syncs, type-checks, and tests
+it from this directory against `experiments/uv.lock`. It never sets paid-service
+credentials. Receipt-backed tests remain gated and require an explicit
+`ASSAY_RUN_RECEIPTS` checkout. Pruning the root `legacy` and `typesafe` extras
+and their development dependencies is a separate follow-up.

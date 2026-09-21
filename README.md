@@ -18,7 +18,7 @@ provider credentials are not required.
 
 ```sh
 uv sync --locked --extra review
-uv run ruff check src tests
+uv run ruff check src tests experiments
 uv run mypy src
 uv run pytest -q
 uv build
@@ -32,11 +32,12 @@ directory containing the `typesafe-relevance-*-2026-09` bundles) to run the
 receipt-dependent primary, fitted-rerun, arms, and census tests:
 
 ```sh
+cd experiments
 ASSAY_RUN_RECEIPTS=/path/to/run-receipts uv run pytest -q \
-  tests/test_evidence_manifests.py \
-  tests/test_relevance_primary.py \
-  tests/test_relevance_fitted_rerun.py \
-  tests/test_relevance_packet.py
+  typesafe_relevance/tests/test_evidence_manifests.py \
+  typesafe_relevance/tests/test_relevance_primary.py \
+  typesafe_relevance/tests/test_relevance_fitted_rerun.py \
+  typesafe_relevance/tests/test_relevance_packet.py
 ```
 
 Without the variable, receipt-dependent tests skip explicitly. The manifest
@@ -213,9 +214,12 @@ local qualification -- exact lock/image identity, real-container trial
 lifecycle and no-reinstall checks, effective Docker controls, a fake-HTTP
 guarded-route boundary, and artifact/accounting/cancellation round trips --
 and only publishes a `QualificationInventory` once every probe passes.
-`tests/test_pier_acceptance.py` is the credential-free acceptance matrix CI
+`experiments/pier_qualification/tests/test_pier_acceptance.py` is the
+credential-free acceptance matrix CI
 runs on every change; it never sets an OpenRouter credential and never
-authorizes a paid dispatch. See [the Pier integration guide](docs/pier-integration.md)
+authorizes a paid dispatch. CI also syncs, type-checks, and tests the standalone
+[`experiments`](experiments/README.md) project against its own lock. See
+[the Pier integration guide](docs/pier-integration.md)
 for preparation through recovery -- one-subject smoke, four-task
 qualification, and full study execution are each a distinct, explicit,
 separately paid operator decision, none of them performed by CI.
