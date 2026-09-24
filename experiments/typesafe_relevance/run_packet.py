@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -34,6 +35,7 @@ from typesafe_relevance.packet import (
     route,
     rubric_card,
     select_census,
+    select_fresh,
     select_packet,
     stratify,
     substance_rubric_card,
@@ -41,6 +43,8 @@ from typesafe_relevance.packet import (
 from typesafe_relevance.packet_html import (
     FORMATS_V1,
     FORMATS_V2,
+    FORMATS_V3,
+    Formats,
     render_packet_html,
 )
 
@@ -56,6 +60,22 @@ SUBSTANCE_NAME = "relevance-substance-2026-09"
 #: same cases in the same sequence, an order effect would replicate along with the
 #: answers and read as agreement.
 SUBSTANCE_SEED = "assay-relevance-substance-2026-09/v1"
+
+FRESH_NAME = "relevance-round4-2026-09"
+
+#: Display order only. Selection is by recency and needs no seed.
+FRESH_SEED = "assay-relevance-round4-2026-09/v1"
+
+FRESH_TAKE: tuple[tuple[str, int], ...] = (("agent-ops", 65), ("agent-evals", 35))
+
+FRESH_READING: dict[str, Any] = {
+    "purpose": (
+        "Relevance round 4, as written in comms/relevance-jev-round-spec.md: 100 fresh "
+        "posts graded blind on the v4 form, then scored against production, jev:v4 "
+        "and llm:v4."
+    ),
+    "take": dict(FRESH_TAKE),
+}
 
 #: Enriched for the crux stratum on purpose. Counts are reported per stratum;
 #: the pooled agreement rate is not a population estimate.
@@ -302,6 +322,228 @@ def packet_digest(
     return _digest({"cases": list(blind), "questions": questions, "sitting": sitting})
 
 
+def _formats(questions: Mapping[str, Any]) -> Formats:
+    """The label format a catalogue's question set is stamped with."""
+    if "needs_thread" in questions:
+        return FORMATS_V3
+    if "substance" in questions:
+        return FORMATS_V2
+    return FORMATS_V1
+
+
+def _write_blind(
+    output: Path,
+    name: str,
+    identity: PacketIdentity,
+    blind: Sequence[Mapping[str, Any]],
+    rubric: Sequence[Mapping[str, Any]],
+    formats: Formats,
+) -> None:
+    """Write the two files the reviewer may see: ``packet.json`` and ``packet.html``."""
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "packet.json").write_text(
+        json.dumps(
+            {
+                "format": "assay.label-packet/v1",
+                "name": name,
+                "sitting": identity.sitting,
+                "digest": identity.digest,
+                "plan_digest": identity.plan_digest,
+                "cases": list(blind),
+                "rubric": list(rubric),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (output / "packet.html").write_text(
+        render_packet_html(
+            name, identity.digest, identity.plan_digest, blind, rubric, formats=formats
+        ),
+        encoding="utf-8",
+    )
+
+
+def _repeat_keys(text: str) -> set[str]:
+    """What makes two posts the same post: the text with links, numbers,
+    punctuation and case dropped, or any one link they share."""
+    words = " ".join(re.sub(r"https?://\S+|\d+|[\W_]+", " ", text).lower().split())
+    return {words, *(link.rstrip(".,)") for link in re.findall(r"https?://\S+", text))}
+
+
+def build_fresh(
+    populations: Mapping[str, Mapping[int, Mapping[str, Any]]],
+    questions: Mapping[str, Any],
+    output: Path,
+    *,
+    sitting: str,
+    exclude: frozenset[int] = frozenset(),
+    name: str = FRESH_NAME,
+    purpose: str = FRESH_READING["purpose"],
+) -> Packet:
+    """Build a fresh packet from Scout exports, one per project.
+
+    ``name`` also sets the display seed, and ``purpose`` goes into the reading, so
+    a later batch is its own packet with its own order.
+
+    Repeated text is taken once, its most recent copy, and text already graded in
+    an earlier round is skipped, so spam posted many times fills one slot or none.
+    Text counts as repeated when it matches with links, numbers, punctuation and
+    case ignored, which catches a reformatted repost or a version bump, or when it
+    shares a link with another post, which catches the same paper posted twice.
+
+    No arms run exists for these posts yet, so the private key carries only what
+    the export does: production's decision and score, keyed by case.
+    """
+    record_of = {
+        evaluation_id: record
+        for records in populations.values()
+        for evaluation_id, record in records.items()
+    }
+    keys_of = {e: _repeat_keys(r["text"]) for e, r in record_of.items()}
+    seen = {k for e in exclude if e in keys_of for k in keys_of[e]}
+    repeats: set[int] = set()
+    for evaluation_id in sorted(set(keys_of) - exclude, reverse=True):
+        if keys_of[evaluation_id] & seen:
+            repeats.add(evaluation_id)
+        seen |= keys_of[evaluation_id]
+    packet = select_fresh(
+        {key: list(records) for key, records in populations.items()},
+        name,
+        FRESH_SEED if name == FRESH_NAME else f"assay-{name}/v1",
+        FRESH_TAKE,
+        exclude=exclude | repeats,
+    )
+    blind = [blind_case(case.case_id, record_of[case.evaluation_id]) for case in packet.cases]
+    rubric = substance_rubric_card(questions)
+    identity = PacketIdentity(
+        sitting=sitting,
+        digest=packet_digest(blind, rubric, sitting),
+        plan_digest=plan_digest({**FRESH_READING, "purpose": purpose}),
+    )
+    _write_blind(output, packet.name, identity, blind, rubric, _formats(questions))
+    (output / "answer-key-private.json").write_text(
+        json.dumps(
+            {
+                "format": "assay.label-packet-key/v2",
+                "name": packet.name,
+                "sitting": sitting,
+                "digest": identity.digest,
+                "plan_digest": identity.plan_digest,
+                "seed": packet.seed,
+                "strata": dict(packet.strata),
+                "excluded_earlier_rounds": len(exclude),
+                "excluded_repeated_text": len(repeats),
+                "cases": [
+                    {
+                        "case_id": case.case_id,
+                        "evaluation_id": case.evaluation_id,
+                        "project_key": case.stratum,
+                        "production_decision": bool(
+                            record_of[case.evaluation_id]["production_decision"]
+                        ),
+                        "production_score": record_of[case.evaluation_id]["production_score"],
+                    }
+                    for case in packet.cases
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    take = ", ".join(f"{n} most recent `{key}`" for key, n in FRESH_TAKE)
+    (output / "PLAN.md").write_text(
+        f"""# {packet.name}
+
+Written {datetime.now(UTC).isoformat(timespec="seconds")}, before any label exists.
+
+Sitting: `{identity.sitting}`
+
+Packet digest: `{identity.digest}`
+
+Reading digest: `{identity.plan_digest}`
+
+Display seed: `{packet.seed}`
+
+{purpose}
+
+Selection: the {take} evaluations, skipping the {len(exclude)} evaluation ids
+already in an earlier grading round and {len(repeats)} whose text repeats a more
+recent post or an earlier round's. `case_id` is display order.
+""",
+        encoding="utf-8",
+    )
+    return packet
+
+
+REGRADE_TAKE = 50
+
+
+def build_regrade(
+    first: Path, questions: Mapping[str, Any], output: Path, *, sitting: str
+) -> list[dict[str, Any]]:
+    """Build the regrade packet: 50 of a graded packet's posts, reshuffled, same form.
+
+    Repeated text counts once, as in scoring. Selection and display order come
+    from one hash of the evaluation id, seeded by the first packet's name, so the
+    order differs from the first sitting. The private key maps each new
+    ``case_id`` back to the first sitting's.
+    """
+    shown = json.loads((first / "packet.json").read_text(encoding="utf-8"))
+    key = {
+        c["case_id"]: c
+        for c in json.loads((first / "answer-key-private.json").read_text(encoding="utf-8"))[
+            "cases"
+        ]
+    }
+    distinct: dict[tuple[Any, Any], Mapping[str, Any]] = {}
+    for case in sorted(shown["cases"], key=lambda c: c["case_id"]):
+        distinct.setdefault((case["text"], case.get("parent_text")), case)
+    seed = f"{shown['name']}/regrade/v1"
+
+    def order(case: Mapping[str, Any]) -> str:
+        eid = key[case["case_id"]]["evaluation_id"]
+        return hashlib.sha256(f"{seed}:{eid}".encode()).hexdigest()
+
+    chosen = sorted(distinct.values(), key=order)[:REGRADE_TAKE]
+    blind = [{**case, "case_id": index + 1} for index, case in enumerate(chosen)]
+    rubric = substance_rubric_card(questions)
+    name = f"{shown['name']}-regrade"
+    identity = PacketIdentity(
+        sitting=sitting,
+        digest=packet_digest(blind, rubric, sitting),
+        plan_digest=plan_digest({"regrade_of": shown["digest"], "seed": seed}),
+    )
+    _write_blind(output, name, identity, blind, rubric, _formats(questions))
+    cases = [
+        {**key[case["case_id"]], "case_id": index + 1, "first_case_id": case["case_id"]}
+        for index, case in enumerate(chosen)
+    ]
+    (output / "answer-key-private.json").write_text(
+        json.dumps(
+            {
+                "format": "assay.label-packet-key/v2",
+                "name": name,
+                "sitting": sitting,
+                "digest": identity.digest,
+                "plan_digest": identity.plan_digest,
+                "regrade_of": shown["digest"],
+                "seed": seed,
+                "cases": cases,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return cases
+
+
 def build(
     document: Mapping[str, Any],
     population: Mapping[int, Mapping[str, Any]],
@@ -322,36 +564,14 @@ def build(
     #: what the page asks, what the labels are stamped, and what the server accepts.
     substance = "substance" in questions
     rubric = substance_rubric_card(questions) if substance else as_questions(rubric_card(questions))
-    formats = FORMATS_V2 if substance else FORMATS_V1
+    formats = _formats(questions)
     identity = PacketIdentity(
         sitting=sitting,
         digest=packet_digest(blind, rubric, sitting),
         plan_digest=plan_digest(dict(reading or READING)),
     )
     digest, reading_digest = identity.digest, identity.plan_digest
-
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "packet.json").write_text(
-        json.dumps(
-            {
-                "format": "assay.label-packet/v1",
-                "name": packet.name,
-                "sitting": sitting,
-                "digest": digest,
-                "plan_digest": reading_digest,
-                "cases": blind,
-                "rubric": rubric,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (output / "packet.html").write_text(
-        render_packet_html(packet.name, digest, reading_digest, blind, rubric, formats=formats),
-        encoding="utf-8",
-    )
+    _write_blind(output, packet.name, identity, blind, rubric, formats)
     (output / "answer-key-private.json").write_text(
         json.dumps(
             {
@@ -897,6 +1117,33 @@ def main() -> None:
         "or it inherits the previous sitting's saved draft",
     )
 
+    fresh = sub.add_parser("fresh", help="build the round 4 packet from fresh Scout exports")
+    fresh.add_argument(
+        "--population",
+        nargs="+",
+        required=True,
+        metavar="PROJECT=PATH",
+        help="one `scout replay export-population` file per project, e.g. agent-ops=ops.jsonl",
+    )
+    fresh.add_argument(
+        "--exclude",
+        type=Path,
+        nargs="*",
+        default=[],
+        help="earlier rounds' answer-key-private.json; their evaluation ids are skipped",
+    )
+    fresh.add_argument("--catalogue", type=Path, required=True)
+    fresh.add_argument("--output", type=Path, required=True)
+    fresh.add_argument("--sitting", required=True)
+    fresh.add_argument("--name", default=FRESH_NAME)
+    fresh.add_argument("--purpose", default=FRESH_READING["purpose"])
+
+    regrade = sub.add_parser("regrade", help="50 of a graded packet's posts, reshuffled")
+    regrade.add_argument("--first", type=Path, required=True, help="the graded packet's dir")
+    regrade.add_argument("--catalogue", type=Path, required=True)
+    regrade.add_argument("--output", type=Path, required=True)
+    regrade.add_argument("--sitting", required=True)
+
     scorer = sub.add_parser("score")
     scorer.add_argument("--labels", type=Path, required=True)
     scorer.add_argument("--key", type=Path, required=True)
@@ -908,6 +1155,38 @@ def main() -> None:
 
     args = parser.parse_args()
     questions = load_catalogue(args.catalogue).questions
+
+    if args.command == "regrade":
+        cases = build_regrade(args.first, questions, args.output, sitting=args.sitting)
+        print(f"{len(cases)} cases into {args.output}")
+        print(f"  open {args.output / 'packet.html'}")
+        return
+
+    if args.command == "fresh":
+        populations = {}
+        for item in args.population:
+            key, _, path = item.partition("=")
+            if not path:
+                parser.error(f"--population takes PROJECT=PATH, got {item!r}")
+            populations[key] = read_population([Path(path)])
+        exclude = frozenset(
+            int(case["evaluation_id"])
+            for path in args.exclude
+            for case in json.loads(path.read_text(encoding="utf-8"))["cases"]
+        )
+        packet = build_fresh(
+            populations,
+            questions,
+            args.output,
+            sitting=args.sitting,
+            exclude=exclude,
+            name=args.name,
+            purpose=args.purpose,
+        )
+        print(f"strata: {dict(packet.strata)}; skipped {len(exclude)} earlier ids")
+        print(f"{len(packet.cases)} cases into {args.output}")
+        print(f"  open {args.output / 'packet.html'}")
+        return
 
     if args.command in ("build", "census", "substance"):
         document = json.loads(args.run.read_text(encoding="utf-8"))

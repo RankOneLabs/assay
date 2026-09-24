@@ -56,6 +56,9 @@ FORMATS_V1 = Formats(labels="assay.label-packet-labels/v1", draft="assay.label-p
 #: The substance rule: `exclusion`, then `substance` when nothing was excluded.
 FORMATS_V2 = Formats(labels="assay.label-packet-labels/v2", draft="assay.label-packet-draft/v2")
 
+#: v4: the substance rule plus the `needs_thread` flag.
+FORMATS_V3 = Formats(labels="assay.label-packet-labels/v3", draft="assay.label-packet-draft/v3")
+
 _STYLE = """
 :root { color-scheme: light dark; }
 body {
@@ -140,7 +143,8 @@ function isAsked(q, a) {
    PACKET.questions rather than a hardcoded list, so changing the rubric is a
    change to the catalogue and not to this file. */
 function answered(a) {
-  return !!a && PACKET.questions.every(q => !isAsked(q, a) || a[q.key] !== undefined);
+  return !!a && PACKET.questions.every(
+    q => q.value_type === 'flag' || !isAsked(q, a) || a[q.key] !== undefined);
 }
 
 /* An answer that is no longer asked is deleted, not left in place. Otherwise
@@ -187,7 +191,7 @@ document.addEventListener('change', (e) => {
   const [kind, id] = el.name.split(':');
   const question = PACKET.questions.find(q => q.key === kind);
   if (!question) return;
-  caseState(id)[kind] = coerce(question, el.value);
+  caseState(id)[kind] = question.value_type === 'flag' ? el.checked : coerce(question, el.value);
   touch();
   refresh();
 });
@@ -216,7 +220,8 @@ function collect() {
          would have JSON.stringify drop the key, so "not asked" and "renderer
          forgot to ask" would arrive at the server looking identical. */
       for (const q of PACKET.questions) {
-        row[q.key] = isAsked(q, a) ? a[q.key] : null;
+        if (q.value_type === 'flag') row[q.key] = !!a[q.key];
+        else row[q.key] = isAsked(q, a) ? a[q.key] : null;
       }
       return row;
     }),
@@ -239,6 +244,11 @@ function restore() {
   for (const [id, a] of Object.entries(answers)) {
     for (const q of PACKET.questions) {
       if (a[q.key] === undefined) continue;
+      if (q.value_type === 'flag') {
+        const box = document.querySelector(`input[name="${q.key}:${id}"]`);
+        if (box) box.checked = !!a[q.key];
+        continue;
+      }
       const el = document.querySelector(
         `input[name="${q.key}:${id}"][value="${String(a[q.key])}"]`);
       if (el) el.checked = true;
@@ -346,6 +356,10 @@ def _rubric_html(rubric: Sequence[Mapping[str, Any]]) -> str:
     one a reviewer is least likely to have memorised.
     """
     blocks = []
+    last_choice = max(
+        (index for index, question in enumerate(rubric) if question["value_type"] != "flag"),
+        default=-1,
+    )
     for index, question in enumerate(rubric):
         options = "".join(
             f"<li><b>{html.escape(option['name'])}</b> — {html.escape(option['what'])}"
@@ -357,7 +371,7 @@ def _rubric_html(rubric: Sequence[Mapping[str, Any]]) -> str:
             + "</li>"
             for option in question["options"]
         )
-        open_attr = " open" if index == len(rubric) - 1 else ""
+        open_attr = " open" if index == last_choice else ""
         blocks.append(
             f"<details{open_attr}><summary>{html.escape(question['prompt'])}</summary>"
             f"<p>{html.escape(question['judge'])}</p><ul>{options}</ul></details>"
@@ -375,6 +389,14 @@ def _case_html(case: Mapping[str, Any], rubric: Sequence[Mapping[str, Any]]) -> 
     )
     fieldsets = []
     for index, question in enumerate(rubric):
+        key = html.escape(question["key"])
+        if question["value_type"] == "flag":
+            fieldsets.append(
+                f'<fieldset id="q-{key}-{case_id}"><label class="opt">'
+                f'<input type="checkbox" name="{key}:{case_id}"> '
+                f'<span class="n">{html.escape(question["prompt"])}</span></label></fieldset>'
+            )
+            continue
         options = "".join(
             f'<label class="opt"><input type="radio" '
             f'name="{html.escape(question["key"])}:{case_id}" '
@@ -387,7 +409,6 @@ def _case_html(case: Mapping[str, Any], rubric: Sequence[Mapping[str, Any]]) -> 
         if question.get("asked_when"):
             classes.append("hidden")
         css = f' class="{" ".join(classes)}"' if classes else ""
-        key = html.escape(question["key"])
         fieldsets.append(
             f'<fieldset id="q-{key}-{case_id}"{css}>'
             f"<legend>{html.escape(question['prompt'])}</legend>"

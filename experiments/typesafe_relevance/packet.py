@@ -241,6 +241,39 @@ def select_packet(
     )
 
 
+def select_fresh(
+    populations: Mapping[str, Sequence[int]],
+    name: str,
+    seed: str,
+    take: Sequence[tuple[str, int]],
+    *,
+    exclude: frozenset[int] = frozenset(),
+) -> Packet:
+    """Take the most recent ``n`` evaluations per project, then shuffle for display.
+
+    Most recent means highest ``evaluation_id``. Posts already in an earlier
+    grading round are skipped. The seed only sets display order; selection needs
+    none. Each case's stratum is its project key.
+    """
+    drawn: list[tuple[int, str]] = []
+    for key, n in take:
+        available = sorted((e for e in populations.get(key, ()) if e not in exclude), reverse=True)
+        if len(available) < n:
+            raise PacketError(f"project {key!r} has {len(available)} fresh evaluations, need {n}")
+        drawn.extend((evaluation_id, key) for evaluation_id in available[:n])
+
+    shown = sorted(drawn, key=lambda pair: _order_hash(seed, "display", pair[0]))
+    return Packet(
+        name=name,
+        seed=seed,
+        cases=tuple(
+            PacketCase(case_id=index + 1, evaluation_id=evaluation_id, stratum=key)
+            for index, (evaluation_id, key) in enumerate(shown)
+        ),
+        strata={key: n for key, n in take},
+    )
+
+
 def blind_case(case_id: int, record: Mapping[str, Any]) -> dict[str, Any]:
     """Project one population record to what a reviewer may see.
 
@@ -330,7 +363,8 @@ def _question(
     ``value_type`` travels with the question because the page has to put the
     answer back into JSON with its original type — a band rung is an integer and
     a yes/no is a boolean, and neither survives a round trip as the string the
-    radio actually carries.
+    radio actually carries. ``flag`` is a checkbox with no options: always a
+    boolean, false until ticked.
 
     ``asked_when`` is ``{"question": <key>, "equals": <value>}`` or ``None`` for
     a question always asked. A question whose condition is unmet is not rendered
@@ -371,7 +405,7 @@ def substance_rubric_card(questions: Mapping[str, Any]) -> list[dict[str, Any]]:
     cleared it, which is what `asked_when` carries into the page and the server.
     """
     exclusion, substance = questions["exclusion"], questions["substance"]
-    return [
+    card = [
         _question(
             "exclusion",
             exclusion["instructions"]["question"],
@@ -398,6 +432,20 @@ def substance_rubric_card(questions: Mapping[str, Any]) -> list[dict[str, Any]]:
             asked_when=substance["asked_when"],
         ),
     ]
+    #: v4's "need the thread" flag. A checkbox rather than a choice: unticked is
+    #: an answer, so it never holds a case open.
+    if "needs_thread" in questions:
+        flag = questions["needs_thread"]
+        card.append(
+            _question(
+                "needs_thread",
+                flag["instructions"]["question"],
+                flag["instructions"]["judge"],
+                [],
+                value_type="flag",
+            )
+        )
+    return card
 
 
 def as_questions(card: Mapping[str, Any]) -> list[dict[str, Any]]:

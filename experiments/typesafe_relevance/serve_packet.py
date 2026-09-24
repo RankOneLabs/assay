@@ -36,6 +36,7 @@ from typesafe_relevance.packet import is_asked
 from typesafe_relevance.packet_html import (
     FORMATS_V1,
     FORMATS_V2,
+    FORMATS_V3,
     Endpoints,
     Formats,
     render_packet_html,
@@ -115,8 +116,13 @@ def _allowed_answers(rubric: Sequence[Mapping[str, Any]]) -> dict[str, frozenset
     accepted without an edit here.
     """
     return {
-        question["key"]: frozenset(
-            _coerce(question["value_type"], str(option["value"])) for option in question["options"]
+        question["key"]: (
+            frozenset({True, False})
+            if question["value_type"] == "flag"
+            else frozenset(
+                _coerce(question["value_type"], str(option["value"]))
+                for option in question["options"]
+            )
         )
         for question in rubric
     }
@@ -129,7 +135,13 @@ def load_packet(path: Path, *, endpoints: Endpoints = SERVED_ENDPOINTS) -> Serve
         raise ServeError(f"{path} is not a label packet")
     cases = document["cases"]
     rubric = document["rubric"]
-    formats = FORMATS_V2 if any(q["key"] == "substance" for q in rubric) else FORMATS_V1
+    keys = {q["key"] for q in rubric}
+    if "needs_thread" in keys:
+        formats = FORMATS_V3
+    elif "substance" in keys:
+        formats = FORMATS_V2
+    else:
+        formats = FORMATS_V1
     return ServedPacket(
         name=document["name"],
         digest=document["digest"],
@@ -173,6 +185,9 @@ def _validate_answer(
             continue
         if partial and value is None:
             continue
+        #: `True in {True, False}` also admits 1 and 0, so a flag is type-checked.
+        if question["value_type"] == "flag" and not isinstance(value, bool):
+            raise ServeError(f"case {case_id}: bad {key} {value!r}")
         if value not in packet.allowed[key]:
             raise ServeError(f"case {case_id}: bad {key} {value!r}")
 
@@ -207,7 +222,7 @@ def validate_draft(payload: Mapping[str, Any], packet: ServedPacket) -> Draft:
         if all(
             entry.get(question["key"]) is not None
             for question in packet.questions
-            if is_asked(question, entry)
+            if is_asked(question, entry) and question["value_type"] != "flag"
         ):
             answered += 1
     return Draft(
