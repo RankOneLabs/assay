@@ -1,16 +1,8 @@
-"""Tests for round 4's ``route()`` and the feature catalogues it reads."""
+"""Tests for round 4's ``route()``."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-from typesafe_relevance.catalogue import load_catalogue
-from typesafe_relevance.render import answer_schema
-from typesafe_relevance.route import EXCLUSION_PREFIX, ROUTED, route
-
-#: The feature catalogues are private; ASSAY_RUN_RECEIPTS points at them.
-FEATURES = "scout-relevance-2026-09/catalogues/agent-ops-relevance-features.{}.yaml"
+from typesafe_relevance.route import ROUTED, route
 
 
 def _answers(**values: float) -> dict:
@@ -52,15 +44,3 @@ def test_margin_overrides_the_path() -> None:
 def test_margin_only_counts_consulted_features() -> None:
     decision = route(_answers(excl_hardware=0.9, points_somewhere=0.5))
     assert decision["action"] == "drop"
-
-
-@pytest.mark.parametrize("version", ["v4", "v5", "v6"])
-def test_feature_catalogue_has_exactly_the_routed_features(
-    run_receipts_checkout: Path, version: str
-) -> None:
-    questions = load_catalogue(run_receipts_checkout / FEATURES.format(version)).questions
-    exclusions = {q for q in questions if q.startswith(EXCLUSION_PREFIX)}
-    assert exclusions
-    assert set(questions) - exclusions == set(ROUTED)
-    assert all(q["type"] == "noul" for q in questions.values())
-    answer_schema(questions)

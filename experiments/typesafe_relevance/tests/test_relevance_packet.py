@@ -39,14 +39,13 @@ from typesafe_relevance.run_packet import (
     score,
 )
 
-MODULE_ROOT = Path(__file__).resolve().parents[1]
-CATALOGUE = MODULE_ROOT / "catalogues/agent-ops-relevance.v2.yaml"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 @pytest.fixture
 def questions() -> dict:
-    return load_catalogue(CATALOGUE).questions
+    return load_catalogue(FIXTURES / "band-form.yaml").questions
 
 
 def _document() -> dict:
@@ -360,7 +359,7 @@ def test_rendered_page_asks_the_disposition_question(questions: dict) -> None:
         "p", "d", "pd", [{"case_id": 1, "text": "x"}], as_questions(rubric_card(questions))
     )
     assert 'name="disposition:1"' in page
-    assert page.count('type="radio"') == 4 + 7 + 3
+    assert page.count('type="radio"') == 4 + len(questions["exclusion"]["criteria"]) + 3
 
 
 def test_score_reports_the_disposition_distribution(questions: dict) -> None:
@@ -447,12 +446,10 @@ def test_census_manifest_does_not_pin_source_files_as_evidence(census_evidence: 
 
 # --- the substance rule ---
 
-V3 = MODULE_ROOT / "catalogues/agent-ops-relevance.v3.yaml"
-
-
 @pytest.fixture
 def v3_questions() -> dict:
-    return load_catalogue(V3).questions
+    questions = load_catalogue(FIXTURES / "label-form.yaml").questions
+    return {key: q for key, q in questions.items() if key != "needs_thread"}
 
 
 def _substance_labels(rows: list[tuple[str, str | None]]) -> dict:

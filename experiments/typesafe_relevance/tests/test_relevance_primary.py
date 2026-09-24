@@ -8,9 +8,6 @@ from typesafe_relevance.catalogue import load_catalogue
 from typesafe_relevance.mappings import DECIDE_REGISTRY, derive_band
 from typesafe_relevance.state import build_state
 
-ROOT = Path(__file__).resolve().parents[1]
-CATALOGUE = ROOT / "catalogues/agent-ops-relevance.v1.yaml"
-
 
 @pytest.fixture(autouse=True)
 def _require_run_receipts(run_receipts_checkout: Path) -> None:
@@ -22,15 +19,24 @@ def answers_path(run_receipts_checkout: Path) -> Path:
     return run_receipts_checkout / "typesafe-relevance-primary-2026-09/exported-answers.json"
 
 
-def test_catalogue_version_matches_primary_report(answers_path: Path) -> None:
-    catalogue = load_catalogue(CATALOGUE)
+@pytest.fixture
+def catalogue_path(relevance_catalogues: Path) -> Path:
+    return relevance_catalogues / "agent-ops-relevance.v1.yaml"
+
+
+def test_catalogue_version_matches_primary_report(
+    answers_path: Path, catalogue_path: Path
+) -> None:
+    catalogue = load_catalogue(catalogue_path)
     report = json.loads(answers_path.read_text(encoding="utf-8"))
     assert catalogue.version == report["catalogue_version"]
     assert len(catalogue.questions) == 17
 
 
-def test_exported_answers_reproduce_every_recorded_decision(answers_path: Path) -> None:
-    catalogue = load_catalogue(CATALOGUE)
+def test_exported_answers_reproduce_every_recorded_decision(
+    answers_path: Path, catalogue_path: Path
+) -> None:
+    catalogue = load_catalogue(catalogue_path)
     decide = DECIDE_REGISTRY[catalogue.decide]
     report = json.loads(answers_path.read_text(encoding="utf-8"))
     assert len(report["cases"]) == 79

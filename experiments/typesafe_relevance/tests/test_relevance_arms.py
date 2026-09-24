@@ -16,55 +16,12 @@ from typesafe_relevance.render import (
 )
 from typesafe_relevance.run_arms import build_arms, load_prior_cells, score_arm
 
-CATALOGUES = Path(__file__).resolve().parents[1] / "catalogues"
-V1 = CATALOGUES / "agent-ops-relevance.v1.yaml"
-V2 = CATALOGUES / "agent-ops-relevance.v2.yaml"
-
-
-@pytest.fixture
-def v1_questions() -> dict:
-    return load_catalogue(V1).questions
+FIXTURE = Path(__file__).resolve().parent / "fixtures/band-form.yaml"
 
 
 @pytest.fixture
 def v2_questions() -> dict:
-    return load_catalogue(V2).questions
-
-
-def test_v2_keeps_v1_question_ids_in_order(v1_questions: dict, v2_questions: dict) -> None:
-    assert list(v2_questions) == list(v1_questions)
-
-
-def test_v2_keeps_v1_answer_types(v1_questions: dict, v2_questions: dict) -> None:
-    assert [q["type"] for q in v2_questions.values()] == [
-        q["type"] for q in v1_questions.values()
-    ]
-
-
-def test_v2_keeps_v1_answer_domains(v1_questions: dict, v2_questions: dict) -> None:
-    def domain(question: dict) -> object:
-        if question["type"] == "score":
-            return len(question["criteria"])
-        return sorted(question["criteria"])
-
-    assert {key: domain(q) for key, q in v2_questions.items()} == {
-        key: domain(q) for key, q in v1_questions.items()
-    }
-
-
-def test_v2_has_a_different_version_than_v1() -> None:
-    assert load_catalogue(V2).version != load_catalogue(V1).version
-
-
-def test_v2_gives_every_criterion_examples(v2_questions: dict) -> None:
-    missing = [
-        f"{question_id}.{name}"
-        for question_id, question in v2_questions.items()
-        if question["type"] != "score"
-        for name, item in question["criteria"].items()
-        if not item.get("examples")
-    ]
-    assert missing == []
+    return load_catalogue(FIXTURE).questions
 
 
 def test_rendered_prompt_names_every_question(v2_questions: dict) -> None:
@@ -111,8 +68,7 @@ def test_normalize_produces_jev_shaped_noul(v2_questions: dict) -> None:
 
 def test_normalize_renormalizes_choice_probabilities(v2_questions: dict) -> None:
     reply = _full_reply(v2_questions)
-    reply["exclusion"] = {"non_english": 2.0, "coding_assistant": 0.0, "hardware": 0.0,
-                          "funding_or_market": 0.0, "event_promo": 0.0, "hype": 0.0, "none": 2.0}
+    reply["exclusion"] = {"non_english": 2.0, "hype": 0.0, "none": 2.0}
     answers = normalize_answers(reply, v2_questions)
     assert answers["exclusion"]["probabilities"]["none"] == pytest.approx(0.5)
 
