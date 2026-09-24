@@ -33,9 +33,12 @@ from typesafe_relevance.serve_packet import (
 SERVED = Endpoints(labels="/labels", draft="/draft")
 
 
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
 @pytest.fixture
-def questions(relevance_catalogues: Path) -> dict:
-    return load_catalogue(relevance_catalogues / "agent-ops-relevance.v2.yaml").questions
+def questions() -> dict:
+    return load_catalogue(FIXTURES / "band-form.yaml").questions
 
 
 @pytest.fixture
@@ -377,15 +380,16 @@ def test_a_synced_draft_never_becomes_the_scored_labels(running: tuple[str, Path
 # --- the substance rule over the wire ---
 
 @pytest.fixture
-def substance_packet(tmp_path: Path, relevance_catalogues: Path) -> ServedPacket:
-    v3 = relevance_catalogues / "agent-ops-relevance.v3.yaml"
+def substance_packet(tmp_path: Path) -> ServedPacket:
+    questions = load_catalogue(FIXTURES / "label-form.yaml").questions
+    v3 = {key: q for key, q in questions.items() if key != "needs_thread"}
     document = {
         "format": "assay.label-packet/v1",
         "name": "substance-packet",
         "digest": "packet-digest",
         "plan_digest": "plan-digest",
         "cases": [{"case_id": 1, "text": "a post", "parent_text": None}],
-        "rubric": substance_rubric_card(load_catalogue(v3).questions),
+        "rubric": substance_rubric_card(v3),
     }
     path = tmp_path / "packet.json"
     path.write_text(json.dumps(document), encoding="utf-8")
@@ -504,7 +508,7 @@ def test_a_file_output_is_left_alone(tmp_path: Path) -> None:
 
 # --- v4: the needs_thread flag ---
 
-V4 = Path(__file__).resolve().parent / "fixtures/label-form.yaml"
+V4 = FIXTURES / "label-form.yaml"
 
 
 @pytest.fixture

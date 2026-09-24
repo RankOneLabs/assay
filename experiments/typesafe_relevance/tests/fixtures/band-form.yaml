@@ -1,0 +1,121 @@
+id: band-form-fixture
+decide: agent_ops_relevance/v1
+description: >-
+  A made-up catalogue in the shape of the band-era catalogues: an exclusion
+  choice, the noul features the band mapping reads, and a four-level band. The
+  wording is placeholder; the real catalogues are private and live in
+  run-receipts.
+state:
+  post: [platform, channel, url, text]
+  parent_context_only: [author_name, text]
+  author: [name, handle]
+  project: [key, name, description]
+questions:
+  exclusion:
+    type: choice
+    instructions:
+      question: Does a hard exclusion apply?
+      judge: Pick the first that fits.
+    criteria:
+      non_english:
+        what: Not in English.
+        examples:
+          - hola a todos
+      hype:
+        what: Excitement with no claim.
+        not_for: A claim with numbers.
+        examples:
+          - this changes everything
+      none:
+        what: No exclusion applies.
+        examples:
+          - A thread about retry policy
+  operational_claim:
+    type: noul
+    instructions: Does the post make a claim about running agents?
+    criteria:
+      true:
+        what: It makes one.
+        examples:
+          - always add retries
+      false:
+        what: It does not.
+        examples:
+          - a job ad
+  reasoned_practice:
+    type: noul
+    instructions: Does the post reason about a practice?
+    criteria:
+      true:
+        what: It does.
+        examples:
+          - we cap tool calls because loops cost money
+      false:
+        what: It does not.
+        examples:
+          - a bare link
+  operational_question:
+    type: noul
+    instructions: Does the post ask an operational question?
+    criteria:
+      true:
+        what: It asks one.
+        examples:
+          - how do you trace agent runs?
+      false:
+        what: It does not.
+        examples:
+          - a launch post
+  point_in_own_text:
+    type: noul
+    instructions: Is the point in the post's own words?
+    criteria:
+      true:
+        what: It is.
+        examples:
+          - a claim stated in full
+      false:
+        what: It is not.
+        examples:
+          - read this
+  on_topic_pointer:
+    type: noul
+    instructions: Does the post point at something on topic?
+    criteria:
+      true:
+        what: It does.
+        examples:
+          - a link to a postmortem
+      false:
+        what: It does not.
+        examples:
+          - a meme
+  general_building:
+    type: noul
+    instructions: Is the post about building software in general?
+    criteria:
+      true:
+        what: It is.
+        examples:
+          - a note on refactoring
+      false:
+        what: It is not.
+        examples:
+          - a sports score
+  band:
+    type: score
+    instructions:
+      question: How much is there to reply to?
+      apply_in_order:
+        - Is it excluded?
+        - Is the point in the post?
+      note: Pick the highest band that fits.
+    criteria:
+      - summary: Nothing to reply to.
+        signals: [off topic]
+      - summary: General building.
+        signals: [software, not agents]
+      - summary: A pointer.
+        signals: [a link]
+      - summary: Substantive.
+        signals: [a claim, a question]
