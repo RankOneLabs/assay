@@ -187,7 +187,7 @@ def score(args: argparse.Namespace) -> None:
             [v for g in pos for v in values.get(g, [])],
             [v for g in neg for v in values.get(g, [])],
         )
-        print(f"  {q:34} {a:.2f}")
+        print(f"  {q:34} {'n/a' if a is None else f'{a:.2f}'}")
 
     def of(family: str) -> list[str]:
         return [q for q in questions if _family(q) == family]

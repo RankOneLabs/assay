@@ -81,9 +81,15 @@ def run(args: argparse.Namespace) -> None:
         args.key, {"agent-ops": args.agent_ops, "agent-evals": args.agent_evals}
     )
     output: Path = args.output
-    cells: dict[str, dict[str, Any]] = (
-        json.loads(output.read_text(encoding="utf-8"))["cells"] if output.exists() else {}
-    )
+    cells: dict[str, dict[str, Any]] = {}
+    if output.exists():
+        prior = json.loads(output.read_text(encoding="utf-8"))
+        if prior["catalogue"]["version"] != catalogue.version:
+            raise SystemExit(
+                f"{output} was run with catalogue version {prior['catalogue']['version']}, "
+                f"not {catalogue.version}; write to a new output"
+            )
+        cells = prior["cells"]
     pending = [
         (arm, record)
         for arm in args.arms

@@ -115,3 +115,13 @@ def test_build_fresh_takes_repeated_text_once_and_skips_earlier_rounds(tmp_path:
     assert 1099 in ids
     assert not ids & {1098, 1097}
     assert key["excluded_repeated_text"] == 2
+
+
+def test_build_fresh_keeps_bare_links_that_differ(tmp_path: Path) -> None:
+    populations = _populations()
+    populations["agent-ops"][1099]["text"] = "https://example.test/a"
+    populations["agent-ops"][1098]["text"] = "https://example.test/b"
+    build_fresh(populations, load_catalogue(V4).questions, tmp_path, sitting="one")
+    key = json.loads((tmp_path / "answer-key-private.json").read_text(encoding="utf-8"))
+    assert {1099, 1098} <= {c["evaluation_id"] for c in key["cases"]}
+    assert key["excluded_repeated_text"] == 0

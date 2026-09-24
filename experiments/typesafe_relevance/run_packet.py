@@ -368,9 +368,11 @@ def _write_blind(
 
 def _repeat_keys(text: str) -> set[str]:
     """What makes two posts the same post: the text with links, numbers,
-    punctuation and case dropped, or any one link they share."""
+    punctuation and case dropped, or any one link they share. A post with no words
+    left, such as a bare link, is matched on its links alone."""
     words = " ".join(re.sub(r"https?://\S+|\d+|[\W_]+", " ", text).lower().split())
-    return {words, *(link.rstrip(".,)") for link in re.findall(r"https?://\S+", text))}
+    links = {link.rstrip(".,)") for link in re.findall(r"https?://\S+", text)}
+    return {words, *links} - {""}
 
 
 def build_fresh(
