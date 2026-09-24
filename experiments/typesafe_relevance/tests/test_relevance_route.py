@@ -9,7 +9,7 @@ from typesafe_relevance.catalogue import load_catalogue
 from typesafe_relevance.render import answer_schema
 from typesafe_relevance.route import EXCLUSION_PREFIX, ROUTED, route
 
-#: The feature catalogues are private; they live in run-receipts.
+#: The feature catalogues are private; ASSAY_RUN_RECEIPTS points at them.
 FEATURES = "scout-relevance-2026-09/catalogues/agent-ops-relevance-features.{}.yaml"
 
 

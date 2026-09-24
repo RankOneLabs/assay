@@ -199,7 +199,7 @@ def score(args: argparse.Namespace) -> None:
     gates += [(q, q) for q in of("practitioner")]
     pointers = [None, *of("points")]
 
-    rows = []
+    rows: list[tuple[int, int, tuple[str, ...]]] = []
     for hype, extra, (answerable, about), points in itertools.product(
         hypes, extras, gates, pointers
     ):
@@ -220,14 +220,14 @@ def score(args: argparse.Namespace) -> None:
             right += action == c["human"]
             surfaced += (action != "drop") == (c["human"] != "drop")
         names = (hype, "+".join(extra), answerable, about, points)
-        rows.append((right, surfaced, *(name or "v4" for name in names)))
+        rows.append((right, surfaced, tuple(name or "v4" for name in names)))
     rows.sort(reverse=True)
     n = len(cases)
     print(f"\nroute() at default thresholds, top {args.top} of {len(rows)} combinations:")
     print(f"  {'action':>6} {'surf':>5}  hype / extra exclusion / answerable / about / points")
-    for right, surfaced, *names in rows[: args.top]:
-        print(f"  {right / n:6.0%} {surfaced / n:5.0%}  {' / '.join(names)}")
-    baseline = next(r for r in rows if set(r[2:]) == {"v4"})
+    for row_right, row_surfaced, labels in rows[: args.top]:
+        print(f"  {row_right / n:6.0%} {row_surfaced / n:5.0%}  {' / '.join(labels)}")
+    baseline = next(r for r in rows if set(r[2]) == {"v4"})
     print(f"  {baseline[0] / n:6.0%} {baseline[1] / n:5.0%}  (the original {args.base} run)")
 
 
@@ -236,7 +236,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     runner = sub.add_parser("run")
     runner.add_argument("--catalogue", type=Path, required=True)
-    runner.add_argument("--round", type=Path, required=True, help="the round4 run-receipts dir")
+    runner.add_argument("--round", type=Path, required=True, help="the round directory")
     runner.add_argument("--output", type=Path, required=True)
     runner.add_argument("--dry-run", action="store_true")
     scorer = sub.add_parser("score")
