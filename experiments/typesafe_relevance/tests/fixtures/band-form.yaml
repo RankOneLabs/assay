@@ -3,8 +3,7 @@ decide: agent_ops_relevance/v1
 description: >-
   A made-up catalogue in the shape of the band-era catalogues: an exclusion
   choice, the noul features the band mapping reads, and a four-level band. The
-  wording is placeholder; the real catalogues are private and live in
-  run-receipts.
+  wording is placeholder; the real catalogues are private.
 state:
   post: [platform, channel, url, text]
   parent_context_only: [author_name, text]
