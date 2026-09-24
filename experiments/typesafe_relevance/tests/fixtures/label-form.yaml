@@ -1,0 +1,53 @@
+id: label-form-fixture
+decide: none
+description: >-
+  A made-up label form in the shape of the round 4 form: exclusion, then
+  substance when nothing is excluded, then the needs_thread flag. The wording
+  is placeholder; the real forms are private.
+state:
+  post: [platform, channel, url, text]
+  parent_context_only: [author_name, text]
+  author: [name, handle]
+  project: [key, name, description]
+questions:
+  exclusion:
+    type: choice
+    instructions:
+      question: Does a hard exclusion apply?
+      judge: Pick the first that fits.
+    criteria:
+      hype:
+        what: Excitement with no claim.
+        not_for: A claim with numbers.
+        examples:
+          - this changes everything
+      none:
+        what: No exclusion applies.
+        examples:
+          - A thread about retry policy
+  substance:
+    type: choice
+    asked_when:
+      question: exclusion
+      equals: none
+    instructions:
+      question: Where is the substance?
+      judge: In the post, behind a pointer, or nowhere.
+    criteria:
+      in_post:
+        what: Answerable from the post's own words.
+        examples:
+          - A claim about agent retries
+      pointer:
+        what: Points at something to open.
+        examples:
+          - A bare link to a paper
+      none:
+        what: Nothing to answer.
+        examples:
+          - A job ad
+  needs_thread:
+    type: flag
+    instructions:
+      question: Need the thread to judge this?
+      judge: Tick when the post depends on the conversation above it.

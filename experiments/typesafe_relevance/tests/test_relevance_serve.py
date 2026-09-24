@@ -505,3 +505,81 @@ def test_a_directory_output_becomes_labels_json_inside_it(tmp_path: Path) -> Non
 def test_a_file_output_is_left_alone(tmp_path: Path) -> None:
     named = tmp_path / "labels.json"
     assert labels_path(named) == named
+
+
+# --- v4: the needs_thread flag ---
+
+V4 = Path(__file__).resolve().parent / "fixtures/label-form.yaml"
+
+
+@pytest.fixture
+def v4_packet(tmp_path: Path) -> ServedPacket:
+    document = {
+        "format": "assay.label-packet/v1",
+        "name": "v4-packet",
+        "digest": "packet-digest",
+        "plan_digest": "plan-digest",
+        "cases": [{"case_id": 1, "text": "a post", "parent_text": None}],
+        "rubric": substance_rubric_card(load_catalogue(V4).questions),
+    }
+    path = tmp_path / "packet.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return load_packet(path)
+
+
+def _v4_submission(**answer: object) -> dict:
+    return {
+        "format": "assay.label-packet-labels/v3",
+        "packet": "v4-packet",
+        "packet_digest": "packet-digest",
+        "plan_digest": "plan-digest",
+        "reviewer": "steve",
+        "saved_at": "2026-09-23T00:00:00Z",
+        "cases": [
+            {
+                "case_id": 1,
+                "exclusion": "none",
+                "substance": "in_post",
+                "needs_thread": False,
+                **answer,
+            }
+        ],
+    }
+
+
+def test_the_v4_page_renders_the_flag_as_a_checkbox(v4_packet: ServedPacket) -> None:
+    assert 'type="checkbox" name="needs_thread:1"' in v4_packet.page
+
+
+def test_the_server_accepts_a_flagged_post(v4_packet: ServedPacket) -> None:
+    assert validate_submission(_v4_submission(needs_thread=True), v4_packet).case_count == 1
+
+
+def test_the_server_accepts_a_flag_on_an_excluded_post(v4_packet: ServedPacket) -> None:
+    payload = _v4_submission(exclusion="hype", substance=None, needs_thread=True)
+    assert validate_submission(payload, v4_packet).case_count == 1
+
+
+def test_the_server_refuses_a_flag_that_is_not_a_boolean(v4_packet: ServedPacket) -> None:
+    with pytest.raises(ServeError, match="bad needs_thread"):
+        validate_submission(_v4_submission(needs_thread=1), v4_packet)
+
+
+def test_the_server_refuses_a_v2_payload_against_a_v4_packet(v4_packet: ServedPacket) -> None:
+    stale = _v4_submission()
+    stale["format"] = "assay.label-packet-labels/v2"
+    with pytest.raises(ServeError, match="not a label-packet-labels/v3 payload"):
+        validate_submission(stale, v4_packet)
+
+
+def test_an_unticked_flag_does_not_hold_a_draft_case_open(v4_packet: ServedPacket) -> None:
+    draft = {
+        "format": "assay.label-packet-draft/v3",
+        "packet": "v4-packet",
+        "packet_digest": "packet-digest",
+        "plan_digest": "plan-digest",
+        "reviewer": "steve",
+        "saved_at": "2026-09-23T00:00:00Z",
+        "answers": {"1": {"exclusion": "none", "substance": "pointer"}},
+    }
+    assert validate_draft(draft, v4_packet).answered == 1
