@@ -32,13 +32,10 @@ from typesafe_relevance.serve_packet import (
 
 SERVED = Endpoints(labels="/labels", draft="/draft")
 
-MODULE_ROOT = Path(__file__).resolve().parents[1]
-CATALOGUE = MODULE_ROOT / "catalogues/agent-ops-relevance.v2.yaml"
-
 
 @pytest.fixture
-def questions() -> dict:
-    return load_catalogue(CATALOGUE).questions
+def questions(relevance_catalogues: Path) -> dict:
+    return load_catalogue(relevance_catalogues / "agent-ops-relevance.v2.yaml").questions
 
 
 @pytest.fixture
@@ -379,18 +376,16 @@ def test_a_synced_draft_never_becomes_the_scored_labels(running: tuple[str, Path
 
 # --- the substance rule over the wire ---
 
-V3 = MODULE_ROOT / "catalogues/agent-ops-relevance.v3.yaml"
-
-
 @pytest.fixture
-def substance_packet(tmp_path: Path) -> ServedPacket:
+def substance_packet(tmp_path: Path, relevance_catalogues: Path) -> ServedPacket:
+    v3 = relevance_catalogues / "agent-ops-relevance.v3.yaml"
     document = {
         "format": "assay.label-packet/v1",
         "name": "substance-packet",
         "digest": "packet-digest",
         "plan_digest": "plan-digest",
         "cases": [{"case_id": 1, "text": "a post", "parent_text": None}],
-        "rubric": substance_rubric_card(load_catalogue(V3).questions),
+        "rubric": substance_rubric_card(load_catalogue(v3).questions),
     }
     path = tmp_path / "packet.json"
     path.write_text(json.dumps(document), encoding="utf-8")

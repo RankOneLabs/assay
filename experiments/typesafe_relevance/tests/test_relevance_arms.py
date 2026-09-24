@@ -16,19 +16,25 @@ from typesafe_relevance.render import (
 )
 from typesafe_relevance.run_arms import build_arms, load_prior_cells, score_arm
 
-CATALOGUES = Path(__file__).resolve().parents[1] / "catalogues"
-V1 = CATALOGUES / "agent-ops-relevance.v1.yaml"
-V2 = CATALOGUES / "agent-ops-relevance.v2.yaml"
+
+@pytest.fixture
+def v1(relevance_catalogues: Path) -> Path:
+    return relevance_catalogues / "agent-ops-relevance.v1.yaml"
 
 
 @pytest.fixture
-def v1_questions() -> dict:
-    return load_catalogue(V1).questions
+def v2(relevance_catalogues: Path) -> Path:
+    return relevance_catalogues / "agent-ops-relevance.v2.yaml"
 
 
 @pytest.fixture
-def v2_questions() -> dict:
-    return load_catalogue(V2).questions
+def v1_questions(v1: Path) -> dict:
+    return load_catalogue(v1).questions
+
+
+@pytest.fixture
+def v2_questions(v2: Path) -> dict:
+    return load_catalogue(v2).questions
 
 
 def test_v2_keeps_v1_question_ids_in_order(v1_questions: dict, v2_questions: dict) -> None:
@@ -52,8 +58,8 @@ def test_v2_keeps_v1_answer_domains(v1_questions: dict, v2_questions: dict) -> N
     }
 
 
-def test_v2_has_a_different_version_than_v1() -> None:
-    assert load_catalogue(V2).version != load_catalogue(V1).version
+def test_v2_has_a_different_version_than_v1(v1: Path, v2: Path) -> None:
+    assert load_catalogue(v2).version != load_catalogue(v1).version
 
 
 def test_v2_gives_every_criterion_examples(v2_questions: dict) -> None:

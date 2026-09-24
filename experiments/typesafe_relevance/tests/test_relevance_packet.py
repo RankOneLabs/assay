@@ -39,14 +39,12 @@ from typesafe_relevance.run_packet import (
     score,
 )
 
-MODULE_ROOT = Path(__file__).resolve().parents[1]
-CATALOGUE = MODULE_ROOT / "catalogues/agent-ops-relevance.v2.yaml"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture
-def questions() -> dict:
-    return load_catalogue(CATALOGUE).questions
+def questions(relevance_catalogues: Path) -> dict:
+    return load_catalogue(relevance_catalogues / "agent-ops-relevance.v2.yaml").questions
 
 
 def _document() -> dict:
@@ -447,12 +445,9 @@ def test_census_manifest_does_not_pin_source_files_as_evidence(census_evidence: 
 
 # --- the substance rule ---
 
-V3 = MODULE_ROOT / "catalogues/agent-ops-relevance.v3.yaml"
-
-
 @pytest.fixture
-def v3_questions() -> dict:
-    return load_catalogue(V3).questions
+def v3_questions(relevance_catalogues: Path) -> dict:
+    return load_catalogue(relevance_catalogues / "agent-ops-relevance.v3.yaml").questions
 
 
 def _substance_labels(rows: list[tuple[str, str | None]]) -> dict:
