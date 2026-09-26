@@ -9,6 +9,7 @@ import math
 import os
 import time
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, cast
 
@@ -81,7 +82,6 @@ def _mcnemar_exact(
 
 def run(args: argparse.Namespace) -> None:
     catalogue = load_catalogue(args.catalogue)
-    check_dispatchable(catalogue.questions)
     decide = DECIDE_REGISTRY[catalogue.decide]
     records = _read_jsonl(args.agent_ops, "agent-ops") + _read_jsonl(
         args.agent_evals, "agent-evals"
@@ -100,14 +100,22 @@ def run(args: argparse.Namespace) -> None:
             for repeat in case.get("repeats", [])
         }
 
+    pending = any(
+        f"{record['evaluation_id']}:{repeat}" not in existing
+        for record in records
+        for repeat in range(1, 4)
+    )
+    if pending:
+        check_dispatchable(catalogue.questions)
+
     case_results: list[dict[str, Any]] = []
     retry = RetryPolicy(max_retries=0)
-    with TypeSafeClient(
+    with (TypeSafeClient(
         api_key=os.environ["TYPESAFE_API_KEY"],
         model="jev-latest",
         retry=retry,
         timeout=60.0,
-    ) as client:
+    ) if pending else nullcontext()) as client:
         for record in records:
             repeats: list[dict[str, Any]] = []
             for repeat_index in range(1, 4):
@@ -115,6 +123,7 @@ def run(args: argparse.Namespace) -> None:
                 if key in existing:
                     repeats.append(existing[key])
                     continue
+                assert client is not None
                 started = time.monotonic()
                 response = client.system_one(
                     state=cast(

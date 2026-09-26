@@ -66,16 +66,18 @@ def scored_cases(round_dir: Path) -> list[dict[str, Any]]:
 
 def run(args: argparse.Namespace) -> None:
     catalogue = load_catalogue(args.catalogue)
-    check_dispatchable(catalogue.questions)
     cases = scored_cases(args.round)
     output: Path = args.output
     cells: dict[str, Any] = (
         json.loads(output.read_text(encoding="utf-8"))["cells"] if output.exists() else {}
     )
     pending = [c for c in cases if str(c["evaluation_id"]) not in cells]
+    if pending:
+        check_dispatchable(catalogue.questions)
     print(f"{catalogue.id} {catalogue.version[:12]}: {len(cases)} posts, {len(pending)} to run")
     backend = TypesafeBackend(arm=catalogue.id)
-    backend.check_ready()
+    if pending:
+        backend.check_ready()
     if args.dry_run:
         return
     failures = []

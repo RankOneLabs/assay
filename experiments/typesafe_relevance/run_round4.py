@@ -77,7 +77,6 @@ def _write(
 
 def run(args: argparse.Namespace) -> None:
     catalogue = load_catalogue(args.catalogue)
-    check_dispatchable(catalogue.questions)
     cases = read_cases(
         args.key, {"agent-ops": args.agent_ops, "agent-evals": args.agent_evals}
     )
@@ -97,6 +96,8 @@ def run(args: argparse.Namespace) -> None:
         for record in cases
         if f"{arm}:{record['evaluation_id']}" not in cells
     ]
+    if pending:
+        check_dispatchable(catalogue.questions)
     print(f"catalogue {catalogue.id} version {catalogue.version}")
     print(f"cases {len(cases)}, arms {', '.join(args.arms)}, to dispatch {len(pending)}")
     for arm in {arm for arm, _ in pending}:

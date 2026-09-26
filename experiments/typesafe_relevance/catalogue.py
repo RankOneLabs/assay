@@ -73,6 +73,9 @@ def check_dispatchable(questions: Mapping[str, Any]) -> None:
     nulls: list[str] = []
     for key, question in questions.items():
         criteria = question.get("criteria", {})
+        if criteria is None:
+            nulls.append(f"{key}.criteria")
+            continue
         entries = criteria.items() if isinstance(criteria, Mapping) else enumerate(criteria)
         for name, criterion in entries:
             if isinstance(criterion, Mapping):

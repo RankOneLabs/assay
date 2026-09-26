@@ -325,7 +325,7 @@ def rubric_card(questions: Mapping[str, Any]) -> dict[str, Any]:
                     "name": name,
                     "what": item["what"],
                     "not_for": item.get("not_for"),
-                    "examples": list(item.get("examples", [])),
+                    "examples": list(item.get("examples") or []),
                 }
                 for name, item in exclusion["criteria"].items()
             ],

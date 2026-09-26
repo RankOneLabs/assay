@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from typesafe_relevance.catalogue import (
     check_dispatchable,
     load_catalogue,
 )
+from typesafe_relevance.packet import rubric_card
 
 
 @pytest.fixture
@@ -59,11 +61,113 @@ def test_synthetic_catalogues_are_dispatchable(name: str) -> None:
     check_dispatchable(load_catalogue(path).questions)
 
 
-@pytest.mark.parametrize("runner", [run_primary, run_round4, variants])
-def test_runners_reject_before_reading_cases(runner, malformed_catalogue: Path) -> None:
-    # No case paths or credentials are supplied: validation must happen first.
-    with pytest.raises(MalformedCatalogueError):
-        runner.run(argparse.Namespace(catalogue=malformed_catalogue))
+def test_null_criteria_is_rejected() -> None:
+    with pytest.raises(MalformedCatalogueError, match="q.criteria"):
+        check_dispatchable({"q": {"criteria": None}})
+
+
+def test_packet_accepts_null_examples() -> None:
+    questions = load_catalogue(
+        Path(__file__).parent / "fixtures" / "band-form.yaml"
+    ).questions
+    questions["exclusion"]["criteria"]["hype"]["examples"] = None
+    check_dispatchable(questions)
+    card = rubric_card(questions)
+    option = next(item for item in card["exclusion"]["options"] if item["name"] == "hype")
+    assert option["examples"] == []
+    assert questions["exclusion"]["criteria"]["hype"]["examples"] is None
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_primary_validates_only_new_requests(
+    completed: bool, malformed_catalogue: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = [
+        {"evaluation_id": index, "human_label": True, "production_score": 1,
+         "production_decision": True}
+        for index in range(79)
+    ]
+    monkeypatch.setattr(
+        run_primary, "_read_jsonl",
+        lambda path, project: records if project == "agent-ops" else [],
+    )
+    monkeypatch.setitem(run_primary.DECIDE_REGISTRY, "test", lambda answers: {})
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+
+    def unexpected_client(*args, **kwargs):
+        pytest.fail("reuse or malformed pending work must not create a provider client")
+
+    monkeypatch.setattr(run_primary, "TypeSafeClient", unexpected_client)
+    cases = [
+        {**record, "repeats": [
+            {"repeat_index": repeat, "decision": {"eligible": True}}
+            for repeat in range(1, 4)
+        ]}
+        for record in records
+    ]
+    if not completed:
+        cases[-1]["repeats"].pop()
+    output = malformed_catalogue.parent / "primary.json"
+    output.write_text(json.dumps({"cases": cases}))
+    before = output.read_bytes()
+    args = argparse.Namespace(
+        catalogue=malformed_catalogue, output=output, agent_ops=None, agent_evals=None,
+        population=malformed_catalogue,
+    )
+    if completed:
+        run_primary.run(args)
+        result = json.loads(output.read_text())
+        assert result["metrics"]["typesafe"]["accuracy"] == 1
+        assert [case["repeats"] for case in result["cases"]] == [
+            case["repeats"] for case in cases
+        ]
+    else:
+        with pytest.raises(MalformedCatalogueError):
+            run_primary.run(args)
+        assert output.read_bytes() == before
+
+
+@pytest.mark.parametrize("runner", [run_round4, variants])
+@pytest.mark.parametrize("completed", [False, True])
+def test_cell_runners_validate_only_pending_work(
+    runner, completed: bool, malformed_catalogue: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = [{"evaluation_id": 1}, {"evaluation_id": 2}]
+    monkeypatch.setattr(run_round4, "read_cases", lambda *_: records)
+    monkeypatch.setattr(variants, "scored_cases", lambda *_: records)
+
+    def unexpected_backend_check(self):
+        pytest.fail("reuse or malformed pending work must not reach backend preflight")
+
+    monkeypatch.setattr(variants.TypesafeBackend, "check_ready", unexpected_backend_check)
+    arm = next(iter(run_round4.ARMS))
+    monkeypatch.setattr(
+        type(run_round4.ARMS[arm]), "check_ready", unexpected_backend_check,
+    )
+    cells = {
+        (f"{arm}:{index}" if runner is run_round4 else str(index)):
+        {"arm": arm, "evaluation_id": index, "answers": {}}
+        for index in (1, 2)
+    }
+    if not completed:
+        cells.pop(f"{arm}:2" if runner is run_round4 else "2")
+    output = malformed_catalogue.parent / "cells.json"
+    output.write_text(json.dumps({
+        "catalogue": {"version": load_catalogue(malformed_catalogue).version},
+        "cells": cells,
+    }))
+    before = output.read_bytes()
+    args = argparse.Namespace(
+        catalogue=malformed_catalogue, output=output, key=None, agent_ops=None,
+        agent_evals=None, round=None, arms=[arm], dry_run=False,
+    )
+    if completed:
+        runner.run(args)
+        assert json.loads(output.read_text())["cells"] == cells
+    else:
+        with pytest.raises(MalformedCatalogueError):
+            runner.run(args)
+        assert output.read_bytes() == before
 
 
 @pytest.mark.parametrize("command", ["fresh", "regrade", "build", "census", "substance"])
