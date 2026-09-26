@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from typesafe_relevance import run_packet, run_primary, run_round4, variants
+from typesafe_relevance import run_arms, run_packet, run_primary, run_round4, variants
 from typesafe_relevance.catalogue import (
     MalformedCatalogueError,
     check_dispatchable,
@@ -39,6 +39,20 @@ def test_quoted_commas_are_dispatchable() -> None:
     ))
 
 
+def test_optional_null_fields_remain_dispatchable() -> None:
+    questions = yaml.safe_load(
+        'q:\n  metadata: null\n  criteria:\n'
+        '    a: {what: "A product, vendor, or company.", not_for: null, examples: null}\n'
+    )
+    check_dispatchable(questions)
+    assert questions["q"]["criteria"]["a"]["not_for"] is None
+
+
+def test_null_required_description_is_rejected() -> None:
+    with pytest.raises(MalformedCatalogueError, match="q.criteria.a.what"):
+        check_dispatchable({"q": {"criteria": {"a": {"what": None}}}})
+
+
 @pytest.mark.parametrize("name", ["band-form", "label-form"])
 def test_synthetic_catalogues_are_dispatchable(name: str) -> None:
     path = Path(__file__).parent / "fixtures" / f"{name}.yaml"
@@ -63,3 +77,28 @@ def test_packets_reject_before_reading_input(
     )
     with pytest.raises(MalformedCatalogueError):
         run_packet.main()
+
+
+@pytest.mark.parametrize("arm,reuse", [("gemini:v1", False), ("gemini:v1", True),
+                                      ("jev:v1", True)])
+def test_arms_validate_only_new_dispatches(
+    arm: str, reuse: bool, malformed_catalogue: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(run_arms, "read_population", lambda *_: [{"evaluation_id": 1}])
+    prior = {f"{arm}:1:{repeat}": {} for repeat in range(1, run_arms.REPEATS + 1)}
+    monkeypatch.setattr(run_arms, "load_prior_cells", lambda *_: prior if reuse else {})
+
+    def unexpected_backend_check(self) -> None:
+        pytest.fail("malformed or reused catalogue must not reach backend preflight")
+
+    monkeypatch.setattr(run_arms.OpenRouterBackend, "check_ready", unexpected_backend_check)
+    args = argparse.Namespace(
+        catalogue_v1=malformed_catalogue, catalogue_v2=malformed_catalogue,
+        arms=[arm], agent_ops=None, agent_evals=None, limit_cases=None,
+        output=malformed_catalogue.parent / "output.json", reuse=[], max_calls=3, dry_run=True,
+    )
+    if reuse:
+        run_arms.run(args)
+    else:
+        with pytest.raises(MalformedCatalogueError):
+            run_arms.run(args)

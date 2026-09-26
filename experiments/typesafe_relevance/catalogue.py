@@ -63,17 +63,28 @@ def _null_paths(value: Any, path: str) -> list[str]:
 
 
 def check_dispatchable(questions: Mapping[str, Any]) -> None:
-    """Refuse questions carrying a null anywhere, before they are dispatched.
+    """Refuse malformed criteria before dispatch, allowing optional descriptions.
 
     An unquoted YAML flow mapping such as ``{what: A product, vendor, or
     company.}`` loads as ``{"what": "A product", "vendor": None, ...}``: the
     commas split the criterion into null-valued keys. v1 was written that way
     and is kept loadable only so recorded runs still verify; it must not run.
     """
-    nulls = [found for key, question in questions.items() for found in _null_paths(question, key)]
+    nulls: list[str] = []
+    for key, question in questions.items():
+        criteria = question.get("criteria", {})
+        entries = criteria.items() if isinstance(criteria, Mapping) else enumerate(criteria)
+        for name, criterion in entries:
+            if isinstance(criterion, Mapping):
+                # The renderer treats absent optional descriptions as empty.
+                criterion = {
+                    field: value for field, value in criterion.items()
+                    if not (field in ("not_for", "examples") and value is None)
+                }
+            nulls.extend(_null_paths(criterion, f"{key}.criteria.{name}"))
     if nulls:
         raise MalformedCatalogueError(
-            f"{len(nulls)} null value(s) in catalogue questions, first {nulls[0]!r}; "
+            f"{len(nulls)} null value(s) in catalogue criteria, first {nulls[0]!r}; "
             "quote criteria text that contains commas"
         )
 
