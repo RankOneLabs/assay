@@ -24,7 +24,7 @@ from typesafe_relevance.backends import (
     OpenRouterBackend,
     TypesafeBackend,
 )
-from typesafe_relevance.catalogue import Catalogue, load_catalogue
+from typesafe_relevance.catalogue import Catalogue, check_dispatchable, load_catalogue
 from typesafe_relevance.route import route
 from typesafe_relevance.run_arms import PROJECTS
 from typesafe_relevance.state import build_state
@@ -77,6 +77,7 @@ def _write(
 
 def run(args: argparse.Namespace) -> None:
     catalogue = load_catalogue(args.catalogue)
+    check_dispatchable(catalogue.questions)
     cases = read_cases(
         args.key, {"agent-ops": args.agent_ops, "agent-evals": args.agent_evals}
     )

@@ -15,7 +15,7 @@ from typing import Any, cast
 import msgspec
 from typesafe_sdk import JSONContent, Question, RetryPolicy, TypeSafeClient
 
-from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.catalogue import check_dispatchable, load_catalogue
 from typesafe_relevance.mappings import DECIDE_REGISTRY
 from typesafe_relevance.state import build_state
 
@@ -81,6 +81,7 @@ def _mcnemar_exact(
 
 def run(args: argparse.Namespace) -> None:
     catalogue = load_catalogue(args.catalogue)
+    check_dispatchable(catalogue.questions)
     decide = DECIDE_REGISTRY[catalogue.decide]
     records = _read_jsonl(args.agent_ops, "agent-ops") + _read_jsonl(
         args.agent_evals, "agent-evals"

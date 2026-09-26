@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from typesafe_relevance.backends import BackendError, TypesafeBackend
-from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.catalogue import check_dispatchable, load_catalogue
 from typesafe_relevance.route import route
 from typesafe_relevance.run_arms import PROJECTS
 from typesafe_relevance.run_round4 import read_cases
@@ -66,6 +66,7 @@ def scored_cases(round_dir: Path) -> list[dict[str, Any]]:
 
 def run(args: argparse.Namespace) -> None:
     catalogue = load_catalogue(args.catalogue)
+    check_dispatchable(catalogue.questions)
     cases = scored_cases(args.round)
     output: Path = args.output
     cells: dict[str, Any] = (
