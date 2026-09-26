@@ -24,7 +24,7 @@ from typesafe_relevance.backends import (
     OpenRouterBackend,
     TypesafeBackend,
 )
-from typesafe_relevance.catalogue import Catalogue, load_catalogue
+from typesafe_relevance.catalogue import Catalogue, check_dispatchable, load_catalogue
 from typesafe_relevance.route import route
 from typesafe_relevance.run_arms import PROJECTS
 from typesafe_relevance.state import build_state
@@ -96,6 +96,8 @@ def run(args: argparse.Namespace) -> None:
         for record in cases
         if f"{arm}:{record['evaluation_id']}" not in cells
     ]
+    if pending:
+        check_dispatchable(catalogue.questions)
     print(f"catalogue {catalogue.id} version {catalogue.version}")
     print(f"cases {len(cases)}, arms {', '.join(args.arms)}, to dispatch {len(pending)}")
     for arm in {arm for arm, _ in pending}:

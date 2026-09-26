@@ -37,7 +37,7 @@ from typesafe_relevance.backends import (
     OpenRouterBackend,
     TypesafeBackend,
 )
-from typesafe_relevance.catalogue import Catalogue, load_catalogue
+from typesafe_relevance.catalogue import Catalogue, check_dispatchable, load_catalogue
 from typesafe_relevance.mappings import DECIDE_REGISTRY
 from typesafe_relevance.state import build_state
 
@@ -218,6 +218,7 @@ def run(args: argparse.Namespace) -> None:
     dispatching = {arm.arm_id for arm, _, _ in pending}
     for arm in arms:
         if arm.backend is not None and arm.arm_id in dispatching:
+            check_dispatchable(catalogues[arm.catalogue_key].questions)
             arm.backend.check_ready()
     print(f"preflight ok for: {', '.join(sorted(dispatching)) or 'nothing to dispatch'}")
     if args.dry_run:

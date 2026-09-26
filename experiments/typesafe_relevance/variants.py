@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from typesafe_relevance.backends import BackendError, TypesafeBackend
-from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.catalogue import check_dispatchable, load_catalogue
 from typesafe_relevance.route import route
 from typesafe_relevance.run_arms import PROJECTS
 from typesafe_relevance.run_round4 import read_cases
@@ -72,9 +72,12 @@ def run(args: argparse.Namespace) -> None:
         json.loads(output.read_text(encoding="utf-8"))["cells"] if output.exists() else {}
     )
     pending = [c for c in cases if str(c["evaluation_id"]) not in cells]
+    if pending:
+        check_dispatchable(catalogue.questions)
     print(f"{catalogue.id} {catalogue.version[:12]}: {len(cases)} posts, {len(pending)} to run")
     backend = TypesafeBackend(arm=catalogue.id)
-    backend.check_ready()
+    if pending:
+        backend.check_ready()
     if args.dry_run:
         return
     failures = []

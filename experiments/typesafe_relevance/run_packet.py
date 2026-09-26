@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.catalogue import check_dispatchable, load_catalogue
 from typesafe_relevance.packet import (
     BAND_NAMES,
     DISPOSITIONS,
@@ -1157,6 +1157,8 @@ def main() -> None:
 
     args = parser.parse_args()
     questions = load_catalogue(args.catalogue).questions
+    if args.command != "score":
+        check_dispatchable(questions)
 
     if args.command == "regrade":
         cases = build_regrade(args.first, questions, args.output, sitting=args.sitting)

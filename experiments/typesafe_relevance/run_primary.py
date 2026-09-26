@@ -9,13 +9,14 @@ import math
 import os
 import time
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, cast
 
 import msgspec
 from typesafe_sdk import JSONContent, Question, RetryPolicy, TypeSafeClient
 
-from typesafe_relevance.catalogue import load_catalogue
+from typesafe_relevance.catalogue import check_dispatchable, load_catalogue
 from typesafe_relevance.mappings import DECIDE_REGISTRY
 from typesafe_relevance.state import build_state
 
@@ -99,14 +100,22 @@ def run(args: argparse.Namespace) -> None:
             for repeat in case.get("repeats", [])
         }
 
+    pending = any(
+        f"{record['evaluation_id']}:{repeat}" not in existing
+        for record in records
+        for repeat in range(1, 4)
+    )
+    if pending:
+        check_dispatchable(catalogue.questions)
+
     case_results: list[dict[str, Any]] = []
     retry = RetryPolicy(max_retries=0)
-    with TypeSafeClient(
+    with (TypeSafeClient(
         api_key=os.environ["TYPESAFE_API_KEY"],
         model="jev-latest",
         retry=retry,
         timeout=60.0,
-    ) as client:
+    ) if pending else nullcontext()) as client:
         for record in records:
             repeats: list[dict[str, Any]] = []
             for repeat_index in range(1, 4):
@@ -114,6 +123,7 @@ def run(args: argparse.Namespace) -> None:
                 if key in existing:
                     repeats.append(existing[key])
                     continue
+                assert client is not None
                 started = time.monotonic()
                 response = client.system_one(
                     state=cast(
