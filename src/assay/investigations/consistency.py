@@ -46,7 +46,15 @@ class ChainStep(WireModel):
 class CodingTask(WireModel):
     id: str
     family: Literal[
-        "cosmetic", "architectural", "semantic", "route-view", "domain-rule", "cross-module"
+        "cosmetic",
+        "architectural",
+        "semantic",
+        "route-view",
+        "domain-rule",
+        "cross-module",
+        "jig-llm",
+        "jig-feedback",
+        "scout-platforms",
     ]
     instruction: str
     helper: str

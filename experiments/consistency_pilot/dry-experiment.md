@@ -138,6 +138,35 @@ These three sets reuse the dose subjects and change one thing each.
   helper. Correctness does not run for `ctx-90`, because those repositories
   exceed the sandbox storage budget. The abstraction verdict is unaffected.
 
+## Codebase scenario set
+
+`scenario="codebase"` sets eleven subjects in real code instead of samples
+written for the experiment. Each subject's repository is a slice of one of our
+public repositories, copied unchanged from a pinned commit by
+`snapshot_codebases.py`. The slice is one package plus the modules it imports.
+Package `__init__` files that would import the rest of the repository are
+replaced by empty ones.
+
+| Family | Slice | Target file | Helpers |
+|---|---|---|---|
+| `jig-llm` | jig `llm` adapters, 5fa9c01 | new `llm/vllm.py` | `parse_tool_arguments`, `wrap_llm_error`, `merge_completion_kwargs`, `stamp_cost` |
+| `jig-feedback` | jig graders and SQLite tracers, 5fa9c01 | new `feedback/rubric_judge.py`, `tracing/jsonl.py` | `strip_markdown_fence`, `validate_scores`, `parse_aware_utc` |
+| `scout-platforms` | scout platform adapters, ee8c901 | new `platforms/mastodon.py` | `derive_source_key`, `source_since`, `parse_platform_ts`, `parse_retry_after` |
+
+Each task asks for a new function in a new, nearly empty module of that slice,
+and the behaviour it asks for is exactly what one existing shared helper
+provides. Two to three existing modules call that helper. The clean arm is the
+code as it is at the pinned commit. In the inconsistent arm those callers copy
+the helper's logic inline instead, in the style the code would plausibly have
+taken without the helper. The helper and the target file are identical in both
+arms, so the arms differ only in how existing code reaches the behaviour. For
+`stamp_cost` and `source_since` the building blocks are themselves shared
+functions (`compute_cost`, `derive_source_key`); calling those without the
+helper counts as duplication, as in the domain-rule family.
+
+Prompts are 135–156 KB, so Claude 3 Haiku's 64 KB request cap excludes it, as
+for `context`. The grid is 11 subjects × 2 arms × 2 repeats = 44 cells.
+
 ## Code metrics
 
 `python -m consistency_pilot.dry_metrics <store> [reference-arm]` measures
@@ -281,7 +310,15 @@ seccomp profile, 64 MiB memory/swap, half a CPU, 32 PIDs, bounded file descripto
 and file size, a ten-second infrastructure-startup deadline, a five-second
 candidate deadline, and a 65,536-byte combined output limit.
 `--pull=never` makes a missing image fail before paid work rather than silently
-resolving mutable remote state. A known implementation is self-tested before the
+resolving mutable remote state.
+
+The codebase snapshots import httpx, aiosqlite and pydantic. Their correctness
+runs use an image built locally from `codebase_sandbox/Dockerfile`, which adds
+those packages at hash-pinned versions to the image above. Its image ID is
+pinned in `CODEBASE_PYTHON_IMAGE`; a rebuild produces a new ID, so the pin must
+be updated after one. These runs also get a 4 MiB `/tmp`, because every case
+writes its own copy of a repository of about 150 KB, and a fifteen-second
+candidate deadline, because each case imports those packages. A known implementation is self-tested before the
 first provider request. External cancellation waits for forced cleanup of the
 uniquely named container.
 

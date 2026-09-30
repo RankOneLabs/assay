@@ -8,9 +8,9 @@ import dataclasses
 import json
 import uuid
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
-from pydantic import Field
+from pydantic import Field, model_serializer
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import EvaluationFailed, EvaluationResult, EvaluationSuccess
@@ -20,7 +20,13 @@ from assay.repository import validate_repository
 
 CORRECTNESS_CATEGORIES = ("incorrect", "correct")
 PYTHON_IMAGE = "python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"
-TMPFS_SIZE_BYTES = 1_048_576
+# PYTHON_IMAGE plus httpx, aiosqlite and pydantic, built locally from
+# experiments/consistency_pilot/codebase_sandbox/Dockerfile for the codebase tasks.
+CODEBASE_PYTHON_IMAGE: Final = (
+    "sha256:859a347929b0f3d791a48b78ba751bd9388a97b895ebbcdcd6427ea2122d634c"
+)
+TMPFS_SIZES = {"1m": 1_048_576, "4m": 4_194_304}
+TMPFS_SIZE_BYTES = TMPFS_SIZES["1m"]
 REPOSITORY_STORAGE_BUDGET_BYTES = TMPFS_SIZE_BYTES * 3 // 4
 TMPFS_BLOCK_BYTES = 4_096
 
@@ -188,7 +194,8 @@ def _render_harness(max_output_bytes: int) -> str:
 
 class DockerRunnerSettings(WireModel):
     image: Literal[
-        "python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"
+        "python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc",
+        "sha256:859a347929b0f3d791a48b78ba751bd9388a97b895ebbcdcd6427ea2122d634c",
     ] = "python@sha256:2be5d3cb08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc"
     platform: Literal["linux/amd64"] = "linux/amd64"
     docker_client_version: Literal["29.6.1"] = "29.6.1"
@@ -200,6 +207,19 @@ class DockerRunnerSettings(WireModel):
     memory: Literal["64m"] = "64m"
     cpus: Literal["0.5"] = "0.5"
     pids_limit: Literal[32] = 32
+    tmpfs_size: Literal["1m", "4m"] = "1m"
+
+    @model_serializer(mode="wrap")
+    def omit_default_tmpfs(self, handler: Any) -> Any:
+        # Runners on the default tmpfs keep their earlier configuration.
+        value = handler(self)
+        if isinstance(value, dict) and value.get("tmpfs_size") == "1m":
+            value.pop("tmpfs_size")
+        return value
+
+    @property
+    def repository_storage_budget_bytes(self) -> int:
+        return TMPFS_SIZES[self.tmpfs_size] * 3 // 4
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -225,6 +245,7 @@ class DockerPythonRunner:
     def __init__(self, settings: DockerRunnerSettings | None = None) -> None:
         self.settings = settings or DockerRunnerSettings()
         self._harness = _render_harness(self.settings.max_output_bytes)
+        self._tmpfs = f"/tmp:rw,noexec,nosuid,nodev,size={self.settings.tmpfs_size}"
         self._runtime_checked = False
         self._runtime_lock = asyncio.Lock()
 
@@ -242,8 +263,8 @@ class DockerPythonRunner:
             "seccomp": "builtin",
             "pull": "never",
             "user": "65534:65534",
-            "tmpfs": "/tmp:rw,noexec,nosuid,nodev,size=1m",
-            "repository_storage_budget_bytes": REPOSITORY_STORAGE_BUDGET_BYTES,
+            "tmpfs": self._tmpfs,
+            "repository_storage_budget_bytes": self.settings.repository_storage_budget_bytes,
             "repository_storage_estimator": "tmpfs-pages-and-directories-v1",
             "ulimits": {"core": "0:0", "fsize": "1048576:1048576", "nofile": "64:64"},
         }
@@ -384,7 +405,8 @@ class DockerPythonRunner:
             per_case_storage = _repository_case_storage_bytes(
                 validated_repository, target_path, source
             )
-            if per_case_storage * len(task.test_cases) > REPOSITORY_STORAGE_BUDGET_BYTES:
+            budget = self.settings.repository_storage_budget_bytes
+            if per_case_storage * len(task.test_cases) > budget:
                 raise ValueError("repository cases exceed the sandbox storage budget")
         except ValueError as error:
             return SandboxFailure("InvalidInput", str(error))
@@ -423,7 +445,7 @@ class DockerPythonRunner:
             "--cpus",
             self.settings.cpus,
             "--tmpfs",
-            "/tmp:rw,noexec,nosuid,nodev,size=1m",
+            self._tmpfs,
             "--ulimit",
             "core=0:0",
             "--ulimit",

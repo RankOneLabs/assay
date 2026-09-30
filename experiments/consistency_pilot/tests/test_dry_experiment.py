@@ -22,11 +22,13 @@ from jig.core.types import CompletionParams, LLMResponse, ToolCall, Usage
 from pydantic import ValidationError
 
 from assay.adapters.consistency import LAYERED_SYSTEM_PROMPT, DescribedClient
-from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
+from assay.adapters.openrouter import HAIKU_4_5_BEDROCK, HAIKU_BEDROCK, OpenRouterFactory
 from assay.execution import EvaluationFailed, EvaluationSuccess
 from assay.investigations.chain_fixtures import CHAIN_TASKS, chain_repository_variants
+from assay.investigations.codebase_fixtures import CODEBASE_TASKS, codebase_repository_variants
 from assay.investigations.consistency import EXPERIMENT_TASKS, CodingTask, StructuralEvaluator
 from assay.investigations.correctness import (
+    CODEBASE_PYTHON_IMAGE,
     DockerPythonRunner,
     DockerRunnerSettings,
     FunctionalCorrectnessEvaluator,
@@ -953,3 +955,110 @@ def test_context_scenario_has_no_claude_3_haiku_route() -> None:
 
     assert "haiku" in dry_profiles("dose")
     assert "haiku" not in dry_profiles("context")
+    assert "haiku" not in dry_profiles("codebase")
+
+
+class CodebaseFakeFactory(FakeFactory):
+    """A Claude Haiku 4.5 route that reuses in the clean arm only."""
+
+    def configuration(self) -> dict[str, Any]:
+        return OpenRouterFactory(HAIKU_4_5_BEDROCK).configuration()
+
+    def create(self) -> DescribedClient:
+        self.created += 1
+        owner = self
+        variants = codebase_repository_variants()
+
+        class Client(DescribedClient):
+            def configuration(self) -> dict[str, Any]:
+                return owner.configuration()
+
+            async def complete(self, params: CompletionParams) -> LLMResponse:
+                owner.calls.append(copy.deepcopy(params))
+                prompt = json.loads(params.messages[0].content)
+                task = next(
+                    item for item in CODEBASE_TASKS if item.instruction == prompt["instruction"]
+                )
+                clean = prompt["repository"] == variants[task.id]["clean"]
+                source = task.reused_source if clean else task.duplicated_source
+                return LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall("submission", "submit_output", {"source": source})],
+                    usage=Usage(10, 5, 0.001),
+                    latency_ms=1,
+                    model=HAIKU_4_5_BEDROCK.model,
+                )
+
+            async def aclose(self) -> None:
+                owner.closed += 1
+
+        return Client()
+
+
+@pytest.mark.asyncio
+async def test_codebase_scenario_prepares_and_runs_offline(tmp_path: Path) -> None:
+    from consistency_pilot.dry_experiment import dry_profiles, dry_runner
+
+    store = ObjectStore(tmp_path / "store")
+    factory = CodebaseFakeFactory()
+    runner = PassingRunner(dry_runner("codebase").settings)
+    _, settings = dry_profiles("codebase")["haiku-4.5"]
+    assert settings.max_input_bytes == 196_608
+    prepared = prepare_dry_experiment(
+        store,
+        factory=factory,
+        settings=settings,
+        schemas=contracts(),
+        runner=runner,
+        scenario="codebase",
+    )
+    assert isinstance(prepared, DryExperimentPrepared), prepared
+    assert prepared.executions == 44 and prepared.evaluations == 88
+    result = await run_dry_experiment(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=prepared.plan_ref,
+        factory=factory,
+        runner=runner,
+        allow_paid=True,
+        scenario="codebase",
+    )
+    assert isinstance(result, DryExperimentSucceeded), result
+    assert len(factory.calls) == 44
+    comparison = json.loads(store.read_bytes(result.abstraction_report_ref))["comparisons"][0]
+    assert comparison["reference_distribution"] == {"duplicated": 11}
+    assert comparison["candidate_distribution"] == {"reused": 11}
+    assert comparison["improved"] == 11
+
+
+def test_codebase_runner_uses_its_image_and_a_larger_tmpfs() -> None:
+    from consistency_pilot.dry_experiment import dry_runner
+
+    configuration = dry_runner("codebase").configuration()
+    assert configuration["settings"]["image"] == CODEBASE_PYTHON_IMAGE
+    assert configuration["settings"]["tmpfs_size"] == "4m"
+    assert configuration["tmpfs"] == "/tmp:rw,noexec,nosuid,nodev,size=4m"
+    assert configuration["repository_storage_budget_bytes"] == 3_145_728
+    assert dry_runner("layered").configuration() == DockerPythonRunner().configuration()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not RUN_DOCKER_TESTS, reason="requires explicitly prepared pinned Docker runtime"
+)
+async def test_codebase_container_accepts_both_reference_implementations() -> None:
+    from consistency_pilot.dry_experiment import dry_runner
+
+    runner = dry_runner("codebase")
+    variants = codebase_repository_variants()
+    for task in CODEBASE_TASKS:
+        for arm in ("clean", "inconsistent"):
+            for source in (task.reused_source, task.duplicated_source):
+                result = await runner.run(
+                    task=task,
+                    repository=variants[task.id][arm],
+                    target_path=task.target_path,
+                    source=source,
+                )
+                assert isinstance(result, SandboxResult), (task.id, arm, result)
+                assert result.passed == result.total, (task.id, arm, result)
