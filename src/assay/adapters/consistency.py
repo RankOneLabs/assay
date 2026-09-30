@@ -546,7 +546,12 @@ def _append_step(target_source: str, step_source: str, name: str) -> str | None:
     ]
     if len(implementations) != 1:
         return None
-    renamed = re.sub(r"^def implement\(", f"def {name}(", step_source, count=1, flags=re.MULTILINE)
+    lines = step_source.splitlines(keepends=True)
+    definition = implementations[0]
+    line = lines[definition.lineno - 1]
+    start = line.index("implement", definition.col_offset)
+    lines[definition.lineno - 1] = line[:start] + name + line[start + len("implement") :]
+    renamed = "".join(lines)
     return target_source.rstrip("\n") + "\n\n\n" + renamed.strip("\n") + "\n"
 
 

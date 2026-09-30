@@ -6,7 +6,9 @@
 (route/view, domain-rule and cross-module fixtures) or ``dose`` (the layered
 subjects with 0, 1, 3, 5, 7 or 10 of ten existing callers bypassing the
 abstraction), ``placement`` (the bypassing callers clustered right above the
-insertion point) or ``chain`` (five successive additions per cell).
+insertion point), ``chain`` (five successive additions per cell) or
+``context`` (the same subjects unpadded and padded to repositories of about
+30 KB and 90 KB).
 
 Running this is the spending authorization: it approves the plan it just
 prepared. Bundles are exported to ``<store-dir>-run-1-bundles``.

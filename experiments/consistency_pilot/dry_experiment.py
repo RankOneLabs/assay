@@ -265,7 +265,11 @@ def dry_profiles(scenario: str = "v1") -> dict[str, tuple[OpenRouterSettings, Pi
         SONNET_5_5_BEDROCK,
     )
 
-    profiles = {"haiku": (HAIKU_BEDROCK, haiku_dry_settings(scenario))}
+    # Claude 3 Haiku's 64 KB request-body cap cannot carry the context
+    # scenario's padded repositories.
+    profiles = (
+        {} if scenario == "context" else {"haiku": (HAIKU_BEDROCK, haiku_dry_settings(scenario))}
+    )
     for name, route in (
         ("sonnet-5.5", SONNET_5_5_BEDROCK),
         ("haiku-4.5", HAIKU_4_5_BEDROCK),

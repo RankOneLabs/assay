@@ -45,20 +45,26 @@ The module-level `render_input` function exposes only the instruction and arm-sp
 answers, test vectors, or arm IDs to the model. Those hidden fields remain bound
 into the subject digest and available to evaluators.
 
-The structural evaluator (version 5) decides automatically in two cases. If
+The structural evaluator (version 6) decides automatically in two cases. If
 `implement` calls the helper in a statement that runs whenever control reaches
 it, the verdict is `reused`, or `mixed` when it also calls any primitive the
 helper uses. Early-return guards before that statement are allowed, and so are
-the bodies of `try` and `with`. If `implement` never names the helper but calls
-one of its primitives, the verdict is `duplicated`. Helper calls only inside
-branches, loops, lambdas, comprehensions or short-circuit operands are
-`AmbiguousStructure`. So are aliases, local rebinding of the helper name, and
-code that calls neither the helper nor a primitive. Without an ambiguity judge,
+the bodies of `try` and `with`, up to a `return` or `raise` that ends one. A
+helper call is the helper's bare name or its exact import from the helper's
+module, at module level or inside `implement`. If `implement` never names the
+helper but calls one of its primitives, the verdict is `duplicated`. Helper
+calls only inside branches, loops, lambdas, comprehensions or short-circuit
+operands are `AmbiguousStructure`. So are same-named functions from other
+modules or objects, local rebinding of the helper name, and code that calls
+neither the helper nor a primitive. Without an ambiguity judge,
 `AmbiguousStructure` is missing evidence. Both worker repeats must be present
 for both arms, so any such missing cell makes the subject incomplete and removes
 it from the paired comparison. Version 4 required the whole body to be a single
 `return` expression. It rejected ordinary `result = helper(value); return
-result` code even though the prompt allowed it.
+result` code even though the prompt allowed it. Version 6 closes review
+findings on version 5: nested early returns, function-local imports and
+same-named calls. Re-scoring all 3,010 stored outputs, including chain steps,
+changes no verdict, so the v5 results below stand.
 
 ## Layered scenario set
 
@@ -151,7 +157,8 @@ number is keyed by the tool that produced it:
 - new code: SonarQube-style new lines and new duplicated lines
 
 The submission's imports join the target file's import block, as a developer
-would place them, so the harness's append order is not scored.
+would place them, so the harness's append order is not scored. Imports the
+target already has are not repeated.
 
 jscpd matches exact token runs at its default thresholds (5 lines, 50
 tokens). So it misses copies with renamed variables, and copies shorter than
@@ -247,7 +254,7 @@ reused and 200 duplicated. Each figure is the mean change per output.
   just more of it to maintain.
 
 For Haiku 4.5 on the dose set (62 reused, 65 duplicated), the gap is smaller:
-4.1 against 3.2 SLOC and 1.5 against 1.0 cyclomatic complexity. Most of its
+4.1 against 2.6 SLOC and 1.5 against 1.0 cyclomatic complexity. Most of its
 duplication is in cross-module one-liners.
 
 **Pending.**

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from code_metrics import METRICS, measure, tool_versions
 
 VIEWS = """from shop.store import audit, load
@@ -110,3 +111,25 @@ def test_ignored_ruff_rules_are_not_counted() -> None:
     unsorted = _after("", "import os\n")
     assert measure(BEFORE, unsorted)["ruff.violations"] >= 1
     assert measure(BEFORE, unsorted, ruff_ignore=("I001", "F401"))["ruff.violations"] == 0
+
+
+def test_nested_function_decisions_count() -> None:
+    nested = (
+        "\n\ndef outer(request):\n    def pick(x):\n        return 1 if x else 2\n"
+        "    return pick(request)\n"
+    )
+    assert measure(BEFORE, _after(nested))["radon.cc"] == 3
+
+
+def test_first_and_last_python_file() -> None:
+    added = measure({}, {"module.py": "x = 1\n"})
+    assert added["radon.sloc"] == 1
+    assert added["mypy.errors"] == 0
+    assert added["grimp.imports"] is None
+    assert measure({"module.py": "x = 1\n"}, {"README.md": ""})["radon.sloc"] == -1
+
+
+def test_paths_outside_the_snapshot_are_refused() -> None:
+    for path in ("../escape.py", "/tmp/escape.py", "a/../../escape.py"):
+        with pytest.raises(ValueError, match="relative"):
+            measure({}, {path: "x = 1\n"})

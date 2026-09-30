@@ -284,9 +284,10 @@ _OTHER_STEPS = {
 
 def _chain(task: CodingTask) -> tuple[ChainStep, ...]:
     prefix = f"In {task.target_path}, add "
+    rest: tuple[tuple[str, str], ...]
     if task.id in _ROUTE_STEPS:
-        first_name, _, rest = _ROUTE_STEPS[task.id]
-        rest = tuple((name, f"implement(request), {text}") for name, text in rest)
+        first_name, _, routes = _ROUTE_STEPS[task.id]
+        rest = tuple((name, f"implement(request), {text}") for name, text in routes)
     else:
         first_name, rest = _OTHER_STEPS[task.id]
     return (

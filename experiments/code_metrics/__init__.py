@@ -41,15 +41,16 @@ import tempfile
 from collections.abc import Mapping
 from difflib import SequenceMatcher
 from importlib.metadata import version
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, NamedTuple
 
 import grimp
 import lizard  # type: ignore[import-untyped]
 from complexipy import code_complexity
+from radon.complexity import add_inner_blocks  # type: ignore[import-untyped]
 from radon.metrics import h_visit, mi_visit  # type: ignore[import-untyped]
 from radon.raw import analyze  # type: ignore[import-untyped]
-from radon.visitors import ComplexityVisitor  # type: ignore[import-untyped]
+from radon.visitors import ComplexityVisitor, Function  # type: ignore[import-untyped]
 
 JSCPD = "jscpd@5.4.0"
 DELTAS = (
@@ -131,8 +132,23 @@ def _python(snapshot: Snapshot) -> dict[str, str]:
 _CACHE: dict[tuple[str, _Config], dict[str, Any]] = {}
 
 
+_EMPTY: dict[str, Any] = {
+    **dict.fromkeys(DELTAS, 0),
+    "grimp.imports": None,
+    "mi": {},
+    "cloned_lines": {},
+    "functions": [],
+}
+
+
 def _snapshot(snapshot: Snapshot, config: _Config) -> dict[str, Any]:
     files = _python(snapshot)
+    for path in files:
+        parts = PurePosixPath(path).parts
+        if PurePosixPath(path).is_absolute() or ".." in parts or "\\" in path:
+            raise ValueError(f"snapshot path must be relative and inside the repository: {path}")
+    if not files:
+        return _EMPTY
     digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
     if (digest, config) not in _CACHE:
         with tempfile.TemporaryDirectory() as directory:
@@ -164,10 +180,13 @@ def _radon(files: dict[str, str]) -> dict[str, Any]:
 
 
 def _cyclomatic(text: str) -> int:
-    """Sum of per-function McCabe scores, as SonarQube's ``complexity`` aggregates them."""
-    visitor = ComplexityVisitor.from_code(text)
-    methods = [method for cls in visitor.classes for method in cls.methods]
-    return sum(block.complexity for block in [*visitor.functions, *methods])
+    """Sum of per-function McCabe scores, as SonarQube's ``complexity`` aggregates them.
+
+    Radon scores nested functions separately from their enclosing function, so
+    closures and inner-class methods are expanded before summing.
+    """
+    blocks = add_inner_blocks(ComplexityVisitor.from_code(text).blocks)
+    return sum(block.complexity for block in blocks if isinstance(block, Function))
 
 
 def _imports(root: Path) -> int | None:

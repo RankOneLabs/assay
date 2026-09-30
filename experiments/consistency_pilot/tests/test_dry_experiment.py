@@ -936,3 +936,20 @@ async def test_chain_scenario_reports_every_step(tmp_path: Path) -> None:
         report = json.loads(store.read_bytes(report_ref))
         regressed = {item["candidate"]: item["regressed"] for item in report["comparisons"]}
         assert regressed == {"tail-03": 0, "tail-07": 0 if step == 0 else 12}
+
+
+def test_chain_append_renames_any_spelling_of_the_definition() -> None:
+    from assay.adapters.consistency import _append_step
+
+    source = "import re\n\n\ndef implement (value):\n    return re.sub('implement', '', value)\n"
+    appended = _append_step("X = 1\n", source, "strip_word")
+    assert appended is not None
+    assert "def strip_word (value):" in appended
+    assert "re.sub('implement', '', value)" in appended
+
+
+def test_context_scenario_has_no_claude_3_haiku_route() -> None:
+    from consistency_pilot.dry_experiment import dry_profiles
+
+    assert "haiku" in dry_profiles("dose")
+    assert "haiku" not in dry_profiles("context")

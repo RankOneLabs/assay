@@ -452,6 +452,39 @@ def _names_callable(origin: str | None, name: str) -> bool:
     return origin is not None and (origin == name or origin.endswith("." + name))
 
 
+def _names_helper(
+    node: ast.expr, origins: Mapping[str, str], helper: str, helper_module: str | None
+) -> bool:
+    """``node`` is the repository helper itself: its bare name, or its exact import origin.
+
+    An attribute whose base is not an imported module (``payload.helper``) and
+    an import of a same-named function from elsewhere are not the helper.
+    """
+    helper_origin = None if helper_module is None else f"{helper_module}.{helper}"
+    if isinstance(node, ast.Name):
+        return origins.get(node.id, node.id) in (helper, helper_origin)
+    return helper_origin is not None and _call_origin(node, origins) == helper_origin
+
+
+def _binds(node: ast.AST, name: str) -> bool:
+    """``node`` rebinds ``name`` inside a function body."""
+    if isinstance(node, ast.Name):
+        return node.id == name and isinstance(node.ctx, ast.Store)
+    if isinstance(node, ast.arg):
+        return node.arg == name
+    if isinstance(node, ast.alias):
+        return (node.asname or node.name.split(".", 1)[0]) == name
+    if isinstance(node, ast.Global | ast.Nonlocal):
+        return name in node.names
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+        return node.name == name
+    if isinstance(node, ast.ExceptHandler | ast.MatchAs | ast.MatchStar):
+        return node.name == name
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    return False
+
+
 _DEFERRED = (
     ast.Lambda,
     ast.GeneratorExp,
@@ -470,21 +503,29 @@ def _unconditional_statements(body: Sequence[ast.stmt]) -> list[ast.stmt]:
     """Simple statements reached whenever the body runs past its guards.
 
     Compound statements contribute nothing except the bodies of ``try`` and
-    ``with``, which start unconditionally. Nothing after a top-level return or
-    raise is reachable.
+    ``with``, which start unconditionally. Nothing after a return or raise is
+    reached unconditionally, including one that ends a ``try`` or ``with`` body.
     """
+    return _unconditional_prefix(body)[0]
+
+
+def _unconditional_prefix(body: Sequence[ast.stmt]) -> tuple[list[ast.stmt], bool]:
+    """Unconditionally reached statements, and whether the body always leaves early."""
     reached: list[ast.stmt] = []
     for statement in body:
         if isinstance(statement, ast.Try | ast.TryStar | ast.With):
-            reached.extend(_unconditional_statements(statement.body))
+            inner, terminated = _unconditional_prefix(statement.body)
+            reached.extend(inner)
+            if terminated:
+                return reached, True
         elif not isinstance(
             statement,
             (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Match, ast.AsyncWith, *_DEFERRED),
         ):
             reached.append(statement)
         if isinstance(statement, ast.Return | ast.Raise):
-            break
-    return reached
+            return reached, True
+    return reached, False
 
 
 def _eager_nodes(node: ast.AST) -> list[ast.AST]:
@@ -507,7 +548,7 @@ class StructuralEvaluator:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "consistency-structure",
-            "version": "5",
+            "version": "6",
             "categories": list(CATEGORIES),
             "target_function": "implement",
             "accepted_module": "optional-docstring-then-imports-then-one-function",
@@ -544,6 +585,20 @@ class StructuralEvaluator:
         _, package_parts = _target_module(task.target_path)
         origins = _import_origins(ast.parse(task.helper_source))
         origins.update(_import_origins(tree, package_parts))
+        local_imports: list[ast.stmt] = [
+            node for node in ast.walk(function) if isinstance(node, ast.Import | ast.ImportFrom)
+        ]
+        local_module = ast.Module(body=local_imports, type_ignores=[])
+        origins.update(_import_origins(local_module, package_parts))
+        helper_imports = {
+            id(alias)
+            for node in local_imports
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if (alias.asname or alias.name) == task.helper
+            and f"{_imported_module(node, package_parts)}.{alias.name}"
+            == f"{task.helper_module}.{task.helper}"
+        }
         names = {
             name
             for node in ast.walk(function)
@@ -554,27 +609,21 @@ class StructuralEvaluator:
         )
         helper_called = any(
             isinstance(node, ast.Call)
-            and _names_callable(_call_origin(node.func, origins), task.helper)
+            and _names_helper(node.func, origins, task.helper, task.helper_module)
             for statement in _unconditional_statements(function.body)
             for node in _eager_nodes(statement)
         )
+        # Any name ending in the helper's counts as a reference, so near misses
+        # go to adjudication instead of being called duplication.
         helper_referenced = any(
             isinstance(node, ast.Name | ast.Attribute)
             and _names_callable(_call_origin(node, origins), task.helper)
             for node in ast.walk(function)
         )
-        # A local rebinding of the helper name makes every call to it suspect.
+        # A local rebinding of the helper name makes every call to it suspect,
+        # unless it is a function-local import of the helper itself.
         helper_shadowed = any(
-            (
-                isinstance(node, ast.Name)
-                and node.id == task.helper
-                and isinstance(node.ctx, ast.Store)
-            )
-            or (isinstance(node, ast.arg) and node.arg == task.helper)
-            or (
-                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
-                and node.name == task.helper
-            )
+            _binds(node, task.helper) and id(node) not in helper_imports
             for node in ast.walk(function)
         )
         detail = {"route": "structural", "calls": sorted(names), "family": task.family}

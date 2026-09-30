@@ -116,21 +116,21 @@ async def test_reference_sources_classify(task) -> None:
         assert result.verdict == expected
 
 
+async def verdict(source: str) -> str:
+    """Structural verdict (or failure type) for an email-key submission."""
+    task = next(item for item in LAYERED_TASKS if item.id == "email-key")
+    result = await StructuralEvaluator().evaluate(
+        input_value={"task": task.model_dump(mode="json")},
+        output={"source": source},
+        coordinate=EvaluationCoordinate(
+            cell_id="email-key:clean:w0", evaluator_id="abstraction", evaluator_repeat=0
+        ),
+    )
+    return getattr(result, "verdict", None) or result.error_type
+
+
 @pytest.mark.asyncio
 async def test_helper_imports_are_accepted_only_from_the_helper_module() -> None:
-    task = next(item for item in LAYERED_TASKS if item.id == "email-key")
-    evaluator = StructuralEvaluator()
-
-    async def verdict(source: str) -> str:
-        result = await evaluator.evaluate(
-            input_value={"task": task.model_dump(mode="json")},
-            output={"source": source},
-            coordinate=EvaluationCoordinate(
-                cell_id="email-key:clean:w0", evaluator_id="abstraction", evaluator_repeat=0
-            ),
-        )
-        return getattr(result, "verdict", None) or result.error_type
-
     body = '\ndef implement(payload):\n    return normalize_email(payload["email"])\n'
     assert await verdict("from accounts.utils import normalize_email" + body) == "reused"
     assert await verdict("from .utils import normalize_email" + body) == "reused"
@@ -150,3 +150,42 @@ async def test_helper_imports_are_accepted_only_from_the_helper_module() -> None
         )
         == "reused"
     )
+
+
+@pytest.mark.asyncio
+async def test_function_local_imports_count_only_for_the_helper_module() -> None:
+    local = 'def implement(payload):\n    from {} import {}\n    return {}(payload["email"])\n'
+    helper = local.format("accounts.utils", "normalize_email", "normalize_email")
+    aliased = local.format("accounts.utils", "normalize_email as canon", "canon")
+    impostor = local.format("accounts.audit", "email_domain as normalize_email", "normalize_email")
+    assert await verdict(helper) == "reused"
+    assert await verdict(aliased) == "reused"
+    assert await verdict(impostor) == "AmbiguousStructure"
+
+
+@pytest.mark.asyncio
+async def test_helper_calls_need_the_helper_origin() -> None:
+    method = 'def implement(payload):\n    return payload.normalize_email(payload["email"])\n'
+    elsewhere = (
+        "from accounts.audit import normalize_email as canon\n"
+        'def implement(payload):\n    return canon(payload["email"])\n'
+    )
+    assert await verdict(method) == "AmbiguousStructure"
+    assert await verdict(elsewhere) == "AmbiguousStructure"
+
+
+@pytest.mark.asyncio
+async def test_nothing_after_a_returning_try_or_with_body_is_unconditional() -> None:
+    after_try = (
+        "def implement(payload):\n    try:\n        return payload.strip().lower()\n"
+        "    except AttributeError:\n        pass\n"
+        '    return normalize_email(payload["email"])\n'
+    )
+    after_with = (
+        "import contextlib\n"
+        "def implement(payload):\n    with contextlib.suppress(KeyError):\n"
+        "        return payload\n"
+        '    return normalize_email(payload["email"])\n'
+    )
+    assert await verdict(after_try) == "AmbiguousStructure"
+    assert await verdict(after_with) == "AmbiguousStructure"

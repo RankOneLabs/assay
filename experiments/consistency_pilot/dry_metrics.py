@@ -27,19 +27,45 @@ from code_metrics import METRICS, measure, tool_versions
 RUFF_IGNORE = ("I001",)
 
 
+def _bindings(statement: ast.Import | ast.ImportFrom) -> list[tuple[Any, ...]]:
+    module = (statement.level, statement.module) if isinstance(statement, ast.ImportFrom) else ()
+    return [(*module, alias.name, alias.asname) for alias in statement.names]
+
+
 def apply_submission(target: str, source: str) -> str:
-    """``target`` with the submission's imports in its import block and its body appended."""
+    """``target`` with the submission's new imports in its import block and its body appended.
+
+    Imports the target already has are not repeated.
+    """
     submission = ast.parse(source)
     lines = source.splitlines()
     body = list(submission.body)
+    start = 0
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
-        body.pop(0)
+        start = body.pop(0).end_lineno or start
+    existing = ast.parse(target).body
+    present = {
+        binding
+        for node in existing
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for binding in _bindings(node)
+    }
     imports = []
     while body and isinstance(body[0], ast.Import | ast.ImportFrom):
         statement = body.pop(0)
-        imports.extend(lines[statement.lineno - 1 : statement.end_lineno])
-    rest = "\n".join(lines[body[0].lineno - 1 :]) if body else ""
-    existing = ast.parse(target).body
+        assert isinstance(statement, ast.Import | ast.ImportFrom)
+        start = statement.end_lineno or start
+        kept = [
+            alias
+            for alias, binding in zip(statement.names, _bindings(statement), strict=True)
+            if binding not in present
+        ]
+        if len(kept) == len(statement.names):
+            imports.extend(lines[statement.lineno - 1 : statement.end_lineno])
+        elif kept:
+            statement.names = kept
+            imports.append(ast.unparse(statement))
+    rest = "\n".join(lines[start:]).strip("\n") if body else ""
     anchor = 0
     for node in existing:
         if isinstance(node, ast.Import | ast.ImportFrom):
@@ -153,6 +179,9 @@ def summarize(cells: list[dict[str, Any]], reference: str) -> dict[str, Any]:
 def main(argv: list[str]) -> int:
     root = Path(argv[0])
     cells = store_cells(root)
+    if not cells:
+        print(json.dumps({"store": root.name, "cells": 0}))
+        return 1
     arms = sorted({cell["arm"] for cell in cells})
     reference = (
         argv[1] if len(argv) > 1 else ("inconsistent" if "inconsistent" in arms else arms[0])

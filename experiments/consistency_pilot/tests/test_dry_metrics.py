@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from code_metrics import METRICS
-from consistency_pilot.dry_metrics import apply_submission, summarize
+from consistency_pilot.dry_metrics import apply_submission, main, summarize
 
 TARGET = '''"""Routes."""
 
@@ -34,6 +37,28 @@ def test_submission_without_imports_is_appended() -> None:
 def test_imports_go_first_in_a_file_without_any() -> None:
     changed = apply_submission("x = 1\n", "import os\n\n\ndef implement():\n    return os.sep\n")
     assert changed.startswith("import os\n\nx = 1\n")
+
+
+def test_imports_the_target_already_has_are_not_repeated() -> None:
+    changed = apply_submission(
+        TARGET,
+        "from shop.views import close_view, get_view\n\n\ndef implement(request):\n"
+        '    return get_view(request["id"]) or close_view(request["id"])\n',
+    )
+    assert changed.count("get_view\n") == 1
+    assert "from shop.views import close_view\n" in changed
+
+
+def test_decorators_are_kept() -> None:
+    changed = apply_submission(
+        "x = 1\n", "from functools import cache\n\n\n@cache\ndef implement():\n    return 1\n"
+    )
+    assert changed.endswith("x = 1\n\n\n@cache\ndef implement():\n    return 1\n")
+
+
+def test_empty_store_is_reported(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main([str(tmp_path)]) == 1
+    assert '"cells": 0' in capsys.readouterr().out
 
 
 def test_summary_compares_each_arm_with_the_reference() -> None:
