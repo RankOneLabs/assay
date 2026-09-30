@@ -12,6 +12,7 @@ import asyncio
 import dataclasses
 import json
 import math
+import re
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -392,7 +393,7 @@ class ConsistencyWorker:
         object.__setattr__(self, "_admission", _Admission(self.settings))
 
     def configuration(self, arm_id: str) -> dict[str, Any]:
-        if arm_id not in {"clean", "inconsistent"}:
+        if arm_id not in {"clean", "inconsistent"} and not re.fullmatch(r"mess-\d\d", arm_id):
             raise ValueError("unknown consistency arm")
         provider = self.factory.configuration()
         if not all(

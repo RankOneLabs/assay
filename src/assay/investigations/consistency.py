@@ -632,12 +632,15 @@ def materialize_consistency(
     correctness_evaluator: Evaluator | None = None,
     execution_schedule: str | None = None,
     repository_variants: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
+    arm_ids: Sequence[str] = ("clean", "inconsistent"),
 ) -> StudySnapshot:
     """Freeze local task/repository inputs and supplied PAA contracts without providers."""
+    if repository_variants is None and set(arm_ids) != {"clean", "inconsistent"}:
+        raise ValueError("arms other than clean and inconsistent need repository variants")
     if repository_variants is not None:
         task_ids = {task.id for task in tasks}
         if set(repository_variants) != task_ids or any(
-            set(repository_variants[task_id]) != {"clean", "inconsistent"} for task_id in task_ids
+            set(repository_variants[task_id]) != set(arm_ids) for task_id in task_ids
         ):
             raise ValueError("repository variants must exactly cover every task and arm")
     basis_ref = str(
@@ -753,7 +756,7 @@ def materialize_consistency(
             intervention={"repository": arm},
             conditions=conditions,
         )
-        for arm in ("clean", "inconsistent")
+        for arm in arm_ids
     )
     subjects = []
     realizations = []

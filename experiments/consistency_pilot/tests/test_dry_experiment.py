@@ -32,6 +32,7 @@ from assay.investigations.correctness import (
     SandboxFailure,
     SandboxResult,
 )
+from assay.investigations.dose_fixtures import DOSE_ARMS, DOSE_TASKS, dose_repository_variants
 from assay.investigations.layered_fixtures import LAYERED_TASKS, layered_repository_variants
 from assay.models import EvaluationCoordinate, ExecutionPlan, StudySnapshot
 from assay.store import ObjectStore
@@ -761,3 +762,89 @@ async def test_layered_scenario_prepares_and_runs_offline(tmp_path: Path) -> Non
     assert comparison["reference_distribution"] == {"duplicated": 12}
     assert comparison["candidate_distribution"] == {"reused": 12}
     assert comparison["improved"] == 12
+
+
+class DoseFakeFactory(FakeFactory):
+    """Reuses until half the existing callers bypass the abstraction."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.arms: list[str] = []
+
+    def create(self) -> DescribedClient:
+        self.created += 1
+        owner = self
+        variants = dose_repository_variants()
+
+        class Client(DescribedClient):
+            def configuration(self) -> dict[str, Any]:
+                return owner.configuration()
+
+            async def complete(self, params: CompletionParams) -> LLMResponse:
+                owner.calls.append(copy.deepcopy(params))
+                prompt = json.loads(params.messages[0].content)
+                task = next(
+                    item for item in DOSE_TASKS if item.instruction == prompt["instruction"]
+                )
+                arm = next(
+                    arm
+                    for arm, repository in variants[task.id].items()
+                    if repository == prompt["repository"]
+                )
+                owner.arms.append(arm)
+                messy = int(arm.removeprefix("mess-")) >= 5
+                source = task.duplicated_source if messy else task.reused_source
+                return LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall("submission", "submit_output", {"source": source})],
+                    usage=Usage(10, 5, 0.001),
+                    latency_ms=1,
+                    model=HAIKU_BEDROCK.model,
+                )
+
+            async def aclose(self) -> None:
+                owner.closed += 1
+
+        return Client()
+
+
+@pytest.mark.asyncio
+async def test_dose_scenario_compares_every_mess_level_with_the_clean_file(
+    tmp_path: Path,
+) -> None:
+    store = ObjectStore(tmp_path / "store")
+    factory = DoseFakeFactory()
+    runner = PassingRunner()
+    settings = haiku_dry_settings("dose")
+    assert settings.max_total_requests == 144
+    prepared = prepare_dry_experiment(
+        store,
+        factory=factory,
+        settings=settings,
+        schemas=contracts(),
+        runner=runner,
+        scenario="dose",
+    )
+    assert isinstance(prepared, DryExperimentPrepared), prepared
+    assert prepared.executions == 144 and prepared.evaluations == 288
+    result = await run_dry_experiment(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=prepared.plan_ref,
+        factory=factory,
+        runner=runner,
+        allow_paid=True,
+        scenario="dose",
+    )
+    assert isinstance(result, DryExperimentSucceeded), result
+    # Each subject/repeat block runs all six arms, starting one arm later each time.
+    blocks = [factory.arms[index : index + 6] for index in range(0, 144, 6)]
+    assert all(sorted(block) == sorted(DOSE_ARMS) for block in blocks)
+    assert [block[0] for block in blocks[:7]] == [*DOSE_ARMS, DOSE_ARMS[0]]
+    report = json.loads(store.read_bytes(result.abstraction_report_ref))
+    by_candidate = {item["candidate"]: item for item in report["comparisons"]}
+    assert set(by_candidate) == set(DOSE_ARMS[1:])
+    for arm, comparison in by_candidate.items():
+        assert comparison["reference"] == "mess-00"
+        expected = 12 if int(arm.removeprefix("mess-")) >= 5 else 0
+        assert comparison["regressed"] == expected

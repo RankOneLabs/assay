@@ -84,6 +84,8 @@ def validate_experiment_shape(
     expected_subjects: int = 12,
     expected_cells: int = 48,
     expected_evaluations: int = 96,
+    arm_ids: Sequence[str] = ("clean", "inconsistent"),
+    schedule: str = "subject-counterbalanced-v1",
 ) -> None:
     """Reject any drift from the fixed, golden 12-task DRY population/grid."""
     tasks_by_id = {task.id: task for task in tasks}
@@ -91,11 +93,9 @@ def validate_experiment_shape(
         subject.id for subject in snapshot.subjects
     } != set(tasks_by_id):
         raise ValueError("consistency experiment subject population changed")
-    if {arm.id for arm in snapshot.arms} != {"clean", "inconsistent"}:
+    if {arm.id for arm in snapshot.arms} != set(arm_ids):
         raise ValueError("consistency experiment arms changed")
-    if {arm.conditions.get("assay_execution_schedule") for arm in snapshot.arms} != {
-        "subject-counterbalanced-v1"
-    }:
+    if {arm.conditions.get("assay_execution_schedule") for arm in snapshot.arms} != {schedule}:
         raise ValueError("consistency experiment execution schedule changed")
     if any(item.repeats != 1 for item in snapshot.evaluators):
         raise ValueError("consistency experiment evaluator repeats changed")
@@ -123,7 +123,7 @@ def validate_experiment_shape(
             or subject.payload_ref != subject_ref
         ):
             raise ValueError("consistency experiment subject declaration changed")
-        for arm_id in ("clean", "inconsistent"):
+        for arm_id in arm_ids:
             repository = repository_for(task, arm_id, repository_variants)
             expected = {
                 "task": task_value,

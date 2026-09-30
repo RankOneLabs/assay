@@ -89,6 +89,30 @@ cd experiments && uv run --env-file ../.env python -m consistency_pilot.run_dry 
     sonnet-5.5 ../.assay/dry-layered-sonnet-5.5-v1 layered
 ```
 
+## Dose-response scenario set
+
+`scenario="dose"` asks how much bypassing code it takes before a model follows it.
+It uses the same twelve layered subjects and tasks, but each target file has ten
+existing callers of the reusable unit. Arm `mess-NN` writes NN of those callers
+inline; the other callers go through the abstraction. There are six arms:
+`mess-00`, `mess-01`, `mess-03`, `mess-05`, `mess-07` and `mess-10`.
+
+- Only the target file differs between arms, and it imports only what its
+  callers use.
+- Messy positions are nested, so each level contains the level below it. They
+  are spread through the file, and the last caller (the one nearest the
+  appended code) stays clean below `mess-10`. A model that follows the mess
+  cannot just be copying the function right above its insertion point.
+- The report compares every mess level with `mess-00` using the same paired
+  sign test. `regressed` counts subjects that reused less at that mess level.
+- The grid is 12 subjects × 6 arms × 2 repeats = 144 cells. The
+  `subject-rotated-v1` schedule starts each subject/repeat block one arm later.
+
+```bash
+cd experiments && uv run --env-file ../.env python -m consistency_pilot.run_dry \
+    gpt-6.1-sol ../.assay/dry-dose-gpt-6.1-sol-v1 dose
+```
+
 ## Correctness sandbox
 
 Generated source is never executed in the Assay process. The correctness

@@ -31,6 +31,7 @@ from assay.investigations.correctness import (
     FunctionalCorrectnessEvaluator,
     SandboxFailure,
 )
+from assay.investigations.dose_fixtures import DOSE_ARMS, DOSE_TASKS, dose_repository_variants
 from assay.investigations.dry_common import (
     publish_plan_dependencies,
     repository_for,
@@ -83,43 +84,72 @@ def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSe
     return ConsistencyWorker, PilotSettings, render_input
 
 
-SCENARIOS = ("v1", "layered")
+SCENARIOS = ("v1", "layered", "dose")
 
 
-def scenario_population(
-    scenario: str,
-) -> tuple[tuple[CodingTask, ...], dict[str, dict[str, dict[str, str]]] | None]:
-    """Tasks and per-arm repositories for a named twelve-subject scenario set."""
+@dataclass(frozen=True)
+class DryScenario:
+    """A twelve-subject population, its arms, and how its report compares them."""
+
+    tasks: tuple[CodingTask, ...]
+    repository_variants: dict[str, dict[str, dict[str, str]]] | None
+    arm_ids: tuple[str, ...] = ("clean", "inconsistent")
+    schedule: str = "subject-counterbalanced-v1"
+    reference_arm: str = "inconsistent"
+    candidates: tuple[str, ...] = ("clean",)
+
+    @property
+    def cells(self) -> int:
+        return len(self.tasks) * len(self.arm_ids) * 2
+
+    @property
+    def evaluations(self) -> int:
+        return self.cells * 2
+
+
+def dry_scenario(scenario: str) -> DryScenario:
+    """The named scenario set: v1 single-file, layered two-arm, or dose-response."""
     if scenario == "v1":
-        return EXPERIMENT_TASKS, None
+        return DryScenario(EXPERIMENT_TASKS, None)
     if scenario == "layered":
-        return LAYERED_TASKS, layered_repository_variants()
+        return DryScenario(LAYERED_TASKS, layered_repository_variants())
+    if scenario == "dose":
+        # Every mess level is compared against the fully consistent file.
+        return DryScenario(
+            DOSE_TASKS,
+            dose_repository_variants(),
+            arm_ids=DOSE_ARMS,
+            schedule="subject-rotated-v1",
+            reference_arm=DOSE_ARMS[0],
+            candidates=DOSE_ARMS[1:],
+        )
     raise ValueError(f"unknown DRY scenario set {scenario!r}; expected one of {SCENARIOS}")
 
 
 def _prompt_override(scenario: str) -> dict[str, str]:
     if scenario == "v1":
         return {}
-    scenario_population(scenario)
+    dry_scenario(scenario)
     from assay.adapters.consistency import LAYERED_SYSTEM_PROMPT
 
     return {"system_prompt": LAYERED_SYSTEM_PROMPT}
 
 
 def haiku_dry_settings(scenario: str = "v1") -> PilotSettings:
-    """Forty-eight one-call cells, $2.88 conservative admission ceiling."""
+    """One call per cell at $0.06 each; 48 cells ($2.88) for two-arm sets."""
     _, PilotSettings, _ = _import_legacy_worker_stack()
+    cells = dry_scenario(scenario).cells
     return PilotSettings(
         **_prompt_override(scenario),
         mode="paid",
         max_llm_calls=1,
-        max_total_requests=48,
-        max_spend_usd=Decimal("2.88"),
+        max_total_requests=cells,
+        max_spend_usd=Decimal("0.06") * cells,
         request_cost_bound_usd=Decimal("0.06"),
         pricing_basis=(
             "OpenRouter inline usage.cost (USD credits), Claude 3 Haiku via "
             "Amazon Bedrock; 2026-09-11 rate caps $0.25/$1.25 per million "
-            "input/output tokens; 48 one-call cells; no per-request fee; bound "
+            f"input/output tokens; {cells} one-call cells; no per-request fee; bound "
             "assumes <=200000 input and <=2048 output tokens, no BYOK, paid "
             "plugins, or additional charges; operator must validate before execution"
         ),
@@ -127,27 +157,28 @@ def haiku_dry_settings(scenario: str = "v1") -> PilotSettings:
 
 
 def frontier_dry_settings(model: str, scenario: str = "v1") -> PilotSettings:
-    """Forty-eight one-call cells for a frontier route, $12 admission ceiling.
+    """One call per cell at $0.25 each; 48 cells ($12) for two-arm sets.
 
     The per-request bound covers a full 65,536-byte request body (<=65,536
     input tokens) at $2.20/M plus 8,192 output tokens at $12/M. Temperature is
     omitted because these routes reject or ignore it for reasoning models.
     """
     _, PilotSettings, _ = _import_legacy_worker_stack()
+    cells = dry_scenario(scenario).cells
     return PilotSettings(
         **_prompt_override(scenario),
         mode="paid",
         temperature=None,
         max_output_tokens=8192,
         max_llm_calls=1,
-        max_total_requests=48,
+        max_total_requests=cells,
         request_timeout_s=120,
         attempt_timeout_s=180,
-        max_spend_usd=Decimal("12.00"),
+        max_spend_usd=Decimal("0.25") * cells,
         request_cost_bound_usd=Decimal("0.25"),
         pricing_basis=(
             f"OpenRouter inline usage.cost (USD credits), {model}; 2026-09-30 rate "
-            "caps <=$2.20/<=$12 per million input/output tokens; 48 one-call cells; "
+            f"caps <=$2.20/<=$12 per million input/output tokens; {cells} one-call cells; "
             "bound assumes <=65536 input and <=8192 output tokens"
         ),
     )
@@ -197,8 +228,8 @@ def prepare_dry_experiment(
 ) -> DryExperimentPrepared | DryExperimentFailed:
     """Materialize the full study without clients, containers, or provider calls."""
     try:
-        tasks, repository_variants = scenario_population(scenario)
-        if len(tasks) < 10:
+        population = dry_scenario(scenario)
+        if len(population.tasks) < 10:
             raise ValueError("DRY experiment requires at least ten subjects")
         _validate_dry_profile(factory, settings, scenario)
         ConsistencyWorker, _, _ = _import_legacy_worker_stack()
@@ -206,14 +237,15 @@ def prepare_dry_experiment(
         correctness = FunctionalCorrectnessEvaluator(runner)
         snapshot = materialize_consistency(
             store,
-            worker_configuration=worker.configuration("clean"),
+            worker_configuration=worker.configuration(population.arm_ids[0]),
             evaluator=StructuralEvaluator(),
             correctness_evaluator=correctness,
             schemas=schemas,
-            tasks=tasks,
+            tasks=population.tasks,
             evaluator_repeats=1,
-            execution_schedule="subject-counterbalanced-v1",
-            repository_variants=repository_variants,
+            execution_schedule=population.schedule,
+            repository_variants=population.repository_variants,
+            arm_ids=population.arm_ids,
         )
         verify_snapshot(store, snapshot)
         snapshot_ref = str(store.publish_json(snapshot.model_dump(mode="json")))
@@ -227,7 +259,7 @@ def prepare_dry_experiment(
         )
         plan_ref = str(store.publish_json(plan.model_dump(mode="json")))
         reference_closure(store, (plan_ref,))
-        if len(plan.cells) != 48 or len(plan.evaluations) != 96:
+        if len(plan.cells) != population.cells or len(plan.evaluations) != population.evaluations:
             raise ValueError("unexpected DRY experiment grid")
         return DryExperimentPrepared(snapshot_ref, plan_ref, len(plan.cells), len(plan.evaluations))
     except Exception as error:
@@ -240,12 +272,14 @@ def _report_config(
     *,
     evaluator_id: str,
     categories: tuple[str, ...],
+    reference_arm: str = "inconsistent",
+    candidates: tuple[str, ...] = ("clean",),
 ) -> ReportConfig:
     return ReportConfig(
         manifest_refs=(manifest_ref,),
         record_refs=record_refs,
-        reference_arm="inconsistent",
-        candidates=("clean",),
+        reference_arm=reference_arm,
+        candidates=candidates,
         evaluator_id=evaluator_id,
         metric="ordinal",
         categories=categories,
@@ -271,6 +305,10 @@ async def run_consistency_experiment(
     expected_evaluations: int,
     allow_paid: bool = False,
     export_destination: Path | None = None,
+    arm_ids: tuple[str, ...] = ("clean", "inconsistent"),
+    schedule: str = "subject-counterbalanced-v1",
+    reference_arm: str = "inconsistent",
+    candidates: tuple[str, ...] = ("clean",),
 ) -> DryExperimentSucceeded | DryExperimentFailed:
     """Execute one independently approved plan and derive two separate reports."""
     manifest_ref: str | None = None
@@ -320,6 +358,8 @@ async def run_consistency_experiment(
             expected_subjects=expected_subjects,
             expected_cells=expected_cells,
             expected_evaluations=expected_evaluations,
+            arm_ids=arm_ids,
+            schedule=schedule,
         )
         settings = PilotSettings.model_validate(snapshot.arms[0].worker["settings"])
         profile_validator(factory, settings)
@@ -349,7 +389,7 @@ async def run_consistency_experiment(
                 return DryExperimentFailed(rendered.error_type, rendered.message)
         sandbox_check = await runner.run(
             task=tasks[0],
-            repository=repository_for(tasks[0], "clean", repository_variants),
+            repository=repository_for(tasks[0], arm_ids[0], repository_variants),
             target_path=tasks[0].target_path,
             source=tasks[0].reused_source,
         )
@@ -388,6 +428,8 @@ async def run_consistency_experiment(
                     by_evaluator["abstraction"],
                     evaluator_id="abstraction",
                     categories=CATEGORIES,
+                    reference_arm=reference_arm,
+                    candidates=candidates,
                 ),
             )
         )
@@ -399,6 +441,8 @@ async def run_consistency_experiment(
                     by_evaluator["correctness"],
                     evaluator_id="correctness",
                     categories=CORRECTNESS_CATEGORIES,
+                    reference_arm=reference_arm,
+                    candidates=candidates,
                 ),
             )
         )
@@ -442,7 +486,7 @@ async def run_dry_experiment(
 ) -> DryExperimentSucceeded | DryExperimentFailed:
     """Execute one independently approved 12-subject DRY plan."""
     try:
-        tasks, repository_variants = scenario_population(scenario)
+        population = dry_scenario(scenario)
     except ValueError as error:
         return DryExperimentFailed(type(error).__name__, str(error))
 
@@ -455,12 +499,16 @@ async def run_dry_experiment(
         authorization=authorization,
         factory=factory,
         runner=runner,
-        tasks=tasks,
-        repository_variants=repository_variants,
+        tasks=population.tasks,
+        repository_variants=population.repository_variants,
         profile_validator=validate_profile,
         expected_subjects=12,
-        expected_cells=48,
-        expected_evaluations=96,
+        expected_cells=population.cells,
+        expected_evaluations=population.evaluations,
         allow_paid=allow_paid,
         export_destination=export_destination,
+        arm_ids=population.arm_ids,
+        schedule=population.schedule,
+        reference_arm=population.reference_arm,
+        candidates=population.candidates,
     )

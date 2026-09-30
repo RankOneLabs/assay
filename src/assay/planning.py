@@ -87,6 +87,17 @@ def _compile_common(
             for arm in (arms if (subject_index + repeat) % 2 == 0 else list(reversed(arms)))
             if (subject.id, arm.id) not in excluded
         )
+    elif schedules == {"subject-rotated-v1"} and len(arms) >= 2:
+        # Each subject/repeat block starts one arm later than the previous one,
+        # so no arm always runs first.
+        ordered_coordinates = (
+            (subject, arm, repeat)
+            for subject_index, subject in enumerate(subjects)
+            for repeat in range(worker_repeats)
+            for offset in [(subject_index * worker_repeats + repeat) % len(arms)]
+            for arm in (*arms[offset:], *arms[:offset])
+            if (subject.id, arm.id) not in excluded
+        )
     else:
         raise ValueError("execution schedule must be absent or a common supported value")
     cells = tuple(

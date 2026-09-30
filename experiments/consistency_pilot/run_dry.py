@@ -2,8 +2,10 @@
 
     cd experiments && uv run python -m consistency_pilot.run_dry <profile> <store-dir> [scenario]
 
-``scenario`` is ``v1`` (default: single-file value helpers) or ``layered``
-(route/view, domain-rule and cross-module fixtures).
+``scenario`` is ``v1`` (default: single-file value helpers), ``layered``
+(route/view, domain-rule and cross-module fixtures) or ``dose`` (the layered
+subjects with 0, 1, 3, 5, 7 or 10 of ten existing callers bypassing the
+abstraction).
 
 Running this is the spending authorization: it approves the plan it just
 prepared. Bundles are exported to ``<store-dir>-run-1-bundles``.
@@ -32,19 +34,23 @@ from consistency_pilot.dry_experiment import (
 
 def _summary(store: ObjectStore, report_ref: str) -> dict[str, object]:
     report = json.loads(store.read_bytes(report_ref))
-    comparison = report["comparisons"][0]
-    return {
-        "clean": comparison["candidate_distribution"],
-        "inconsistent": comparison["reference_distribution"],
-        "n": comparison["n"],
-        "ties": comparison["ties"],
-        "improved": comparison["improved"],
-        "regressed": comparison["regressed"],
-        "p_value": comparison["p_value"],
-        "decision": comparison["decision"],
-        "missingness": report["missingness"],
-        "cost": report["costs"]["amounts"],
+    comparisons = report["comparisons"]
+    summary: dict[str, object] = {
+        comparisons[0]["reference"]: comparisons[0]["reference_distribution"]
     }
+    for comparison in comparisons:
+        summary[comparison["candidate"]] = {
+            "distribution": comparison["candidate_distribution"],
+            "n": comparison["n"],
+            "ties": comparison["ties"],
+            "improved": comparison["improved"],
+            "regressed": comparison["regressed"],
+            "p_value": comparison["p_value"],
+            "decision": comparison["decision"],
+        }
+    summary["missingness"] = report["missingness"]
+    summary["cost"] = report["costs"]["amounts"]
+    return summary
 
 
 async def main(profile: str, root: str, scenario: str = "v1") -> int:
