@@ -36,6 +36,13 @@ class FunctionalCase(WireModel):
     expected: Any
 
 
+class ChainStep(WireModel):
+    """One addition in a chained task; its output is renamed to ``name`` and kept."""
+
+    instruction: str = Field(min_length=1)
+    name: str = Field(pattern=r"^[a-z_][a-z0-9_]*$")
+
+
 class CodingTask(WireModel):
     id: str
     family: Literal[
@@ -52,14 +59,27 @@ class CodingTask(WireModel):
     test_cases: tuple[FunctionalCase, ...] = ()
     reused_source: str = ""
     duplicated_source: str = ""
+    # Successive additions made in one cell, the first being ``instruction``.
+    chain: tuple[ChainStep, ...] = ()
 
     @model_serializer(mode="wrap")
     def omit_absent_helper_module(self, handler: Any) -> Any:
-        # Same-file tasks keep their pre-helper_module payloads and digests.
+        # Tasks without these fields keep their earlier payloads and digests.
         value = handler(self)
-        if isinstance(value, dict) and value.get("helper_module") is None:
-            value.pop("helper_module", None)
+        if isinstance(value, dict):
+            if value.get("helper_module") is None:
+                value.pop("helper_module", None)
+            if not value.get("chain"):
+                value.pop("chain", None)
         return value
+
+    @model_validator(mode="after")
+    def chain_starts_with_instruction(self) -> CodingTask:
+        if self.chain and self.chain[0].instruction != self.instruction:
+            raise ValueError("a chain's first step must be the task instruction")
+        if len({step.name for step in self.chain}) != len(self.chain):
+            raise ValueError("chain step names must be unique")
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -588,6 +608,29 @@ class StructuralEvaluator:
         )
 
 
+class ChainStepEvaluator:
+    """Structural verdict for one step of a chained worker output."""
+
+    def __init__(self, step: int) -> None:
+        self.step = step
+        self.structural = StructuralEvaluator()
+
+    def configuration(self) -> dict[str, Any]:
+        return {**self.structural.configuration(), "chain_step": self.step}
+
+    async def evaluate(
+        self, *, input_value: Any, output: Any, coordinate: EvaluationCoordinate
+    ) -> EvaluationResult:
+        try:
+            step = output["steps"][self.step]
+            source = step["source"]
+        except (KeyError, IndexError, TypeError):
+            return EvaluationFailed("StepMissing", f"chain step {self.step} produced no source")
+        return await self.structural.evaluate(
+            input_value=input_value, output={"source": source}, coordinate=coordinate
+        )
+
+
 def _payload_schema(schema_id: str, categories: tuple[str, ...]) -> dict[str, Any]:
     ref = {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
     fields: dict[str, Any] = {
@@ -633,6 +676,7 @@ def materialize_consistency(
     execution_schedule: str | None = None,
     repository_variants: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
     arm_ids: Sequence[str] = ("clean", "inconsistent"),
+    abstraction_evaluators: Mapping[str, Evaluator] | None = None,
 ) -> StudySnapshot:
     """Freeze local task/repository inputs and supplied PAA contracts without providers."""
     if repository_variants is None and set(arm_ids) != {"clean", "inconsistent"}:
@@ -665,16 +709,21 @@ def materialize_consistency(
         "version": "2",
         "authority": "advisory",
     }
-    declaration = EvaluatorDeclaration(
-        id="abstraction",
-        identity=identity,
-        payload_schema=PAYLOAD_SCHEMA_ID,
-        payload_schema_ref=str(store.publish_json(_payload_schema(PAYLOAD_SCHEMA_ID, CATEGORIES))),
-        basis_ref=basis_ref,
-        configuration=evaluator.configuration(),
-        repeats=evaluator_repeats,
-    )
-    declarations = [declaration]
+    payload_schema_ref = str(store.publish_json(_payload_schema(PAYLOAD_SCHEMA_ID, CATEGORIES)))
+    declarations = [
+        EvaluatorDeclaration(
+            id=evaluator_id,
+            identity=identity,
+            payload_schema=PAYLOAD_SCHEMA_ID,
+            payload_schema_ref=payload_schema_ref,
+            basis_ref=basis_ref,
+            configuration=abstraction.configuration(),
+            repeats=evaluator_repeats,
+        )
+        for evaluator_id, abstraction in (
+            abstraction_evaluators or {"abstraction": evaluator}
+        ).items()
+    ]
     identities: list[dict[str, Any]] = [identity]
     if correctness_evaluator is not None:
         correctness_categories = ("incorrect", "correct")

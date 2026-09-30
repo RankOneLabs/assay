@@ -112,5 +112,5 @@ GEMINI_3_1_PRO_VERTEX = OpenRouterSettings(
     max_prompt_price=2,
     max_completion_price=12,
     max_output_tokens=8192,
-    timeout_s=120,
+    timeout_s=300,
 )

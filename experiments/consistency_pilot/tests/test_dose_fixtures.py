@@ -12,6 +12,8 @@ from assay.investigations.dose_fixtures import (
     DOSE_ARMS,
     DOSE_TASKS,
     MESS_POSITIONS,
+    PLACEMENT_ARMS,
+    PLACEMENT_LAYOUT,
     dose_repository_variants,
 )
 from assay.models import EvaluationCoordinate
@@ -107,3 +109,33 @@ async def test_reference_sources_classify(task) -> None:
         )
         assert isinstance(result, EvaluationSuccess), result
         assert result.verdict == expected
+
+
+PLACEMENT = dose_repository_variants(PLACEMENT_LAYOUT)
+
+
+@pytest.mark.parametrize("task", DOSE_TASKS, ids=lambda task: task.id)
+def test_placement_arms_put_the_inline_callers_right_above_the_insertion_point(task) -> None:
+    arms = PLACEMENT[task.id]
+    assert tuple(arms) == PLACEMENT_ARMS
+    for arm in ("mess-00", "mess-10"):
+        assert arms[arm] == VARIANTS[task.id][arm]
+    distractors = {
+        name
+        for name, function in _functions(arms["mess-00"][task.target_path]).items()
+        if not _uses_abstraction(function, task.helper)
+    }
+    for arm, repository in arms.items():
+        functions = _functions(repository[task.target_path]).items()
+        inline = [
+            not _uses_abstraction(function, task.helper)
+            for name, function in functions
+            if name not in distractors
+        ]
+        count = int(arm.split("-")[1])
+        # The inline callers form one block at the end of the file.
+        assert inline == [False] * (10 - count) + [True] * count
+        for source in (task.reused_source, task.duplicated_source):
+            case = task.test_cases[0]
+            actual = _run_case(repository, task.target_path, source, case.input)
+            assert canonical_json(actual) == canonical_json(case.expected), (arm, source)

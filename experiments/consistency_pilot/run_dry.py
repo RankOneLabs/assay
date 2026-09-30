@@ -5,7 +5,8 @@
 ``scenario`` is ``v1`` (default: single-file value helpers), ``layered``
 (route/view, domain-rule and cross-module fixtures) or ``dose`` (the layered
 subjects with 0, 1, 3, 5, 7 or 10 of ten existing callers bypassing the
-abstraction).
+abstraction), ``placement`` (the bypassing callers clustered right above the
+insertion point) or ``chain`` (five successive additions per cell).
 
 Running this is the spending authorization: it approves the plan it just
 prepared. Bundles are exported to ``<store-dir>-run-1-bundles``.
@@ -84,10 +85,7 @@ async def main(profile: str, root: str, scenario: str = "v1") -> int:
     print(profile, result, flush=True)
     if not isinstance(result, DryExperimentSucceeded):
         return 1
-    for name, ref in (
-        ("abstraction", result.abstraction_report_ref),
-        ("correctness", result.correctness_report_ref),
-    ):
+    for name, ref in (result.report_refs or {}).items():
         print(profile, name, json.dumps(_summary(store, ref)), flush=True)
     return 0
 

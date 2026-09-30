@@ -7,6 +7,9 @@ inline and the rest through the abstraction; everything else in the repository
 is identical across arms. Messy callers are spread through the file, each
 level's set contains the previous level's, and the caller nearest the end of
 the file, where the model's code is appended, stays clean until ``mess-10``.
+
+The placement layout swaps that: arm ``tail-NN`` makes the last NN callers
+inline, so the code nearest the model's insertion point is always messy.
 """
 
 from __future__ import annotations
@@ -42,7 +45,14 @@ MESS_POSITIONS: dict[int, tuple[int, ...]] = {
     7: (0, 1, 2, 4, 6, 7, 8),
     10: tuple(range(10)),
 }
-DOSE_ARMS = tuple(f"mess-{level:02d}" for level in MESS_POSITIONS)
+DOSE_LAYOUT = {f"mess-{level:02d}": positions for level, positions in MESS_POSITIONS.items()}
+DOSE_ARMS = tuple(DOSE_LAYOUT)
+PLACEMENT_LAYOUT: dict[str, tuple[int, ...]] = {
+    "mess-00": (),
+    **{f"tail-{count:02d}": tuple(range(10 - count, 10)) for count in (1, 3, 5, 7)},
+    "mess-10": tuple(range(10)),
+}
+PLACEMENT_ARMS = tuple(PLACEMENT_LAYOUT)
 
 
 def _source(text: str) -> str:
@@ -83,8 +93,8 @@ class _Target:
     # so a file never imports a name only its other rendering would use.
     caller_imports: tuple[tuple[Mapping[str, set[str]], Mapping[str, set[str]]], ...] = ()
 
-    def render(self, level: int) -> str:
-        messy = set(MESS_POSITIONS[level])
+    def render(self, positions: Sequence[int]) -> str:
+        messy = set(positions)
         if self.caller_imports:
             imports = _merge(
                 self.always,
@@ -1205,8 +1215,10 @@ def _dose_task(task: CodingTask) -> CodingTask:
 DOSE_TASKS: tuple[CodingTask, ...] = tuple(_dose_task(task) for task in LAYERED_TASKS)
 
 
-def dose_repository_variants() -> dict[str, dict[str, dict[str, str]]]:
-    """Every subject at every mess level; only the target file differs between arms."""
+def dose_repository_variants(
+    layout: Mapping[str, Sequence[int]] = DOSE_LAYOUT,
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Every subject in every arm of ``layout``; only the target file differs."""
     variants: dict[str, dict[str, dict[str, str]]] = {}
     for task in DOSE_TASKS:
         shared, target, replacement = _SUBJECTS[task.id]
@@ -1214,7 +1226,7 @@ def dose_repository_variants() -> dict[str, dict[str, dict[str, str]]]:
         if replacement is not None:
             files[replacement[0]] = replacement[1]
         variants[task.id] = {
-            f"mess-{level:02d}": {**files, task.target_path: target.render(level)}
-            for level in MESS_POSITIONS
+            arm: {**files, task.target_path: target.render(positions)}
+            for arm, positions in layout.items()
         }
     return variants

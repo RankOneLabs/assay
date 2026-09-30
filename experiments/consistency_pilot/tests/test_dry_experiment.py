@@ -24,6 +24,7 @@ from pydantic import ValidationError
 from assay.adapters.consistency import LAYERED_SYSTEM_PROMPT, DescribedClient
 from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
 from assay.execution import EvaluationFailed, EvaluationSuccess
+from assay.investigations.chain_fixtures import CHAIN_TASKS, chain_repository_variants
 from assay.investigations.consistency import EXPERIMENT_TASKS, CodingTask, StructuralEvaluator
 from assay.investigations.correctness import (
     DockerPythonRunner,
@@ -848,3 +849,90 @@ async def test_dose_scenario_compares_every_mess_level_with_the_clean_file(
         assert comparison["reference"] == "mess-00"
         expected = 12 if int(arm.removeprefix("mess-")) >= 5 else 0
         assert comparison["regressed"] == expected
+
+
+class ChainFakeFactory(FakeFactory):
+    """Reuses on the first step; from a tail-07 file it duplicates afterwards."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prompts: list[dict[str, Any]] = []
+
+    def create(self) -> DescribedClient:
+        self.created += 1
+        owner = self
+        variants = chain_repository_variants()
+
+        class Client(DescribedClient):
+            def configuration(self) -> dict[str, Any]:
+                return owner.configuration()
+
+            async def complete(self, params: CompletionParams) -> LLMResponse:
+                owner.calls.append(copy.deepcopy(params))
+                prompt = json.loads(params.messages[0].content)
+                owner.prompts.append(prompt)
+                task = next(
+                    item
+                    for item in CHAIN_TASKS
+                    if prompt["instruction"] in {step.instruction for step in item.chain}
+                )
+                target = prompt["repository"][task.target_path]
+                first = prompt["instruction"] == task.chain[0].instruction
+                messy = target.startswith(variants[task.id]["tail-07"][task.target_path])
+                source = task.reused_source if first or not messy else task.duplicated_source
+                return LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall("submission", "submit_output", {"source": source})],
+                    usage=Usage(10, 5, 0.001),
+                    latency_ms=1,
+                    model=HAIKU_BEDROCK.model,
+                )
+
+            async def aclose(self) -> None:
+                owner.closed += 1
+
+        return Client()
+
+
+@pytest.mark.asyncio
+async def test_chain_scenario_reports_every_step(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / "store")
+    factory = ChainFakeFactory()
+    runner = PassingRunner()
+    settings = haiku_dry_settings("chain")
+    assert settings.max_total_requests == 72 * 5
+    prepared = prepare_dry_experiment(
+        store,
+        factory=factory,
+        settings=settings,
+        schemas=contracts(),
+        runner=runner,
+        scenario="chain",
+    )
+    assert isinstance(prepared, DryExperimentPrepared), prepared
+    assert prepared.executions == 72 and prepared.evaluations == 72 * 5
+    result = await run_dry_experiment(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=prepared.plan_ref,
+        factory=factory,
+        runner=runner,
+        allow_paid=True,
+        scenario="chain",
+    )
+    assert isinstance(result, DryExperimentSucceeded), result
+    assert len(factory.calls) == 72 * 5
+    # Each later step sees the earlier steps' functions under their chain names.
+    task = CHAIN_TASKS[0]
+    later = [p for p in factory.prompts if p["instruction"] == task.chain[4].instruction]
+    assert later and all(
+        f"def {step.name}(" in prompt["repository"][task.target_path]
+        for prompt in later
+        for step in task.chain[:4]
+    )
+    assert result.report_refs is not None
+    assert list(result.report_refs) == [f"abstraction-{step}" for step in range(1, 6)]
+    for step, report_ref in enumerate(result.report_refs.values()):
+        report = json.loads(store.read_bytes(report_ref))
+        regressed = {item["candidate"]: item["regressed"] for item in report["comparisons"]}
+        assert regressed == {"tail-03": 0, "tail-07": 0 if step == 0 else 12}

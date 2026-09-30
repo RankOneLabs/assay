@@ -8,6 +8,7 @@ validated per-request billing bound; it cannot control a remote provider's bill.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import dataclasses
 import json
@@ -393,7 +394,9 @@ class ConsistencyWorker:
         object.__setattr__(self, "_admission", _Admission(self.settings))
 
     def configuration(self, arm_id: str) -> dict[str, Any]:
-        if arm_id not in {"clean", "inconsistent"} and not re.fullmatch(r"mess-\d\d", arm_id):
+        if arm_id not in {"clean", "inconsistent"} and not re.fullmatch(
+            r"(mess|tail|ctx)-\d\d", arm_id
+        ):
             raise ValueError("unknown consistency arm")
         provider = self.factory.configuration()
         if not all(
@@ -503,3 +506,104 @@ class ConsistencyWorker:
             trace=detail,
             accounting=Accounting() if bounded is None else bounded.accounting(),
         )
+
+
+def _combined_accounting(parts: list[Accounting]) -> Accounting:
+    """One cell's accounting across its chained attempts; unknown stays unknown."""
+    measured = [part.usage for part in parts if part.usage is not None]
+    usage: dict[str, float | None] | None = None
+    if measured:
+        keys = sorted({key for part in measured for key in part})
+        usage = {}
+        for key in keys:
+            values = [part.get(key) for part in measured]
+            usage[key] = None if any(value is None for value in values) else sum(values)  # type: ignore[arg-type]
+    if any(part.coverage == "uncertain" for part in parts):
+        return Accounting(usage=usage, coverage="uncertain")
+    priced = [part for part in parts if part.amount is not None]
+    if not priced:
+        return Accounting(usage=usage, coverage="unavailable")
+    if len({part.currency for part in priced}) != 1:
+        return Accounting(usage=usage, coverage="uncertain")
+    coverages = {part.coverage for part in priced}
+    return Accounting(
+        usage=usage,
+        amount=sum(part.amount for part in priced if part.amount is not None),
+        currency=priced[0].currency,
+        coverage=coverages.pop() if len(coverages) == 1 else "mixed",
+        basis=priced[0].basis,
+    )
+
+
+def _append_step(target_source: str, step_source: str, name: str) -> str | None:
+    """The target file with a step's source appended and ``implement`` renamed."""
+    try:
+        tree = ast.parse(step_source)
+    except SyntaxError:
+        return None
+    implementations = [
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "implement"
+    ]
+    if len(implementations) != 1:
+        return None
+    renamed = re.sub(r"^def implement\(", f"def {name}(", step_source, count=1, flags=re.MULTILINE)
+    return target_source.rstrip("\n") + "\n\n\n" + renamed.strip("\n") + "\n"
+
+
+@dataclasses.dataclass(frozen=True)
+class ChainWorker:
+    """Makes a task's chained additions in one cell, each seeing the ones before it.
+
+    Every step is one ordinary consistency-worker call. Its source is appended
+    to the target file under the step's name before the next call, so later
+    steps read the model's own earlier code. A failed or unparseable step ends
+    the chain; the steps before it are kept.
+    """
+
+    inner: ConsistencyWorker
+
+    def configuration(self, arm_id: str) -> dict[str, Any]:
+        return {**self.inner.configuration(arm_id), "chain": "append-renamed-v1"}
+
+    async def run(self, *, input_value: Any, arm_id: str) -> WorkerResult:
+        try:
+            task = input_value["task"]
+            steps = task["chain"]
+            target = task["target_path"]
+            repository = dict(input_value["repository"])
+            if not steps or target not in repository:
+                raise ValueError("chained task input required")
+        except (KeyError, TypeError, ValueError):
+            return WorkerFailure("InvalidInput", "chained task input required")
+        outputs: list[dict[str, str]] = []
+        traces: list[Any] = []
+        parts: list[Accounting] = []
+        for step in steps:
+            result = await self.inner.run(
+                input_value={
+                    "task": {**task, "instruction": step["instruction"]},
+                    "repository": dict(repository),
+                    "base_subject_ref": input_value["base_subject_ref"],
+                },
+                arm_id=arm_id,
+            )
+            traces.append(result.trace)
+            parts.append(result.accounting)
+            if isinstance(result, WorkerFailure):
+                outputs.append({"error_type": result.error_type, "message": result.message})
+                break
+            source = result.output["source"]
+            outputs.append({"source": source})
+            appended = _append_step(repository[target], source, step["name"])
+            if appended is None:
+                break
+            repository[target] = appended
+        accounting = _combined_accounting(parts)
+        if "source" not in outputs[0]:
+            return WorkerFailure(
+                outputs[0]["error_type"],
+                outputs[0]["message"],
+                trace={"steps": traces},
+                accounting=accounting,
+            )
+        return WorkerSuccess({"steps": outputs}, trace={"steps": traces}, accounting=accounting)

@@ -18,20 +18,34 @@ from typing import TYPE_CHECKING, Any
 from assay._version import __version__
 from assay.canonical import canonical_json
 from assay.execution import Evaluator, RunFailed, WorkerFailure, execute_plan
+from assay.investigations.chain_fixtures import (
+    CHAIN_ARMS,
+    CHAIN_STEPS,
+    CHAIN_TASKS,
+    chain_repository_variants,
+)
 from assay.investigations.consistency import (
     CATEGORIES,
     EXPERIMENT_TASKS,
+    ChainStepEvaluator,
     CodingTask,
     StructuralEvaluator,
     materialize_consistency,
 )
+from assay.investigations.context_fixtures import CONTEXT_ARMS, context_repository_variants
 from assay.investigations.correctness import (
     CORRECTNESS_CATEGORIES,
     DockerPythonRunner,
     FunctionalCorrectnessEvaluator,
     SandboxFailure,
 )
-from assay.investigations.dose_fixtures import DOSE_ARMS, DOSE_TASKS, dose_repository_variants
+from assay.investigations.dose_fixtures import (
+    DOSE_ARMS,
+    DOSE_TASKS,
+    PLACEMENT_ARMS,
+    PLACEMENT_LAYOUT,
+    dose_repository_variants,
+)
 from assay.investigations.dry_common import (
     publish_plan_dependencies,
     repository_for,
@@ -71,7 +85,9 @@ class DryExperimentFailed:
 class DryExperimentSucceeded:
     manifest_ref: str
     abstraction_report_ref: str
-    correctness_report_ref: str
+    correctness_report_ref: str | None
+    # Every report by evaluator id; chained runs have one abstraction report per step.
+    report_refs: dict[str, str] | None = None
 
 
 def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSettings], Any]:
@@ -84,7 +100,7 @@ def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSe
     return ConsistencyWorker, PilotSettings, render_input
 
 
-SCENARIOS = ("v1", "layered", "dose")
+SCENARIOS = ("v1", "layered", "dose", "placement", "chain", "context")
 
 
 @dataclass(frozen=True)
@@ -97,14 +113,32 @@ class DryScenario:
     schedule: str = "subject-counterbalanced-v1"
     reference_arm: str = "inconsistent"
     candidates: tuple[str, ...] = ("clean",)
+    # Successive additions per cell; 0 means one ordinary call per cell.
+    chain_steps: int = 0
 
     @property
     def cells(self) -> int:
         return len(self.tasks) * len(self.arm_ids) * 2
 
     @property
+    def requests(self) -> int:
+        return self.cells * max(1, self.chain_steps)
+
+    @property
+    def evaluator_ids(self) -> tuple[str, ...]:
+        if self.chain_steps:
+            return tuple(f"abstraction-{step}" for step in range(1, self.chain_steps + 1))
+        return ("abstraction", "correctness")
+
+    @property
     def evaluations(self) -> int:
-        return self.cells * 2
+        return self.cells * len(self.evaluator_ids)
+
+    @property
+    def request_basis(self) -> str:
+        if self.chain_steps:
+            return f"{self.cells} cells of {self.chain_steps} one-call steps"
+        return f"{self.cells} one-call cells"
 
 
 def dry_scenario(scenario: str) -> DryScenario:
@@ -123,40 +157,77 @@ def dry_scenario(scenario: str) -> DryScenario:
             reference_arm=DOSE_ARMS[0],
             candidates=DOSE_ARMS[1:],
         )
+    if scenario == "placement":
+        # The inline callers sit right above the model's insertion point.
+        return DryScenario(
+            DOSE_TASKS,
+            dose_repository_variants(PLACEMENT_LAYOUT),
+            arm_ids=PLACEMENT_ARMS,
+            schedule="subject-rotated-v1",
+            reference_arm="mess-00",
+            candidates=PLACEMENT_ARMS[1:],
+        )
+    if scenario == "chain":
+        # Five successive additions per cell, starting from placement files.
+        return DryScenario(
+            CHAIN_TASKS,
+            chain_repository_variants(),
+            arm_ids=CHAIN_ARMS,
+            schedule="subject-rotated-v1",
+            reference_arm=CHAIN_ARMS[0],
+            candidates=CHAIN_ARMS[1:],
+            chain_steps=CHAIN_STEPS,
+        )
+    if scenario == "context":
+        # The same tail-07 file in repositories padded to about 30 KB and 90 KB.
+        return DryScenario(
+            DOSE_TASKS,
+            context_repository_variants(),
+            arm_ids=CONTEXT_ARMS,
+            schedule="subject-rotated-v1",
+            reference_arm=CONTEXT_ARMS[0],
+            candidates=CONTEXT_ARMS[1:],
+        )
     raise ValueError(f"unknown DRY scenario set {scenario!r}; expected one of {SCENARIOS}")
 
 
-def _prompt_override(scenario: str) -> dict[str, str]:
+def _prompt_override(scenario: str) -> dict[str, Any]:
     if scenario == "v1":
         return {}
     dry_scenario(scenario)
     from assay.adapters.consistency import LAYERED_SYSTEM_PROMPT
 
-    return {"system_prompt": LAYERED_SYSTEM_PROMPT}
+    override: dict[str, Any] = {"system_prompt": LAYERED_SYSTEM_PROMPT}
+    if scenario == "context":
+        # Padded repositories render to about 103 KB of prompt.
+        override["max_input_bytes"] = 131_072
+    return override
 
 
 def haiku_dry_settings(scenario: str = "v1") -> PilotSettings:
     """One call per cell at $0.06 each; 48 cells ($2.88) for two-arm sets."""
     _, PilotSettings, _ = _import_legacy_worker_stack()
-    cells = dry_scenario(scenario).cells
+    population = dry_scenario(scenario)
     return PilotSettings(
         **_prompt_override(scenario),
         mode="paid",
         max_llm_calls=1,
-        max_total_requests=cells,
-        max_spend_usd=Decimal("0.06") * cells,
+        max_total_requests=population.requests,
+        max_spend_usd=Decimal("0.06") * population.requests,
         request_cost_bound_usd=Decimal("0.06"),
         pricing_basis=(
             "OpenRouter inline usage.cost (USD credits), Claude 3 Haiku via "
             "Amazon Bedrock; 2026-09-11 rate caps $0.25/$1.25 per million "
-            f"input/output tokens; {cells} one-call cells; no per-request fee; bound "
+            f"input/output tokens; {population.request_basis}; no per-request fee; bound "
             "assumes <=200000 input and <=2048 output tokens, no BYOK, paid "
             "plugins, or additional charges; operator must validate before execution"
         ),
     )
 
 
-def frontier_dry_settings(model: str, scenario: str = "v1") -> PilotSettings:
+def frontier_dry_settings(
+    model: str, scenario: str = "v1", request_timeout_s: float = 120
+) -> PilotSettings:
     """One call per cell at $0.25 each; 48 cells ($12) for two-arm sets.
 
     The per-request bound covers a full 65,536-byte request body (<=65,536
@@ -164,21 +235,21 @@ def frontier_dry_settings(model: str, scenario: str = "v1") -> PilotSettings:
     omitted because these routes reject or ignore it for reasoning models.
     """
     _, PilotSettings, _ = _import_legacy_worker_stack()
-    cells = dry_scenario(scenario).cells
+    population = dry_scenario(scenario)
     return PilotSettings(
         **_prompt_override(scenario),
         mode="paid",
         temperature=None,
         max_output_tokens=8192,
         max_llm_calls=1,
-        max_total_requests=cells,
-        request_timeout_s=120,
-        attempt_timeout_s=180,
-        max_spend_usd=Decimal("0.25") * cells,
+        max_total_requests=population.requests,
+        request_timeout_s=request_timeout_s,
+        attempt_timeout_s=request_timeout_s + 60,
+        max_spend_usd=Decimal("0.25") * population.requests,
         request_cost_bound_usd=Decimal("0.25"),
         pricing_basis=(
             f"OpenRouter inline usage.cost (USD credits), {model}; 2026-09-30 rate "
-            f"caps <=$2.20/<=$12 per million input/output tokens; {cells} one-call cells; "
+            f"caps <=$2.20/<=$12 per million input/output tokens; {population.request_basis}; "
             "bound assumes <=65536 input and <=8192 output tokens"
         ),
     )
@@ -199,7 +270,10 @@ def dry_profiles(scenario: str = "v1") -> dict[str, tuple[OpenRouterSettings, Pi
         ("gpt-6.1-sol", GPT_6_1_SOL_AZURE),
         ("gemini-3.1-pro", GEMINI_3_1_PRO_VERTEX),
     ):
-        profiles[name] = (route, frontier_dry_settings(route.model, scenario))
+        profiles[name] = (
+            route,
+            frontier_dry_settings(route.model, scenario, request_timeout_s=route.timeout_s),
+        )
     return profiles
 
 
@@ -233,13 +307,16 @@ def prepare_dry_experiment(
             raise ValueError("DRY experiment requires at least ten subjects")
         _validate_dry_profile(factory, settings, scenario)
         ConsistencyWorker, _, _ = _import_legacy_worker_stack()
-        worker = ConsistencyWorker(factory, settings)
-        correctness = FunctionalCorrectnessEvaluator(runner)
+        worker = _scenario_worker(ConsistencyWorker(factory, settings), population)
+        evaluators = _scenario_evaluators(population, runner)
         snapshot = materialize_consistency(
             store,
             worker_configuration=worker.configuration(population.arm_ids[0]),
             evaluator=StructuralEvaluator(),
-            correctness_evaluator=correctness,
+            correctness_evaluator=evaluators.get("correctness"),
+            abstraction_evaluators={
+                key: value for key, value in evaluators.items() if key != "correctness"
+            },
             schemas=schemas,
             tasks=population.tasks,
             evaluator_repeats=1,
@@ -264,6 +341,26 @@ def prepare_dry_experiment(
         return DryExperimentPrepared(snapshot_ref, plan_ref, len(plan.cells), len(plan.evaluations))
     except Exception as error:
         return DryExperimentFailed(type(error).__name__, str(error))
+
+
+def _scenario_worker(inner: ConsistencyWorker, population: DryScenario) -> Any:
+    if not population.chain_steps:
+        return inner
+    from assay.adapters.consistency import ChainWorker
+
+    return ChainWorker(inner)
+
+
+def _scenario_evaluators(population: DryScenario, runner: DockerPythonRunner) -> dict[str, Any]:
+    if population.chain_steps:
+        return {
+            evaluator_id: ChainStepEvaluator(step)
+            for step, evaluator_id in enumerate(population.evaluator_ids)
+        }
+    return {
+        "abstraction": StructuralEvaluator(),
+        "correctness": FunctionalCorrectnessEvaluator(runner),
+    }
 
 
 def _report_config(
@@ -309,11 +406,14 @@ async def run_consistency_experiment(
     schedule: str = "subject-counterbalanced-v1",
     reference_arm: str = "inconsistent",
     candidates: tuple[str, ...] = ("clean",),
+    population: DryScenario | None = None,
 ) -> DryExperimentSucceeded | DryExperimentFailed:
-    """Execute one independently approved plan and derive two separate reports."""
+    """Execute one independently approved plan and derive one report per evaluator."""
     manifest_ref: str | None = None
     abstraction_ref: str | None = None
     correctness_ref: str | None = None
+    if population is None:
+        population = DryScenario(tuple(tasks), None)
     try:
         plan_bytes = store.read_bytes(plan_ref)
         plan = authorize(plan_bytes, authorization)
@@ -347,7 +447,7 @@ async def run_consistency_experiment(
         if conditions_ref != plan.execution_conditions_ref:
             raise ValueError("execution conditions differ from the authorized plan")
         reference_closure(store, (plan_ref,))
-        if {item.id for item in snapshot.evaluators} != {"abstraction", "correctness"}:
+        if {item.id for item in snapshot.evaluators} != set(population.evaluator_ids):
             raise ValueError("DRY experiment evaluator set changed")
         validate_experiment_shape(
             store,
@@ -365,13 +465,10 @@ async def run_consistency_experiment(
         profile_validator(factory, settings)
         if settings.mode == "paid" and not allow_paid:
             raise ValueError("paid consistency experiment requires explicit allow_paid=True")
-        worker = ConsistencyWorker(factory, settings, allow_paid=allow_paid)
-        structural = StructuralEvaluator()
-        correctness = FunctionalCorrectnessEvaluator(runner)
-        runtime_evaluators: dict[str, Evaluator] = {
-            "abstraction": structural,
-            "correctness": correctness,
-        }
+        worker = _scenario_worker(
+            ConsistencyWorker(factory, settings, allow_paid=allow_paid), population
+        )
+        runtime_evaluators: dict[str, Evaluator] = _scenario_evaluators(population, runner)
         if any(
             canonical_json(worker.configuration(arm.id)) != canonical_json(arm.worker)
             for arm in snapshot.arms
@@ -387,16 +484,17 @@ async def run_consistency_experiment(
             rendered = render_input(json.loads(store.read_bytes(ref)), settings.max_input_bytes)
             if isinstance(rendered, WorkerFailure):
                 return DryExperimentFailed(rendered.error_type, rendered.message)
-        sandbox_check = await runner.run(
-            task=tasks[0],
-            repository=repository_for(tasks[0], arm_ids[0], repository_variants),
-            target_path=tasks[0].target_path,
-            source=tasks[0].reused_source,
-        )
-        if isinstance(sandbox_check, SandboxFailure):
-            return DryExperimentFailed(sandbox_check.error_type, sandbox_check.message)
-        if sandbox_check.passed != sandbox_check.total:
-            return DryExperimentFailed("SandboxSelfTestFailed", "sandbox self-test failed")
+        if "correctness" in runtime_evaluators:
+            sandbox_check = await runner.run(
+                task=tasks[0],
+                repository=repository_for(tasks[0], arm_ids[0], repository_variants),
+                target_path=tasks[0].target_path,
+                source=tasks[0].reused_source,
+            )
+            if isinstance(sandbox_check, SandboxFailure):
+                return DryExperimentFailed(sandbox_check.error_type, sandbox_check.message)
+            if sandbox_check.passed != sandbox_check.total:
+                return DryExperimentFailed("SandboxSelfTestFailed", "sandbox self-test failed")
         result = await execute_plan(
             plan_bytes=plan_bytes,
             authorization=authorization,
@@ -410,8 +508,8 @@ async def run_consistency_experiment(
         if isinstance(result, RunFailed):
             return DryExperimentFailed(result.error_type, result.message, manifest_ref)
         assert manifest_ref is not None
-        by_evaluator: dict[str, tuple[str, ...]] = {}
-        for evaluator_id in ("abstraction", "correctness"):
+        report_refs: dict[str, str] = {}
+        for evaluator_id in population.evaluator_ids:
             selected = tuple(
                 sorted(
                     str(result.manifest.evaluation_records[coordinate.id])
@@ -419,50 +517,32 @@ async def run_consistency_experiment(
                     if coordinate.evaluator_id == evaluator_id
                 )
             )
-            by_evaluator[evaluator_id] = selected
-        abstraction_ref = str(
-            persist_report(
-                store,
-                _report_config(
-                    manifest_ref,
-                    by_evaluator["abstraction"],
-                    evaluator_id="abstraction",
-                    categories=CATEGORIES,
-                    reference_arm=reference_arm,
-                    candidates=candidates,
-                ),
+            report_refs[evaluator_id] = str(
+                persist_report(
+                    store,
+                    _report_config(
+                        manifest_ref,
+                        selected,
+                        evaluator_id=evaluator_id,
+                        categories=(
+                            CORRECTNESS_CATEGORIES if evaluator_id == "correctness" else CATEGORIES
+                        ),
+                        reference_arm=reference_arm,
+                        candidates=candidates,
+                    ),
+                )
             )
-        )
-        correctness_ref = str(
-            persist_report(
-                store,
-                _report_config(
-                    manifest_ref,
-                    by_evaluator["correctness"],
-                    evaluator_id="correctness",
-                    categories=CORRECTNESS_CATEGORIES,
-                    reference_arm=reference_arm,
-                    candidates=candidates,
-                ),
-            )
-        )
+        abstraction_ref = report_refs.get("abstraction", report_refs[population.evaluator_ids[0]])
+        correctness_ref = report_refs.get("correctness")
         if export_destination is not None:
             if export_destination.exists():
                 raise ValueError("export destination already exists")
-            abstraction_bundle = export_bundle(
-                store, abstraction_ref, export_destination / "abstraction"
-            )
-            correctness_bundle = export_bundle(
-                store, correctness_ref, export_destination / "correctness"
-            )
-            for bundle, report_ref in (
-                (abstraction_bundle, abstraction_ref),
-                (correctness_bundle, correctness_ref),
-            ):
+            for evaluator_id, report_ref in report_refs.items():
+                bundle = export_bundle(store, report_ref, export_destination / evaluator_id)
                 failures = verify_bundle(bundle, report_ref)
                 if failures:
                     raise ValueError(f"exported bundle failed verification: {failures}")
-        return DryExperimentSucceeded(manifest_ref, abstraction_ref, correctness_ref)
+        return DryExperimentSucceeded(manifest_ref, abstraction_ref, correctness_ref, report_refs)
     except Exception as error:
         return DryExperimentFailed(
             type(error).__name__,
@@ -511,4 +591,5 @@ async def run_dry_experiment(
         schedule=population.schedule,
         reference_arm=population.reference_arm,
         candidates=population.candidates,
+        population=population,
     )
