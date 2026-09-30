@@ -161,6 +161,13 @@ async def test_function_local_imports_count_only_for_the_helper_module() -> None
     assert await verdict(helper) == "reused"
     assert await verdict(aliased) == "reused"
     assert await verdict(impostor) == "AmbiguousStructure"
+    for bound in ("normalize_email", "normalize_email as canon"):
+        conditional = (
+            "def implement(payload):\n    if payload:\n"
+            f"        from accounts.utils import {bound}\n"
+            f'    return {bound.split()[-1]}(payload["email"])\n'
+        )
+        assert await verdict(conditional) == "AmbiguousStructure"
 
 
 @pytest.mark.asyncio

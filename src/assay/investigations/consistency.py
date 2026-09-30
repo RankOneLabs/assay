@@ -585,8 +585,12 @@ class StructuralEvaluator:
         _, package_parts = _target_module(task.target_path)
         origins = _import_origins(ast.parse(task.helper_source))
         origins.update(_import_origins(tree, package_parts))
+        # Only imports that always run resolve names; any other local import of
+        # the helper name is a rebinding.
         local_imports: list[ast.stmt] = [
-            node for node in ast.walk(function) if isinstance(node, ast.Import | ast.ImportFrom)
+            node
+            for node in _unconditional_statements(function.body)
+            if isinstance(node, ast.Import | ast.ImportFrom)
         ]
         local_module = ast.Module(body=local_imports, type_ignores=[])
         origins.update(_import_origins(local_module, package_parts))
