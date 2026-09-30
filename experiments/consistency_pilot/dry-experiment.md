@@ -113,6 +113,96 @@ cd experiments && uv run --env-file ../.env python -m consistency_pilot.run_dry 
     gpt-6.1-sol ../.assay/dry-dose-gpt-6.1-sol-v1 dose
 ```
 
+## Placement, chain and context scenario sets
+
+These three sets reuse the dose subjects and change one thing each.
+
+- `scenario="placement"` puts the messy callers together at the end of the
+  file, directly above the insertion point. Arm `tail-NN` makes the last NN
+  of the ten callers inline. The arms are `mess-00`, `tail-01`, `tail-03`,
+  `tail-05`, `tail-07` and `mess-10`, so the grid is again 144 cells.
+- `scenario="chain"` asks for five sequential additions per cell instead of
+  one. Each step appends the previous output to the target file under its
+  step name, so later steps see the model's own earlier code. The arms are
+  `mess-00`, `tail-03` and `tail-07`. There is one abstraction report per step
+  (`abstraction-1` to `abstraction-5`), and correctness is not run.
+- `scenario="context"` starts every arm from the `tail-07` file. It adds
+  unrelated support modules until the repository is about 30 KB (`ctx-30`) or
+  90 KB (`ctx-90`); `ctx-00` is unpadded. The padding never mentions the
+  helper. Correctness does not run for `ctx-90`, because those repositories
+  exceed the sandbox storage budget. The abstraction verdict is unaffected.
+
+## Code metrics
+
+`python -m consistency_pilot.code_metrics <store> [reference-arm]` measures
+every stored `implement` function. The measurements are:
+
+- non-blank lines and statements
+- cyclomatic complexity and nesting depth
+- fan-out (distinct callees) and imports
+- magic numbers
+- clone similarity: token similarity to the closest existing function in the
+  target file
+- new ruff findings (`E9,F,B,SIM`)
+
+Each arm is compared with the reference arm per subject, using the same sign
+test. The metrics are computed from source only, so they can be rerun on any
+stored result at no cost.
+
+## Results so far (2026-09-30)
+
+Verdict counts are over 24 cells (12 subjects × 2 repeats), scored with v5.
+"Flipped" means a paired sign test at p < 0.05 against the clean arm.
+
+**Single-file v1 set.** In the clean arm, Haiku 4.5 duplicated in 10 of 12
+subjects. It ignores a one-line helper even when every caller uses it, so the
+consistency manipulation has nothing to act on. This is a floor effect, not
+drift. Sol reused in every cell of both arms. Gemini reused in every
+complete clean subject; in the inconsistent arm it duplicated in 5 subjects, plus 1 split pair.
+Sonnet reused in 9 of 12 clean subjects and duplicated in 5 inconsistent
+ones.
+
+**Dose (mess spread through the file), reused / duplicated:**
+
+| mess | Sol | Sonnet | Gemini |
+|---|---|---|---|
+| 0/10 | 24 / 0 | 23 / 0 | 21 / 2 |
+| 1/10 | 24 / 0 | 23 / 0 | 20 / 4 |
+| 3/10 | 22 / 2 | 24 / 0 | 17 / 6 |
+| 5/10 | 20 / 4 | 21 / 0 | 15 / 8 |
+| 7/10 | 24 / 0 | 23 / 0 | 15 / 9 |
+| 10/10 | 2 / 22 | 14 / 9 | 0 / 23 |
+
+- Sol and Sonnet hold until the whole file bypasses the abstraction. Sol then
+  follows the mess almost completely (22 of 24). Sonnet does too for route
+  views (7 of 8), but it keeps importing cross-module helpers.
+- Gemini degrades gradually, and only on one-line cross-module helpers: 6 of 8
+  reused with no mess, 4 with 1/10, 1 with 3/10 and none from 5/10. Its views
+  and rules hold until 10/10.
+
+**Placement (mess clustered above the insertion point).** Up to 7 of 10
+inline callers directly above the insertion point cost at most 3 of 24 cells
+for Sol and Sonnet (21 / 3 at `tail-07`, all route views). Neither result is
+significant.
+
+**Chains of five additions.** There is no snowball. Sol slipped on 2 subjects
+at step 1 of `tail-07`, then reused everywhere for steps 2–4, and had 1
+regression per messy arm at step 5. Sonnet had at most 1 regressed subject
+per step in `tail-07`, and none in `tail-03`.
+
+**Context size.** Padding the `tail-07` repository to about 30 KB or 90 KB
+changed nothing. Sol's reuse count was 21 at ctx-00, 21 at ctx-30 and 22 at
+ctx-90; Sonnet's was 20 at all three sizes.
+
+**What duplication costs.** Duplicated outputs take about 3 times the lines,
+4–5 times the statements, twice the cyclomatic complexity and 4–5 times the
+fan-out of reused ones. Sol and Gemini (layered set, and Sol dose 10/10) are
+significant on lines, statements and fan-out. Correctness, new lint findings
+and magic numbers do not differ: the duplicated code works, and there is just
+more of it to maintain.
+
+**Pending.** Gemini placement, chain and context runs.
+
 ## Correctness sandbox
 
 Generated source is never executed in the Assay process. The correctness
