@@ -17,9 +17,12 @@ from assay.adapters.consistency import CompletionNotSent, DescribedClient, Sourc
 from assay.adapters.openrouter_diagnostics import ResponseDiagnostics, diagnostic_policy
 from assay.adapters.openrouter_policy import (
     ENDPOINT,
+    GEMINI_3_1_PRO_VERTEX,
+    GPT_6_1_SOL_AZURE,
     GPT_OSS_120B_COREWEAVE,
     HAIKU_BEDROCK,
     QWEN_NOVITA,
+    SONNET_5_5_BEDROCK,
     OpenRouterSettings,
 )
 from assay.canonical import canonical_json
@@ -27,9 +30,12 @@ from assay.execution import WorkerFailure
 
 __all__ = [
     "ENDPOINT",
+    "GEMINI_3_1_PRO_VERTEX",
+    "GPT_6_1_SOL_AZURE",
     "GPT_OSS_120B_COREWEAVE",
     "HAIKU_BEDROCK",
     "QWEN_NOVITA",
+    "SONNET_5_5_BEDROCK",
     "OpenRouterFactory",
     "OpenRouterSettings",
     "source_output_tool",
@@ -76,7 +82,7 @@ class OpenRouterFactory:
             "hidden_retries": 0,
             "settings": self.settings.model_dump(mode="json"),
             "routing": self.settings.routing(),
-            "tool_choice": "submit_output",
+            "tool_choice": "submit_output" if self.settings.tool_choice == "forced" else "auto",
             "tool_definition": dataclasses.asdict(source_output_tool()),
             "transforms": [],
             "plugins": [],
@@ -196,7 +202,10 @@ class _PilotClient(OpenRouterClient, DescribedClient):
     def _apply_extra_kwargs(self, kwargs: dict[str, Any]) -> None:
         super()._apply_extra_kwargs(kwargs)
         kwargs["extra_body"].update(provider=self.settings.routing(), transforms=[], plugins=[])
-        kwargs["tool_choice"] = {"type": "function", "function": {"name": "submit_output"}}
+        if self.settings.tool_choice == "forced":
+            kwargs["tool_choice"] = {"type": "function", "function": {"name": "submit_output"}}
+        else:
+            kwargs["tool_choice"] = "auto"
         kwargs["stream"] = False
 
     async def complete_result(self, params: CompletionParams) -> LLMResponse | WorkerFailure:

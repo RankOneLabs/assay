@@ -21,7 +21,7 @@ from consistency_pilot.dry_experiment import (
 from jig.core.types import CompletionParams, LLMResponse, ToolCall, Usage
 from pydantic import ValidationError
 
-from assay.adapters.consistency import DescribedClient
+from assay.adapters.consistency import LAYERED_SYSTEM_PROMPT, DescribedClient
 from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
 from assay.execution import EvaluationFailed, EvaluationSuccess
 from assay.investigations.consistency import EXPERIMENT_TASKS, CodingTask, StructuralEvaluator
@@ -32,6 +32,7 @@ from assay.investigations.correctness import (
     SandboxFailure,
     SandboxResult,
 )
+from assay.investigations.layered_fixtures import LAYERED_TASKS, layered_repository_variants
 from assay.models import EvaluationCoordinate, ExecutionPlan, StudySnapshot
 from assay.store import ObjectStore
 from assay.verify import reference_closure, verify_bundle, verify_manifest
@@ -212,8 +213,7 @@ async def test_structural_docstrings_primitives_and_source_boundary() -> None:
         )
 
     docstring = await evaluate(
-        'def implement(value):\n    """Normalize the email."""\n'
-        "    return normalize_email(value)\n"
+        'def implement(value):\n    """Normalize the email."""\n    return normalize_email(value)\n'
     )
     assert isinstance(docstring, EvaluationSuccess), docstring
     assert docstring.verdict == "reused"
@@ -224,17 +224,54 @@ async def test_structural_docstrings_primitives_and_source_boundary() -> None:
     assert isinstance(annotated, EvaluationSuccess), annotated
     assert annotated.verdict == "reused"
 
-    mixed = await evaluate(
-        "def implement(value):\n    return normalize_email(value.strip())\n"
-    )
+    mixed = await evaluate("def implement(value):\n    return normalize_email(value.strip())\n")
     assert isinstance(mixed, EvaluationSuccess), mixed
     assert mixed.verdict == "mixed"
 
-    ambiguous = await evaluate(
-        "def implement(value):\n    result = normalize_email(value)\n    return result\n"
-    )
-    assert isinstance(ambiguous, EvaluationFailed), ambiguous
-    assert ambiguous.error_type == "AmbiguousStructure"
+    for source, expected in (
+        (
+            "def implement(value):\n    result = normalize_email(value)\n    return result\n",
+            "reused",
+        ),
+        (
+            "def implement(value):\n    if not value:\n        return ''\n"
+            "    email = normalize_email(value)\n    return email\n",
+            "reused",
+        ),
+        (
+            "def implement(value):\n    cleaned = value.strip()\n    return cleaned.lower()\n",
+            "duplicated",
+        ),
+        (
+            "def implement(value):\n    if value:\n        return value.strip().lower()\n"
+            "    return value\n",
+            "duplicated",
+        ),
+        (
+            "def implement(value):\n    value = value.strip()\n    return normalize_email(value)\n",
+            "mixed",
+        ),
+        (
+            "def implement(value):\n    try:\n        return normalize_email(value)\n"
+            "    except AttributeError:\n        return ''\n",
+            "reused",
+        ),
+    ):
+        multi = await evaluate(source)
+        assert isinstance(multi, EvaluationSuccess), (source, multi)
+        assert multi.verdict == expected, source
+
+    for source in (
+        "def implement(value):\n    if value:\n        return normalize_email(value)\n"
+        "    return value.strip().lower()\n",
+        "def implement(value):\n    return value\n    return normalize_email(value)\n",
+        "def implement(value):\n    normalize_email = str.lower\n"
+        "    return normalize_email(value)\n",
+        "def implement(value):\n    f = normalize_email\n    return f(value)\n",
+    ):
+        ambiguous = await evaluate(source)
+        assert isinstance(ambiguous, EvaluationFailed), (source, ambiguous)
+        assert ambiguous.error_type == "AmbiguousStructure"
 
     replacement = await evaluate(
         "def normalize_email(value):\n    return value\n"
@@ -256,15 +293,12 @@ async def test_structural_docstrings_primitives_and_source_boundary() -> None:
             ),
         )
 
-    qualified = await evaluate_decoding(
-        "def implement(value):\n    return json.loads(value)\n"
-    )
+    qualified = await evaluate_decoding("def implement(value):\n    return json.loads(value)\n")
     assert isinstance(qualified, EvaluationSuccess), qualified
     assert qualified.verdict == "duplicated"
 
     aliased = await evaluate_decoding(
-        "from json import loads as decode\n"
-        "def implement(value):\n    return decode(value)\n"
+        "from json import loads as decode\ndef implement(value):\n    return decode(value)\n"
     )
     assert isinstance(aliased, EvaluationSuccess), aliased
     assert aliased.verdict == "duplicated"
@@ -313,9 +347,12 @@ def test_sandbox_configuration_binds_isolation_and_runtime() -> None:
         "cpus": "0.5",
         "pids_limit": 32,
     }
-    assert DockerPythonRunner(
-        DockerRunnerSettings(max_output_bytes=1024)
-    ).configuration()["harness_sha256"] != configuration["harness_sha256"]
+    assert (
+        DockerPythonRunner(DockerRunnerSettings(max_output_bytes=1024)).configuration()[
+            "harness_sha256"
+        ]
+        != configuration["harness_sha256"]
+    )
     with pytest.raises(ValidationError):
         DockerRunnerSettings(image="python:latest")  # type: ignore[arg-type]
 
@@ -329,9 +366,7 @@ def test_sandbox_configuration_binds_isolation_and_runtime() -> None:
         ("max_output_bytes", 0),
     ],
 )
-def test_sandbox_settings_reject_nonpositive_or_nonfinite_bounds(
-    field: str, value: float
-) -> None:
+def test_sandbox_settings_reject_nonpositive_or_nonfinite_bounds(field: str, value: float) -> None:
     with pytest.raises(ValidationError):
         DockerRunnerSettings.model_validate({field: value})
 
@@ -437,10 +472,7 @@ async def test_candidate_cannot_forge_supervisor_result_protocol() -> None:
         separators=(",", ":"),
     )
     source = (
-        "import os\n"
-        "def implement(value):\n"
-        f"    os.write(1, {forged.encode()!r})\n"
-        "    os._exit(0)\n"
+        f"import os\ndef implement(value):\n    os.write(1, {forged.encode()!r})\n    os._exit(0)\n"
     )
     result = await runner.run(
         task=task,
@@ -640,3 +672,92 @@ async def test_run_dry_experiment_reports_a_missing_legacy_extra_before_reading_
         )
     assert isinstance(result, DryExperimentFailed)
     assert result.error_type == "ModuleNotFoundError" and "assay[legacy]" in result.message
+
+
+class LayeredFakeFactory(FakeFactory):
+    """Reuses in the clean arm and duplicates in the inconsistent arm."""
+
+    def create(self) -> DescribedClient:
+        self.created += 1
+        owner = self
+        variants = layered_repository_variants()
+
+        class Client(DescribedClient):
+            def configuration(self) -> dict[str, Any]:
+                return owner.configuration()
+
+            async def complete(self, params: CompletionParams) -> LLMResponse:
+                owner.calls.append(copy.deepcopy(params))
+                prompt = json.loads(params.messages[0].content)
+                task = next(
+                    item for item in LAYERED_TASKS if item.instruction == prompt["instruction"]
+                )
+                clean = prompt["repository"] == variants[task.id]["clean"]
+                source = task.reused_source if clean else task.duplicated_source
+                return LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall("submission", "submit_output", {"source": source})],
+                    usage=Usage(10, 5, 0.001),
+                    latency_ms=1,
+                    model=HAIKU_BEDROCK.model,
+                )
+
+            async def aclose(self) -> None:
+                owner.closed += 1
+
+        return Client()
+
+
+@pytest.mark.asyncio
+async def test_layered_scenario_prepares_and_runs_offline(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / "store")
+    factory = LayeredFakeFactory()
+    runner = PassingRunner()
+    settings = haiku_dry_settings("layered")
+    assert settings.system_prompt == LAYERED_SYSTEM_PROMPT
+    assert "exactly one return" not in settings.system_prompt
+    mismatched = prepare_dry_experiment(
+        store,
+        factory=factory,
+        settings=haiku_dry_settings(),
+        schemas=contracts(),
+        runner=runner,
+        scenario="layered",
+    )
+    assert isinstance(mismatched, DryExperimentFailed)
+    prepared = prepare_dry_experiment(
+        store,
+        factory=factory,
+        settings=settings,
+        schemas=contracts(),
+        runner=runner,
+        scenario="layered",
+    )
+    assert isinstance(prepared, DryExperimentPrepared), prepared
+    assert prepared.executions == 48 and prepared.evaluations == 96
+    wrong_scenario = await run_dry_experiment(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=prepared.plan_ref,
+        factory=factory,
+        runner=runner,
+        allow_paid=True,
+    )
+    assert isinstance(wrong_scenario, DryExperimentFailed)
+    assert not factory.calls
+    result = await run_dry_experiment(
+        store,
+        plan_ref=prepared.plan_ref,
+        authorization=prepared.plan_ref,
+        factory=factory,
+        runner=runner,
+        allow_paid=True,
+        scenario="layered",
+    )
+    assert isinstance(result, DryExperimentSucceeded), result
+    assert len(factory.calls) == 48
+    assert all(call.system.startswith(LAYERED_SYSTEM_PROMPT) for call in factory.calls)
+    comparison = json.loads(store.read_bytes(result.abstraction_report_ref))["comparisons"][0]
+    assert comparison["reference_distribution"] == {"duplicated": 12}
+    assert comparison["candidate_distribution"] == {"reused": 12}
+    assert comparison["improved"] == 12

@@ -45,13 +45,49 @@ The module-level `render_input` function exposes only the instruction and arm-sp
 answers, test vectors, or arm IDs to the model. Those hidden fields remain bound
 into the subject digest and available to evaluators.
 
-The structural evaluator tolerates one leading function docstring, then requires
-a single return statement for an automatic verdict. It recognizes every named
-primitive used by the task helper, so calling the helper while also repeating any
-of those operations is `mixed`. Assignments, branches, aliases, and other shapes
-are `AmbiguousStructure`; without an ambiguity judge that is missing evidence.
-Both worker repeats must be present for both arms, so any such missing cell makes
-the subject incomplete and removes it from the paired comparison.
+The structural evaluator (version 5) decides automatically in two cases. If
+`implement` calls the helper in a statement that runs whenever control reaches
+it, the verdict is `reused`, or `mixed` when it also calls any primitive the
+helper uses. Early-return guards before that statement are allowed, and so are
+the bodies of `try` and `with`. If `implement` never names the helper but calls
+one of its primitives, the verdict is `duplicated`. Helper calls only inside
+branches, loops, lambdas, comprehensions or short-circuit operands are
+`AmbiguousStructure`. So are aliases, local rebinding of the helper name, and
+code that calls neither the helper nor a primitive. Without an ambiguity judge,
+`AmbiguousStructure` is missing evidence. Both worker repeats must be present
+for both arms, so any such missing cell makes the subject incomplete and removes
+it from the paired comparison. Version 4 required the whole body to be a single
+`return` expression. It rejected ordinary `result = helper(value); return
+result` code even though the prompt allowed it.
+
+## Layered scenario set
+
+`scenario="layered"` swaps in twelve multi-file subjects from
+`assay.investigations.layered_fixtures`. The grid, schedule and reports are the
+same as v1. The reusable unit lives outside the target file, and only the target
+file differs between arms:
+
+- `route-view` (4 subjects). In the clean arm, `routes.py` delegates each route
+  to a view in `views.py`. In the inconsistent arm, routes inline the lookup,
+  validation, persistence and serialization. The task adds the route for a view
+  that exists but has no route yet. The primitives are the store and serializer
+  calls.
+- `domain-rule` (4 subjects). Existing callers either use a composite business
+  rule, such as `order_total`, or rebuild it from its building blocks. The task
+  needs the composite's result. The test cases make naive shortcuts (a subtotal
+  instead of the total, gross pay instead of net) fail.
+- `cross-module` (4 subjects). A one-line value helper lives in `utils.py`, next
+  to distractor helpers. The target either imports it for three callers or
+  inlines it three times.
+
+These subjects may import the helper, but only from its declared
+`helper_module`. The layered profiles use a prompt that drops the "exactly one
+return statement" constraint, because an inlined route cannot meet it.
+
+```bash
+cd experiments && uv run --env-file ../.env python -m consistency_pilot.run_dry \
+    sonnet-5.5 ../.assay/dry-layered-sonnet-5.5-v1 layered
+```
 
 ## Correctness sandbox
 

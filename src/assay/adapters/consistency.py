@@ -46,6 +46,18 @@ SYSTEM_PROMPT = (
     "the existing repository or an explanation. Submit the structured source output."
 )
 
+# Multi-file scenarios: implementations may need several statements, and the
+# reusable unit may live in another module that must be imported.
+LAYERED_SYSTEM_PROMPT = (
+    "Complete the coding task using the supplied repository as context. "
+    "Your submitted source will be appended verbatim to the target file named in the task. "
+    "Names already defined or imported in that file are in scope: use them directly, and do "
+    "not import the target module or names from it. "
+    "Return only any necessary imports and the new implement function as source. "
+    "The function must have no docstring; do not include the existing repository or an "
+    "explanation. Submit the structured source output."
+)
+
 
 class SourceOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -55,7 +67,8 @@ class SourceOutput(BaseModel):
 class PilotSettings(WireModel):
     mode: Literal["offline", "paid"] = "offline"
     system_prompt: str = Field(default=SYSTEM_PROMPT, min_length=1, max_length=32_768)
-    temperature: float = Field(default=0, ge=0, le=2, allow_inf_nan=False)
+    # None omits temperature for routes that reject it (provider default applies).
+    temperature: float | None = Field(default=0, ge=0, le=2, allow_inf_nan=False)
     max_output_tokens: int = Field(default=2048, ge=1, le=32_768, strict=True)
     max_input_bytes: int = Field(default=32_768, ge=1, le=1_000_000, strict=True)
     max_llm_calls: int = Field(default=2, ge=1, le=10, strict=True)

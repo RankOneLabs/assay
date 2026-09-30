@@ -36,6 +36,7 @@ from assay.investigations.dry_common import (
     repository_for,
     validate_experiment_shape,
 )
+from assay.investigations.layered_fixtures import LAYERED_TASKS, layered_repository_variants
 from assay.models import ExecutionPlan, ReportConfig, StatisticalProfile, StudySnapshot
 from assay.planning import authorize, compile_plan, validate_plan_snapshot
 from assay.report_engine import persist_report
@@ -45,6 +46,7 @@ from consistency_pilot.pilot import installed_jig_revision
 
 if TYPE_CHECKING:
     from assay.adapters.consistency import ClientFactory, ConsistencyWorker, PilotSettings
+    from assay.adapters.openrouter_policy import OpenRouterSettings
 
 
 @dataclass(frozen=True)
@@ -81,10 +83,34 @@ def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSe
     return ConsistencyWorker, PilotSettings, render_input
 
 
-def haiku_dry_settings() -> PilotSettings:
+SCENARIOS = ("v1", "layered")
+
+
+def scenario_population(
+    scenario: str,
+) -> tuple[tuple[CodingTask, ...], dict[str, dict[str, dict[str, str]]] | None]:
+    """Tasks and per-arm repositories for a named twelve-subject scenario set."""
+    if scenario == "v1":
+        return EXPERIMENT_TASKS, None
+    if scenario == "layered":
+        return LAYERED_TASKS, layered_repository_variants()
+    raise ValueError(f"unknown DRY scenario set {scenario!r}; expected one of {SCENARIOS}")
+
+
+def _prompt_override(scenario: str) -> dict[str, str]:
+    if scenario == "v1":
+        return {}
+    scenario_population(scenario)
+    from assay.adapters.consistency import LAYERED_SYSTEM_PROMPT
+
+    return {"system_prompt": LAYERED_SYSTEM_PROMPT}
+
+
+def haiku_dry_settings(scenario: str = "v1") -> PilotSettings:
     """Forty-eight one-call cells, $2.88 conservative admission ceiling."""
     _, PilotSettings, _ = _import_legacy_worker_stack()
     return PilotSettings(
+        **_prompt_override(scenario),
         mode="paid",
         max_llm_calls=1,
         max_total_requests=48,
@@ -100,15 +126,64 @@ def haiku_dry_settings() -> PilotSettings:
     )
 
 
-def _validate_haiku_profile(factory: ClientFactory, settings: PilotSettings) -> None:
-    from assay.adapters.openrouter import HAIKU_BEDROCK, OpenRouterFactory
+def frontier_dry_settings(model: str, scenario: str = "v1") -> PilotSettings:
+    """Forty-eight one-call cells for a frontier route, $12 admission ceiling.
 
-    if settings != haiku_dry_settings():
-        raise ValueError("DRY experiment settings differ from the governed Haiku profile")
-    if canonical_json(factory.configuration()) != canonical_json(
-        OpenRouterFactory(HAIKU_BEDROCK).configuration()
+    The per-request bound covers a full 65,536-byte request body (<=65,536
+    input tokens) at $2.20/M plus 8,192 output tokens at $12/M. Temperature is
+    omitted because these routes reject or ignore it for reasoning models.
+    """
+    _, PilotSettings, _ = _import_legacy_worker_stack()
+    return PilotSettings(
+        **_prompt_override(scenario),
+        mode="paid",
+        temperature=None,
+        max_output_tokens=8192,
+        max_llm_calls=1,
+        max_total_requests=48,
+        request_timeout_s=120,
+        attempt_timeout_s=180,
+        max_spend_usd=Decimal("12.00"),
+        request_cost_bound_usd=Decimal("0.25"),
+        pricing_basis=(
+            f"OpenRouter inline usage.cost (USD credits), {model}; 2026-09-30 rate "
+            "caps <=$2.20/<=$12 per million input/output tokens; 48 one-call cells; "
+            "bound assumes <=65536 input and <=8192 output tokens"
+        ),
+    )
+
+
+def dry_profiles(scenario: str = "v1") -> dict[str, tuple[OpenRouterSettings, PilotSettings]]:
+    """Governed DRY routes by name: provider route and worker settings."""
+    from assay.adapters.openrouter import (
+        GEMINI_3_1_PRO_VERTEX,
+        GPT_6_1_SOL_AZURE,
+        HAIKU_BEDROCK,
+        SONNET_5_5_BEDROCK,
+    )
+
+    profiles = {"haiku": (HAIKU_BEDROCK, haiku_dry_settings(scenario))}
+    for name, route in (
+        ("sonnet-5.5", SONNET_5_5_BEDROCK),
+        ("gpt-6.1-sol", GPT_6_1_SOL_AZURE),
+        ("gemini-3.1-pro", GEMINI_3_1_PRO_VERTEX),
     ):
-        raise ValueError("DRY experiment provider differs from the governed Haiku profile")
+        profiles[name] = (route, frontier_dry_settings(route.model, scenario))
+    return profiles
+
+
+def _validate_dry_profile(
+    factory: ClientFactory, settings: PilotSettings, scenario: str = "v1"
+) -> None:
+    from assay.adapters.openrouter import OpenRouterFactory
+
+    provider = canonical_json(factory.configuration())
+    for route, governed in dry_profiles(scenario).values():
+        if canonical_json(OpenRouterFactory(route).configuration()) == provider:
+            if settings != governed:
+                raise ValueError("DRY experiment settings differ from the governed profile")
+            return
+    raise ValueError("DRY experiment provider is not a governed DRY profile")
 
 
 def prepare_dry_experiment(
@@ -118,12 +193,14 @@ def prepare_dry_experiment(
     settings: PilotSettings,
     schemas: Mapping[str, dict[str, object]],
     runner: DockerPythonRunner,
+    scenario: str = "v1",
 ) -> DryExperimentPrepared | DryExperimentFailed:
     """Materialize the full study without clients, containers, or provider calls."""
     try:
-        if len(EXPERIMENT_TASKS) < 10:
+        tasks, repository_variants = scenario_population(scenario)
+        if len(tasks) < 10:
             raise ValueError("DRY experiment requires at least ten subjects")
-        _validate_haiku_profile(factory, settings)
+        _validate_dry_profile(factory, settings, scenario)
         ConsistencyWorker, _, _ = _import_legacy_worker_stack()
         worker = ConsistencyWorker(factory, settings)
         correctness = FunctionalCorrectnessEvaluator(runner)
@@ -133,9 +210,10 @@ def prepare_dry_experiment(
             evaluator=StructuralEvaluator(),
             correctness_evaluator=correctness,
             schemas=schemas,
-            tasks=EXPERIMENT_TASKS,
+            tasks=tasks,
             evaluator_repeats=1,
             execution_schedule="subject-counterbalanced-v1",
+            repository_variants=repository_variants,
         )
         verify_snapshot(store, snapshot)
         snapshot_ref = str(store.publish_json(snapshot.model_dump(mode="json")))
@@ -360,17 +438,26 @@ async def run_dry_experiment(
     runner: DockerPythonRunner,
     allow_paid: bool = False,
     export_destination: Path | None = None,
+    scenario: str = "v1",
 ) -> DryExperimentSucceeded | DryExperimentFailed:
     """Execute one independently approved 12-subject DRY plan."""
+    try:
+        tasks, repository_variants = scenario_population(scenario)
+    except ValueError as error:
+        return DryExperimentFailed(type(error).__name__, str(error))
+
+    def validate_profile(factory: ClientFactory, settings: PilotSettings) -> None:
+        _validate_dry_profile(factory, settings, scenario)
+
     return await run_consistency_experiment(
         store,
         plan_ref=plan_ref,
         authorization=authorization,
         factory=factory,
         runner=runner,
-        tasks=EXPERIMENT_TASKS,
-        repository_variants=None,
-        profile_validator=_validate_haiku_profile,
+        tasks=tasks,
+        repository_variants=repository_variants,
+        profile_validator=validate_profile,
         expected_subjects=12,
         expected_cells=48,
         expected_evaluations=96,
