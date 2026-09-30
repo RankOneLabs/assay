@@ -40,6 +40,7 @@ def _repository_case_storage_bytes(
         allocated += max(TMPFS_BLOCK_BYTES, -(-size // TMPFS_BLOCK_BYTES) * TMPFS_BLOCK_BYTES)
     return allocated + len(directories) * TMPFS_BLOCK_BYTES
 
+
 _CANDIDATE_HARNESS = r"""import importlib
 import json
 from pathlib import Path, PurePosixPath
@@ -177,6 +178,7 @@ for index, case in enumerate(payload["cases"]):
 result = {"passed": passed, "total": len(payload["cases"]), "failures": failures}
 sys.stdout.write(dumps(result, allow_nan=False, sort_keys=True, separators=(",", ":")))
 """
+
 
 def _render_harness(max_output_bytes: int) -> str:
     return _HARNESS_TEMPLATE.replace(
@@ -365,7 +367,12 @@ class DockerPythonRunner:
         source: str,
     ) -> SandboxResult | SandboxFailure:
         try:
-            parse_candidate_source(source, helper=task.helper, target_path=task.target_path)
+            parse_candidate_source(
+                source,
+                helper=task.helper,
+                target_path=task.target_path,
+                helper_module=task.helper_module,
+            )
         except (SyntaxError, ValueError) as error:
             return SandboxFailure("InvalidOutput", str(error))
         if not task.test_cases:
@@ -562,7 +569,12 @@ class FunctionalCorrectnessEvaluator:
             source = output["source"]
             if not isinstance(source, str):
                 raise ValueError("worker output source must be a string")
-            parse_candidate_source(source, helper=task.helper, target_path=task.target_path)
+            parse_candidate_source(
+                source,
+                helper=task.helper,
+                target_path=task.target_path,
+                helper_module=task.helper_module,
+            )
             if not task.test_cases:
                 raise ValueError("correctness evaluation requires test cases")
         except (KeyError, TypeError, ValueError, SyntaxError) as error:

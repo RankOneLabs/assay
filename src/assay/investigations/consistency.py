@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 from typing import Any, Literal, Protocol
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_serializer, model_validator
 
 from assay.execution import EvaluationFailed, EvaluationResult, EvaluationSuccess, Evaluator
 from assay.models import (
@@ -36,17 +36,50 @@ class FunctionalCase(WireModel):
     expected: Any
 
 
+class ChainStep(WireModel):
+    """One addition in a chained task; its output is renamed to ``name`` and kept."""
+
+    instruction: str = Field(min_length=1)
+    name: str = Field(pattern=r"^[a-z_][a-z0-9_]*$")
+
+
 class CodingTask(WireModel):
     id: str
-    family: Literal["cosmetic", "architectural", "semantic"]
+    family: Literal[
+        "cosmetic", "architectural", "semantic", "route-view", "domain-rule", "cross-module"
+    ]
     instruction: str
     helper: str
     primitives: tuple[str, ...] = Field(min_length=1)
     helper_source: str
     target_path: str = "module.py"
+    # Dotted module defining the helper when it lives outside the target file;
+    # candidates may import the helper from exactly this module.
+    helper_module: str | None = None
     test_cases: tuple[FunctionalCase, ...] = ()
     reused_source: str = ""
     duplicated_source: str = ""
+    # Successive additions made in one cell, the first being ``instruction``.
+    chain: tuple[ChainStep, ...] = ()
+
+    @model_serializer(mode="wrap")
+    def omit_absent_helper_module(self, handler: Any) -> Any:
+        # Tasks without these fields keep their earlier payloads and digests.
+        value = handler(self)
+        if isinstance(value, dict):
+            if value.get("helper_module") is None:
+                value.pop("helper_module", None)
+            if not value.get("chain"):
+                value.pop("chain", None)
+        return value
+
+    @model_validator(mode="after")
+    def chain_starts_with_instruction(self) -> CodingTask:
+        if self.chain and self.chain[0].instruction != self.instruction:
+            raise ValueError("a chain's first step must be the task instruction")
+        if len({step.name for step in self.chain}) != len(self.chain):
+            raise ValueError("chain step names must be unique")
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -294,7 +327,7 @@ class AmbiguityJudge(Protocol):
 
 
 def parse_candidate_source(
-    source: str, *, helper: str, target_path: str
+    source: str, *, helper: str, target_path: str, helper_module: str | None = None
 ) -> tuple[ast.Module, ast.FunctionDef]:
     """Accept only imports and one inertly declared implement function."""
     tree = ast.parse(source)
@@ -328,35 +361,28 @@ def parse_candidate_source(
         annotations.append(function.returns)
     if any(not isinstance(annotation, ast.Name | ast.Constant) for annotation in annotations):
         raise ValueError("only simple name or string annotations are allowed")
-    bound_names: set[str] = set()
+    target_module, package_parts = _target_module(target_path)
+    helper_origin = None if helper_module is None else f"{helper_module}.{helper}"
     for statement in imports:
         for alias in statement.names:
             if alias.name == "*":
                 raise ValueError("wildcard imports are not allowed")
-            bound_names.add(alias.asname or alias.name.split(".", 1)[0])
-    if bound_names & {helper, "implement"}:
-        raise ValueError("imports must not replace the repository helper or implement")
-    target = PurePosixPath(target_path)
-    target_parts = list(target.with_suffix("").parts)
-    if target_parts and target_parts[0] == "src":
-        target_parts.pop(0)
-    target_is_package = bool(target_parts and target_parts[-1] == "__init__")
-    if target_is_package:
-        target_parts.pop()
-    target_module = ".".join(target_parts)
-    package_parts = target_parts if target_is_package else target_parts[:-1]
+            bound = alias.asname or alias.name.split(".", 1)[0]
+            if bound == "implement":
+                raise ValueError("imports must not replace the repository helper or implement")
+            if bound == helper:
+                origin = (
+                    f"{_imported_module(statement, package_parts)}.{alias.name}"
+                    if isinstance(statement, ast.ImportFrom)
+                    else None
+                )
+                if helper_origin is None or origin != helper_origin:
+                    raise ValueError("imports must not replace the repository helper or implement")
     for statement in imports:
         if isinstance(statement, ast.Import):
             imports_target = any(alias.name == target_module for alias in statement.names)
         else:
-            if statement.level:
-                retained = len(package_parts) - (statement.level - 1)
-                base_parts = package_parts[: max(0, retained)]
-                if statement.module:
-                    base_parts.extend(statement.module.split("."))
-                imported_module = ".".join(base_parts)
-            else:
-                imported_module = statement.module or ""
+            imported_module = _imported_module(statement, package_parts)
             imports_target = imported_module == target_module or any(
                 f"{imported_module}.{alias.name}" == target_module for alias in statement.names
             )
@@ -365,7 +391,29 @@ def parse_candidate_source(
     return tree, function
 
 
-def _import_origins(tree: ast.Module) -> dict[str, str]:
+def _target_module(target_path: str) -> tuple[str, list[str]]:
+    """The target file's dotted module name and the package it resolves imports against."""
+    target_parts = list(PurePosixPath(target_path).with_suffix("").parts)
+    if target_parts and target_parts[0] == "src":
+        target_parts.pop(0)
+    target_is_package = bool(target_parts and target_parts[-1] == "__init__")
+    if target_is_package:
+        target_parts.pop()
+    package_parts = target_parts if target_is_package else target_parts[:-1]
+    return ".".join(target_parts), package_parts
+
+
+def _imported_module(statement: ast.ImportFrom, package_parts: Sequence[str]) -> str:
+    if not statement.level:
+        return statement.module or ""
+    retained = len(package_parts) - (statement.level - 1)
+    base_parts = list(package_parts[: max(0, retained)])
+    if statement.module:
+        base_parts.extend(statement.module.split("."))
+    return ".".join(base_parts)
+
+
+def _import_origins(tree: ast.Module, package_parts: Sequence[str] | None = None) -> dict[str, str]:
     origins: dict[str, str] = {}
     for statement in tree.body:
         if isinstance(statement, ast.Import):
@@ -373,7 +421,11 @@ def _import_origins(tree: ast.Module) -> dict[str, str]:
                 bound = alias.asname or alias.name.split(".", 1)[0]
                 origins[bound] = alias.name if alias.asname else bound
         elif isinstance(statement, ast.ImportFrom):
-            module = "." * statement.level + (statement.module or "")
+            module = (
+                "." * statement.level + (statement.module or "")
+                if package_parts is None
+                else _imported_module(statement, package_parts)
+            )
             for alias in statement.names:
                 if alias.name != "*":
                     origins[alias.asname or alias.name] = f"{module}.{alias.name}"
@@ -395,6 +447,100 @@ def _call_origin(node: ast.expr, origins: Mapping[str, str]) -> str | None:
     return node.attr
 
 
+def _names_callable(origin: str | None, name: str) -> bool:
+    """An origin names a callable directly or as a qualified attribute."""
+    return origin is not None and (origin == name or origin.endswith("." + name))
+
+
+def _names_helper(
+    node: ast.expr, origins: Mapping[str, str], helper: str, helper_module: str | None
+) -> bool:
+    """``node`` is the repository helper itself: its bare name, or its exact import origin.
+
+    An attribute whose base is not an imported module (``payload.helper``) and
+    an import of a same-named function from elsewhere are not the helper.
+    """
+    helper_origin = None if helper_module is None else f"{helper_module}.{helper}"
+    if isinstance(node, ast.Name):
+        return origins.get(node.id, node.id) in (helper, helper_origin)
+    return helper_origin is not None and _call_origin(node, origins) == helper_origin
+
+
+def _binds(node: ast.AST, name: str) -> bool:
+    """``node`` rebinds ``name`` inside a function body."""
+    if isinstance(node, ast.Name):
+        return node.id == name and isinstance(node.ctx, ast.Store)
+    if isinstance(node, ast.arg):
+        return node.arg == name
+    if isinstance(node, ast.alias):
+        return (node.asname or node.name.split(".", 1)[0]) == name
+    if isinstance(node, ast.Global | ast.Nonlocal):
+        return name in node.names
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+        return node.name == name
+    if isinstance(node, ast.ExceptHandler | ast.MatchAs | ast.MatchStar):
+        return node.name == name
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    return False
+
+
+_DEFERRED = (
+    ast.Lambda,
+    ast.GeneratorExp,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.IfExp,
+    ast.BoolOp,
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.ClassDef,
+)
+
+
+def _unconditional_statements(body: Sequence[ast.stmt]) -> list[ast.stmt]:
+    """Simple statements reached whenever the body runs past its guards.
+
+    Compound statements contribute nothing except the bodies of ``try`` and
+    ``with``, which start unconditionally. Nothing after a return or raise is
+    reached unconditionally, including one that ends a ``try`` or ``with`` body.
+    """
+    return _unconditional_prefix(body)[0]
+
+
+def _unconditional_prefix(body: Sequence[ast.stmt]) -> tuple[list[ast.stmt], bool]:
+    """Unconditionally reached statements, and whether the body always leaves early."""
+    reached: list[ast.stmt] = []
+    for statement in body:
+        if isinstance(statement, ast.Try | ast.TryStar | ast.With):
+            inner, terminated = _unconditional_prefix(statement.body)
+            reached.extend(inner)
+            if terminated:
+                return reached, True
+        elif not isinstance(
+            statement,
+            (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Match, ast.AsyncWith, *_DEFERRED),
+        ):
+            reached.append(statement)
+        if isinstance(statement, ast.Return | ast.Raise):
+            return reached, True
+    return reached, False
+
+
+def _eager_nodes(node: ast.AST) -> list[ast.AST]:
+    """Nodes evaluated with ``node``, excluding deferred or conditional subexpressions."""
+    nodes: list[ast.AST] = []
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        nodes.append(current)
+        pending.extend(
+            child for child in ast.iter_child_nodes(current) if not isinstance(child, _DEFERRED)
+        )
+    return nodes
+
+
 class StructuralEvaluator:
     def __init__(self, judge: AmbiguityJudge | None = None) -> None:
         self.judge = judge
@@ -402,11 +548,15 @@ class StructuralEvaluator:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "consistency-structure",
-            "version": "4",
+            "version": "6",
             "categories": list(CATEGORIES),
             "target_function": "implement",
             "accepted_module": "optional-docstring-then-imports-then-one-function",
-            "accepted_function": "optional-docstring-then-one-return-for-automatic-verdict",
+            "automatic_verdicts": {
+                "reused": "helper called unconditionally, no primitive called",
+                "mixed": "helper called unconditionally and a primitive called",
+                "duplicated": "helper never referenced and a primitive called",
+            },
             "judge": None if self.judge is None else self.judge.configuration(),
         }
 
@@ -420,57 +570,72 @@ class StructuralEvaluator:
             if not isinstance(source, str):
                 raise ValueError("worker output source must be a string")
             tree, function = parse_candidate_source(
-                source, helper=task.helper, target_path=task.target_path
+                source,
+                helper=task.helper,
+                target_path=task.target_path,
+                helper_module=task.helper_module,
             )
         except (KeyError, TypeError, ValueError, SyntaxError) as error:
             return EvaluationFailed("InvalidOutput", str(error))
-        # Limit automatic classification to straight-line return expressions.
-        # Calls hidden in branches, nested functions, or aliases need adjudication.
-        function_body = list(function.body)
-        if (
-            function_body
-            and isinstance(function_body[0], ast.Expr)
-            and isinstance(function_body[0].value, ast.Constant)
-            and isinstance(function_body[0].value.value, str)
-        ):
-            function_body.pop(0)
-        statement = function_body[0] if len(function_body) == 1 else None
-        expression = statement.value if isinstance(statement, ast.Return) else None
-        nodes = list(ast.walk(expression)) if expression is not None else []
-        # ast.walk also visits deferred or conditional expressions: a helper
-        # inside a returned lambda/generator need not execute at all.
-        indirect = any(
-            isinstance(
-                node,
-                ast.Lambda
-                | ast.GeneratorExp
-                | ast.ListComp
-                | ast.SetComp
-                | ast.DictComp
-                | ast.IfExp
-                | ast.BoolOp,
-            )
-            for node in nodes
-        )
-        straight = expression is not None and not indirect
-        calls = [node.func for node in nodes if isinstance(node, ast.Call)]
+        # A helper call counts only where it runs whenever control reaches that
+        # statement; calls in branches, loops, lambdas, comprehensions, or
+        # short-circuit operands need adjudication. Duplication needs no such
+        # care: a function that never names the helper but calls its
+        # primitives rebuilt the helper somewhere.
+        _, package_parts = _target_module(task.target_path)
         origins = _import_origins(ast.parse(task.helper_source))
-        origins.update(_import_origins(tree))
-        call_origins = [_call_origin(node, origins) for node in calls]
-        names = {name for name in call_origins if name is not None}
-        helper_used = task.helper in names
-        primitives_used = sorted(names.intersection(task.primitives))
-        allowed_calls = {*task.primitives, task.helper}
-        unknown_call = any(name not in allowed_calls for name in call_origins)
-        straight = straight and not unknown_call
+        origins.update(_import_origins(tree, package_parts))
+        # Only imports that always run resolve names; any other local import of
+        # the helper name is a rebinding.
+        local_imports: list[ast.stmt] = [
+            node
+            for node in _unconditional_statements(function.body)
+            if isinstance(node, ast.Import | ast.ImportFrom)
+        ]
+        local_module = ast.Module(body=local_imports, type_ignores=[])
+        origins.update(_import_origins(local_module, package_parts))
+        helper_imports = {
+            id(alias)
+            for node in local_imports
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if (alias.asname or alias.name) == task.helper
+            and f"{_imported_module(node, package_parts)}.{alias.name}"
+            == f"{task.helper_module}.{task.helper}"
+        }
+        names = {
+            name
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call) and (name := _call_origin(node.func, origins)) is not None
+        }
+        primitives_used = any(
+            _names_callable(name, primitive) for name in names for primitive in task.primitives
+        )
+        helper_called = any(
+            isinstance(node, ast.Call)
+            and _names_helper(node.func, origins, task.helper, task.helper_module)
+            for statement in _unconditional_statements(function.body)
+            for node in _eager_nodes(statement)
+        )
+        # Any name ending in the helper's counts as a reference, so near misses
+        # go to adjudication instead of being called duplication.
+        helper_referenced = any(
+            isinstance(node, ast.Name | ast.Attribute)
+            and _names_callable(_call_origin(node, origins), task.helper)
+            for node in ast.walk(function)
+        )
+        # A local rebinding of the helper name makes every call to it suspect,
+        # unless it is a function-local import of the helper itself.
+        helper_shadowed = any(
+            _binds(node, task.helper) and id(node) not in helper_imports
+            for node in ast.walk(function)
+        )
         detail = {"route": "structural", "calls": sorted(names), "family": task.family}
-        if straight and (helper_used or primitives_used):
-            verdict = (
-                "mixed"
-                if helper_used and primitives_used
-                else ("reused" if helper_used else "duplicated")
-            )
-            return EvaluationSuccess(verdict, ("direct_call_structure",), detail)
+        if helper_called and not helper_shadowed:
+            verdict = "mixed" if primitives_used else "reused"
+            return EvaluationSuccess(verdict, ("unconditional_helper_call",), detail)
+        if primitives_used and not helper_referenced:
+            return EvaluationSuccess("duplicated", ("helper_absent",), detail)
         if self.judge is None:
             return EvaluationFailed("AmbiguousStructure", "no ambiguity judge configured", detail)
         try:
@@ -493,6 +658,29 @@ class StructuralEvaluator:
             (*result.reason_codes, "ambiguous_judge"),
             {"route": "judge", "structural": detail, "judge": result.detail},
             result.accounting,
+        )
+
+
+class ChainStepEvaluator:
+    """Structural verdict for one step of a chained worker output."""
+
+    def __init__(self, step: int) -> None:
+        self.step = step
+        self.structural = StructuralEvaluator()
+
+    def configuration(self) -> dict[str, Any]:
+        return {**self.structural.configuration(), "chain_step": self.step}
+
+    async def evaluate(
+        self, *, input_value: Any, output: Any, coordinate: EvaluationCoordinate
+    ) -> EvaluationResult:
+        try:
+            step = output["steps"][self.step]
+            source = step["source"]
+        except (KeyError, IndexError, TypeError):
+            return EvaluationFailed("StepMissing", f"chain step {self.step} produced no source")
+        return await self.structural.evaluate(
+            input_value=input_value, output={"source": source}, coordinate=coordinate
         )
 
 
@@ -540,13 +728,16 @@ def materialize_consistency(
     correctness_evaluator: Evaluator | None = None,
     execution_schedule: str | None = None,
     repository_variants: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
+    arm_ids: Sequence[str] = ("clean", "inconsistent"),
+    abstraction_evaluators: Mapping[str, Evaluator] | None = None,
 ) -> StudySnapshot:
     """Freeze local task/repository inputs and supplied PAA contracts without providers."""
+    if repository_variants is None and set(arm_ids) != {"clean", "inconsistent"}:
+        raise ValueError("arms other than clean and inconsistent need repository variants")
     if repository_variants is not None:
         task_ids = {task.id for task in tasks}
         if set(repository_variants) != task_ids or any(
-            set(repository_variants[task_id]) != {"clean", "inconsistent"}
-            for task_id in task_ids
+            set(repository_variants[task_id]) != set(arm_ids) for task_id in task_ids
         ):
             raise ValueError("repository variants must exactly cover every task and arm")
     basis_ref = str(
@@ -554,10 +745,11 @@ def materialize_consistency(
             {
                 "categories": list(CATEGORIES),
                 "definition": (
-                    "Direct helper reuse; mixed includes calls to any primitive used by the helper."
+                    "Reused calls the helper unconditionally; mixed also calls a primitive "
+                    "used by the helper; duplicated calls a primitive and never names the helper."
                 ),
-                "ambiguous": "Judge when direct, unconditional call structure cannot decide; "
-                "deferred and conditional expressions are ambiguous.",
+                "ambiguous": "Judge when neither rule decides; helper calls in branches, "
+                "loops, deferred or short-circuit expressions are ambiguous.",
             }
         )
     )
@@ -570,16 +762,21 @@ def materialize_consistency(
         "version": "2",
         "authority": "advisory",
     }
-    declaration = EvaluatorDeclaration(
-        id="abstraction",
-        identity=identity,
-        payload_schema=PAYLOAD_SCHEMA_ID,
-        payload_schema_ref=str(store.publish_json(_payload_schema(PAYLOAD_SCHEMA_ID, CATEGORIES))),
-        basis_ref=basis_ref,
-        configuration=evaluator.configuration(),
-        repeats=evaluator_repeats,
-    )
-    declarations = [declaration]
+    payload_schema_ref = str(store.publish_json(_payload_schema(PAYLOAD_SCHEMA_ID, CATEGORIES)))
+    declarations = [
+        EvaluatorDeclaration(
+            id=evaluator_id,
+            identity=identity,
+            payload_schema=PAYLOAD_SCHEMA_ID,
+            payload_schema_ref=payload_schema_ref,
+            basis_ref=basis_ref,
+            configuration=abstraction.configuration(),
+            repeats=evaluator_repeats,
+        )
+        for evaluator_id, abstraction in (
+            abstraction_evaluators or {"abstraction": evaluator}
+        ).items()
+    ]
     identities: list[dict[str, Any]] = [identity]
     if correctness_evaluator is not None:
         correctness_categories = ("incorrect", "correct")
@@ -661,7 +858,7 @@ def materialize_consistency(
             intervention={"repository": arm},
             conditions=conditions,
         )
-        for arm in ("clean", "inconsistent")
+        for arm in arm_ids
     )
     subjects = []
     realizations = []
@@ -682,18 +879,14 @@ def materialize_consistency(
                 example = task.reused_source if arm.id == "clean" else task.duplicated_source
                 repository = {
                     task.target_path: (
-                        task.helper_source
-                        + "\n"
-                        + example.replace("implement", "existing_feature")
+                        task.helper_source + "\n" + example.replace("implement", "existing_feature")
                     )
                 }
             else:
                 try:
                     repository = validate_repository(repository_variants[task.id][arm.id])
                 except KeyError as error:
-                    raise ValueError(
-                        f"missing {arm.id} repository for task {task.id}"
-                    ) from error
+                    raise ValueError(f"missing {arm.id} repository for task {task.id}") from error
                 if task.target_path not in repository:
                     raise ValueError(f"target file missing for task {task.id}")
             artifact_ref = str(

@@ -45,13 +45,226 @@ The module-level `render_input` function exposes only the instruction and arm-sp
 answers, test vectors, or arm IDs to the model. Those hidden fields remain bound
 into the subject digest and available to evaluators.
 
-The structural evaluator tolerates one leading function docstring, then requires
-a single return statement for an automatic verdict. It recognizes every named
-primitive used by the task helper, so calling the helper while also repeating any
-of those operations is `mixed`. Assignments, branches, aliases, and other shapes
-are `AmbiguousStructure`; without an ambiguity judge that is missing evidence.
-Both worker repeats must be present for both arms, so any such missing cell makes
-the subject incomplete and removes it from the paired comparison.
+The structural evaluator (version 6) decides automatically in two cases. If
+`implement` calls the helper in a statement that runs whenever control reaches
+it, the verdict is `reused`, or `mixed` when it also calls any primitive the
+helper uses. Early-return guards before that statement are allowed, and so are
+the bodies of `try` and `with`, up to a `return` or `raise` that ends one. A
+helper call is the helper's bare name or its exact import from the helper's
+module, at module level or inside `implement`. If `implement` never names the
+helper but calls one of its primitives, the verdict is `duplicated`. Helper
+calls only inside branches, loops, lambdas, comprehensions or short-circuit
+operands are `AmbiguousStructure`. So are same-named functions from other
+modules or objects, local rebinding of the helper name, and code that calls
+neither the helper nor a primitive. Without an ambiguity judge,
+`AmbiguousStructure` is missing evidence. Both worker repeats must be present
+for both arms, so any such missing cell makes the subject incomplete and removes
+it from the paired comparison. Version 4 required the whole body to be a single
+`return` expression. It rejected ordinary `result = helper(value); return
+result` code even though the prompt allowed it. Version 6 closes review
+findings on version 5: nested early returns, function-local imports and
+same-named calls. Re-scoring all 3,010 stored outputs, including chain steps,
+changes no verdict, so the v5 results below stand.
+
+## Layered scenario set
+
+`scenario="layered"` swaps in twelve multi-file subjects from
+`assay.investigations.layered_fixtures`. The grid, schedule and reports are the
+same as v1. The reusable unit lives outside the target file, and only the target
+file differs between arms:
+
+- `route-view` (4 subjects). In the clean arm, `routes.py` delegates each route
+  to a view in `views.py`. In the inconsistent arm, routes inline the lookup,
+  validation, persistence and serialization. The task adds the route for a view
+  that exists but has no route yet. The primitives are the store and serializer
+  calls.
+- `domain-rule` (4 subjects). Existing callers either use a composite business
+  rule, such as `order_total`, or rebuild it from its building blocks. The task
+  needs the composite's result. The test cases make naive shortcuts (a subtotal
+  instead of the total, gross pay instead of net) fail.
+- `cross-module` (4 subjects). A one-line value helper lives in `utils.py`, next
+  to distractor helpers. The target either imports it for three callers or
+  inlines it three times.
+
+These subjects may import the helper, but only from its declared
+`helper_module`. The layered profiles use a prompt that drops the "exactly one
+return statement" constraint, because an inlined route cannot meet it.
+
+```bash
+cd experiments && uv run --env-file ../.env python -m consistency_pilot.run_dry \
+    sonnet-5.5 ../.assay/dry-layered-sonnet-5.5-v1 layered
+```
+
+## Dose-response scenario set
+
+`scenario="dose"` asks how much bypassing code it takes before a model follows it.
+It uses the same twelve layered subjects and tasks, but each target file has ten
+existing callers of the reusable unit. Arm `mess-NN` writes NN of those callers
+inline; the other callers go through the abstraction. There are six arms:
+`mess-00`, `mess-01`, `mess-03`, `mess-05`, `mess-07` and `mess-10`.
+
+- Only the target file differs between arms, and it imports only what its
+  callers use.
+- Messy positions are nested, so each level contains the level below it. They
+  are spread through the file, and the last caller (the one nearest the
+  appended code) stays clean below `mess-10`. A model that follows the mess
+  cannot just be copying the function right above its insertion point.
+- The report compares every mess level with `mess-00` using the same paired
+  sign test. `regressed` counts subjects that reused less at that mess level.
+- The grid is 12 subjects × 6 arms × 2 repeats = 144 cells. The
+  `subject-rotated-v1` schedule starts each subject/repeat block one arm later.
+
+```bash
+cd experiments && uv run --env-file ../.env python -m consistency_pilot.run_dry \
+    gpt-6.1-sol ../.assay/dry-dose-gpt-6.1-sol-v1 dose
+```
+
+## Placement, chain and context scenario sets
+
+These three sets reuse the dose subjects and change one thing each.
+
+- `scenario="placement"` puts the messy callers together at the end of the
+  file, directly above the insertion point. Arm `tail-NN` makes the last NN
+  of the ten callers inline. The arms are `mess-00`, `tail-01`, `tail-03`,
+  `tail-05`, `tail-07` and `mess-10`, so the grid is again 144 cells.
+- `scenario="chain"` asks for five sequential additions per cell instead of
+  one. Each step appends the previous output to the target file under its
+  step name, so later steps see the model's own earlier code. The arms are
+  `mess-00`, `tail-03` and `tail-07`. There is one abstraction report per step
+  (`abstraction-1` to `abstraction-5`), and correctness is not run.
+- `scenario="context"` starts every arm from the `tail-07` file. It adds
+  unrelated support modules until the repository is about 30 KB (`ctx-30`) or
+  90 KB (`ctx-90`); `ctx-00` is unpadded. The padding never mentions the
+  helper. Correctness does not run for `ctx-90`, because those repositories
+  exceed the sandbox storage budget. The abstraction verdict is unaffected.
+
+## Code metrics
+
+`python -m consistency_pilot.dry_metrics <store> [reference-arm]` measures
+every stored output as a change to its arm's repository. It uses the shared
+`code_metrics` package (`experiments/code_metrics`). That package defines no
+metrics of its own: it runs established tools, with pinned versions, on the
+repository before and after the change and reports the difference. Each
+number is keyed by the tool that produced it:
+
+- size: `radon` SLOC and LLOC
+- complexity: `radon` cyclomatic complexity (McCabe) and Halstead volume;
+  `complexipy` cognitive complexity (SonarSource); `lizard` nesting depth
+- maintainability: `radon` Maintainability Index
+- coupling: `grimp` direct import dependencies
+- duplication: `jscpd` clones and duplicated lines
+- findings: `ruff` default rules; `ruff` PLR2004 magic values; `mypy` errors
+- new code: SonarQube-style new lines and new duplicated lines
+
+The submission's imports join the target file's import block, as a developer
+would place them, so the harness's append order is not scored. Imports the
+target already has are not repeated.
+
+jscpd matches exact token runs at its default thresholds (5 lines, 50
+tokens). So it misses copies with renamed variables, and copies shorter than
+those thresholds.
+
+Each arm is compared with the reference arm per subject, using the same sign
+test. The metrics are computed from source only, without running it, so they
+can be rerun on any stored result. The DRY verdict (reused / mixed /
+duplicated) and the mess ratio are this experiment's own measures, not
+code-quality metrics.
+
+## Results so far (2026-09-30)
+
+Verdict counts are over 24 cells (12 subjects × 2 repeats), scored with v5.
+"Flipped" means a paired sign test at p < 0.05 against the clean arm.
+
+**Single-file v1 set.** In the clean arm, Claude 3 Haiku duplicated in 10 of
+12 subjects. It ignores a one-line helper even when every caller uses it, so
+the consistency manipulation has nothing to act on. This is a floor effect,
+not drift. Haiku 4.5 reused in 10 of 12 clean subjects. In the inconsistent
+arm it duplicated in 8 and split in 2; 6 of those 8 had reused when clean.
+It follows the local convention more than any frontier model tested. Sol
+reused in every cell of both arms. Gemini reused in every
+complete clean subject; in the inconsistent arm it duplicated in 5 subjects, plus 1 split pair.
+Sonnet reused in 9 of 12 clean subjects and duplicated in 5 inconsistent
+ones.
+
+**Dose (mess spread through the file), reused / duplicated:**
+
+| mess | Sol | Sonnet | Gemini | Haiku 4.5 |
+|---|---|---|---|---|
+| 0/10 | 24 / 0 | 23 / 0 | 21 / 2 | 15 / 6 |
+| 1/10 | 24 / 0 | 23 / 0 | 20 / 4 | 10 / 10 |
+| 3/10 | 22 / 2 | 24 / 0 | 17 / 6 | 14 / 9 |
+| 5/10 | 20 / 4 | 21 / 0 | 15 / 8 | 11 / 10 |
+| 7/10 | 24 / 0 | 23 / 0 | 15 / 9 | 10 / 11 |
+| 10/10 | 2 / 22 | 14 / 9 | 0 / 23 | 2 / 19 |
+
+- Sol and Sonnet hold until the whole file bypasses the abstraction. Sol then
+  follows the mess almost completely (22 of 24). Sonnet does too for route
+  views (7 of 8), but it keeps importing cross-module helpers.
+- Gemini degrades gradually, and only on one-line cross-module helpers: 6 of 8
+  reused with no mess, 4 with 1/10, 1 with 3/10 and none from 5/10. Its views
+  and rules hold until 10/10.
+- Haiku 4.5 duplicates cross-module helpers in 6 of 8 clean cells and all 8
+  from 1/10. Its route views drift from 1/10 (2–3 of 5 scored cells
+  duplicated), and its domain rules hold until 10/10. Up to 4 cells per arm
+  failed, mostly route views.
+
+**Placement (mess clustered above the insertion point).** Up to 7 of 10
+inline callers directly above the insertion point cost at most 3 of 24 cells
+for Sol and Sonnet (21 / 3 at `tail-07`, all route views). Neither result is
+significant.
+
+**Chains of five additions.** There is no snowball. Sol slipped on 2 subjects
+at step 1 of `tail-07`, then reused everywhere for steps 2–4, and had 1
+regression per messy arm at step 5. Sonnet had at most 1 regressed subject
+per step in `tail-07`, and none in `tail-03`.
+
+**Context size.** Padding the `tail-07` repository to about 30 KB or 90 KB
+changed nothing. Sol's reuse count was 21 at ctx-00, 21 at ctx-30 and 22 at
+ctx-90; Sonnet's was 20 at all three sizes. Gemini (v2) was also flat, at
+about half. By cell (reused / duplicated) it scored 8 / 9 at ctx-00, 9 / 10
+at ctx-30 and 10 / 8 at ctx-90. By subject it was 4 reused and 4 duplicated
+at every size, with 3–4 subjects incomplete per arm. Its `tail-07` placement
+drift does not grow with repository size.
+
+**What duplication costs.** These are standard metrics (`code_metrics`) over
+988 frontier outputs from the layered, dose, placement and context runs: 788
+reused and 200 duplicated. Each figure is the mean change per output.
+
+| metric | reused | duplicated |
+|---|---|---|
+| SLOC (radon) | 2.4 | 6.3 |
+| cyclomatic complexity (radon) | 1.0 | 2.2 |
+| cognitive complexity (complexipy) | 0 | 1.2 |
+| Halstead volume (radon) | 11 | 41 |
+| max nesting depth, new code (lizard) | 0 | 1.1 |
+| new duplicated lines (jscpd, default thresholds) | 0.05 | 3.4 |
+
+- The cost is concentrated in route views. There, a duplicated output adds
+  11.2 SLOC against 3.0, cyclomatic complexity 3.8 against 1.0, cognitive
+  complexity 2.8 against 0, and nesting 2.6 against 0. Every duplicated route
+  view is also a jscpd clone at jscpd's default thresholds, so an off-the-shelf
+  duplication gate would catch them.
+- Duplicated one-line cross-module helpers cost nothing measurable. They are
+  too small for any of these metrics.
+- Within subjects that produced both verdicts, the duplicated version never
+  scored lower on complexity, cognitive complexity, Halstead volume or nesting.
+  Its Maintainability Index was lower in all 12.
+- Ruff and mypy findings, magic values and import dependencies do not
+  separate the verdicts. The duplicated code is clean and it works; there is
+  just more of it to maintain.
+
+For Haiku 4.5 on the dose set (62 reused, 65 duplicated), the gap is smaller:
+4.1 against 2.6 SLOC and 1.5 against 1.0 cyclomatic complexity. Most of its
+duplication is in cross-module one-liners.
+
+**Pending.**
+- Gemini chain. The v3 run failed in about 16 of 24 cells per arm, without
+  request errors; this needs investigating before any rerun.
+
+**Gemini placement (v3).** Clustered mess moves Gemini, unlike Sol and
+Sonnet. Duplicated subjects were 2 of 8 at `tail-01`, 4 of 9 at `tail-03`,
+and 6 of 8 at both `tail-05` and `tail-07`, with 1–2 subjects incomplete per
+arm.
 
 ## Correctness sandbox
 
