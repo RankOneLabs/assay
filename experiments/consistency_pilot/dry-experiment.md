@@ -213,7 +213,11 @@ per step in `tail-07`, and none in `tail-03`.
 
 **Context size.** Padding the `tail-07` repository to about 30 KB or 90 KB
 changed nothing. Sol's reuse count was 21 at ctx-00, 21 at ctx-30 and 22 at
-ctx-90; Sonnet's was 20 at all three sizes.
+ctx-90; Sonnet's was 20 at all three sizes. Gemini (v2) was also flat, at
+about half. By cell (reused / duplicated) it scored 8 / 9 at ctx-00, 9 / 10
+at ctx-30 and 10 / 8 at ctx-90. By subject it was 4 reused and 4 duplicated
+at every size, with 3–4 subjects incomplete per arm. Its `tail-07` placement
+drift does not grow with repository size.
 
 **What duplication costs.** These are standard metrics (`code_metrics`) over
 988 frontier outputs from the layered, dose, placement and context runs: 788
@@ -247,7 +251,6 @@ For Haiku 4.5 on the dose set (62 reused, 65 duplicated), the gap is smaller:
 duplication is in cross-module one-liners.
 
 **Pending.**
-- Gemini context.
 - Gemini chain. The v3 run failed in about 16 of 24 cells per arm, without
   request errors; this needs investigating before any rerun.
 
