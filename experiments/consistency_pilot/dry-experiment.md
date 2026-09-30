@@ -134,44 +134,61 @@ These three sets reuse the dose subjects and change one thing each.
 
 ## Code metrics
 
-`python -m consistency_pilot.code_metrics <store> [reference-arm]` measures
-every stored `implement` function. The measurements are:
+`python -m consistency_pilot.dry_metrics <store> [reference-arm]` measures
+every stored output as a change to its arm's repository. It uses the shared
+`code_metrics` package (`experiments/code_metrics`). That package defines no
+metrics of its own: it runs established tools, with pinned versions, on the
+repository before and after the change and reports the difference. Each
+number is keyed by the tool that produced it:
 
-- non-blank lines and statements
-- cyclomatic complexity and nesting depth
-- fan-out (distinct callees) and imports
-- magic numbers
-- clone similarity: token similarity to the closest existing function in the
-  target file
-- new ruff findings (`E9,F,B,SIM`)
+- size: `radon` SLOC and LLOC
+- complexity: `radon` cyclomatic complexity (McCabe) and Halstead volume;
+  `complexipy` cognitive complexity (SonarSource); `lizard` nesting depth
+- maintainability: `radon` Maintainability Index
+- coupling: `grimp` direct import dependencies
+- duplication: `jscpd` clones and duplicated lines
+- findings: `ruff` default rules; `ruff` PLR2004 magic values; `mypy` errors
+- new code: SonarQube-style new lines and new duplicated lines
+
+The submission's imports join the target file's import block, as a developer
+would place them, so the harness's append order is not scored.
+
+jscpd matches exact token runs at its default thresholds (5 lines, 50
+tokens). So it misses copies with renamed variables, and copies shorter than
+those thresholds.
 
 Each arm is compared with the reference arm per subject, using the same sign
-test. The metrics are computed from source only, so they can be rerun on any
-stored result at no cost.
+test. The metrics are computed from source only, without running it, so they
+can be rerun on any stored result. The DRY verdict (reused / mixed /
+duplicated) and the mess ratio are this experiment's own measures, not
+code-quality metrics.
 
 ## Results so far (2026-09-30)
 
 Verdict counts are over 24 cells (12 subjects × 2 repeats), scored with v5.
 "Flipped" means a paired sign test at p < 0.05 against the clean arm.
 
-**Single-file v1 set.** In the clean arm, Haiku 4.5 duplicated in 10 of 12
-subjects. It ignores a one-line helper even when every caller uses it, so the
-consistency manipulation has nothing to act on. This is a floor effect, not
-drift. Sol reused in every cell of both arms. Gemini reused in every
+**Single-file v1 set.** In the clean arm, Claude 3 Haiku duplicated in 10 of
+12 subjects. It ignores a one-line helper even when every caller uses it, so
+the consistency manipulation has nothing to act on. This is a floor effect,
+not drift. Haiku 4.5 reused in 10 of 12 clean subjects. In the inconsistent
+arm it duplicated in 8 and split in 2; 6 of those 8 had reused when clean.
+It follows the local convention more than any frontier model tested. Sol
+reused in every cell of both arms. Gemini reused in every
 complete clean subject; in the inconsistent arm it duplicated in 5 subjects, plus 1 split pair.
 Sonnet reused in 9 of 12 clean subjects and duplicated in 5 inconsistent
 ones.
 
 **Dose (mess spread through the file), reused / duplicated:**
 
-| mess | Sol | Sonnet | Gemini |
-|---|---|---|---|
-| 0/10 | 24 / 0 | 23 / 0 | 21 / 2 |
-| 1/10 | 24 / 0 | 23 / 0 | 20 / 4 |
-| 3/10 | 22 / 2 | 24 / 0 | 17 / 6 |
-| 5/10 | 20 / 4 | 21 / 0 | 15 / 8 |
-| 7/10 | 24 / 0 | 23 / 0 | 15 / 9 |
-| 10/10 | 2 / 22 | 14 / 9 | 0 / 23 |
+| mess | Sol | Sonnet | Gemini | Haiku 4.5 |
+|---|---|---|---|---|
+| 0/10 | 24 / 0 | 23 / 0 | 21 / 2 | 15 / 6 |
+| 1/10 | 24 / 0 | 23 / 0 | 20 / 4 | 10 / 10 |
+| 3/10 | 22 / 2 | 24 / 0 | 17 / 6 | 14 / 9 |
+| 5/10 | 20 / 4 | 21 / 0 | 15 / 8 | 11 / 10 |
+| 7/10 | 24 / 0 | 23 / 0 | 15 / 9 | 10 / 11 |
+| 10/10 | 2 / 22 | 14 / 9 | 0 / 23 | 2 / 19 |
 
 - Sol and Sonnet hold until the whole file bypasses the abstraction. Sol then
   follows the mess almost completely (22 of 24). Sonnet does too for route
@@ -179,6 +196,10 @@ ones.
 - Gemini degrades gradually, and only on one-line cross-module helpers: 6 of 8
   reused with no mess, 4 with 1/10, 1 with 3/10 and none from 5/10. Its views
   and rules hold until 10/10.
+- Haiku 4.5 duplicates cross-module helpers in 6 of 8 clean cells and all 8
+  from 1/10. Its route views drift from 1/10 (2–3 of 5 scored cells
+  duplicated), and its domain rules hold until 10/10. Up to 4 cells per arm
+  failed, mostly route views.
 
 **Placement (mess clustered above the insertion point).** Up to 7 of 10
 inline callers directly above the insertion point cost at most 3 of 24 cells
@@ -194,14 +215,46 @@ per step in `tail-07`, and none in `tail-03`.
 changed nothing. Sol's reuse count was 21 at ctx-00, 21 at ctx-30 and 22 at
 ctx-90; Sonnet's was 20 at all three sizes.
 
-**What duplication costs.** Duplicated outputs take about 3 times the lines,
-4–5 times the statements, twice the cyclomatic complexity and 4–5 times the
-fan-out of reused ones. Sol and Gemini (layered set, and Sol dose 10/10) are
-significant on lines, statements and fan-out. Correctness, new lint findings
-and magic numbers do not differ: the duplicated code works, and there is just
-more of it to maintain.
+**What duplication costs.** These are standard metrics (`code_metrics`) over
+988 frontier outputs from the layered, dose, placement and context runs: 788
+reused and 200 duplicated. Each figure is the mean change per output.
 
-**Pending.** Gemini placement, chain and context runs.
+| metric | reused | duplicated |
+|---|---|---|
+| SLOC (radon) | 2.4 | 6.3 |
+| cyclomatic complexity (radon) | 1.0 | 2.2 |
+| cognitive complexity (complexipy) | 0 | 1.2 |
+| Halstead volume (radon) | 11 | 41 |
+| max nesting depth, new code (lizard) | 0 | 1.1 |
+| new duplicated lines (jscpd, default thresholds) | 0.05 | 3.4 |
+
+- The cost is concentrated in route views. There, a duplicated output adds
+  11.2 SLOC against 3.0, cyclomatic complexity 3.8 against 1.0, cognitive
+  complexity 2.8 against 0, and nesting 2.6 against 0. Every duplicated route
+  view is also a jscpd clone at jscpd's default thresholds, so an off-the-shelf
+  duplication gate would catch them.
+- Duplicated one-line cross-module helpers cost nothing measurable. They are
+  too small for any of these metrics.
+- Within subjects that produced both verdicts, the duplicated version never
+  scored lower on complexity, cognitive complexity, Halstead volume or nesting.
+  Its Maintainability Index was lower in all 12.
+- Ruff and mypy findings, magic values and import dependencies do not
+  separate the verdicts. The duplicated code is clean and it works; there is
+  just more of it to maintain.
+
+For Haiku 4.5 on the dose set (62 reused, 65 duplicated), the gap is smaller:
+4.1 against 3.2 SLOC and 1.5 against 1.0 cyclomatic complexity. Most of its
+duplication is in cross-module one-liners.
+
+**Pending.**
+- Gemini context.
+- Gemini chain. The v3 run failed in about 16 of 24 cells per arm, without
+  request errors; this needs investigating before any rerun.
+
+**Gemini placement (v3).** Clustered mess moves Gemini, unlike Sol and
+Sonnet. Duplicated subjects were 2 of 8 at `tail-01`, 4 of 9 at `tail-03`,
+and 6 of 8 at both `tail-05` and `tail-07`, with 1–2 subjects incomplete per
+arm.
 
 ## Correctness sandbox
 

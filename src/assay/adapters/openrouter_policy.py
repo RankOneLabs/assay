@@ -109,6 +109,18 @@ GPT_6_1_SOL_AZURE = OpenRouterSettings(
     timeout_s=120,
 )
 
+# Small-model comparison route; Claude 3 Haiku had no OpenRouter endpoints by 2026-09-30.
+HAIKU_4_5_BEDROCK = OpenRouterSettings(
+    model="anthropic/claude-haiku-4.5",
+    provider="amazon-bedrock",
+    provider_name="Amazon Bedrock",
+    max_prompt_price=1.1,
+    max_completion_price=5.5,
+    max_output_tokens=8192,
+    max_request_body_bytes=196_608,
+    timeout_s=120,
+)
+
 GEMINI_3_1_PRO_VERTEX = OpenRouterSettings(
     model="google/gemini-3.1-pro-preview",
     provider="google-vertex/global",

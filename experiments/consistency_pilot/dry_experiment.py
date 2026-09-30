@@ -260,6 +260,7 @@ def dry_profiles(scenario: str = "v1") -> dict[str, tuple[OpenRouterSettings, Pi
     from assay.adapters.openrouter import (
         GEMINI_3_1_PRO_VERTEX,
         GPT_6_1_SOL_AZURE,
+        HAIKU_4_5_BEDROCK,
         HAIKU_BEDROCK,
         SONNET_5_5_BEDROCK,
     )
@@ -267,6 +268,7 @@ def dry_profiles(scenario: str = "v1") -> dict[str, tuple[OpenRouterSettings, Pi
     profiles = {"haiku": (HAIKU_BEDROCK, haiku_dry_settings(scenario))}
     for name, route in (
         ("sonnet-5.5", SONNET_5_5_BEDROCK),
+        ("haiku-4.5", HAIKU_4_5_BEDROCK),
         ("gpt-6.1-sol", GPT_6_1_SOL_AZURE),
         ("gemini-3.1-pro", GEMINI_3_1_PRO_VERTEX),
     ):
