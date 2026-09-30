@@ -83,6 +83,8 @@ HAIKU_BEDROCK = OpenRouterSettings(
 
 # Catalogue checked 2026-09-30. Frontier routes for the DRY experiment; each is
 # a ZDR endpoint. Sonnet 5.5 routes reject forced tool_choice, so it uses "auto".
+# Request bodies up to 192 KB (padded context scenarios) stay under the
+# 65,536-input-token assumption behind the per-request cost bound.
 SONNET_5_5_BEDROCK = OpenRouterSettings(
     model="anthropic/claude-sonnet-5.5",
     provider="amazon-bedrock",
@@ -90,6 +92,7 @@ SONNET_5_5_BEDROCK = OpenRouterSettings(
     max_prompt_price=2,
     max_completion_price=10,
     max_output_tokens=8192,
+    max_request_body_bytes=196_608,
     timeout_s=120,
     tool_choice="auto",
 )
@@ -102,6 +105,7 @@ GPT_6_1_SOL_AZURE = OpenRouterSettings(
     max_prompt_price=2.2,
     max_completion_price=11,
     max_output_tokens=8192,
+    max_request_body_bytes=196_608,
     timeout_s=120,
 )
 
@@ -112,5 +116,6 @@ GEMINI_3_1_PRO_VERTEX = OpenRouterSettings(
     max_prompt_price=2,
     max_completion_price=12,
     max_output_tokens=8192,
+    max_request_body_bytes=196_608,
     timeout_s=300,
 )
