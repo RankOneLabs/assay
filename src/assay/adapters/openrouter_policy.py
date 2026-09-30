@@ -109,6 +109,19 @@ GPT_6_1_SOL_AZURE = OpenRouterSettings(
     timeout_s=120,
 )
 
+# GPT-6 Luna, the low-cost sibling of Sol, on the same Azure pool; catalogue
+# checked 2026-09-30.
+GPT_6_LUNA_AZURE = OpenRouterSettings(
+    model="openai/gpt-6-luna",
+    provider="azure/us",
+    provider_name="Azure",
+    max_prompt_price=0.11,
+    max_completion_price=0.55,
+    max_output_tokens=8192,
+    max_request_body_bytes=196_608,
+    timeout_s=120,
+)
+
 # Small-model comparison route; Claude 3 Haiku had no OpenRouter endpoints by 2026-09-30.
 HAIKU_4_5_BEDROCK = OpenRouterSettings(
     model="anthropic/claude-haiku-4.5",
