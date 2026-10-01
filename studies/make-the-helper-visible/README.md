@@ -4,8 +4,8 @@ I tested a simple question: when a coding model adds code, does it reuse an
 existing shared helper, or does it copy the inline duplicates around it?
 
 - **Synthetic files.** Weaker models started copying the mess from the first
-  inline caller. Sol and Sonnet held out until the whole file bypassed the
-  helper.
+  inline caller. Sol and Sonnet mostly held out until the whole file bypassed
+  the helper.
 - **Real repositories.** I used slices of two of our own repositories. Inline
   copies in other files changed nothing for any of four models.
 - **What moved reuse:** whether the target file imported the helper, and which
