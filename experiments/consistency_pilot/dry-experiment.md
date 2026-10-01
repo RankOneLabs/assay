@@ -138,6 +138,46 @@ These three sets reuse the dose subjects and change one thing each.
   helper. Correctness does not run for `ctx-90`, because those repositories
   exceed the sandbox storage budget. The abstraction verdict is unaffected.
 
+## Codebase scenario set
+
+`scenario="codebase"` sets eleven subjects in real code instead of samples
+written for the experiment. Each subject's repository is a slice of one of our
+public repositories, copied unchanged from a pinned commit by
+`snapshot_codebases.py`. The slice is one package plus the modules it imports.
+Package `__init__` files that would import the rest of the repository are
+replaced by empty ones.
+
+| Family | Slice | Target file | Helpers |
+|---|---|---|---|
+| `jig-llm` | jig `llm` adapters, 5fa9c01 | new `llm/vllm.py` | `parse_tool_arguments`, `wrap_llm_error`, `merge_completion_kwargs`, `stamp_cost` |
+| `jig-feedback` | jig graders and SQLite tracers, 5fa9c01 | new `feedback/rubric_judge.py`, `tracing/jsonl.py` | `strip_markdown_fence`, `validate_scores`, `parse_aware_utc` |
+| `scout-platforms` | scout platform adapters, ee8c901 | new `platforms/mastodon.py` | `derive_source_key`, `source_since`, `parse_platform_ts`, `parse_retry_after` |
+
+Each task asks for a new function in a new, nearly empty module of that slice,
+and the behaviour it asks for is exactly what one existing shared helper
+provides. The module already imports that helper, as a neighbouring module
+that uses it would; without the import, the first runs (Haiku 4.5, Gemini 3.1
+Pro, GPT-6 Luna) reused the helper in only 4–9 of 22 clean cells, too few for
+the arms to differ. Two to three existing modules call that helper. The clean arm is the
+code as it is at the pinned commit. In the inconsistent arm those callers copy
+the helper's logic inline instead, in the style the code would plausibly have
+taken without the helper. The helper and the target file are identical in both
+arms, so the arms differ only in how existing code reaches the behaviour. For
+`stamp_cost` and `source_since` the building blocks are themselves shared
+functions (`compute_cost`, `derive_source_key`); calling those without the
+helper counts as duplication, as in the domain-rule family.
+
+Prompts are 135–156 KB, so Claude 3 Haiku's 64 KB request cap excludes it, as
+for `context`. The grid is 11 subjects × 2 arms × 2 repeats = 44 cells.
+
+`codebase-near` puts the mess next to the edit. The target module already
+holds one private function that needs the helper's behaviour too, for example
+assembling streamed tool calls next to the task of converting one. In the
+clean arm it calls the helper; in the inconsistent arm it inlines the logic in
+the style of the distant copies, and the module imports what that copy needs.
+The helper import stays in both arms, so they differ only in how existing
+code, near and far, reaches the behaviour.
+
 ## Code metrics
 
 `python -m consistency_pilot.dry_metrics <store> [reference-arm]` measures
@@ -257,9 +297,68 @@ For Haiku 4.5 on the dose set (62 reused, 65 duplicated), the gap is smaller:
 4.1 against 2.6 SLOC and 1.5 against 1.0 cyclomatic complexity. Most of its
 duplication is in cross-module one-liners.
 
+**Codebase (real code).** These are cells that reused the helper, out of 22
+per arm (11 subjects × 2 repeats), as clean / inconsistent. All runs are
+scored with evaluator v7.
+
+| target module | Haiku 4.5 | Gemini 3.1 Pro | GPT-6 Luna | GPT-6.1 Sol |
+|---|---|---|---|---|
+| no helper import | 4 / 2 | 9 / 8 | 6 / 4 | — |
+| imports the helper | 8 / 8 | — | 16 / 18 | 18 / 18 |
+| plus a neighbour (`codebase-near`) | 6 / 9 | 13 / 12 | 17 / 15 | 18 / 16 |
+
+- Distant mess did nothing. No run shows an arm difference, and no sign test
+  falls below p = 0.5. With the helper imported, Sol and Haiku tied on every
+  scored subject. Luna reused slightly more in the inconsistent arm.
+- Making the helper visible mattered more than consistency did. Importing it
+  in the target module raised clean-arm reuse from 6 to 16 cells for Luna and
+  from 4 to 8 for Haiku, and it did the same in both arms.
+- A neighbour in the target module moved Luna and Sol on one subject. For
+  `usage-cost`, both reused in all 4 clean cells and duplicated in all 4
+  inconsistent cells. They copied the neighbour, which calls `compute_cost`
+  itself, a legitimate shared function. On the other 10 subjects the
+  neighbour changed at most one cell (Luna, `source-key`). Gemini tied on
+  every subject, and Haiku moved the other way (6 against 9), within its
+  noise. Both duplicated `usage-cost` in every cell, clean arm included, so
+  the neighbour can only move a model that reuses the helper when clean.
+- Models differ more than arms. With the helper imported:
+  - Sol reused in more cells than Haiku on 6 of 11 subjects and in fewer on
+    none (sign test p = 0.03).
+  - Luna reused in more cells than Haiku on 5 subjects and in fewer on none
+    (p = 0.06).
+  - Luna and Sol differ by at most one cell per subject.
+
+  This comparison was not planned, so treat it as exploratory. Haiku
+  duplicates `wrap_llm_error`, `stamp_cost`, `parse_aware_utc` and
+  `derive_source_key` in every scored cell, even with the import a few lines
+  above. Luna and Sol were correct on all 11 subjects in every run. Haiku was
+  correct on 8 of 9 scored subjects per arm, and on 7 of 10 with the
+  neighbour. Gemini sits between Haiku and Luna, both on the original stubs
+  and with the neighbour, where it was correct on 10 of 11 subjects per arm.
+- Two subjects are at or near the floor for every model:
+  - `request-kwargs` is duplicated in every cell. Why has not been
+    investigated, but it is probably the task design.
+  - `judge-scores` is duplicated, or ambiguous for Sol; Gemini reused it
+    in one clean `codebase-near` cell. Models write the
+    range checks themselves instead of building the `Score` objects that
+    `validate_scores` takes. `0 <= v <= 1` is not on the primitive list, so
+    v7 has no evidence either way when an output only checks ranges, and
+    Sol's outputs score as ambiguous.
+- Method notes:
+  - Evaluator v6 rejected idiomatic annotations such as
+    `dict[str, Any] | None`, which hit 16 of 44 Haiku cells and most of
+    Gemini's. v7 accepts type expressions, and the earlier runs were rescored
+    offline from their stored sources.
+  - At peak load, Azure answers large prompts with HTTP 200 and an error
+    body. This stopped Luna's first two runs under the budget guard, so the
+    Luna figures above come from off-peak reruns.
+  - A run costs about $2 for Haiku and Sol, $4–5 for Gemini and $0.12 for
+    Luna.
+
 **Pending.**
 - Gemini chain. The v3 run failed in about 16 of 24 cells per arm, without
   request errors; this needs investigating before any rerun.
+- Gemini on the helper-import variant without the neighbour.
 
 **Gemini placement (v3).** Clustered mess moves Gemini, unlike Sol and
 Sonnet. Duplicated subjects were 2 of 8 at `tail-01`, 4 of 9 at `tail-03`,
@@ -281,7 +380,15 @@ seccomp profile, 64 MiB memory/swap, half a CPU, 32 PIDs, bounded file descripto
 and file size, a ten-second infrastructure-startup deadline, a five-second
 candidate deadline, and a 65,536-byte combined output limit.
 `--pull=never` makes a missing image fail before paid work rather than silently
-resolving mutable remote state. A known implementation is self-tested before the
+resolving mutable remote state.
+
+The codebase snapshots import httpx, aiosqlite and pydantic. Their correctness
+runs use an image built locally from `codebase_sandbox/Dockerfile`, which adds
+those packages at hash-pinned versions to the image above. Its image ID is
+pinned in `CODEBASE_PYTHON_IMAGE`; a rebuild produces a new ID, so the pin must
+be updated after one. These runs also get a 4 MiB `/tmp`, because every case
+writes its own copy of a repository of about 150 KB, and a fifteen-second
+candidate deadline, because each case imports those packages. A known implementation is self-tested before the
 first provider request. External cancellation waits for forced cleanup of the
 uniquely named container.
 

@@ -46,7 +46,15 @@ class ChainStep(WireModel):
 class CodingTask(WireModel):
     id: str
     family: Literal[
-        "cosmetic", "architectural", "semantic", "route-view", "domain-rule", "cross-module"
+        "cosmetic",
+        "architectural",
+        "semantic",
+        "route-view",
+        "domain-rule",
+        "cross-module",
+        "jig-llm",
+        "jig-feedback",
+        "scout-platforms",
     ]
     instruction: str
     helper: str
@@ -326,6 +334,21 @@ class AmbiguityJudge(Protocol):
     async def judge(self, *, task: CodingTask, source: str) -> EvaluationResult: ...
 
 
+# Annotations are evaluated at definition time, so they may only spell types:
+# names, dotted names, subscripts, `X | Y` unions and string forward references.
+_TYPE_EXPRESSION_NODES = (
+    ast.Name,
+    ast.Attribute,
+    ast.Subscript,
+    ast.BinOp,
+    ast.BitOr,
+    ast.Constant,
+    ast.Tuple,
+    ast.List,
+    ast.Load,
+)
+
+
 def parse_candidate_source(
     source: str, *, helper: str, target_path: str, helper_module: str | None = None
 ) -> tuple[ast.Module, ast.FunctionDef]:
@@ -359,8 +382,13 @@ def parse_candidate_source(
     annotations = [argument.annotation for argument in arguments if argument.annotation is not None]
     if function.returns is not None:
         annotations.append(function.returns)
-    if any(not isinstance(annotation, ast.Name | ast.Constant) for annotation in annotations):
-        raise ValueError("only simple name or string annotations are allowed")
+    if any(
+        not isinstance(node, _TYPE_EXPRESSION_NODES)
+        or (isinstance(node, ast.BinOp) and not isinstance(node.op, ast.BitOr))
+        for annotation in annotations
+        for node in ast.walk(annotation)
+    ):
+        raise ValueError("only type-expression annotations are allowed")
     target_module, package_parts = _target_module(target_path)
     helper_origin = None if helper_module is None else f"{helper_module}.{helper}"
     for statement in imports:
@@ -548,7 +576,7 @@ class StructuralEvaluator:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "consistency-structure",
-            "version": "6",
+            "version": "7",
             "categories": list(CATEGORIES),
             "target_function": "implement",
             "accepted_module": "optional-docstring-then-imports-then-one-function",

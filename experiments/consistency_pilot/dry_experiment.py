@@ -24,6 +24,7 @@ from assay.investigations.chain_fixtures import (
     CHAIN_TASKS,
     chain_repository_variants,
 )
+from assay.investigations.codebase_fixtures import CODEBASE_TASKS, codebase_repository_variants
 from assay.investigations.consistency import (
     CATEGORIES,
     EXPERIMENT_TASKS,
@@ -34,8 +35,10 @@ from assay.investigations.consistency import (
 )
 from assay.investigations.context_fixtures import CONTEXT_ARMS, context_repository_variants
 from assay.investigations.correctness import (
+    CODEBASE_PYTHON_IMAGE,
     CORRECTNESS_CATEGORIES,
     DockerPythonRunner,
+    DockerRunnerSettings,
     FunctionalCorrectnessEvaluator,
     SandboxFailure,
 )
@@ -100,12 +103,12 @@ def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSe
     return ConsistencyWorker, PilotSettings, render_input
 
 
-SCENARIOS = ("v1", "layered", "dose", "placement", "chain", "context")
+SCENARIOS = ("v1", "layered", "dose", "placement", "chain", "context", "codebase", "codebase-near")
 
 
 @dataclass(frozen=True)
 class DryScenario:
-    """A twelve-subject population, its arms, and how its report compares them."""
+    """A subject population, its arms, and how its report compares them."""
 
     tasks: tuple[CodingTask, ...]
     repository_variants: dict[str, dict[str, dict[str, str]]] | None
@@ -115,6 +118,8 @@ class DryScenario:
     candidates: tuple[str, ...] = ("clean",)
     # Successive additions per cell; 0 means one ordinary call per cell.
     chain_steps: int = 0
+    # Sandbox for the correctness evaluator; None is the default runner.
+    runner_settings: DockerRunnerSettings | None = None
 
     @property
     def cells(self) -> int:
@@ -188,6 +193,18 @@ def dry_scenario(scenario: str) -> DryScenario:
             reference_arm=CONTEXT_ARMS[0],
             candidates=CONTEXT_ARMS[1:],
         )
+    if scenario in ("codebase", "codebase-near"):
+        # Snapshots of jig and scout; their imports need httpx, aiosqlite and
+        # pydantic, and each repository copy needs more than the default tmpfs.
+        # In codebase-near the target module's own neighbour function also
+        # inlines the helper in the inconsistent arm.
+        return DryScenario(
+            CODEBASE_TASKS,
+            codebase_repository_variants(near=scenario == "codebase-near"),
+            runner_settings=DockerRunnerSettings(
+                image=CODEBASE_PYTHON_IMAGE, tmpfs_size="4m", timeout_s=15.0
+            ),
+        )
     raise ValueError(f"unknown DRY scenario set {scenario!r}; expected one of {SCENARIOS}")
 
 
@@ -201,7 +218,15 @@ def _prompt_override(scenario: str) -> dict[str, Any]:
     if scenario == "context":
         # Padded repositories render to about 103 KB of prompt.
         override["max_input_bytes"] = 131_072
+    if scenario in ("codebase", "codebase-near"):
+        # Codebase snapshots render to at most about 156 KB of prompt.
+        override["max_input_bytes"] = 196_608
     return override
+
+
+def dry_runner(scenario: str) -> DockerPythonRunner:
+    """The correctness sandbox a scenario's repositories run in."""
+    return DockerPythonRunner(dry_scenario(scenario).runner_settings)
 
 
 def haiku_dry_settings(scenario: str = "v1") -> PilotSettings:
@@ -260,19 +285,23 @@ def dry_profiles(scenario: str = "v1") -> dict[str, tuple[OpenRouterSettings, Pi
     from assay.adapters.openrouter import (
         GEMINI_3_1_PRO_VERTEX,
         GPT_6_1_SOL_AZURE,
+        GPT_6_LUNA_AZURE,
         HAIKU_4_5_BEDROCK,
         HAIKU_BEDROCK,
         SONNET_5_5_BEDROCK,
     )
 
     # Claude 3 Haiku's 64 KB request-body cap cannot carry the context
-    # scenario's padded repositories.
+    # scenario's padded repositories or the codebase snapshots.
     profiles = (
-        {} if scenario == "context" else {"haiku": (HAIKU_BEDROCK, haiku_dry_settings(scenario))}
+        {}
+        if scenario in ("context", "codebase", "codebase-near")
+        else {"haiku": (HAIKU_BEDROCK, haiku_dry_settings(scenario))}
     )
     for name, route in (
         ("sonnet-5.5", SONNET_5_5_BEDROCK),
         ("haiku-4.5", HAIKU_4_5_BEDROCK),
+        ("gpt-6-luna", GPT_6_LUNA_AZURE),
         ("gpt-6.1-sol", GPT_6_1_SOL_AZURE),
         ("gemini-3.1-pro", GEMINI_3_1_PRO_VERTEX),
     ):
@@ -570,7 +599,7 @@ async def run_dry_experiment(
     export_destination: Path | None = None,
     scenario: str = "v1",
 ) -> DryExperimentSucceeded | DryExperimentFailed:
-    """Execute one independently approved 12-subject DRY plan."""
+    """Execute one independently approved DRY plan."""
     try:
         population = dry_scenario(scenario)
     except ValueError as error:
@@ -588,7 +617,7 @@ async def run_dry_experiment(
         tasks=population.tasks,
         repository_variants=population.repository_variants,
         profile_validator=validate_profile,
-        expected_subjects=12,
+        expected_subjects=len(population.tasks),
         expected_cells=population.cells,
         expected_evaluations=population.evaluations,
         allow_paid=allow_paid,

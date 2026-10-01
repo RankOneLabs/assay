@@ -25,6 +25,7 @@ from assay.investigations.consistency import (
     CodingTask,
     StructuralEvaluator,
     materialize_consistency,
+    parse_candidate_source,
 )
 from assay.models import EvaluationCoordinate, Exclusion, ReportConfig, StatisticalProfile
 from assay.planning import compile_plan
@@ -237,6 +238,32 @@ async def test_ambiguous_and_invalid_outputs_are_failures() -> None:
             coordinate=coordinate,
         )
         assert isinstance(result, EvaluationFailed) and result.error_type == error_type
+
+
+def test_annotations_may_spell_types_but_not_run_code() -> None:
+    task = TASKS[0]
+
+    def parse(signature: str) -> None:
+        parse_candidate_source(
+            f"def implement{signature}:\n    return normalize_name(value)\n",
+            helper=task.helper,
+            target_path=task.target_path,
+        )
+
+    for signature in (
+        "(value: str) -> 'str'",
+        "(value: dict[str, typing.Any] | None) -> str | None",
+        "(value: Callable[[int], str]) -> tuple[int, ...]",
+    ):
+        parse(signature)
+    for signature in (
+        "(value: normalize_name(1))",
+        "(value) -> (lambda: str)()",
+        "(value: str + int)",
+        "(value: [x for x in ()])",
+    ):
+        with pytest.raises(ValueError, match="type-expression annotations"):
+            parse(signature)
 
 
 def test_all_stakes_families_materialize_without_provider_calls(tmp_path: Path) -> None:
