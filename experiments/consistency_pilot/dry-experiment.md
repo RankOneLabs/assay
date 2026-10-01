@@ -305,7 +305,7 @@ scored with evaluator v7.
 |---|---|---|---|---|
 | no helper import | 4 / 2 | 9 / 8 | 6 / 4 | — |
 | imports the helper | 8 / 8 | — | 16 / 18 | 18 / 18 |
-| plus a neighbour (`codebase-near`) | 6 / 9 | — | 17 / 15 | 18 / 16 |
+| plus a neighbour (`codebase-near`) | 6 / 9 | 13 / 12 | 17 / 15 | 18 / 16 |
 
 - Distant mess did nothing. No run shows an arm difference, and no sign test
   falls below p = 0.5. With the helper imported, Sol and Haiku tied on every
@@ -317,8 +317,10 @@ scored with evaluator v7.
   `usage-cost`, both reused in all 4 clean cells and duplicated in all 4
   inconsistent cells. They copied the neighbour, which calls `compute_cost`
   itself, a legitimate shared function. On the other 10 subjects the
-  neighbour changed at most one cell (Luna, `source-key`). Haiku moved the
-  other way (6 against 9), within its noise.
+  neighbour changed at most one cell (Luna, `source-key`). Gemini tied on
+  every subject, and Haiku moved the other way (6 against 9), within its
+  noise. Both duplicated `usage-cost` in every cell, clean arm included, so
+  the neighbour can only move a model that reuses the helper when clean.
 - Models differ more than arms. With the helper imported:
   - Sol reused in more cells than Haiku on 6 of 11 subjects and in fewer on
     none (sign test p = 0.03).
@@ -331,11 +333,13 @@ scored with evaluator v7.
   `derive_source_key` in every scored cell, even with the import a few lines
   above. Luna and Sol were correct on all 11 subjects in every run. Haiku was
   correct on 8 of 9 scored subjects per arm, and on 7 of 10 with the
-  neighbour. On the original stubs Gemini sat between Haiku and Luna.
-- Two subjects are at the floor for every model:
+  neighbour. Gemini sits between Haiku and Luna, both on the original stubs
+  and with the neighbour, where it was correct on 10 of 11 subjects per arm.
+- Two subjects are at or near the floor for every model:
   - `request-kwargs` is duplicated in every cell. Why has not been
     investigated, but it is probably the task design.
-  - `judge-scores` is duplicated, or ambiguous for Sol. Models write the
+  - `judge-scores` is duplicated, or ambiguous for Sol; Gemini reused it
+    in one clean `codebase-near` cell. Models write the
     range checks themselves instead of building the `Score` objects that
     `validate_scores` takes. `0 <= v <= 1` is not on the primitive list, so
     v7 has no evidence either way when an output only checks ranges, and
@@ -348,13 +352,13 @@ scored with evaluator v7.
   - At peak load, Azure answers large prompts with HTTP 200 and an error
     body. This stopped Luna's first two runs under the budget guard, so the
     Luna figures above come from off-peak reruns.
-  - A run costs about $2 for Haiku and Sol, $5 for Gemini and $0.12 for
+  - A run costs about $2 for Haiku and Sol, $4–5 for Gemini and $0.12 for
     Luna.
 
 **Pending.**
 - Gemini chain. The v3 run failed in about 16 of 24 cells per arm, without
   request errors; this needs investigating before any rerun.
-- Gemini on the helper-import and `codebase-near` variants.
+- Gemini on the helper-import variant without the neighbour.
 
 **Gemini placement (v3).** Clustered mess moves Gemini, unlike Sol and
 Sonnet. Duplicated subjects were 2 of 8 at `tail-01`, 4 of 9 at `tail-03`,
