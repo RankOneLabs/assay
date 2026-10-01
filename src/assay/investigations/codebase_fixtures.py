@@ -1357,12 +1357,25 @@ def _with_packages(files: dict[str, str]) -> dict[str, str]:
     return {**dict.fromkeys(packages, ""), **files}
 
 
+def _target_stub(task: CodingTask) -> str:
+    """The target module, already importing the helper as a neighbouring module would."""
+    stub = _TARGETS[task.target_path]
+    last_import = max(
+        node.end_lineno or node.lineno
+        for node in ast.parse(stub).body
+        if isinstance(node, ast.Import | ast.ImportFrom)
+    )
+    lines = stub.splitlines(keepends=True)
+    lines.insert(last_import, f"from {task.helper_module} import {task.helper}\n")
+    return "".join(lines)
+
+
 def codebase_repository_variants() -> dict[str, dict[str, dict[str, str]]]:
     """Both arms of every subject; they differ only in the helper's callers."""
     variants: dict[str, dict[str, dict[str, str]]] = {}
     for task, inline in _FIXTURES:
         clean = _with_packages(
-            {**SNAPSHOTS[task.family]["files"], task.target_path: _TARGETS[task.target_path]}
+            {**SNAPSHOTS[task.family]["files"], task.target_path: _target_stub(task)}
         )
         inconsistent = dict(clean)
         inline(inconsistent)

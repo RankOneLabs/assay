@@ -86,7 +86,10 @@ def test_arms_differ_only_in_the_helpers_callers(task) -> None:
     assert not any(call.search(inconsistent[path]) for path in changed)
     assert f"def {task.helper}(" in task.helper_source
     assert task.helper_source in clean[_helper_path(task)]
-    assert task.helper not in clean[task.target_path]
+    helper_import = f"from {task.helper_module} import {task.helper}\n"
+    assert helper_import in clean[task.target_path]
+    assert not call.search(clean[task.target_path])
+    assert clean[task.target_path] == inconsistent[task.target_path]
     budget = DockerRunnerSettings(tmpfs_size="4m").repository_storage_budget_bytes
     for repository in (clean, inconsistent):
         for path, text in repository.items():

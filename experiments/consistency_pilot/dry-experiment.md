@@ -155,7 +155,10 @@ replaced by empty ones.
 
 Each task asks for a new function in a new, nearly empty module of that slice,
 and the behaviour it asks for is exactly what one existing shared helper
-provides. Two to three existing modules call that helper. The clean arm is the
+provides. The module already imports that helper, as a neighbouring module
+that uses it would; without the import, the first runs (Haiku 4.5, Gemini 3.1
+Pro, GPT-6 Luna) reused the helper in only 4–9 of 22 clean cells, too few for
+the arms to differ. Two to three existing modules call that helper. The clean arm is the
 code as it is at the pinned commit. In the inconsistent arm those callers copy
 the helper's logic inline instead, in the style the code would plausibly have
 taken without the helper. The helper and the target file are identical in both
