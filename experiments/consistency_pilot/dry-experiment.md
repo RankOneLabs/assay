@@ -170,6 +170,14 @@ helper counts as duplication, as in the domain-rule family.
 Prompts are 135–156 KB, so Claude 3 Haiku's 64 KB request cap excludes it, as
 for `context`. The grid is 11 subjects × 2 arms × 2 repeats = 44 cells.
 
+`codebase-near` puts the mess next to the edit. The target module already
+holds one private function that needs the helper's behaviour too, for example
+assembling streamed tool calls next to the task of converting one. In the
+clean arm it calls the helper; in the inconsistent arm it inlines the logic in
+the style of the distant copies, and the module imports what that copy needs.
+The helper import stays in both arms, so they differ only in how existing
+code, near and far, reaches the behaviour.
+
 ## Code metrics
 
 `python -m consistency_pilot.dry_metrics <store> [reference-arm]` measures

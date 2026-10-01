@@ -24,6 +24,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import sys
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from textwrap import dedent, indent
@@ -1357,27 +1358,348 @@ def _with_packages(files: dict[str, str]) -> dict[str, str]:
     return {**dict.fromkeys(packages, ""), **files}
 
 
-def _target_stub(task: CodingTask) -> str:
+# --- neighbours -----------------------------------------------------------------------
+#
+# For the ``near`` variants, the target module already holds one function that
+# needs the helper's behaviour too. In the clean arm it calls the helper; in
+# the inconsistent arm it inlines the logic, in the style of the distant
+# callers' inlined copies, and the module imports whatever that copy needs.
+
+
+class _Neighbour:
+    def __init__(self, clean: str, inline: str, imports: str = "", clean_imports: str = "") -> None:
+        self.clean = _source(clean)
+        self.inline = _source(inline)
+        self.imports = imports
+        self.clean_imports = clean_imports
+
+
+_NEIGHBOURS = {
+    "tool-args": _Neighbour(
+        '''
+        def _finish_streamed_tool_calls(pending: dict[int, dict[str, str]]) -> list[ToolCall]:
+            """Assemble tool calls whose argument JSON arrived in stream fragments."""
+            calls = []
+            for index in sorted(pending):
+                entry = pending[index]
+                calls.append(
+                    ToolCall(
+                        id=entry["id"],
+                        name=entry["name"],
+                        arguments=parse_tool_arguments(entry["arguments"], "vllm"),
+                    )
+                )
+            return calls
+        ''',
+        '''
+        def _finish_streamed_tool_calls(pending: dict[int, dict[str, str]]) -> list[ToolCall]:
+            """Assemble tool calls whose argument JSON arrived in stream fragments."""
+            calls = []
+            for index in sorted(pending):
+                entry = pending[index]
+                calls.append(
+                    ToolCall(
+                        id=entry["id"],
+                        name=entry["name"],
+                        arguments=json.loads(entry["arguments"] or "{}"),
+                    )
+                )
+            return calls
+        ''',
+        "import json\n",
+    ),
+    "llm-error": _Neighbour(
+        '''
+        async def _served_models(client: Any) -> list[str]:
+            """Ids of the models this vLLM server has loaded."""
+            try:
+                page = await client.models.list()
+            except Exception as e:
+                raise wrap_llm_error(e, "vllm") from e
+            return [model.id for model in page.data]
+        ''',
+        '''
+        async def _served_models(client: Any) -> list[str]:
+            """Ids of the models this vLLM server has loaded."""
+            try:
+                page = await client.models.list()
+            except Exception as e:
+                raise JigLLMError(str(e), "vllm", status_code=getattr(e, "status_code", None)) from e
+            return [model.id for model in page.data]
+        ''',
+    ),
+    "request-kwargs": _Neighbour(
+        '''
+        def _stream_kwargs(
+            model: str, messages: list[dict[str, Any]], params: CompletionParams
+        ) -> dict[str, Any]:
+            """Keyword arguments for a streamed chat completion that reports usage."""
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            }
+            merge_completion_kwargs(kwargs, params, supports_response_format=True)
+            return kwargs
+        ''',
+        _source(
+            '''
+            def _stream_kwargs(
+                model: str, messages: list[dict[str, Any]], params: CompletionParams
+            ) -> dict[str, Any]:
+                """Keyword arguments for a streamed chat completion that reports usage."""
+                kwargs: dict[str, Any] = {
+                    "model": model,
+                    "messages": messages,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+            '''
+        )
+        + indent(
+            _merge_block(
+                "kwargs",
+                response_format='kwargs["response_format"] = params.response_format',
+                reasoning="params.reasoning is not None",
+            ),
+            "    ",
+        )
+        + "    return kwargs\n",
+    ),
+    "usage-cost": _Neighbour(
+        '''
+        def _usage(raw: Any, model: str) -> Usage:
+            """Token usage from an OpenAI-shaped usage block, priced when vLLM reports no cost."""
+            usage = Usage(input_tokens=raw.prompt_tokens, output_tokens=raw.completion_tokens)
+            return stamp_cost(usage, model)
+        ''',
+        '''
+        def _usage(raw: Any, model: str) -> Usage:
+            """Token usage from an OpenAI-shaped usage block, priced when vLLM reports no cost."""
+            usage = Usage(input_tokens=raw.prompt_tokens, output_tokens=raw.completion_tokens)
+            if usage.cost is None:
+                usage.cost = compute_cost(model, usage.input_tokens, usage.output_tokens)
+            return usage
+        ''',
+        "from jig.llm.pricing import compute_cost\n",
+    ),
+    "judge-reply": _Neighbour(
+        '''
+        def _rationale(content: str) -> str:
+            """The judge's free-text rationale, from the optional "feedback" field of its reply."""
+            data = json.loads(strip_markdown_fence(content))
+            return str(data.get("feedback", ""))
+        ''',
+        '''
+        def _rationale(content: str) -> str:
+            """The judge's free-text rationale, from the optional "feedback" field of its reply."""
+            text = content.strip()
+            if text.startswith("```"):
+                text = text.split("\\n", 1)[-1].rsplit("```", 1)[0]
+            data = json.loads(text)
+            return str(data.get("feedback", ""))
+        ''',
+    ),
+    "judge-scores": _Neighbour(
+        '''
+        def _criterion_scores(data: dict[str, Any], criteria: list[str]) -> list[Score]:
+            """One Score per rubric criterion, checked before the grade is returned."""
+            scores = [
+                Score(dimension=name, value=float(data[name]), source=ScoreSource.LLM_JUDGE)
+                for name in criteria
+            ]
+            validate_scores(scores)
+            return scores
+        ''',
+        '''
+        def _criterion_scores(data: dict[str, Any], criteria: list[str]) -> list[Score]:
+            """One Score per rubric criterion, checked before the grade is returned."""
+            scores = [
+                Score(dimension=name, value=float(data[name]), source=ScoreSource.LLM_JUDGE)
+                for name in criteria
+            ]
+            if not scores:
+                raise ValueError("scores must be non-empty")
+            for s in scores:
+                if not s.dimension or not 0.0 <= float(s.value) <= 1.0:
+                    raise ValueError(f"invalid score {s.value!r} for dimension {s.dimension!r}")
+            return scores
+        ''',
+    ),
+    "span-time": _Neighbour(
+        '''
+        def _ended_at(record: dict[str, Any]) -> datetime | None:
+            """A span's end time as written to the trace file, or None for an open span."""
+            raw = record.get("ended_at")
+            if raw is None:
+                return None
+            return parse_aware_utc(raw)
+        ''',
+        '''
+        def _ended_at(record: dict[str, Any]) -> datetime | None:
+            """A span's end time as written to the trace file, or None for an open span."""
+            raw = record.get("ended_at")
+            if raw is None:
+                return None
+            return datetime.fromisoformat(raw).astimezone(UTC)
+        ''',
+        "from datetime import UTC, datetime\n",
+        "from datetime import datetime\n",
+    ),
+    "source-key": _Neighbour(
+        '''
+        def _unique_sources(descriptors: Sequence[SourceDescriptor]) -> list[SourceDescriptor]:
+            """Drop configured sources that share a checkpoint with an earlier one."""
+            seen: set[str] = set()
+            unique = []
+            for descriptor in descriptors:
+                key = derive_source_key(descriptor)
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(descriptor)
+            return unique
+        ''',
+        '''
+        def _unique_sources(descriptors: Sequence[SourceDescriptor]) -> list[SourceDescriptor]:
+            """Drop configured sources that share a checkpoint with an earlier one."""
+            seen: set[str] = set()
+            unique = []
+            for descriptor in descriptors:
+                key = f"{descriptor.platform.strip().casefold()}:{descriptor.source_kind.strip().casefold()}:{descriptor.provider_key.strip().casefold()}"
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(descriptor)
+            return unique
+        ''',
+    ),
+    "source-boundary": _Neighbour(
+        '''
+        def _hashtag_boundaries(
+            descriptors: Sequence[SourceDescriptor],
+            since: datetime | None,
+            source_checkpoints: Mapping[str, datetime | None] | None,
+        ) -> dict[str, datetime | None]:
+            """Where each configured hashtag timeline resumes, by hashtag."""
+            return {
+                descriptor.provider_key: source_since(descriptor, since, source_checkpoints)
+                for descriptor in descriptors
+            }
+        ''',
+        '''
+        def _hashtag_boundaries(
+            descriptors: Sequence[SourceDescriptor],
+            since: datetime | None,
+            source_checkpoints: Mapping[str, datetime | None] | None,
+        ) -> dict[str, datetime | None]:
+            """Where each configured hashtag timeline resumes, by hashtag."""
+            return {
+                descriptor.provider_key: (
+                    since if source_checkpoints is None
+                    else source_checkpoints.get(derive_source_key(descriptor))
+                )
+                for descriptor in descriptors
+            }
+        ''',
+        "from scout.platforms.base import derive_source_key\n",
+    ),
+    "status-time": _Neighbour(
+        '''
+        def _edited_at(status: Mapping[str, object]) -> datetime | None:
+            """When a status was last edited, or None for a status never edited."""
+            raw = status.get("edited_at")
+            if not raw:
+                return None
+            return parse_platform_ts(str(raw))
+        ''',
+        '''
+        def _edited_at(status: Mapping[str, object]) -> datetime | None:
+            """When a status was last edited, or None for a status never edited."""
+            raw = status.get("edited_at")
+            if not raw:
+                return None
+            try:
+                dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return dt if dt.tzinfo is not None else None
+        ''',
+    ),
+    "retry-delay": _Neighbour(
+        '''
+        def _backoff(response: httpx.Response, now: datetime) -> float | None:
+            """Seconds to wait before retrying a rate-limited response, or None to give up."""
+            retry_after = response.headers.get("Retry-After")
+            return parse_retry_after(retry_after, now) if retry_after else None
+        ''',
+        '''
+        def _backoff(response: httpx.Response, now: datetime) -> float | None:
+            """Seconds to wait before retrying a rate-limited response, or None to give up."""
+            retry_after = response.headers.get("Retry-After")
+            delay = None
+            if retry_after:
+                try:
+                    delay = float(retry_after)
+                except ValueError:
+                    delay = (parsedate_to_datetime(retry_after) - now).total_seconds()
+            return delay
+        ''',
+        "from email.utils import parsedate_to_datetime\n",
+    ),
+}
+
+
+def _target_stub(task: CodingTask, *, imports: str = "", neighbour: str = "") -> str:
     """The target module, already importing the helper as a neighbouring module would."""
     stub = _TARGETS[task.target_path]
-    last_import = max(
-        node.end_lineno or node.lineno
-        for node in ast.parse(stub).body
-        if isinstance(node, ast.Import | ast.ImportFrom)
+    nodes = [node for node in ast.parse(stub).body if isinstance(node, ast.Import | ast.ImportFrom)]
+
+    def end(node: ast.stmt) -> int:
+        return node.end_lineno or node.lineno
+
+    def standard(line: str) -> bool:
+        return line.split()[1].split(".")[0] in sys.stdlib_module_names
+
+    # Standard-library imports join that group; the rest follow the last import.
+    extra = imports.splitlines(keepends=True)
+    last_standard = max(
+        end(node)
+        for node in nodes
+        if (node.names[0].name if isinstance(node, ast.Import) else node.module or "").split(".")[0]
+        in sys.stdlib_module_names
     )
     lines = stub.splitlines(keepends=True)
-    lines.insert(last_import, f"from {task.helper_module} import {task.helper}\n")
-    return "".join(lines)
+    lines.insert(
+        max(map(end, nodes)),
+        "".join(line for line in extra if not standard(line))
+        + f"from {task.helper_module} import {task.helper}\n",
+    )
+    lines.insert(last_standard, "".join(line for line in extra if standard(line)))
+    return "".join(lines) + ("\n\n" + neighbour if neighbour else "")
 
 
-def codebase_repository_variants() -> dict[str, dict[str, dict[str, str]]]:
-    """Both arms of every subject; they differ only in the helper's callers."""
+def codebase_repository_variants(*, near: bool = False) -> dict[str, dict[str, dict[str, str]]]:
+    """Both arms of every subject; they differ only in how existing code reaches the helper.
+
+    With ``near``, the target module's own neighbour function is part of that
+    difference; otherwise the target module is identical in both arms.
+    """
     variants: dict[str, dict[str, dict[str, str]]] = {}
     for task, inline in _FIXTURES:
+        neighbour = _NEIGHBOURS[task.id] if near else None
         clean = _with_packages(
-            {**SNAPSHOTS[task.family]["files"], task.target_path: _target_stub(task)}
+            {
+                **SNAPSHOTS[task.family]["files"],
+                task.target_path: _target_stub(task)
+                if neighbour is None
+                else _target_stub(task, imports=neighbour.clean_imports, neighbour=neighbour.clean),
+            }
         )
         inconsistent = dict(clean)
         inline(inconsistent)
+        if neighbour is not None:
+            inconsistent[task.target_path] = _target_stub(
+                task, imports=neighbour.imports, neighbour=neighbour.inline
+            )
         variants[task.id] = {"clean": clean, "inconsistent": inconsistent}
     return variants

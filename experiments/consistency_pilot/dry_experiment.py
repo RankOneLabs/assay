@@ -103,7 +103,7 @@ def _import_legacy_worker_stack() -> tuple[type[ConsistencyWorker], type[PilotSe
     return ConsistencyWorker, PilotSettings, render_input
 
 
-SCENARIOS = ("v1", "layered", "dose", "placement", "chain", "context", "codebase")
+SCENARIOS = ("v1", "layered", "dose", "placement", "chain", "context", "codebase", "codebase-near")
 
 
 @dataclass(frozen=True)
@@ -193,12 +193,14 @@ def dry_scenario(scenario: str) -> DryScenario:
             reference_arm=CONTEXT_ARMS[0],
             candidates=CONTEXT_ARMS[1:],
         )
-    if scenario == "codebase":
+    if scenario in ("codebase", "codebase-near"):
         # Snapshots of jig and scout; their imports need httpx, aiosqlite and
         # pydantic, and each repository copy needs more than the default tmpfs.
+        # In codebase-near the target module's own neighbour function also
+        # inlines the helper in the inconsistent arm.
         return DryScenario(
             CODEBASE_TASKS,
-            codebase_repository_variants(),
+            codebase_repository_variants(near=scenario == "codebase-near"),
             runner_settings=DockerRunnerSettings(
                 image=CODEBASE_PYTHON_IMAGE, tmpfs_size="4m", timeout_s=15.0
             ),
@@ -216,7 +218,7 @@ def _prompt_override(scenario: str) -> dict[str, Any]:
     if scenario == "context":
         # Padded repositories render to about 103 KB of prompt.
         override["max_input_bytes"] = 131_072
-    if scenario == "codebase":
+    if scenario in ("codebase", "codebase-near"):
         # Codebase snapshots render to at most about 156 KB of prompt.
         override["max_input_bytes"] = 196_608
     return override
@@ -293,7 +295,7 @@ def dry_profiles(scenario: str = "v1") -> dict[str, tuple[OpenRouterSettings, Pi
     # scenario's padded repositories or the codebase snapshots.
     profiles = (
         {}
-        if scenario in ("context", "codebase")
+        if scenario in ("context", "codebase", "codebase-near")
         else {"haiku": (HAIKU_BEDROCK, haiku_dry_settings(scenario))}
     )
     for name, route in (

@@ -956,6 +956,7 @@ def test_context_scenario_has_no_claude_3_haiku_route() -> None:
     assert "haiku" in dry_profiles("dose")
     assert "haiku" not in dry_profiles("context")
     assert "haiku" not in dry_profiles("codebase")
+    assert "haiku" not in dry_profiles("codebase-near")
 
 
 class CodebaseFakeFactory(FakeFactory):
@@ -1031,6 +1032,16 @@ async def test_codebase_scenario_prepares_and_runs_offline(tmp_path: Path) -> No
     assert comparison["improved"] == 11
 
 
+def test_codebase_near_scenario_uses_the_near_variants() -> None:
+    from consistency_pilot.dry_experiment import dry_scenario
+
+    population = dry_scenario("codebase-near")
+    assert population.tasks == CODEBASE_TASKS
+    assert population.requests == 44
+    assert population.repository_variants == codebase_repository_variants(near=True)
+    assert population.repository_variants != dry_scenario("codebase").repository_variants
+
+
 def test_codebase_runner_uses_its_image_and_a_larger_tmpfs() -> None:
     from consistency_pilot.dry_experiment import dry_runner
 
@@ -1039,6 +1050,7 @@ def test_codebase_runner_uses_its_image_and_a_larger_tmpfs() -> None:
     assert configuration["settings"]["tmpfs_size"] == "4m"
     assert configuration["tmpfs"] == "/tmp:rw,noexec,nosuid,nodev,size=4m"
     assert configuration["repository_storage_budget_bytes"] == 3_145_728
+    assert dry_runner("codebase-near").configuration() == configuration
     assert dry_runner("layered").configuration() == DockerPythonRunner().configuration()
 
 

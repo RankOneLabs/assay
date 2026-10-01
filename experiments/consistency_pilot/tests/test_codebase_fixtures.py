@@ -24,6 +24,7 @@ from assay.investigations.correctness import (
 from assay.models import EvaluationCoordinate
 
 VARIANTS = codebase_repository_variants()
+NEAR = codebase_repository_variants(near=True)
 
 
 def _helper_path(task) -> str:
@@ -101,13 +102,29 @@ def test_arms_differ_only_in_the_helpers_callers(task) -> None:
 
 
 @pytest.mark.parametrize("task", CODEBASE_TASKS, ids=lambda task: task.id)
-def test_reference_sources_pass_in_both_arms(task) -> None:
+def test_near_arms_add_only_the_targets_neighbour(task) -> None:
+    call = re.compile(rf"\b{task.helper}\(")
+    helper_import = f"from {task.helper_module} import {task.helper}\n"
     for arm in ("clean", "inconsistent"):
-        repository = VARIANTS[task.id][arm]
-        for source in (task.reused_source, task.duplicated_source):
-            for case in task.test_cases:
-                actual = _run_case(repository, task.target_path, source, case.input)
-                assert canonical_json(actual) == canonical_json(case.expected), (arm, source)
+        near, plain = NEAR[task.id][arm], VARIANTS[task.id][arm]
+        assert {path for path in near if near[path] != plain[path]} == {task.target_path}
+        assert helper_import in near[task.target_path]
+        ast.parse(near[task.target_path])
+        prompt = canonical_json({"instruction": task.instruction, "repository": near})
+        assert len(prompt) <= 196_608
+    assert call.search(NEAR[task.id]["clean"][task.target_path])
+    assert not call.search(NEAR[task.id]["inconsistent"][task.target_path])
+
+
+@pytest.mark.parametrize("task", CODEBASE_TASKS, ids=lambda task: task.id)
+def test_reference_sources_pass_in_both_arms(task) -> None:
+    for variants in (VARIANTS, NEAR):
+        for arm in ("clean", "inconsistent"):
+            repository = variants[task.id][arm]
+            for source in (task.reused_source, task.duplicated_source):
+                for case in task.test_cases:
+                    actual = _run_case(repository, task.target_path, source, case.input)
+                    assert canonical_json(actual) == canonical_json(case.expected), (arm, source)
 
 
 @pytest.mark.asyncio

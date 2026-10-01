@@ -8,8 +8,10 @@ subjects with 0, 1, 3, 5, 7 or 10 of ten existing callers bypassing the
 abstraction), ``placement`` (the bypassing callers clustered right above the
 insertion point), ``chain`` (five successive additions per cell),
 ``context`` (the same subjects unpadded and padded to repositories of about
-30 KB and 90 KB) or ``codebase`` (eleven subjects set in snapshots of jig and
-scout; correctness needs the image built from ``codebase_sandbox/``).
+30 KB and 90 KB), ``codebase`` (eleven subjects set in snapshots of jig and
+scout; correctness needs the image built from ``codebase_sandbox/``) or
+``codebase-near`` (the same, with a neighbour function in the target module
+that also inlines the helper in the inconsistent arm).
 
 Running this is the spending authorization: it approves the plan it just
 prepared. Bundles are exported to ``<store-dir>-run-1-bundles``.
