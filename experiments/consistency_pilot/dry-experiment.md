@@ -297,9 +297,64 @@ For Haiku 4.5 on the dose set (62 reused, 65 duplicated), the gap is smaller:
 4.1 against 2.6 SLOC and 1.5 against 1.0 cyclomatic complexity. Most of its
 duplication is in cross-module one-liners.
 
+**Codebase (real code).** These are cells that reused the helper, out of 22
+per arm (11 subjects × 2 repeats), as clean / inconsistent. All runs are
+scored with evaluator v7.
+
+| target module | Haiku 4.5 | Gemini 3.1 Pro | GPT-6 Luna | GPT-6.1 Sol |
+|---|---|---|---|---|
+| no helper import | 4 / 2 | 9 / 8 | 6 / 4 | — |
+| imports the helper | 8 / 8 | — | 16 / 18 | 18 / 18 |
+| plus a neighbour (`codebase-near`) | 6 / 9 | — | 17 / 15 | 18 / 16 |
+
+- Distant mess did nothing. No run shows an arm difference, and no sign test
+  falls below p = 0.5. With the helper imported, Sol and Haiku tied on every
+  scored subject. Luna reused slightly more in the inconsistent arm.
+- Making the helper visible mattered more than consistency did. Importing it
+  in the target module raised clean-arm reuse from 6 to 16 cells for Luna and
+  from 4 to 8 for Haiku, and it did the same in both arms.
+- A neighbour in the target module moved Luna and Sol on one subject. For
+  `usage-cost`, both reused in all 4 clean cells and duplicated in all 4
+  inconsistent cells. They copied the neighbour, which calls `compute_cost`
+  itself, a legitimate shared function. On the other 10 subjects the
+  neighbour changed at most one cell (Luna, `source-key`). Haiku moved the
+  other way (6 against 9), within its noise.
+- Models differ more than arms. With the helper imported:
+  - Sol reused in more cells than Haiku on 6 of 11 subjects and in fewer on
+    none (sign test p = 0.03).
+  - Luna reused in more cells than Haiku on 5 subjects and in fewer on none
+    (p = 0.06).
+  - Luna and Sol differ by at most one cell per subject.
+
+  This comparison was not planned, so treat it as exploratory. Haiku
+  duplicates `wrap_llm_error`, `stamp_cost`, `parse_aware_utc` and
+  `derive_source_key` in every scored cell, even with the import a few lines
+  above. Luna and Sol were correct on all 11 subjects in every run. Haiku was
+  correct on 8 of 9 scored subjects per arm, and on 7 of 10 with the
+  neighbour. On the original stubs Gemini sat between Haiku and Luna.
+- Two subjects are at the floor for every model:
+  - `request-kwargs` is duplicated in every cell. Why has not been
+    investigated, but it is probably the task design.
+  - `judge-scores` is duplicated, or ambiguous for Sol. Models write the
+    range checks themselves instead of building the `Score` objects that
+    `validate_scores` takes. `0 <= v <= 1` is not on the primitive list, so
+    v7 has no evidence either way when an output only checks ranges, and
+    Sol's outputs score as ambiguous.
+- Method notes:
+  - Evaluator v6 rejected idiomatic annotations such as
+    `dict[str, Any] | None`, which hit 16 of 44 Haiku cells and most of
+    Gemini's. v7 accepts type expressions, and the earlier runs were rescored
+    offline from their stored sources.
+  - At peak load, Azure answers large prompts with HTTP 200 and an error
+    body. This stopped Luna's first two runs under the budget guard, so the
+    Luna figures above come from off-peak reruns.
+  - A run costs about $2 for Haiku and Sol, $5 for Gemini and $0.12 for
+    Luna.
+
 **Pending.**
 - Gemini chain. The v3 run failed in about 16 of 24 cells per arm, without
   request errors; this needs investigating before any rerun.
+- Gemini on the helper-import and `codebase-near` variants.
 
 **Gemini placement (v3).** Clustered mess moves Gemini, unlike Sol and
 Sonnet. Duplicated subjects were 2 of 8 at `tail-01`, 4 of 9 at `tail-03`,
