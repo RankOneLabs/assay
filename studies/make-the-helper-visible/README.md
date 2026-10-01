@@ -41,7 +41,8 @@ that reused the helper, out of 24.
 | 5 of 10 | 20 | 21 | 15 | 11 |
 | 10 of 10 | 2 | 14 | 0 | 2 |
 
-- **Sol and Sonnet** held until all ten callers were inline.
+- **Sol and Sonnet** stayed at 20 or more of 24 until all ten callers were
+  inline.
 - **Gemini** degraded gradually, and only on one-line cross-module helpers.
 - **Haiku 4.5** drifted from the first inline caller.
 
@@ -70,7 +71,9 @@ inconsistent.
 | Imports the helper | 8 / 8 | — | 16 / 18 | 18 / 18 |
 | Plus an inline neighbour in the same file | 6 / 9 | 13 / 12 | 17 / 15 | 18 / 16 |
 
-No run showed an arm difference, and no sign test came out below p = 0.5.
+No arm difference was significant (every sign test p ≥ 0.5). Clean and
+inconsistent counts differ by at most 2 cells, except Haiku's same-file run
+(6 / 9).
 
 ## Importing the helper did more than consistency
 
