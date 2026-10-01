@@ -572,7 +572,7 @@ class FunctionalCorrectnessEvaluator:
     def configuration(self) -> dict[str, Any]:
         return {
             "id": "consistency-functional-correctness",
-            "version": "3",
+            "version": "4",
             "categories": list(CORRECTNESS_CATEGORIES),
             "runner": self.runner.configuration(),
             "comparison": "canonical-json-output-equality",
