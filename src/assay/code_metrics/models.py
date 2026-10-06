@@ -90,6 +90,19 @@ class BoundaryPair(WireModel):
     edge_count: int
 
 
+class ModuleComponent(WireModel):
+    module: ModuleName
+    path: RepoPath | None
+    component: ComponentName
+
+
+class ComponentMetricsReport(WireModel):
+    module_coupling: tuple[ModuleCoupling, ...]
+    component_coupling: tuple[ComponentCoupling, ...]
+    module_components: tuple[ModuleComponent, ...]
+    boundaries: tuple[BoundaryPair, ...]
+
+
 class StronglyConnectedComponent(WireModel):
     modules: tuple[ModuleName, ...]
     is_cyclic: bool
