@@ -1,5 +1,9 @@
 """Component assignment, coupling, and cohesion from extracted graphs."""
 
+import os
+import subprocess
+import sys
+
 import pytest
 from code_metrics_fixtures import FIXTURE_COUPLING, FIXTURE_I, FIXTURE_J
 
@@ -106,3 +110,42 @@ def test_zero_denominators() -> None:
     assert alpha.internal_dependency_density is None
     assert alpha.instability is None
     assert alpha.internal_edge_share is None
+
+
+def test_namespace_module_matches_dotted_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    from assay.code_metrics import graph as extractor
+
+    class FakeGraph:
+        modules = {"pkg", "pkg.namespace"}
+
+        def find_modules_directly_imported_by(self, module: str) -> set[str]:
+            return set()
+
+    monkeypatch.setattr(extractor.grimp, "build_graph", lambda *args, **kwargs: FakeGraph())
+    graph, _ = build_module_graph({"src/pkg/__init__.py": ""})
+    result = assign_components(graph, (ComponentConfig("namespace", ("pkg.namespace",)),))
+    assert [(entry.module, entry.path, entry.component) for entry in result] == [
+        ("pkg", "src/pkg/__init__.py", "unassigned"),
+        ("pkg.namespace", None, "namespace"),
+    ]
+
+
+def test_component_output_stable_across_hash_seeds() -> None:
+    graph, _ = build_module_graph(FIXTURE_COUPLING)
+    expected = analyze_components(graph, _config()).model_dump_json()
+    code = (
+        "from assay.code_metrics.components import ComponentConfig, analyze_components; "
+        "from assay.code_metrics.graph import build_module_graph; "
+        f"graph = build_module_graph({dict(FIXTURE_COUPLING)!r})[0]; "
+        "config = (ComponentConfig('alpha', ('src/pkg/a.py', 'src/pkg/b.py')), "
+        "ComponentConfig('beta', ('src/pkg/c.py', 'src/pkg/d.py'))); "
+        "print(analyze_components(graph, config).model_dump_json())"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env={**os.environ, "PYTHONHASHSEED": "73"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == expected
