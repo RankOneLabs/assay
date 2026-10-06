@@ -23,6 +23,7 @@ from .errors import AnalyzerFailed, SnapshotPathError
 from .models import DELTAS, Snapshot, _Config
 from .pins import JSCPD
 
+
 def _python(snapshot: Snapshot) -> dict[str, str]:
     return {path: text for path, text in snapshot.items() if path.endswith(".py")}
 
@@ -32,10 +33,10 @@ _CACHE: OrderedDict[tuple[str, _Config], dict[str, Any]] = OrderedDict()
 
 def _empty() -> dict[str, Any]:
     return {
-    **dict.fromkeys(DELTAS, 0),
-    "grimp.imports": None,
-    "mi": {},
-    "cloned_lines": {},
+        **dict.fromkeys(DELTAS, 0),
+        "grimp.imports": None,
+        "mi": {},
+        "cloned_lines": {},
         "functions": [],
     }
 
@@ -45,7 +46,9 @@ def _snapshot(snapshot: Snapshot, config: _Config) -> dict[str, Any]:
     for path in files:
         parts = PurePosixPath(path).parts
         if PurePosixPath(path).is_absolute() or ".." in parts or "\\" in path:
-            raise SnapshotPathError(f"snapshot path must be relative and inside the repository: {path}")
+            raise SnapshotPathError(
+                f"snapshot path must be relative and inside the repository: {path}"
+            )
     if not files:
         return _empty()
     digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()

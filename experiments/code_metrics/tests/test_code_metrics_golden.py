@@ -13,7 +13,7 @@ GOLDEN = Path(__file__).resolve().parents[3] / "tests/fixtures/code_metrics_gold
 
 
 def record() -> None:
-    """Regenerate with: cd experiments && uv run python code_metrics/tests/test_code_metrics_golden.py"""
+    """Regenerate from experiments with uv run python on this file."""
     data = {
         name: {"metrics": measure(before, after, **options), "tool_versions": tool_versions()}
         for name, (before, after, options) in CASES.items()

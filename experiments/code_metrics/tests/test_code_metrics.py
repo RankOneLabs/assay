@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 from code_metrics import METRICS, measure, tool_versions
-
 from metric_snapshots import BEFORE, DELEGATING, INLINED, _after
 
 

@@ -8,6 +8,7 @@ from .models import DELTAS, Snapshot, _Config
 from .pins import assert_pinned_tools
 from .tools import _python, _snapshot
 
+
 def measure(
     before: Snapshot,
     after: Snapshot,

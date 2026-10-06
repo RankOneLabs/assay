@@ -1,14 +1,14 @@
 """Pinned analyzer versions and snapshot cache behavior."""
 
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 import pytest
 
+from assay.code_metrics import tools
 from assay.code_metrics.errors import ToolVersionMismatch
 from assay.code_metrics.models import _Config
 from assay.code_metrics.pins import PINS, assert_pinned_tools
-from assay.code_metrics import tools
 
 
 def test_pins_match_declared_extra() -> None:
@@ -37,7 +37,9 @@ def test_snapshot_cache_is_bounded_and_empty_results_are_fresh(
     assert second["mi"] == {}
 
     monkeypatch.setattr(tools, "_radon", lambda files: {})
-    monkeypatch.setattr(tools, "code_complexity", lambda text: type("Result", (), {"complexity": 0})())
+    monkeypatch.setattr(
+        tools, "code_complexity", lambda text: type("Result", (), {"complexity": 0})()
+    )
     monkeypatch.setattr(tools, "_imports", lambda root: None)
     monkeypatch.setattr(tools, "_ruff", lambda root, ignore: {})
     monkeypatch.setattr(tools, "_mypy", lambda root: 0)

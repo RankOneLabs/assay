@@ -5,7 +5,9 @@ import runpy
 from pathlib import Path
 
 import pytest
+
 from assay.code_metrics import METRICS, measure, tool_versions
+
 ROOT = Path(__file__).parents[1]
 GOLDEN = ROOT / "tests/fixtures/code_metrics_golden.json"
 CASES = runpy.run_path(str(ROOT / "experiments/code_metrics/tests/metric_snapshots.py"))["CASES"]
