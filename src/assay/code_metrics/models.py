@@ -111,7 +111,7 @@ class StronglyConnectedComponent(WireModel):
 class CycleReport(WireModel):
     components: tuple[StronglyConnectedComponent, ...]
     cyclic_component_count: int
-    modules_in_cycles: int
+    modules_in_cycles: tuple[ModuleName, ...] | int
 
 
 class ModuleVisibility(WireModel):

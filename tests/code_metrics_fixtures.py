@@ -23,3 +23,8 @@ FIXTURE_I = package_snapshot("pkg", {"a": ()})
 FIXTURE_J = package_snapshot("pkg", {"a": ("b",), "b": ()})
 # Exact four-leaf coupling and cohesion fixture; pkg itself is unassigned.
 FIXTURE_COUPLING = package_snapshot("pkg", {"a": ("b",), "b": ("c",), "c": (), "d": ("a",)})
+# Fixture C creates a cycle; Fixture D removes the same closing edge.
+FIXTURE_C_BEFORE = package_snapshot("pkg", {"a": ("b",), "b": ("c",), "c": ()})
+FIXTURE_C_AFTER = package_snapshot("pkg", {"a": ("b",), "b": ("c",), "c": ("a",)})
+FIXTURE_D_BEFORE = FIXTURE_C_AFTER
+FIXTURE_D_AFTER = FIXTURE_C_BEFORE
