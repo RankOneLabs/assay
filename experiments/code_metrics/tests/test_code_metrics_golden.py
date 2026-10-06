@@ -7,25 +7,9 @@ from pathlib import Path
 
 import pytest
 from code_metrics import METRICS, measure, tool_versions
-from metric_snapshots import BEFORE, DELEGATING, INLINED, _after
+from metric_snapshots import CASES
 
 GOLDEN = Path(__file__).resolve().parents[3] / "tests/fixtures/code_metrics_golden.json"
-CASES = {
-    "unchanged": (BEFORE, dict(BEFORE), {}),
-    "delegating": (BEFORE, _after(DELEGATING), {}),
-    "inlined": (
-        BEFORE,
-        _after(INLINED, "from shop.store import audit, load\n"),
-        {"clone_min_lines": 3, "clone_min_tokens": 15},
-    ),
-    "first_python_file": ({}, {"module.py": "x = 1\n"}, {}),
-    "last_python_file": ({"module.py": "x = 1\n"}, {"README.md": ""}, {}),
-    "single_module": (
-        {"module.py": "x = 1\n"},
-        {"module.py": "import os\nx = 1\n"},
-        {},
-    ),
-}
 
 
 def record() -> None:

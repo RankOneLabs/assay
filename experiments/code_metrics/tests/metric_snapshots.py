@@ -40,3 +40,22 @@ def _after(addition: str, imports: str = "") -> dict[str, str]:
     return {**BEFORE, "src/shop/routes.py": imports + routes + addition}
 
 
+
+
+CASES = {
+    "unchanged": (BEFORE, dict(BEFORE), {}),
+    "delegating": (BEFORE, _after(DELEGATING), {}),
+    "inlined": (
+        BEFORE,
+        _after(INLINED, "from shop.store import audit, load\n"),
+        {"clone_min_lines": 3, "clone_min_tokens": 15},
+    ),
+    "first_python_file": ({}, {"module.py": "x = 1\n"}, {}),
+    "last_python_file": ({"module.py": "x = 1\n"}, {"README.md": ""}, {}),
+    "single_module": (
+        {"module.py": "x = 1\n"},
+        {"module.py": "import os\nx = 1\n"},
+        {},
+    ),
+}
+

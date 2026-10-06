@@ -5,19 +5,12 @@ description = "Non-shipping experiments and qualification runners for Assay"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-  "assay[review,legacy]",
+  "assay[review,legacy,code-metrics]",
   "jig[openrouter] @ git+https://github.com/RankOneLabs/jig.git@5932f7237a369fe705512915ef4033da0ca27c74",
   "typesafe-sdk==0.6.0",
   "scikit-learn==1.9.0",
   "paa-contracts @ git+https://github.com/RankOneLabs/paa.git@1e054d02a36d1da832e8a1c9cf10974131b09f5d#subdirectory=packages/paa-contracts",
   "msgspec==0.21.1",
-  # code_metrics: pinned so a metric means the same thing across runs.
-  "radon==6.0.1",
-  "complexipy==8.0.1",
-  "lizard==1.24.0",
-  "grimp==3.17",
-  "ruff==0.16.8",
-  "mypy==2.3.1",
 ]
 
 [tool.uv.sources]
