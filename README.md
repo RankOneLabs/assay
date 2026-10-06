@@ -16,8 +16,11 @@ Python 3.13+, Git, and uv 0.10.2 are required. Install the tested uv version wit
 pinned to immutable upstream commits over public HTTPS; sibling checkouts and
 provider credentials are not required.
 
+The code-metrics tests also require Node.js and npm, with `npx` on PATH.
+JSCPD runs through `npx`, which downloads the pinned version on first use.
+
 ```sh
-uv sync --locked --extra review
+uv sync --locked --extra review --extra legacy --extra code-metrics
 uv run ruff check src tests experiments
 uv run mypy src
 uv run pytest -q

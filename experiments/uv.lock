@@ -57,6 +57,14 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+code-metrics = [
+    { name = "complexipy" },
+    { name = "grimp" },
+    { name = "lizard" },
+    { name = "mypy" },
+    { name = "radon" },
+    { name = "ruff" },
+]
 legacy = [
     { name = "httpx" },
     { name = "jig", extra = ["openrouter"] },
@@ -70,18 +78,24 @@ review = [
 
 [package.metadata]
 requires-dist = [
+    { name = "complexipy", marker = "extra == 'code-metrics'", specifier = "==8.0.1" },
     { name = "fastapi", marker = "extra == 'review'", specifier = ">=0.115" },
+    { name = "grimp", marker = "extra == 'code-metrics'", specifier = "==3.17" },
     { name = "httpx", marker = "extra == 'legacy'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'review'", specifier = ">=0.27" },
     { name = "jig", extras = ["openrouter"], marker = "extra == 'legacy'", git = "https://github.com/RankOneLabs/jig.git?rev=5932f7237a369fe705512915ef4033da0ca27c74" },
     { name = "jsonschema", specifier = ">=4.23" },
+    { name = "lizard", marker = "extra == 'code-metrics'", specifier = "==1.24.0" },
+    { name = "mypy", marker = "extra == 'code-metrics'", specifier = "==2.3.1" },
     { name = "openai", marker = "extra == 'legacy'", specifier = ">=2,<3" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "radon", marker = "extra == 'code-metrics'", specifier = "==6.0.1" },
+    { name = "ruff", marker = "extra == 'code-metrics'", specifier = "==0.16.8" },
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = "~=0.6.0" },
     { name = "uvicorn", marker = "extra == 'review'", specifier = ">=0.32" },
 ]
-provides-extras = ["review", "legacy", "typesafe"]
+provides-extras = ["review", "legacy", "typesafe", "code-metrics"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -100,16 +114,10 @@ name = "assay-experiments"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "assay", extra = ["legacy", "review"] },
-    { name = "complexipy" },
-    { name = "grimp" },
+    { name = "assay", extra = ["code-metrics", "legacy", "review"] },
     { name = "jig", extra = ["openrouter"] },
-    { name = "lizard" },
     { name = "msgspec" },
-    { name = "mypy" },
     { name = "paa-contracts" },
-    { name = "radon" },
-    { name = "ruff" },
     { name = "scikit-learn" },
     { name = "typesafe-sdk" },
 ]
@@ -125,16 +133,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "assay", extras = ["review", "legacy"], editable = "../" },
-    { name = "complexipy", specifier = "==8.0.1" },
-    { name = "grimp", specifier = "==3.17" },
+    { name = "assay", extras = ["review", "legacy", "code-metrics"], editable = "../" },
     { name = "jig", extras = ["openrouter"], git = "https://github.com/RankOneLabs/jig.git?rev=5932f7237a369fe705512915ef4033da0ca27c74" },
-    { name = "lizard", specifier = "==1.24.0" },
     { name = "msgspec", specifier = "==0.21.1" },
-    { name = "mypy", specifier = "==2.3.1" },
     { name = "paa-contracts", git = "https://github.com/RankOneLabs/paa.git?subdirectory=packages%2Fpaa-contracts&rev=1e054d02a36d1da832e8a1c9cf10974131b09f5d" },
-    { name = "radon", specifier = "==6.0.1" },
-    { name = "ruff", specifier = "==0.16.8" },
     { name = "scikit-learn", specifier = "==1.9.0" },
     { name = "typesafe-sdk", specifier = "==0.6.0" },
 ]
