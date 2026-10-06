@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from assay.code_metrics import tools
+from assay.code_metrics.graph import build_module_graph
 from assay.code_metrics.models import _Config
 
 
@@ -73,9 +74,20 @@ def test_parallel_import_graphs_use_their_own_snapshot(
 
     monkeypatch.setattr(tools.grimp, "build_graph", delayed_build_graph)
     original_path = sys.path.copy()
+    def extract(index: int) -> int:
+        root = roots[index % 2]
+        if index % 4 < 2:
+            return tools._imports(root)  # type: ignore[return-value]
+        snapshot = {
+            path.relative_to(root).as_posix(): path.read_text()
+            for path in root.rglob("*.py")
+        }
+        graph, _ = build_module_graph(snapshot)
+        return len(graph.edges) + len(graph.external_dependencies)
+
     with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(tools._imports, roots * 8))
-    assert results == [0, 1] * 8
+        results = list(executor.map(extract, range(32)))
+    assert results == [0, 1] * 16
     assert maximum_active == 1
     assert sys.path == original_path
 
