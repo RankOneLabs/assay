@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Annotated, Literal, NamedTuple
 
-from pydantic import StringConstraints
+from pydantic import Field, StringConstraints
 
 from assay.models import Identifier, NonEmpty, WireModel
 
@@ -123,14 +123,16 @@ class ResolvedConfiguration(WireModel):
     clone_min_lines: int
     clone_min_tokens: int
     ruff_ignore: tuple[Identifier, ...]
-    components: Mapping[ComponentName, tuple[RepoPath, ...]]
+    components: Mapping[ComponentName, tuple[RepoPath, ...]] = Field(
+        json_schema_extra={"additionalProperties": False}
+    )
     excluded_directories: tuple[RepoPath, ...]
 
 
 class ToolVersions(WireModel):
     assay: NonEmpty
     python: NonEmpty
-    tools: Mapping[Identifier, NonEmpty]
+    tools: Mapping[Identifier, NonEmpty] = Field(json_schema_extra={"additionalProperties": False})
 
 
 class ExistingMetrics(WireModel):
@@ -145,7 +147,9 @@ class ExistingMetrics(WireModel):
     mypy_errors: int
     jscpd_clones: int
     jscpd_duplicated_lines: int
-    maintainability_index: Mapping[RepoPath, float]
+    maintainability_index: Mapping[RepoPath, float] = Field(
+        json_schema_extra={"additionalProperties": False}
+    )
     maintainability_index_mean: float | None
 
 
@@ -177,7 +181,9 @@ class ArchitectureReport(WireModel):
     graph: ModuleGraph
     module_coupling: tuple[ModuleCoupling, ...]
     component_coupling: tuple[ComponentCoupling, ...]
-    module_components: Mapping[ModuleName, ComponentName]
+    module_components: Mapping[ModuleName, ComponentName] = Field(
+        json_schema_extra={"additionalProperties": False}
+    )
     boundaries: tuple[BoundaryPair, ...]
     cycles: CycleReport
     propagation: PropagationReport

@@ -3,6 +3,8 @@
 from typing import get_args, get_type_hints
 
 import pytest
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError as SchemaValidationError
 from pydantic import ValidationError
 
 from assay.code_metrics.models import (
@@ -117,3 +119,24 @@ def test_denominator_fields_are_nullable() -> None:
         hints = get_type_hints(model)
         for name in names:
             assert set(get_args(hints[name])) == {float, type(None)}
+
+
+@pytest.mark.parametrize(("section", "field", "valid", "invalid"), [
+    ("configuration", "components", {"core": ["src/pkg"]}, {"bad key": []}),
+    ("versions", "tools", {"grimp": "3.17"}, {"bad key": "3.17"}),
+    ("existing_metrics", "maintainability_index", {"pkg/a.py": 100.0}, {"/a.py": 100.0}),
+    ("architecture", "module_components", {"pkg.a": "core"}, {"pkg..a": "core"}),
+])
+def test_mapping_keys_match_published_schema(section, field, valid, invalid) -> None:
+    schema = CodeMetricsReport.model_json_schema()
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema)
+    payload = _report().model_dump(mode="json")
+    payload[section][field] = valid
+    validator.validate(payload)
+    CodeMetricsReport.model_validate(payload)
+    payload[section][field] = invalid
+    with pytest.raises(SchemaValidationError):
+        validator.validate(payload)
+    with pytest.raises(ValidationError):
+        CodeMetricsReport.model_validate(payload)

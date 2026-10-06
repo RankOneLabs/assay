@@ -20,6 +20,7 @@ from radon.metrics import h_visit, mi_visit  # type: ignore[import-untyped]
 from radon.raw import analyze  # type: ignore[import-untyped]
 from radon.visitors import ComplexityVisitor, Function  # type: ignore[import-untyped]
 
+from ._imports import IMPORT_LOCK
 from .errors import AnalyzerFailed, SnapshotPathError
 from .models import DELTAS, Snapshot, _Config
 from .pins import JSCPD
@@ -31,7 +32,6 @@ def _python(snapshot: Snapshot) -> dict[str, str]:
 
 _CACHE: OrderedDict[tuple[str, _Config], dict[str, Any]] = OrderedDict()
 _CACHE_LOCK = Lock()
-_IMPORT_LOCK = Lock()
 
 
 def _empty() -> dict[str, Any]:
@@ -110,7 +110,7 @@ def _imports(root: Path) -> int | None:
     packages = sorted(p.parent.name for p in base.glob("*/__init__.py"))
     if not packages:
         return None
-    with _IMPORT_LOCK:
+    with IMPORT_LOCK:
         sys.path.insert(0, str(base))
         try:
             graph = grimp.build_graph(*packages, include_external_packages=True, cache_dir=None)
@@ -181,4 +181,3 @@ def _functions(root: Path) -> list[tuple[str, int, int, int]]:
         for info in lizard.analyze([str(root)], exts=extensions)
         for function in info.function_list
     ]
-

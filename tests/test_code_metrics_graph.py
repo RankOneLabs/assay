@@ -4,9 +4,30 @@ import os
 import subprocess
 import sys
 
+import pytest
 from code_metrics_fixtures import FIXTURE_A, FIXTURE_H, package_snapshot
 
 from assay.code_metrics.graph import build_module_graph
+
+
+@pytest.mark.parametrize("snapshot", [
+    {"pkg/a.py": "", "pkg//a.py": ""},
+    {"pkg/./a.py": ""},
+    {"pkg/a.py": "", "pkg/a.py/b.py": ""},
+    {"pkg/A.py": "", "pkg/a.py": ""},
+    {"../notes.txt": "", "pkg/__init__.py": ""},
+    {f"file{i}.txt": "" for i in range(201)},
+    {"notes.txt": "x" * 1_000_001},
+])
+def test_invalid_snapshot_is_rejected_before_materialization(snapshot, monkeypatch) -> None:
+    from assay.code_metrics import graph as extractor
+
+    def materialize():
+        pytest.fail("invalid snapshot reached filesystem materialization")
+
+    monkeypatch.setattr(extractor.tempfile, "TemporaryDirectory", materialize)
+    with pytest.raises(ValueError):
+        build_module_graph(snapshot)
 
 
 def _nodes(graph: object) -> tuple[str, ...]:

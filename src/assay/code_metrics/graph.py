@@ -5,12 +5,13 @@ from __future__ import annotations
 import sys
 import tempfile
 from collections.abc import Iterable
-from pathlib import Path, PurePosixPath
-from threading import Lock
+from pathlib import Path
 
 import grimp
 
-from .errors import SnapshotPathError
+from assay.repository import validate_repository
+
+from ._imports import IMPORT_LOCK
 from .models import (
     ExternalDependency,
     ImportEdge,
@@ -20,20 +21,13 @@ from .models import (
     SnapshotCoverage,
 )
 
-_IMPORT_LOCK = Lock()
-
 
 def build_module_graph(
     snapshot: Snapshot, *, python_files_analyzed: Iterable[str] | None = None
 ) -> tuple[ModuleGraph, SnapshotCoverage]:
     """Build one Grimp graph and return sorted first-party evidence and coverage."""
-    files = {path: text for path, text in snapshot.items() if path.endswith(".py")}
-    for path in files:
-        parts = PurePosixPath(path).parts
-        if PurePosixPath(path).is_absolute() or ".." in parts or "\\" in path:
-            raise SnapshotPathError(
-                f"snapshot path must be relative and inside the repository: {path}"
-            )
+    validated = validate_repository(snapshot)
+    files = {path: text for path, text in validated.items() if path.endswith(".py")}
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         for path, source in sorted(files.items()):
@@ -51,7 +45,7 @@ def _extract(
     if not packages:
         graph = ModuleGraph(modules=(), edges=(), external_dependencies=())
     else:
-        with _IMPORT_LOCK:
+        with IMPORT_LOCK:
             sys.path.insert(0, str(base))
             try:
                 imports = grimp.build_graph(
