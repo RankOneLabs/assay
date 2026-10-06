@@ -6,7 +6,6 @@ from difflib import SequenceMatcher
 
 from .models import DELTAS, Snapshot, _Config
 from .pins import assert_pinned_tools
-from .tools import _python, _snapshot
 
 
 def measure(
@@ -19,6 +18,8 @@ def measure(
 ) -> dict[str, float | None]:
     """after - before for every repository metric, plus new-code metrics for the change."""
     assert_pinned_tools()
+    from .tools import _snapshot
+
     config = _Config(clone_min_lines, clone_min_tokens, ruff_ignore)
     old, new = _snapshot(before, config), _snapshot(after, config)
     result: dict[str, float | None] = {}
@@ -52,6 +53,8 @@ def measure(
 
 def _added_lines(before: Snapshot, after: Snapshot) -> dict[str, set[int]]:
     """1-based line numbers of non-blank lines in ``after`` that ``before`` lacks."""
+    from .tools import _python
+
     added: dict[str, set[int]] = {}
     for path, text in _python(after).items():
         new = text.splitlines()

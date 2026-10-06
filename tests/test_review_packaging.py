@@ -175,6 +175,30 @@ def _installed_environment() -> dict[str, str]:
     return environment
 
 
+def test_core_wheel_imports_metric_contracts_without_analyzer_extra(
+    installed_wheel: InstalledWheel,
+) -> None:
+    program = """
+import importlib
+from importlib.util import find_spec
+
+for tool in ('grimp', 'radon', 'lizard', 'complexipy', 'ruff', 'mypy'):
+    assert find_spec(tool) is None, tool
+for module in ('models', 'errors', 'pins'):
+    importlib.import_module('assay.code_metrics.' + module)
+from assay.code_metrics import METRICS, measure, tool_versions
+assert len(METRICS) == 15
+assert callable(measure)
+assert callable(tool_versions)
+"""
+    result = _run(
+        [installed_wheel.python, "-c", program],
+        cwd=installed_wheel.outside,
+        env=_installed_environment(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_core_wheel_discovers_and_exports_outside_checkout_without_server_extra(
     installed_wheel: InstalledWheel,
 ) -> None:

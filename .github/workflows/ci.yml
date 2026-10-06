@@ -62,6 +62,9 @@ jobs:
           from importlib.resources import files
 
           import assay.review
+          import assay.code_metrics.models
+          import assay.code_metrics.errors
+          import assay.code_metrics.pins
 
           assert find_spec("fastapi") is None
           installed = distribution("assay").files or ()

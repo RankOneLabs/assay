@@ -17,7 +17,7 @@ pinned to immutable upstream commits over public HTTPS; sibling checkouts and
 provider credentials are not required.
 
 ```sh
-uv sync --locked --extra review
+uv sync --locked --extra review --extra legacy --extra code-metrics
 uv run ruff check src tests experiments
 uv run mypy src
 uv run pytest -q
