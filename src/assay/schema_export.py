@@ -10,6 +10,7 @@ from typing import Any
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from assay.code_metrics.models import CodeMetricsComparison, CodeMetricsReport
 from assay.models import (
     Arm,
     EvaluationFailure,
@@ -23,6 +24,8 @@ from assay.models import (
 )
 
 SCHEMA_MODELS: dict[str, type[WireModel]] = {
+    "assay-code-metrics-report": CodeMetricsReport,
+    "assay-code-metrics-comparison": CodeMetricsComparison,
     "assay-arm-declaration": Arm,
     "assay-evaluation-failure": EvaluationFailure,
     "assay-execution-outcome": ExecutionOutcome,
