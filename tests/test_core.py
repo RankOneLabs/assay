@@ -77,7 +77,7 @@ def test_exclusion_removes_only_declared_pair(tmp_path: Path) -> None:
 def test_schema_files_are_valid_and_closed() -> None:
     directory = Path(__file__).resolve().parents[1] / "schemas"
     check_schemas(directory)
-    assert len(schema_documents()) == 9
+    assert len(schema_documents()) == 11
     for name in schema_documents():
         path = directory / name
         schema = json.loads(path.read_text())
