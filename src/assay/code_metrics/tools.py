@@ -9,6 +9,7 @@ import sys
 import tempfile
 from collections import OrderedDict
 from pathlib import Path, PurePosixPath
+from threading import Lock
 from typing import Any
 
 import grimp
@@ -29,6 +30,8 @@ def _python(snapshot: Snapshot) -> dict[str, str]:
 
 
 _CACHE: OrderedDict[tuple[str, _Config], dict[str, Any]] = OrderedDict()
+_CACHE_LOCK = Lock()
+_IMPORT_LOCK = Lock()
 
 
 def _empty() -> dict[str, Any]:
@@ -52,25 +55,32 @@ def _snapshot(snapshot: Snapshot, config: _Config) -> dict[str, Any]:
     if not files:
         return _empty()
     digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
-    if (digest, config) not in _CACHE:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for path, text in files.items():
-                (root / path).parent.mkdir(parents=True, exist_ok=True)
-                (root / path).write_text(text, encoding="utf-8")
-            _CACHE[(digest, config)] = {
-                **_radon(files),
-                "complexipy.cognitive": sum(code_complexity(t).complexity for t in files.values()),
-                "grimp.imports": _imports(root),
-                **_ruff(root, config.ruff_ignore),
-                "mypy.errors": _mypy(root),
-                **_jscpd(root, config),
-                "functions": _functions(root),
-            }
-    _CACHE.move_to_end((digest, config))
-    if len(_CACHE) > 8:
-        _CACHE.popitem(last=False)
-    return _CACHE[(digest, config)]
+    key = (digest, config)
+    with _CACHE_LOCK:
+        if key in _CACHE:
+            result = _CACHE[key]
+            _CACHE.move_to_end(key)
+            return result
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        for path, text in files.items():
+            (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / path).write_text(text, encoding="utf-8")
+        result = {
+            **_radon(files),
+            "complexipy.cognitive": sum(code_complexity(t).complexity for t in files.values()),
+            "grimp.imports": _imports(root),
+            **_ruff(root, config.ruff_ignore),
+            "mypy.errors": _mypy(root),
+            **_jscpd(root, config),
+            "functions": _functions(root),
+        }
+    with _CACHE_LOCK:
+        result = _CACHE.setdefault(key, result)
+        _CACHE.move_to_end(key)
+        if len(_CACHE) > 8:
+            _CACHE.popitem(last=False)
+    return result
 
 
 def _radon(files: dict[str, str]) -> dict[str, Any]:
@@ -100,11 +110,12 @@ def _imports(root: Path) -> int | None:
     packages = sorted(p.parent.name for p in base.glob("*/__init__.py"))
     if not packages:
         return None
-    sys.path.insert(0, str(base))
-    try:
-        graph = grimp.build_graph(*packages, include_external_packages=True, cache_dir=None)
-    finally:
-        sys.path.remove(str(base))
+    with _IMPORT_LOCK:
+        sys.path.insert(0, str(base))
+        try:
+            graph = grimp.build_graph(*packages, include_external_packages=True, cache_dir=None)
+        finally:
+            sys.path.remove(str(base))
     return sum(len(graph.find_modules_directly_imported_by(module)) for module in graph.modules)
 
 
@@ -170,5 +181,4 @@ def _functions(root: Path) -> list[tuple[str, int, int, int]]:
         for info in lizard.analyze([str(root)], exts=extensions)
         for function in info.function_list
     ]
-
 
