@@ -15,6 +15,7 @@ from assay.code_metrics.models import (
     CodeMetricsComparisonV2,
     CodeMetricsReport,
     CodeMetricsReportV2,
+    DetailedCodeMetricsComparison,
 )
 from assay.models import (
     Arm,
@@ -53,6 +54,7 @@ CODE_METRICS_SCHEMA_MODELS: dict[str, dict[str, type[WireModel]]] = {
     "assay-code-metrics-comparison": {
         "assay-code-metrics-comparison-v0.1": CodeMetricsComparison,
         "assay-code-metrics-comparison-v0.2": CodeMetricsComparisonV2,
+        "assay-code-metrics-comparison-v0.3": DetailedCodeMetricsComparison,
     },
 }
 

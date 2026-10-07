@@ -9,42 +9,55 @@ from types import SimpleNamespace
 
 import pytest
 
-from assay.code_metrics import tools
+from assay.code_metrics import analyze, tools
 from assay.code_metrics.graph import build_module_graph
-from assay.code_metrics.models import _Config
 
 
 def test_parallel_snapshots_survive_cache_eviction(monkeypatch: pytest.MonkeyPatch) -> None:
     workers = 12
     barrier = Barrier(workers)
 
-    def radon(files: dict[str, str]) -> dict[str, str]:
+    def radon(files: dict[str, str]) -> dict[str, object]:
         barrier.wait(timeout=10)
-        return {"source": files["module.py"]}
+        number = int(files["module.py"].split("=")[1])
+        return {
+            "radon.sloc": number,
+            "radon.lloc": 1,
+            "radon.cc": 0,
+            "radon.halstead_volume": 0.0,
+            "mi": {"module.py": 100.0},
+        }
 
     monkeypatch.setattr(tools, "_radon", radon)
     monkeypatch.setattr(tools, "code_complexity", lambda text: SimpleNamespace(complexity=0))
-    monkeypatch.setattr(tools, "_imports", lambda root: None)
-    monkeypatch.setattr(tools, "_ruff", lambda root, ignore: {})
+    monkeypatch.setattr(tools, "_imports", lambda root, graph=None, direct_import_count=None: None)
+    monkeypatch.setattr(
+        tools, "_ruff", lambda root, ignore: {"ruff.violations": 0, "ruff.magic_values": 0}
+    )
     monkeypatch.setattr(tools, "_mypy", lambda root: 0)
-    monkeypatch.setattr(tools, "_jscpd", lambda root, config: {})
+    monkeypatch.setattr(
+        tools,
+        "_jscpd",
+        lambda root, config: {"jscpd.clones": 0, "jscpd.duplicated_lines": 0, "cloned_lines": {}},
+    )
     monkeypatch.setattr(tools, "_functions", lambda root: [])
 
-    def snapshot(number: int) -> str:
-        return tools._snapshot({"module.py": f"x = {number}\n"}, _Config(5, 50, ()))['source']
+    def snapshot(number: int) -> int:
+        return analyze({"module.py": f"x = {number}\n"}).existing_metrics.radon_sloc
 
     tools._CACHE.clear()
     try:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             results = list(executor.map(snapshot, range(workers * 4)))
-        assert results == [f"x = {number}\n" for number in range(workers * 4)]
+        assert results == list(range(workers * 4))
         assert len(tools._CACHE) == 8
     finally:
         tools._CACHE.clear()
 
 
 def test_parallel_import_graphs_use_their_own_snapshot(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     roots = [tmp_path / "first", tmp_path / "second"]
     for index, root in enumerate(roots):
@@ -74,13 +87,13 @@ def test_parallel_import_graphs_use_their_own_snapshot(
 
     monkeypatch.setattr(tools.grimp, "build_graph", delayed_build_graph)
     original_path = sys.path.copy()
+
     def extract(index: int) -> int:
         root = roots[index % 2]
         if index % 4 < 2:
             return tools._imports(root)  # type: ignore[return-value]
         snapshot = {
-            path.relative_to(root).as_posix(): path.read_text()
-            for path in root.rglob("*.py")
+            path.relative_to(root).as_posix(): path.read_text() for path in root.rglob("*.py")
         }
         graph, _ = build_module_graph(snapshot)
         return len(graph.edges) + len(graph.external_dependencies)
@@ -93,7 +106,8 @@ def test_parallel_import_graphs_use_their_own_snapshot(
 
 
 def test_import_graph_failure_restores_path_and_releases_lock(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     package = tmp_path / "shop"
     package.mkdir()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import tempfile
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 import grimp
@@ -22,10 +23,27 @@ from .models import (
 )
 
 
+@dataclass(frozen=True)
+class GraphExtraction:
+    """Graph evidence and the uncollapsed direct-import count from one Grimp run."""
+
+    graph: ModuleGraph
+    coverage: SnapshotCoverage
+    direct_import_count: int | None
+
+
 def build_module_graph(
     snapshot: Snapshot, *, python_files_analyzed: Iterable[str] | None = None
 ) -> tuple[ModuleGraph, SnapshotCoverage]:
     """Build one Grimp graph and return sorted first-party evidence and coverage."""
+    extracted = extract_module_graph(snapshot, python_files_analyzed=python_files_analyzed)
+    return extracted.graph, extracted.coverage
+
+
+def extract_module_graph(
+    snapshot: Snapshot, *, python_files_analyzed: Iterable[str] | None = None
+) -> GraphExtraction:
+    """Extract public evidence and the legacy direct-import scalar together."""
     validated = validate_repository(snapshot)
     files = {path: text for path, text in validated.items() if path.endswith(".py")}
     with tempfile.TemporaryDirectory() as directory:
@@ -39,11 +57,12 @@ def build_module_graph(
 
 def _extract(
     root: Path, files: dict[str, str], python_files_analyzed: Iterable[str] | None
-) -> tuple[ModuleGraph, SnapshotCoverage]:
+) -> GraphExtraction:
     base = root / "src" if (root / "src").is_dir() else root
     packages = sorted(p.parent.name for p in base.glob("*/__init__.py"))
     if not packages:
         graph = ModuleGraph(modules=(), edges=(), external_dependencies=())
+        direct_import_count: int | None = None
     else:
         with IMPORT_LOCK:
             sys.path.insert(0, str(base))
@@ -59,6 +78,11 @@ def _extract(
             if any(module == package or module.startswith(package + ".") for package in packages)
         )
         nodes = set(first_party)
+        direct_imports = {
+            module: tuple(sorted(imports.find_modules_directly_imported_by(module)))
+            for module in sorted(imports.modules)
+        }
+        direct_import_count = sum(len(imported) for imported in direct_imports.values())
         modules = tuple(
             ModuleEntry(module=module, path=_module_path(root, base, module))
             for module in first_party
@@ -66,7 +90,7 @@ def _extract(
         edges: list[ImportEdge] = []
         external: set[tuple[str, str]] = set()
         for importer in first_party:
-            for imported in sorted(imports.find_modules_directly_imported_by(importer)):
+            for imported in direct_imports[importer]:
                 if imported in nodes:
                     edges.append(ImportEdge(importer=importer, imported=imported))
                 else:
@@ -87,7 +111,7 @@ def _extract(
         modules_discovered=len(graph.modules),
         files_without_module=tuple(sorted(files.keys() - resolved)),
     )
-    return graph, coverage
+    return GraphExtraction(graph, coverage, direct_import_count)
 
 
 def _module_path(root: Path, base: Path, module: str) -> str | None:
