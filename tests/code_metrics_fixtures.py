@@ -17,3 +17,14 @@ def package_snapshot(package: str, adjacency: Mapping[str, tuple[str, ...]]) -> 
 FIXTURE_A = package_snapshot("pkg", {"a": ("b",), "b": ("c",), "c": ()})
 # Fixture H uses pkg.isolated with no imports or importers.
 FIXTURE_H = package_snapshot("pkg", {"isolated": ()})
+# Fixture I has pkg.a available for two overlapping component patterns.
+FIXTURE_I = package_snapshot("pkg", {"a": ()})
+# Fixture J leaves pkg.b outside the configured component.
+FIXTURE_J = package_snapshot("pkg", {"a": ("b",), "b": ()})
+# Exact four-leaf coupling and cohesion fixture; pkg itself is unassigned.
+FIXTURE_COUPLING = package_snapshot("pkg", {"a": ("b",), "b": ("c",), "c": (), "d": ("a",)})
+# Fixture C creates a cycle; Fixture D removes the same closing edge.
+FIXTURE_C_BEFORE = package_snapshot("pkg", {"a": ("b",), "b": ("c",), "c": ()})
+FIXTURE_C_AFTER = package_snapshot("pkg", {"a": ("b",), "b": ("c",), "c": ("a",)})
+FIXTURE_D_BEFORE = FIXTURE_C_AFTER
+FIXTURE_D_AFTER = FIXTURE_C_BEFORE

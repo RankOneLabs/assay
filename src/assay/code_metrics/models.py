@@ -90,12 +90,33 @@ class BoundaryPair(WireModel):
     edge_count: int
 
 
+class ModuleComponent(WireModel):
+    module: ModuleName
+    path: RepoPath | None
+    component: ComponentName
+
+
+class ComponentMetricsReport(WireModel):
+    module_coupling: tuple[ModuleCoupling, ...]
+    component_coupling: tuple[ComponentCoupling, ...]
+    module_components: tuple[ModuleComponent, ...]
+    boundaries: tuple[BoundaryPair, ...]
+
+
 class StronglyConnectedComponent(WireModel):
     modules: tuple[ModuleName, ...]
     is_cyclic: bool
 
 
 class CycleReport(WireModel):
+    components: tuple[StronglyConnectedComponent, ...]
+    cyclic_component_count: int
+    modules_in_cycles: tuple[ModuleName, ...]
+
+
+class CycleReportV1(WireModel):
+    """The published 0.1.0 cycle shape."""
+
     components: tuple[StronglyConnectedComponent, ...]
     cyclic_component_count: int
     modules_in_cycles: int
@@ -181,18 +202,54 @@ class ArchitectureReport(WireModel):
     graph: ModuleGraph
     module_coupling: tuple[ModuleCoupling, ...]
     component_coupling: tuple[ComponentCoupling, ...]
-    module_components: Mapping[ModuleName, ComponentName] = Field(
-        json_schema_extra={"additionalProperties": False}
-    )
+    module_components: tuple[ModuleComponent, ...]
     boundaries: tuple[BoundaryPair, ...]
     cycles: CycleReport
     propagation: PropagationReport
 
 
+class ArchitectureReportV1(WireModel):
+    """The published 0.1.0 architecture shape."""
+
+    graph: ModuleGraph
+    module_coupling: tuple[ModuleCoupling, ...]
+    component_coupling: tuple[ComponentCoupling, ...]
+    module_components: Mapping[ModuleName, ComponentName] = Field(
+        json_schema_extra={"additionalProperties": False}
+    )
+    boundaries: tuple[BoundaryPair, ...]
+    cycles: CycleReportV1
+    propagation: PropagationReport
+
+
 class CodeMetricsReport(WireModel):
-    """Absolute snapshot report; added-line metrics require a comparison."""
+    """Published 0.1.0 absolute snapshot report."""
 
     schema_version: Literal["assay-code-metrics-report/0.1.0"] = "assay-code-metrics-report/0.1.0"
+    existing_metrics: ExistingMetrics
+    architecture: ArchitectureReportV1
+    coverage: SnapshotCoverage
+    configuration: ResolvedConfiguration
+    versions: ToolVersions
+
+
+class CodeMetricsComparison(WireModel):
+    """Published 0.1.0 comparison of two absolute reports."""
+
+    schema_version: Literal["assay-code-metrics-comparison/0.1.0"] = (
+        "assay-code-metrics-comparison/0.1.0"
+    )
+    before: CodeMetricsReport
+    after: CodeMetricsReport
+    deltas: tuple[MetricDelta, ...]
+    new_code: NewCodeMetrics
+    structural_changes: StructuralChanges
+
+
+class CodeMetricsReportV2(WireModel):
+    """Absolute snapshot report with path-bearing component and cycle evidence."""
+
+    schema_version: Literal["assay-code-metrics-report/0.2.0"] = "assay-code-metrics-report/0.2.0"
     existing_metrics: ExistingMetrics
     architecture: ArchitectureReport
     coverage: SnapshotCoverage
@@ -200,14 +257,14 @@ class CodeMetricsReport(WireModel):
     versions: ToolVersions
 
 
-class CodeMetricsComparison(WireModel):
-    """Two absolute reports and their deltas, including added-line metrics."""
+class CodeMetricsComparisonV2(WireModel):
+    """Comparison of two 0.2.0 absolute reports."""
 
-    schema_version: Literal["assay-code-metrics-comparison/0.1.0"] = (
-        "assay-code-metrics-comparison/0.1.0"
+    schema_version: Literal["assay-code-metrics-comparison/0.2.0"] = (
+        "assay-code-metrics-comparison/0.2.0"
     )
-    before: CodeMetricsReport
-    after: CodeMetricsReport
+    before: CodeMetricsReportV2
+    after: CodeMetricsReportV2
     deltas: tuple[MetricDelta, ...]
     new_code: NewCodeMetrics
     structural_changes: StructuralChanges
