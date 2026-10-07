@@ -7,31 +7,31 @@ from collections.abc import Sequence
 from .components import ComponentConfig, analyze_components
 from .cycles import analyze_cycles
 from .models import (
-    ArchitectureDeltas,
-    ArchitectureReportV3,
+    ArchitectureDeltasV2,
+    ArchitectureReportV4,
     BoundaryPairDelta,
     ComponentDelta,
     ComponentMetricDeltas,
     CountDelta,
-    CrossComponentEdge,
-    ModuleCouplingDelta,
-    ModuleGraph,
+    CrossComponentEdgeV2,
+    ModuleCouplingDeltaV2,
+    ModuleGraphV2,
     RatioDelta,
-    StructuralChangesV4,
+    StructuralChangesV5,
     SystemArchitectureDeltas,
 )
 from .propagation import analyze_propagation
 
 
 def analyze_architecture(
-    graph: ModuleGraph,
+    graph: ModuleGraphV2,
     configuration: Sequence[ComponentConfig],
     *,
     require_matches: bool = True,
-) -> ArchitectureReportV3:
+) -> ArchitectureReportV4:
     """Assemble coupling, cycle, propagation, and graph-count evidence for one graph."""
     components = analyze_components(graph, configuration, require_matches=require_matches)
-    return ArchitectureReportV3(
+    return ArchitectureReportV4(
         graph=graph,
         module_count=len(graph.modules),
         first_party_edge_count=len(graph.edges),
@@ -55,8 +55,8 @@ def _ratio(before: float | None, after: float | None) -> RatioDelta:
 
 
 def compare_architecture(
-    before: ArchitectureReportV3, after: ArchitectureReportV3
-) -> ArchitectureDeltas:
+    before: ArchitectureReportV4, after: ArchitectureReportV4
+) -> ArchitectureDeltasV2:
     """Pair each side's scalars; a component or module on one side only has no entry."""
     system = SystemArchitectureDeltas(
         propagation_cost=_ratio(
@@ -100,7 +100,7 @@ def compare_architecture(
     old_modules = {item.module: item for item in before.module_coupling}
     new_modules = {item.module: item for item in after.module_coupling}
     modules = tuple(
-        ModuleCouplingDelta(
+        ModuleCouplingDeltaV2(
             module=name,
             fan_in=_count(old_modules[name].fan_in, new_modules[name].fan_in),
             fan_out=_count(old_modules[name].fan_out, new_modules[name].fan_out),
@@ -126,16 +126,16 @@ def compare_architecture(
         )
         for source, target in sorted(old_pairs.keys() | new_pairs.keys())
     )
-    return ArchitectureDeltas(
+    return ArchitectureDeltasV2(
         system=system, components=tuple(components), modules=modules, boundaries=boundaries
     )
 
 
-def cross_component_edges(report: ArchitectureReportV3) -> frozenset[CrossComponentEdge]:
+def cross_component_edges(report: ArchitectureReportV4) -> frozenset[CrossComponentEdgeV2]:
     """Edges whose ends belong to different components, labeled with both owners."""
     owner = {entry.module: entry.component for entry in report.module_components}
     return frozenset(
-        CrossComponentEdge(
+        CrossComponentEdgeV2(
             importer=edge.importer,
             imported=edge.imported,
             importer_component=owner[edge.importer],
@@ -146,13 +146,13 @@ def cross_component_edges(report: ArchitectureReportV3) -> frozenset[CrossCompon
     )
 
 
-def _cross_component_order(edge: CrossComponentEdge) -> tuple[str, str, str, str]:
+def _cross_component_order(edge: CrossComponentEdgeV2) -> tuple[str, str, str, str]:
     return (edge.importer_component, edge.imported_component, edge.importer, edge.imported)
 
 
 def structural_changes(
-    before: ArchitectureReportV3, after: ArchitectureReportV3
-) -> StructuralChangesV4:
+    before: ArchitectureReportV4, after: ArchitectureReportV4
+) -> StructuralChangesV5:
     """Set differences of modules, edges, components, cyclic SCCs, and boundary edges.
 
     A cross-component edge is identified by both ends and both owners, so an
@@ -167,7 +167,7 @@ def structural_changes(
     old_cycles = {item.modules for item in before.cycles.components if item.is_cyclic}
     new_cycles = {item.modules for item in after.cycles.components if item.is_cyclic}
     old_boundary, new_boundary = cross_component_edges(before), cross_component_edges(after)
-    return StructuralChangesV4(
+    return StructuralChangesV5(
         modules_added=tuple(sorted(new_modules - old_modules)),
         modules_removed=tuple(sorted(old_modules - new_modules)),
         edges_added=tuple(

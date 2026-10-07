@@ -27,7 +27,7 @@ def test_absolute_report_and_partial_graph() -> None:
     assert report.architecture.graph.modules == ()
     assert report.architecture.propagation.propagation_cost is None
     assert report.existing_metrics.grimp_imports is None
-    assert report.coverage.files_without_module == ("solo.py",)
+    assert report.coverage.languages[0].files_without_module == ("solo.py",)
     assert "excluded_directories" not in CodeMetricsConfig.__dataclass_fields__
     assert report.configuration.excluded_directories == ()
 
@@ -36,7 +36,7 @@ def test_package_initializer_wins_over_same_named_module() -> None:
     report = analyze({"pkg.py": "", "pkg/__init__.py": "", "pkg/a.py": "x = 1\n"})
     paths = {entry.module: entry.path for entry in report.architecture.graph.modules}
     assert paths["pkg"] == "pkg/__init__.py"
-    assert report.coverage.files_without_module == ("pkg.py",)
+    assert report.coverage.languages[0].files_without_module == ("pkg.py",)
 
 
 def test_component_zero_denominators_and_unmapped_file() -> None:
@@ -48,7 +48,7 @@ def test_component_zero_denominators_and_unmapped_file() -> None:
     assert alpha.instability is None
     assert alpha.internal_dependency_density is None
     assert alpha.internal_edge_share is None
-    assert report.coverage.files_without_module == ("loose.py",)
+    assert report.coverage.languages[0].files_without_module == ("loose.py",)
 
 
 def test_compared_component_may_exist_on_one_side() -> None:
@@ -129,7 +129,10 @@ def test_unicode_and_unimportable_names_do_not_abort_analysis() -> None:
     }
     report = analyze(snapshot)
     assert [entry.module for entry in report.architecture.graph.modules] == ["pkg", "pkg.café"]
-    assert report.coverage.files_without_module == ("my-pkg/__init__.py", "pkg/my-mod.py")
+    assert report.coverage.languages[0].files_without_module == (
+        "my-pkg/__init__.py",
+        "pkg/my-mod.py",
+    )
     assert report.existing_metrics.mypy_errors is None
     result = compare(PACKAGE | {"pkg/__init__.py": ""}, snapshot)
     assert "pkg.café" in result.structural_changes.modules_added
@@ -184,5 +187,56 @@ def test_coding_text_inside_a_string_is_analyzed() -> None:
 def test_snapshot_of_only_unimportable_packages_is_measured() -> None:
     report = analyze({"my-pkg/__init__.py": "x = 1\n"})
     assert report.architecture.graph.modules == ()
-    assert report.coverage.files_without_module == ("my-pkg/__init__.py",)
+    assert report.coverage.languages[0].files_without_module == ("my-pkg/__init__.py",)
     assert report.existing_metrics.mypy_errors == 0
+
+
+def test_other_languages_are_covered_without_changing_python_results() -> None:
+    mixed = {**PACKAGE, "web/app.ts": "export const x = 1;\n", "core/src/lib.rs": "mod a;\n"}
+    python_only = analyze(PACKAGE).model_dump(mode="json")
+    report = analyze(mixed)
+    measured = report.model_dump(mode="json")
+    assert measured.pop("coverage") != python_only.pop("coverage")
+    assert measured == python_only
+    assert {entry.language for entry in report.architecture.graph.modules} == {"python"}
+    assert [entry.model_dump() for entry in report.coverage.languages] == [
+        {
+            "language": "python",
+            "files_seen": 2,
+            "files_analyzed": 2,
+            "modules_discovered": 2,
+            "files_without_module": (),
+        },
+        {
+            "language": "rust",
+            "files_seen": 1,
+            "files_analyzed": 0,
+            "modules_discovered": 0,
+            "files_without_module": ("core/src/lib.rs",),
+        },
+        {
+            "language": "typescript",
+            "files_seen": 1,
+            "files_analyzed": 0,
+            "modules_discovered": 0,
+            "files_without_module": ("web/app.ts",),
+        },
+    ]
+
+
+def test_snapshot_without_python_has_null_python_metrics() -> None:
+    typescript = {"web/app.ts": "export const x = 1;\n"}
+    report = analyze(typescript)
+    metrics = report.existing_metrics.model_dump()
+    assert metrics.pop("maintainability_index") == {}
+    assert set(metrics.values()) == {None}
+    comparison = compare(typescript, PACKAGE)
+    assert {entry.before for entry in comparison.deltas} == {None}
+    assert {entry.delta for entry in comparison.deltas} == {None}
+    assert comparison.new_code.new_lines == 1
+    reverse = compare(PACKAGE, typescript)
+    assert reverse.new_code.model_dump() == dict.fromkeys(
+        ("new_lines", "new_duplicated_lines", "new_max_nesting_depth")
+    )
+    # The legacy mapping still counts a side without Python as zero.
+    assert measure(typescript, PACKAGE)["radon.sloc"] == 1

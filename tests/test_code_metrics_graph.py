@@ -10,13 +10,16 @@ from code_metrics_fixtures import FIXTURE_A, FIXTURE_H, package_snapshot
 from assay.code_metrics.graph import build_module_graph
 
 
-@pytest.mark.parametrize("snapshot", [
-    {"pkg/a.py": "", "pkg//a.py": ""},
-    {"pkg/./a.py": ""},
-    {"pkg/a.py": "", "pkg/a.py/b.py": ""},
-    {"pkg/A.py": "", "pkg/a.py": ""},
-    {"../notes.txt": "", "pkg/__init__.py": ""},
-])
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        {"pkg/a.py": "", "pkg//a.py": ""},
+        {"pkg/./a.py": ""},
+        {"pkg/a.py": "", "pkg/a.py/b.py": ""},
+        {"pkg/A.py": "", "pkg/a.py": ""},
+        {"../notes.txt": "", "pkg/__init__.py": ""},
+    ],
+)
 def test_invalid_snapshot_is_rejected_before_materialization(snapshot, monkeypatch) -> None:
     from assay.code_metrics import graph as extractor
 
@@ -35,16 +38,14 @@ def test_snapshot_beyond_study_repository_caps_is_accepted() -> None:
     }
     graph, coverage = build_module_graph(snapshot)
     assert len(graph.modules) == 252
-    assert coverage.python_files_seen == 252
+    assert coverage.files_seen == 252
 
 
 def test_package_named_like_an_imported_module_graphs_the_snapshot() -> None:
     # assay and pydantic are already imported here; the snapshot must still win.
     for package in ("assay", "pydantic"):
         assert package in sys.modules
-        graph, coverage = build_module_graph(
-            package_snapshot(package, {"a": ("b",), "b": ()})
-        )
+        graph, coverage = build_module_graph(package_snapshot(package, {"a": ("b",), "b": ()}))
         assert _nodes(graph) == (package, f"{package}.a", f"{package}.b")
         assert _edges(graph) == ((f"{package}.a", f"{package}.b"),)
         assert coverage.files_without_module == ()
@@ -84,12 +85,12 @@ def test_no_package_and_unmapped_python_file() -> None:
     assert _nodes(graph) == ()
     assert _edges(graph) == ()
     assert coverage.files_without_module == ("solo.py",)
-    assert coverage.python_files_seen == 1
+    assert coverage.files_seen == 1
     graph, coverage = build_module_graph({**FIXTURE_H, "loose.py": "pass\n"})
     assert _nodes(graph) == ("pkg", "pkg.isolated")
     assert _edges(graph) == ()
     assert coverage.files_without_module == ("loose.py",)
-    assert coverage.python_files_seen > coverage.modules_discovered
+    assert coverage.files_seen > coverage.modules_discovered
 
 
 def test_external_dependency_is_evidence_only() -> None:

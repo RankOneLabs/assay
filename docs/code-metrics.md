@@ -9,9 +9,10 @@ assay code-metrics snapshot PATH [--config FILE] [--exclude GLOB ...] [--json]
 assay code-metrics compare BEFORE_PATH AFTER_PATH [--config FILE] [--exclude GLOB ...] [--json]
 ```
 
-Each path is a directory. The CLI reads its Python files into a snapshot keyed
-by relative path, decoding each as Python does (a coding declaration or BOM,
-otherwise UTF-8). It skips symlinks and the `.git`, `.venv`, `venv`,
+Each path is a directory. The CLI reads its Python (`.py`), TypeScript (`.ts`,
+`.tsx`, `.mts`, `.cts`), and Rust (`.rs`) files into a snapshot keyed by
+relative path. It decodes Python as Python does (a coding declaration or BOM,
+otherwise UTF-8) and the other languages as UTF-8 without a BOM. It skips symlinks and the `.git`, `.venv`, `venv`,
 `node_modules`, `__pycache__`, `.assay`, `.claude`, `dist`, `build`,
 `.mypy_cache`, `.pytest_cache`, and `.ruff_cache` directories. Each `--exclude`
 adds a file or directory glob; the report's `configuration.excluded_directories` lists the
@@ -36,11 +37,31 @@ network access for the first download.
 
 ## Metric definitions
 
-`analyze` returns an `assay-code-metrics-report/0.3.0` report and `compare`
-an `assay-code-metrics-comparison/0.4.0` comparison. Earlier schema versions
+`analyze` returns an `assay-code-metrics-report/0.4.0` report and `compare`
+an `assay-code-metrics-comparison/0.5.0` comparison. Earlier schema versions
 stay in `schemas/`. Every graph count below is over first-party modules: the
 modules of top-level packages in the snapshot. Imports of anything else are
 listed in `graph.external_dependencies` and do not enter these counts.
+
+### Languages
+
+Each graph module names its `language`: `python`, `rust`, or `typescript`. A
+Python module is identified by its dotted name. Only Python has a graph
+extractor so far, so a TypeScript or Rust file contributes no module or edge.
+
+`coverage.languages` has one entry per language, zeros included. `files_seen`
+counts the snapshot's files with that language's extensions, `files_analyzed`
+those an analyzer read, and `files_without_module` lists the files that
+produced no module. A language without an extractor lists every file it sees.
+
+The `existing_metrics` analyzers (radon, complexipy, grimp, ruff, mypy, and
+jscpd) read Python files only. Each value is `null`, and the maintainability
+index map empty, when the snapshot has no Python file, so a TypeScript or Rust
+codebase is not reported as zero lines. In a comparison, a legacy delta's side
+is `null` when that side has no Python file, and its `delta` is `null` when
+either side is. `new_code` counts added Python lines and is `null` when the
+after side has no Python file. The legacy `measure()` mapping is unchanged and
+still counts a side without Python as zero.
 
 ### Coupling
 

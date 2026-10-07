@@ -27,17 +27,21 @@ from .errors import (
 )
 from .models import (
     DELTAS,
-    CodeMetricsComparisonV4,
-    CodeMetricsReportV3,
+    LANGUAGES,
+    CodeMetricsComparisonV5,
+    CodeMetricsReportV4,
     DetailedMetricDelta,
-    ExistingMetrics,
-    ModuleGraph,
-    NewCodeMetrics,
+    ExistingMetricsV2,
+    Language,
+    LanguageCoverage,
+    ModuleGraphV2,
+    NewCodeMetricsV2,
     ResolvedConfiguration,
     Snapshot,
-    SnapshotCoverage,
+    SnapshotCoverageV2,
     ToolVersions,
     _Config,
+    language_of,
     validate_snapshot,
 )
 from .pins import JSCPD, assert_pinned_tools, tool_versions
@@ -104,7 +108,7 @@ def _validate_config(config: CodeMetricsConfig) -> None:
 
 def _analyze(
     snapshot: Snapshot, config: CodeMetricsConfig, *, require_matches: bool = True
-) -> tuple[CodeMetricsReportV3, dict[str, Any]]:
+) -> tuple[CodeMetricsReportV4, dict[str, Any]]:
     _validate_config(config)
     _preflight()
     snapshot = _validate_paths(snapshot)
@@ -119,17 +123,20 @@ def _analyze(
             raise SnapshotSyntaxError(path, error) from error
     if snapshot:
         extracted = extract_module_graph(snapshot, python_files_analyzed=files)
-        graph, coverage = extracted.graph, extracted.coverage
+        graph, python_coverage = extracted.graph, extracted.coverage
         direct_import_count = extracted.direct_import_count
     else:
-        graph = ModuleGraph(modules=(), edges=(), external_dependencies=())
-        coverage = SnapshotCoverage(
-            python_files_seen=0,
-            python_files_analyzed=0,
-            modules_discovered=0,
-            files_without_module=(),
-        )
+        graph = ModuleGraphV2(modules=(), edges=(), external_dependencies=())
+        python_coverage = _unextracted("python", {})
         direct_import_count = None
+    # Only Python has a graph extractor; other languages' files are counted
+    # and listed without a module.
+    coverage = SnapshotCoverageV2(
+        languages=tuple(
+            python_coverage if language == "python" else _unextracted(language, snapshot)
+            for language in LANGUAGES
+        )
+    )
     legacy_config = _Config(config.clone_min_lines, config.clone_min_tokens, config.ruff_ignore)
     try:
         payload = dict(
@@ -143,21 +150,23 @@ def _analyze(
     mi = dict(sorted(payload["mi"].items()))
     payload["radon.mi"] = statistics.fmean(mi.values()) if mi else None
     architecture = analyze_architecture(graph, config.components, require_matches=require_matches)
-    report = CodeMetricsReportV3(
-        existing_metrics=ExistingMetrics(
-            radon_sloc=payload["radon.sloc"],
-            radon_lloc=payload["radon.lloc"],
-            radon_cc=payload["radon.cc"],
-            radon_halstead_volume=payload["radon.halstead_volume"],
-            complexipy_cognitive=payload["complexipy.cognitive"],
-            grimp_imports=payload["grimp.imports"],
-            ruff_violations=payload["ruff.violations"],
-            ruff_magic_values=payload["ruff.magic_values"],
-            mypy_errors=payload["mypy.errors"],
-            jscpd_clones=payload["jscpd.clones"],
-            jscpd_duplicated_lines=payload["jscpd.duplicated_lines"],
+    # The analyzers read Python only, so without a Python file nothing was measured.
+    measured = {key: payload[key] if files else None for key in DELTAS}
+    report = CodeMetricsReportV4(
+        existing_metrics=ExistingMetricsV2(
+            radon_sloc=measured["radon.sloc"],
+            radon_lloc=measured["radon.lloc"],
+            radon_cc=measured["radon.cc"],
+            radon_halstead_volume=measured["radon.halstead_volume"],
+            complexipy_cognitive=measured["complexipy.cognitive"],
+            grimp_imports=measured["grimp.imports"],
+            ruff_violations=measured["ruff.violations"],
+            ruff_magic_values=measured["ruff.magic_values"],
+            mypy_errors=measured["mypy.errors"],
+            jscpd_clones=measured["jscpd.clones"],
+            jscpd_duplicated_lines=measured["jscpd.duplicated_lines"],
             maintainability_index=mi,
-            maintainability_index_mean=payload["radon.mi"],
+            maintainability_index_mean=measured["radon.mi"],
         ),
         architecture=architecture,
         coverage=coverage,
@@ -180,20 +189,35 @@ def _analyze(
     return report, payload
 
 
-def analyze(snapshot: Snapshot, *, config: CodeMetricsConfig | None = None) -> CodeMetricsReportV3:
+def _unextracted(language: Language, snapshot: Snapshot) -> LanguageCoverage:
+    paths = tuple(sorted(path for path in snapshot if language_of(path) == language))
+    return LanguageCoverage(
+        language=language,
+        files_seen=len(paths),
+        files_analyzed=0,
+        modules_discovered=0,
+        files_without_module=paths,
+    )
+
+
+def analyze(snapshot: Snapshot, *, config: CodeMetricsConfig | None = None) -> CodeMetricsReportV4:
     """Measure one snapshot and assemble its absolute metric and architecture report."""
     return _analyze(snapshot, config or CodeMetricsConfig())[0]
 
 
 def _compare(
     before: Snapshot, after: Snapshot, config: CodeMetricsConfig
-) -> CodeMetricsComparisonV4:
+) -> tuple[CodeMetricsComparisonV5, dict[str, float | None]]:
+    """The comparison and the legacy delta mapping, which counts a side without Python as 0."""
     old_report, old = _analyze(before, config, require_matches=False)
     new_report, new = _analyze(after, config, require_matches=False)
     require_pattern_matches(
         (old_report.architecture.graph, new_report.architecture.graph), config.components
     )
     shared = tuple(sorted(old["mi"].keys() & new["mi"].keys()))
+    old_python = _has_python(before)
+    new_python = _has_python(after)
+    legacy: dict[str, float | None] = {}
     deltas = []
     for key in DELTAS:
         if key == "radon.mi":
@@ -206,34 +230,47 @@ def _compare(
             difference = None
         else:
             difference = round(new[key] - old[key], 3)
+        legacy[key] = difference
+        old_value = old[key] if old_python else None
+        new_value = new[key] if new_python else None
         deltas.append(
             DetailedMetricDelta(
                 metric=key,
-                before=old[key],
-                after=new[key],
-                delta=difference,
+                before=old_value,
+                after=new_value,
+                delta=difference if old_python and new_python else None,
                 provenance="shared_file_mean" if key == "radon.mi" else "absolute_difference",
                 shared_files=shared if key == "radon.mi" else (),
                 shared_file_count=len(shared) if key == "radon.mi" else None,
             )
         )
     added = _added_lines(before, after)
-    new_code = NewCodeMetrics(
-        new_lines=sum(map(len, added.values())),
-        new_duplicated_lines=sum(
-            len(lines & new["cloned_lines"].get(path, set())) for path, lines in added.items()
+    new_lines = sum(map(len, added.values()))
+    new_duplicated_lines = sum(
+        len(lines & new["cloned_lines"].get(path, set())) for path, lines in added.items()
+    )
+    new_max_nesting_depth = max(
+        (
+            depth
+            for path, start, end, depth in new["functions"]
+            if any(start <= line <= end for line in added.get(path, ()))
         ),
-        new_max_nesting_depth=max(
-            (
-                depth
-                for path, start, end, depth in new["functions"]
-                if any(start <= line <= end for line in added.get(path, ()))
-            ),
-            default=0,
-        ),
+        default=0,
+    )
+    legacy["new_lines"] = new_lines
+    legacy["new_duplicated_lines"] = new_duplicated_lines
+    legacy["new_max_nesting_depth"] = new_max_nesting_depth
+    new_code = (
+        NewCodeMetricsV2(
+            new_lines=new_lines,
+            new_duplicated_lines=new_duplicated_lines,
+            new_max_nesting_depth=new_max_nesting_depth,
+        )
+        if new_python
+        else NewCodeMetricsV2(new_lines=None, new_duplicated_lines=None, new_max_nesting_depth=None)
     )
     old_architecture, new_architecture = old_report.architecture, new_report.architecture
-    return CodeMetricsComparisonV4(
+    comparison = CodeMetricsComparisonV5(
         before=old_report,
         after=new_report,
         deltas=tuple(deltas),
@@ -241,13 +278,18 @@ def _compare(
         new_code=new_code,
         structural_changes=structural_changes(old_architecture, new_architecture),
     )
+    return comparison, legacy
+
+
+def _has_python(snapshot: Snapshot) -> bool:
+    return any(path.endswith(".py") for path in snapshot)
 
 
 def compare(
     before: Snapshot, after: Snapshot, *, config: CodeMetricsConfig | None = None
-) -> CodeMetricsComparisonV4:
+) -> CodeMetricsComparisonV5:
     """Compare absolute reports with explicit architecture deltas and structural evidence."""
-    return _compare(before, after, config or CodeMetricsConfig())
+    return _compare(before, after, config or CodeMetricsConfig())[0]
 
 
 def measure(
@@ -259,7 +301,7 @@ def measure(
     ruff_ignore: tuple[str, ...] = (),
 ) -> dict[str, float | None]:
     """Legacy ordered, rounded metric deltas over the shared analysis."""
-    comparison = _compare(
+    return _compare(
         before,
         after,
         CodeMetricsConfig(
@@ -267,12 +309,7 @@ def measure(
             clone_min_tokens=clone_min_tokens,
             ruff_ignore=ruff_ignore,
         ),
-    )
-    result: dict[str, float | None] = {entry.metric: entry.delta for entry in comparison.deltas}
-    result["new_lines"] = comparison.new_code.new_lines
-    result["new_duplicated_lines"] = comparison.new_code.new_duplicated_lines
-    result["new_max_nesting_depth"] = comparison.new_code.new_max_nesting_depth
-    return result
+    )[1]
 
 
 def _added_lines(before: Snapshot, after: Snapshot) -> dict[str, set[int]]:

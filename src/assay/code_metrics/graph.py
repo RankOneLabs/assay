@@ -14,12 +14,12 @@ from grimp.application.ports.packagefinder import AbstractPackageFinder
 
 from ._imports import IMPORT_LOCK
 from .models import (
-    ExternalDependency,
-    ImportEdge,
-    ModuleEntry,
-    ModuleGraph,
+    ExternalDependencyV2,
+    ImportEdgeV2,
+    LanguageCoverage,
+    ModuleEntryV2,
+    ModuleGraphV2,
     Snapshot,
-    SnapshotCoverage,
     is_module_name,
     utf8_source,
     validate_snapshot,
@@ -59,15 +59,15 @@ def build_import_graph(base: Path, packages: Iterable[str]) -> grimp.ImportGraph
 class GraphExtraction:
     """Graph evidence and the uncollapsed direct-import count from one Grimp run."""
 
-    graph: ModuleGraph
-    coverage: SnapshotCoverage
+    graph: ModuleGraphV2
+    coverage: LanguageCoverage
     direct_import_count: int | None
 
 
 def build_module_graph(
     snapshot: Snapshot, *, python_files_analyzed: Iterable[str] | None = None
-) -> tuple[ModuleGraph, SnapshotCoverage]:
-    """Build one Grimp graph and return sorted first-party evidence and coverage."""
+) -> tuple[ModuleGraphV2, LanguageCoverage]:
+    """Build one Grimp graph and return sorted first-party evidence and Python coverage."""
     extracted = extract_module_graph(snapshot, python_files_analyzed=python_files_analyzed)
     return extracted.graph, extracted.coverage
 
@@ -102,7 +102,7 @@ def _extract(
         p.parent.name for p in base.glob("*/__init__.py") if p.parent.name.isidentifier()
     )
     if not packages:
-        graph = ModuleGraph(modules=(), edges=(), external_dependencies=())
+        graph = ModuleGraphV2(modules=(), edges=(), external_dependencies=())
         direct_import_count: int | None = None
     else:
         imports = build_import_graph(base, packages)
@@ -119,10 +119,10 @@ def _extract(
         }
         direct_import_count = sum(len(imported) for imported in direct_imports.values())
         modules = tuple(
-            ModuleEntry(module=module, path=_module_path(root, base, module))
+            ModuleEntryV2(module=module, path=_module_path(root, base, module), language="python")
             for module in first_party
         )
-        edges: list[ImportEdge] = []
+        edges: list[ImportEdgeV2] = []
         external: set[tuple[str, str]] = set()
         for importer in first_party:
             for imported in direct_imports[importer]:
@@ -130,22 +130,23 @@ def _extract(
                 if not is_module_name(imported):
                     continue
                 if imported in nodes:
-                    edges.append(ImportEdge(importer=importer, imported=imported))
+                    edges.append(ImportEdgeV2(importer=importer, imported=imported))
                 else:
                     external.add((importer, imported.split(".", 1)[0]))
-        graph = ModuleGraph(
+        graph = ModuleGraphV2(
             modules=modules,
             edges=tuple(sorted(edges, key=lambda edge: (edge.importer, edge.imported))),
             external_dependencies=tuple(
-                ExternalDependency(module=module, package=package)
+                ExternalDependencyV2(module=module, package=package)
                 for module, package in sorted(external)
             ),
         )
     resolved = {entry.path for entry in graph.modules if entry.path is not None}
     analyzed = set(files) if python_files_analyzed is None else set(python_files_analyzed)
-    coverage = SnapshotCoverage(
-        python_files_seen=len(files),
-        python_files_analyzed=len(analyzed & files.keys()),
+    coverage = LanguageCoverage(
+        language="python",
+        files_seen=len(files),
+        files_analyzed=len(analyzed & files.keys()),
         modules_discovered=len(graph.modules),
         files_without_module=tuple(sorted(files.keys() - resolved)),
     )
