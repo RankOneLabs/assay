@@ -191,37 +191,26 @@ def test_snapshot_of_only_unimportable_packages_is_measured() -> None:
     assert report.existing_metrics.mypy_errors == 0
 
 
-def test_other_languages_are_covered_without_changing_python_results() -> None:
+def test_other_languages_leave_python_results_unchanged() -> None:
     mixed = {**PACKAGE, "web/app.ts": "export const x = 1;\n", "core/src/lib.rs": "mod a;\n"}
-    python_only = analyze(PACKAGE).model_dump(mode="json")
+    python_only = analyze(PACKAGE)
     report = analyze(mixed)
-    measured = report.model_dump(mode="json")
-    assert measured.pop("coverage") != python_only.pop("coverage")
-    assert measured == python_only
-    assert {entry.language for entry in report.architecture.graph.modules} == {"python"}
-    assert [entry.model_dump() for entry in report.coverage.languages] == [
-        {
-            "language": "python",
-            "files_seen": 2,
-            "files_analyzed": 2,
-            "modules_discovered": 2,
-            "files_without_module": (),
-        },
-        {
-            "language": "rust",
-            "files_seen": 1,
-            "files_analyzed": 0,
-            "modules_discovered": 0,
-            "files_without_module": ("core/src/lib.rs",),
-        },
-        {
-            "language": "typescript",
-            "files_seen": 1,
-            "files_analyzed": 0,
-            "modules_discovered": 0,
-            "files_without_module": ("web/app.ts",),
-        },
-    ]
+    assert report.existing_metrics == python_only.existing_metrics
+    graph = report.architecture.graph
+    python_modules = tuple(entry for entry in graph.modules if entry.language == "python")
+    assert python_modules == python_only.architecture.graph.modules
+    assert graph.edges == python_only.architecture.graph.edges
+    coverage = {entry.language: entry for entry in report.coverage.languages}
+    assert coverage["python"] == python_only.coverage.languages[0]
+    assert coverage["typescript"].modules_discovered == 1
+    # Rust has no extractor yet, so its file is seen without a module.
+    assert coverage["rust"].model_dump() == {
+        "language": "rust",
+        "files_seen": 1,
+        "files_analyzed": 0,
+        "modules_discovered": 0,
+        "files_without_module": ("core/src/lib.rs",),
+    }
 
 
 def test_snapshot_without_python_has_null_python_metrics() -> None:

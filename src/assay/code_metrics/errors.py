@@ -10,7 +10,9 @@
 | Component pattern matching zero modules | EmptyComponentPattern(ConfigurationError) |
 | Resolved tool version differs from its pin | ToolVersionMismatch(RuntimeError) |
 | Node/npx unavailable or jscpd fetch fails | ToolUnavailable(RuntimeError) |
+| dependency-cruiser fetch fails, with a TypeScript file | ToolUnavailable(RuntimeError) |
 | mypy crashes, ruff or jscpd errors, unreadable jscpd report | AnalyzerFailed(RuntimeError) |
+| dependency-cruiser errors or its report is unreadable | AnalyzerFailed(RuntimeError) |
 | No first-party package | Report: empty graph; propagation_cost and grimp.imports null |
 | Python file outside discovered packages | Report: path without module (below) |
 | Package or module name not a Python identifier | Report: path without module (below) |
