@@ -245,3 +245,27 @@ def test_published_v1_shapes_remain_distinct_from_v2() -> None:
             Draft202012Validator(old_schema).validate(new_payload)
         with pytest.raises(SchemaValidationError):
             Draft202012Validator(new_schema).validate(old_payload)
+
+
+@pytest.mark.parametrize(
+    ("module", "valid"),
+    [("pkg.café", True), ("π.ñ_1", True), ("pkg.my-mod", False), ("pkg.1a", False), ("", False)],
+)
+def test_module_names_follow_python_identifiers(module: str, valid: bool) -> None:
+    item = ModuleComponent(module="pkg.a", path="src/pkg/a.py", component="core")
+    report = _report().model_copy(
+        update={
+            "architecture": _report().architecture.model_copy(update={"module_components": (item,)})
+        }
+    )
+    payload = report.model_dump(mode="json")
+    payload["architecture"]["module_components"][0]["module"] = module
+    validator = Draft202012Validator(CodeMetricsReportV2.model_json_schema())
+    if valid:
+        validator.validate(payload)
+        CodeMetricsReportV2.model_validate(payload)
+    else:
+        with pytest.raises(SchemaValidationError):
+            validator.validate(payload)
+        with pytest.raises(ValidationError):
+            CodeMetricsReportV2.model_validate(payload)

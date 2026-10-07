@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,7 +22,7 @@ from radon.raw import analyze  # type: ignore[import-untyped]
 from radon.visitors import ComplexityVisitor, Function  # type: ignore[import-untyped]
 
 from .errors import AnalyzerFailed, SnapshotPathError, ToolUnavailable
-from .graph import build_import_graph
+from .graph import build_import_graph, write_sources
 from .models import DELTAS, ModuleGraph, Snapshot, _Config
 from .pins import JSCPD
 
@@ -70,9 +71,7 @@ def _snapshot(
             return result
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        for path, text in files.items():
-            (root / path).parent.mkdir(parents=True, exist_ok=True)
-            (root / path).write_text(text, encoding="utf-8")
+        write_sources(root, files)
         result = {
             **_radon(files),
             "complexipy.cognitive": sum(code_complexity(t).complexity for t in files.values()),
@@ -145,33 +144,61 @@ def _ruff(root: Path, ignore: tuple[str, ...]) -> dict[str, int]:
     }
 
 
-def _mypy(root: Path) -> int:
+def _mypy(root: Path) -> int | None:
     base = root / "src" if (root / "src").is_dir() else root
+    # mypy aborts on a package directory that is not an identifier; the graph
+    # leaves those out too, so neither counts them.
+    unimportable = sorted(
+        init.parent.relative_to(root).as_posix()
+        for init in root.rglob("__init__.py")
+        if init.parent != root and not init.parent.name.isidentifier()
+    )
+    prefixes = tuple(f"{path}/" for path in unimportable)
+    if all(path.relative_to(root).as_posix().startswith(prefixes) for path in root.rglob("*.py")):
+        return 0
+    excluded = (
+        ["--exclude", "|".join(f"^{re.escape(path)}/" for path in unimportable)]
+        if unimportable
+        else []
+    )
     completed = subprocess.run(
         [sys.executable, "-m", "mypy", "--check-untyped-defs", "--explicit-package-bases",
-         "--cache-dir", os.devnull, "--no-error-summary", "--hide-error-context", "."],
+         "--cache-dir", os.devnull, "--no-error-summary", "--hide-error-context", *excluded, "."],
         cwd=root, env={**os.environ, "MYPYPATH": str(base)},
         capture_output=True, text=True, check=False,
     )  # fmt: skip
+    errors = sum(": error:" in line for line in completed.stdout.splitlines())
+    if completed.returncode == 2 and errors and not completed.stderr.strip():
+        # A blocking source error, such as a relative import above its
+        # top-level package, stops mypy before it checks the rest.
+        return None
     if completed.returncode not in (0, 1):
         raise AnalyzerFailed(f"mypy failed: {completed.stderr.strip()}")
-    return sum(": error:" in line for line in completed.stdout.splitlines())
+    return errors
 
 
 def _jscpd(root: Path, config: _Config) -> dict[str, Any]:
+    # Fetching and launching jscpd is checked apart from the analysis, so a
+    # jscpd failure on this snapshot is not reported as a missing tool.
+    try:
+        subprocess.run(
+            ["npx", "--yes", JSCPD, "--version"],
+            capture_output=True, text=True, check=True,
+        )  # fmt: skip
+    except subprocess.CalledProcessError as error:
+        raise ToolUnavailable(JSCPD, (error.stderr or str(error)).strip()) from error
+    except OSError as error:
+        raise ToolUnavailable(JSCPD, str(error)) from error
     with tempfile.TemporaryDirectory() as output:
-        try:
-            subprocess.run(
-                ["npx", "--yes", JSCPD, "--silent", "--format", "python", "--reporters", "json",
-                 "--min-lines", str(config.clone_min_lines),
-                 "--min-tokens", str(config.clone_min_tokens),
-                 "--output", output, "."],
-                cwd=root, capture_output=True, text=True, check=True,
-            )  # fmt: skip
-        except subprocess.CalledProcessError as error:
-            raise ToolUnavailable(JSCPD, (error.stderr or str(error)).strip()) from error
-        except OSError as error:
-            raise ToolUnavailable(JSCPD, str(error)) from error
+        completed = subprocess.run(
+            ["npx", "--yes", JSCPD, "--silent", "--format", "python", "--reporters", "json",
+             "--min-lines", str(config.clone_min_lines),
+             "--min-tokens", str(config.clone_min_tokens),
+             "--output", output, "."],
+            cwd=root, capture_output=True, text=True, check=False,
+        )  # fmt: skip
+        if completed.returncode != 0:
+            raise AnalyzerFailed(f"jscpd failed: {completed.stderr.strip()}")
         try:
             report = json.loads((Path(output) / "jscpd-report.json").read_text())
             cloned: dict[str, set[int]] = {}

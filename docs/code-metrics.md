@@ -10,10 +10,11 @@ assay code-metrics compare BEFORE_PATH AFTER_PATH [--config FILE] [--exclude GLO
 ```
 
 Each path is a directory. The CLI reads its Python files into a snapshot keyed
-by relative path. It skips `.git`, `.venv`, `venv`, `node_modules`,
-`__pycache__`, `.assay`, `.claude`, `dist`, `build`, `.mypy_cache`,
-`.pytest_cache`, and `.ruff_cache` directories. Each `--exclude` adds a file or
-directory glob; the report's `configuration.excluded_directories` lists the
+by relative path, decoding each as Python does (a coding declaration or BOM,
+otherwise UTF-8). It skips symlinks and the `.git`, `.venv`, `venv`,
+`node_modules`, `__pycache__`, `.assay`, `.claude`, `dist`, `build`,
+`.mypy_cache`, `.pytest_cache`, and `.ruff_cache` directories. Each `--exclude`
+adds a file or directory glob; the report's `configuration.excluded_directories` lists the
 resolved default names and supplied globs. The Python API accepts a snapshot
 mapping directly and does not apply these exclusions.
 

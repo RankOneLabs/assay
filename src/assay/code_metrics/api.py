@@ -12,6 +12,8 @@ from difflib import SequenceMatcher
 from importlib.metadata import version
 from typing import Any
 
+from assay.repository import RepositoryPathError
+
 from .components import ComponentConfig, analyze_components, require_pattern_matches
 from .cycles import analyze_cycles
 from .errors import (
@@ -65,9 +67,7 @@ def _validate_paths(snapshot: Snapshot) -> dict[str, str]:
         return {}
     try:
         return validate_snapshot(snapshot)
-    except ValueError as error:
-        if "path" not in str(error) and "collides" not in str(error):
-            raise
+    except RepositoryPathError as error:
         raise SnapshotPathError(
             f"must be relative and inside the repository: {error}; paths={tuple(snapshot)!r}"
         ) from error

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import codecs
+import re
 import sys
 from collections.abc import Mapping
 from typing import Annotated, Literal, NamedTuple
 
-from pydantic import Field, StringConstraints
+from pydantic import AfterValidator, Field, StringConstraints
 
 from assay.models import Identifier, NonEmpty, WireModel
 from assay.repository import validate_repository
@@ -36,14 +38,59 @@ def validate_snapshot(snapshot: Snapshot) -> dict[str, str]:
     return validate_repository(snapshot, max_files=sys.maxsize, max_total_bytes=sys.maxsize)
 
 
+_DECODED = "# decoded source"
+_CODING = re.compile(r"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)", re.ASCII)
+
+
+def utf8_source(source: str) -> str:
+    """*source* for a UTF-8 file, with a declaration of another encoding replaced.
+
+    A snapshot holds decoded text, so a Latin-1 declaration no longer describes
+    it: analyzers would decode the UTF-8 copy as Latin-1, and Grimp 3.17 panics
+    on any non-UTF-8 declaration. The declaration becomes a plain comment (an
+    empty one would itself be a ruff finding), so every line number is unchanged.
+    """
+    lines = source.splitlines(keepends=True)
+    for index, line in enumerate(lines[:2]):
+        match = _CODING.match(line)
+        if match is None:
+            continue
+        try:
+            utf8 = codecs.lookup(match.group(1)).name == "utf-8"
+        except LookupError:
+            utf8 = False
+        if not utf8:
+            lines[index] = _DECODED + line[len(line.rstrip("\r\n")) :]
+    return "".join(lines)
+
+
 class _Config(NamedTuple):
     clone_min_lines: int
     clone_min_tokens: int
     ruff_ignore: tuple[str, ...]
 
 
+def is_module_name(value: str) -> bool:
+    """Whether *value* is a dotted name of Python identifiers, Unicode ones included."""
+    return all(part.isidentifier() for part in value.split("."))
+
+
+def _module_name(value: str) -> str:
+    if not is_module_name(value):
+        raise ValueError(f"{value!r} is not a dotted Python identifier")
+    return value
+
+
+# The published pattern is exact for ASCII and admits every non-ASCII character,
+# because JSON Schema regex engines disagree on Unicode classes; the model's
+# validator applies Python's own identifier rule to the rest.
+_IDENTIFIER_START = r"[^\x00-\x40\x5B-\x5E\x60\x7B-\x7F]"
+_IDENTIFIER_CONTINUE = r"[^\x00-\x2F\x3A-\x40\x5B-\x5E\x60\x7B-\x7F]"
+_IDENTIFIER = f"{_IDENTIFIER_START}{_IDENTIFIER_CONTINUE}*"
 ModuleName = Annotated[
-    str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+    str,
+    StringConstraints(pattern=rf"^{_IDENTIFIER}(\.{_IDENTIFIER})*$"),
+    AfterValidator(_module_name),
 ]
 ComponentName = Identifier
 RepoPath = Annotated[str, StringConstraints(pattern=r"^[^/\\][^\\]*$")]
@@ -172,7 +219,7 @@ class ExistingMetrics(WireModel):
     grimp_imports: int | None
     ruff_violations: int
     ruff_magic_values: int
-    mypy_errors: int
+    mypy_errors: int | None
     jscpd_clones: int
     jscpd_duplicated_lines: int
     maintainability_index: Mapping[RepoPath, float] = Field(

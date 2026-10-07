@@ -11,6 +11,7 @@ from assay.code_metrics import analyze, compare, graph, measure
 from assay.code_metrics.api import CodeMetricsConfig
 from assay.code_metrics.components import ComponentConfig
 from assay.code_metrics.errors import EmptyComponentPattern
+from assay.code_metrics.models import utf8_source
 
 PACKAGE = {"src/pkg/__init__.py": "", "src/pkg/a.py": "x = 1\n"}
 
@@ -109,3 +110,46 @@ def test_uncollapsed_direct_import_count(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert report.existing_metrics.grimp_imports == 2
     assert len(report.architecture.graph.external_dependencies) == 1
+
+
+def test_unicode_and_unimportable_names_do_not_abort_analysis() -> None:
+    snapshot = {
+        "pkg/__init__.py": "from .. import nothing\n",
+        "pkg/café.py": "import pkg\n",
+        "pkg/my-mod.py": "x = 1\n",
+        "my-pkg/__init__.py": "",
+    }
+    report = analyze(snapshot)
+    assert [entry.module for entry in report.architecture.graph.modules] == ["pkg", "pkg.café"]
+    assert report.coverage.files_without_module == ("my-pkg/__init__.py", "pkg/my-mod.py")
+    assert report.existing_metrics.mypy_errors is None
+    result = compare(PACKAGE | {"pkg/__init__.py": ""}, snapshot)
+    assert "pkg.café" in result.structural_changes.modules_added
+
+
+@pytest.mark.parametrize("coding", ["latin-1", "no-such-codec"])
+def test_non_utf8_coding_declaration_does_not_abort_analysis(coding: str) -> None:
+    source = f"# -*- coding: {coding} -*-\nimport pkg\nname = 'café'\n"
+    report = analyze({"pkg/__init__.py": "", "pkg/m.py": source})
+    assert [entry.module for entry in report.architecture.graph.modules] == ["pkg", "pkg.m"]
+    assert [(edge.importer, edge.imported) for edge in report.architecture.graph.edges] == [
+        ("pkg.m", "pkg")
+    ]
+    assert report.existing_metrics.mypy_errors == 0
+    plain_source = source.replace(f"coding: {coding}", "notes")
+    plain = analyze({"pkg/__init__.py": "", "pkg/m.py": plain_source})
+    assert report.existing_metrics.ruff_violations == plain.existing_metrics.ruff_violations
+
+
+def test_utf8_source_rewrites_only_foreign_declarations() -> None:
+    assert utf8_source("#!/usr/bin/env python\n# coding: latin-1\r\nx = 1\n") == (
+        "#!/usr/bin/env python\n# decoded source\r\nx = 1\n"
+    )
+    assert utf8_source("# coding: utf-8\nx = 1\n") == "# coding: utf-8\nx = 1\n"
+
+
+def test_snapshot_of_only_unimportable_packages_is_measured() -> None:
+    report = analyze({"my-pkg/__init__.py": "x = 1\n"})
+    assert report.architecture.graph.modules == ()
+    assert report.coverage.files_without_module == ("my-pkg/__init__.py",)
+    assert report.existing_metrics.mypy_errors == 0

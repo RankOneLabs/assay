@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +20,8 @@ from .models import (
     ModuleGraph,
     Snapshot,
     SnapshotCoverage,
+    is_module_name,
+    utf8_source,
     validate_snapshot,
 )
 
@@ -78,18 +80,27 @@ def extract_module_graph(
     files = {path: text for path, text in validated.items() if path.endswith(".py")}
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        for path, source in sorted(files.items()):
-            target = root / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(source, encoding="utf-8")
+        write_sources(root, files)
         return _extract(root, files, python_files_analyzed)
+
+
+def write_sources(root: Path, files: Mapping[str, str]) -> None:
+    """Materialize sources under *root* as the UTF-8 text the snapshot holds."""
+    for path, source in sorted(files.items()):
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(utf8_source(source), encoding="utf-8")
 
 
 def _extract(
     root: Path, files: dict[str, str], python_files_analyzed: Iterable[str] | None
 ) -> GraphExtraction:
     base = root / "src" if (root / "src").is_dir() else root
-    packages = sorted(p.parent.name for p in base.glob("*/__init__.py"))
+    # A directory that is not an identifier is not importable as a package;
+    # its files stay in coverage.files_without_module.
+    packages = sorted(
+        p.parent.name for p in base.glob("*/__init__.py") if p.parent.name.isidentifier()
+    )
     if not packages:
         graph = ModuleGraph(modules=(), edges=(), external_dependencies=())
         direct_import_count: int | None = None
@@ -98,7 +109,8 @@ def _extract(
         first_party = sorted(
             module
             for module in imports.modules
-            if any(module == package or module.startswith(package + ".") for package in packages)
+            if is_module_name(module)
+            and any(module == package or module.startswith(package + ".") for package in packages)
         )
         nodes = set(first_party)
         direct_imports = {
@@ -114,6 +126,9 @@ def _extract(
         external: set[tuple[str, str]] = set()
         for importer in first_party:
             for imported in direct_imports[importer]:
+                # Grimp reports a relative import above the top-level package as "".
+                if not is_module_name(imported):
+                    continue
                 if imported in nodes:
                     edges.append(ImportEdge(importer=importer, imported=imported))
                 else:
