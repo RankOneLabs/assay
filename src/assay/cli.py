@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Callable
 from importlib import import_module
 from pathlib import Path
@@ -145,6 +146,13 @@ def _with_exclusions(report: Any, excluded: tuple[str, ...]) -> Any:
     return report.model_copy(update={"configuration": configuration})
 
 
+def _write_canonical(model: Any) -> None:
+    from assay.canonical import canonical_json
+
+    sys.stdout.buffer.write(canonical_json(model.model_dump(mode="json")))
+    sys.stdout.buffer.flush()
+
+
 def _handle_code_metrics_snapshot(args: argparse.Namespace) -> int:
     try:
         from assay.code_metrics import analyze
@@ -159,7 +167,7 @@ def _handle_code_metrics_snapshot(args: argparse.Namespace) -> int:
         report = _with_exclusions(
             analyze(snapshot, config=_code_metrics_config(args.config)), excluded
         )
-        print(report.model_dump_json())
+        _write_canonical(report)
     except (OSError, ValueError, RuntimeError) as error:
         print(f"code_metrics_snapshot_failed: {error}")
         return 1
@@ -185,7 +193,7 @@ def _handle_code_metrics_compare(args: argparse.Namespace) -> int:
                 "after": _with_exclusions(result.after, after_excluded),
             }
         )
-        print(result.model_dump_json())
+        _write_canonical(result)
     except (OSError, ValueError, RuntimeError) as error:
         print(f"code_metrics_compare_failed: {error}")
         return 1

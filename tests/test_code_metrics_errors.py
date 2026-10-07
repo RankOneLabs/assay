@@ -11,6 +11,7 @@ from assay.code_metrics.components import ComponentConfig
 from assay.code_metrics.errors import (
     AmbiguousComponentConfig,
     AnalyzerFailed,
+    ConfigurationError,
     EmptyComponentPattern,
     MalformedComponentConfig,
     ReservedComponentName,
@@ -98,6 +99,23 @@ def test_invalid_path_and_component_configurations() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("config", "field"),
+    [
+        (CodeMetricsConfig(clone_min_lines=0), "clone_min_lines"),
+        (CodeMetricsConfig(clone_min_tokens=True), "clone_min_tokens"),  # type: ignore[arg-type]
+        (CodeMetricsConfig(ruff_ignore=["E501"]), "ruff_ignore"),  # type: ignore[arg-type]
+        (CodeMetricsConfig(ruff_ignore=(1,)), "ruff_ignore"),  # type: ignore[arg-type]
+    ],
+)
+def test_invalid_analyzer_settings_are_typed(
+    monkeypatch: pytest.MonkeyPatch, config: CodeMetricsConfig, field: str
+) -> None:
+    monkeypatch.setattr(api, "_preflight", lambda: pytest.fail("preflight ran"))
+    with pytest.raises(ConfigurationError, match=field):
+        analyze(PACKAGE, config=config)
+
+
 def test_version_mismatch_names_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("assay.code_metrics.pins.version", lambda name: "0.0.0")
     with pytest.raises(ToolVersionMismatch, match=f"radon.*{PINS['radon']}"):
@@ -174,4 +192,5 @@ def test_mypy_abnormal_exit_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(AnalyzerFailed) as caught:
         analyze(PACKAGE)
     assert "mypy" in str(caught.value)
-    assert "src/pkg/a.py" in str(caught.value)
+    assert "2 Python files" in str(caught.value)
+    assert str(caught.value).count("run analyzer:") == 1

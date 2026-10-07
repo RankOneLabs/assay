@@ -9,6 +9,7 @@ from code_metrics_fixtures import stub_jscpd
 from jsonschema import Draft202012Validator
 
 from assay import cli
+from assay.canonical import canonical_json
 from assay.code_metrics import analyze, cli_snapshot
 from assay.code_metrics.cli_snapshot import DEFAULT_EXCLUDED_DIRECTORIES, snapshot_directory
 
@@ -52,7 +53,10 @@ def test_snapshot_skips_symlinked_files(tmp_path: Path) -> None:
 def _run(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], *args: str) -> dict:
     monkeypatch.setattr(sys, "argv", ["assay", "code-metrics", *args])
     assert cli.main() == 0
-    return json.loads(capsys.readouterr().out)
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert out == canonical_json(result).decode("utf-8")
+    return result
 
 
 def test_unparsable_file_fails_without_traceback(

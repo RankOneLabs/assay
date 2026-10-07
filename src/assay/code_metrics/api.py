@@ -18,6 +18,7 @@ from .components import ComponentConfig, analyze_components, require_pattern_mat
 from .cycles import analyze_cycles
 from .errors import (
     AnalyzerFailed,
+    ConfigurationError,
     MalformedComponentConfig,
     ReservedComponentName,
     SnapshotPathError,
@@ -68,12 +69,18 @@ def _validate_paths(snapshot: Snapshot) -> dict[str, str]:
     try:
         return validate_snapshot(snapshot)
     except RepositoryPathError as error:
-        raise SnapshotPathError(
-            f"must be relative and inside the repository: {error}; paths={tuple(snapshot)!r}"
-        ) from error
+        raise SnapshotPathError(f"must be relative and inside the repository: {error}") from error
 
 
 def _validate_config(config: CodeMetricsConfig) -> None:
+    for key in ("clone_min_lines", "clone_min_tokens"):
+        value = getattr(config, key)
+        if type(value) is not int or value < 1:
+            raise ConfigurationError(f"{key} {value!r} must be a positive integer")
+    if not isinstance(config.ruff_ignore, tuple) or not all(
+        isinstance(rule, str) for rule in config.ruff_ignore
+    ):
+        raise ConfigurationError(f"ruff_ignore {config.ruff_ignore!r} must be a tuple of strings")
     names: set[str] = set()
     if not isinstance(config.components, tuple):
         raise MalformedComponentConfig(f"components {config.components!r} must be a tuple")
@@ -101,8 +108,8 @@ def _validate_config(config: CodeMetricsConfig) -> None:
 def _analyze(
     snapshot: Snapshot, config: CodeMetricsConfig, *, require_matches: bool = True
 ) -> tuple[CodeMetricsReportV2, dict[str, Any]]:
-    _preflight()
     _validate_config(config)
+    _preflight()
     snapshot = _validate_paths(snapshot)
     from . import tools
     from .graph import extract_module_graph
@@ -134,7 +141,8 @@ def _analyze(
             )
         )
     except AnalyzerFailed as error:
-        raise AnalyzerFailed(f"analyze snapshot {', '.join(files)}: {error}") from error
+        detail = str(error).removeprefix(f"{AnalyzerFailed.operation}: ")
+        raise AnalyzerFailed(f"analyze snapshot of {len(files)} Python files: {detail}") from error
     mi = dict(sorted(payload["mi"].items()))
     payload["radon.mi"] = statistics.fmean(mi.values()) if mi else None
     components = analyze_components(graph, config.components, require_matches=require_matches)

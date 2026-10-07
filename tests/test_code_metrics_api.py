@@ -32,6 +32,13 @@ def test_absolute_report_and_partial_graph() -> None:
     assert report.configuration.excluded_directories == ()
 
 
+def test_package_initializer_wins_over_same_named_module() -> None:
+    report = analyze({"pkg.py": "", "pkg/__init__.py": "", "pkg/a.py": "x = 1\n"})
+    paths = {entry.module: entry.path for entry in report.architecture.graph.modules}
+    assert paths["pkg"] == "pkg/__init__.py"
+    assert report.coverage.files_without_module == ("pkg.py",)
+
+
 def test_component_zero_denominators_and_unmapped_file() -> None:
     report = analyze(
         {**PACKAGE, "loose.py": "pass\n"},

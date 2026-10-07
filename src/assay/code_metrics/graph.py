@@ -154,7 +154,8 @@ def _extract(
 
 def _module_path(root: Path, base: Path, module: str) -> str | None:
     stem = base.joinpath(*module.split("."))
-    for candidate in (stem.with_suffix(".py"), stem / "__init__.py"):
+    # Python imports the package when pkg/__init__.py and pkg.py both exist.
+    for candidate in (stem / "__init__.py", stem.with_suffix(".py")):
         if candidate.is_file():
             return candidate.relative_to(root).as_posix()
     return None
