@@ -211,3 +211,9 @@ def test_snapshot_reads_supported_languages_only(tmp_path: Path) -> None:
         "web/app.ts": "export const x = 1;\n",
         "web/view.tsx": "export {};\n",
     }
+
+
+def test_undecodable_non_python_file_does_not_abort_the_snapshot(tmp_path: Path) -> None:
+    (tmp_path / "fixture.ts").write_bytes(b"\xff\xfeexport {};\n")
+    snapshot, _ = snapshot_directory(tmp_path)
+    assert snapshot == {"fixture.ts": "��export {};\n"}

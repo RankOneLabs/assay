@@ -12,16 +12,18 @@
 | Node/npx unavailable or jscpd fetch fails | ToolUnavailable(RuntimeError) |
 | mypy crashes, ruff or jscpd errors, unreadable jscpd report | AnalyzerFailed(RuntimeError) |
 | No first-party package | Report: empty graph; propagation_cost and grimp.imports null |
-| Python file outside discovered packages | Report: path in coverage.files_without_module |
-| Package or module name not a Python identifier | Report: path in files_without_module |
-| File of a language without a graph extractor | Report: path in files_without_module |
+| Python file outside discovered packages | Report: path without module (below) |
+| Package or module name not a Python identifier | Report: path without module (below) |
+| File of a language without a graph extractor | Report: path without module (below) |
 | Snapshot without a Python file | Report: Python analyzer metrics null |
 | Relative import above its top-level package | Report: no edge; mypy_errors null |
 | Afferent + efferent equals zero | Report: instability null |
 | Component has at most one module | Report: internal_dependency_density null |
 | Internal edge share has zero denominator | Report: internal_edge_share null |
 
-Null means undefined or unavailable; it never means zero.
+A path without module is listed in ``files_without_module`` of its language's
+``coverage.languages`` entry. Null means undefined or unavailable; it never
+means zero.
 """
 
 

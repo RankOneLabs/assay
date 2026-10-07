@@ -579,6 +579,14 @@ class ModuleGraphV2(ModuleGraph):
     edges: tuple[ImportEdgeV2, ...]
     external_dependencies: tuple[ExternalDependencyV2, ...]
 
+    @model_validator(mode="after")
+    def unique_modules(self) -> Self:
+        # Every metric keys on the id alone, so a shared id would merge two modules.
+        ids = [entry.module for entry in self.modules]
+        if len(ids) != len(set(ids)):
+            raise ValueError("module ids must be unique across languages")
+        return self
+
 
 class ModuleCouplingV4(ModuleCouplingV3):
     module: ModuleId

@@ -70,10 +70,11 @@ def snapshot_directory(
 
 def _read_source(path: Path, key: str) -> str:
     """Decode Python as the interpreter would (a coding declaration or BOM, else
-    UTF-8) and every other language as UTF-8 without a BOM."""
+    UTF-8) and every other language as UTF-8 without a BOM, replacing bytes
+    that are not UTF-8 so one such file cannot abort the snapshot."""
     try:
         if language_of(key) != "python":
-            return path.read_text(encoding="utf-8-sig")
+            return path.read_text(encoding="utf-8-sig", errors="replace")
         with tokenize.open(path) as handle:
             return handle.read()
     except (SyntaxError, UnicodeDecodeError) as error:

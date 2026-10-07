@@ -282,3 +282,14 @@ def test_module_ids_follow_their_language() -> None:
         ModuleEntryV2(module="web/src/app.ts", path=None, language="python")
     with pytest.raises(ValidationError):
         ModuleEntryV2(module="bad\nid", path=None, language="typescript")
+
+
+def test_module_ids_are_unique_across_languages() -> None:
+    from assay.code_metrics.models import ModuleEntryV2, ModuleGraphV2
+
+    entries = tuple(
+        ModuleEntryV2(module="pkg.sub", path=None, language=language)
+        for language in ("python", "typescript")
+    )
+    with pytest.raises(ValidationError, match="unique"):
+        ModuleGraphV2(modules=entries, edges=(), external_dependencies=())
