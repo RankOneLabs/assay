@@ -12,7 +12,7 @@ from assay.store import ObjectIntegrityError, ObjectStore
 from assay.verify import export_bundle, verify_bundle
 
 _REVIEW_SERVER_DEPENDENCIES = frozenset({"fastapi", "uvicorn"})
-_CODE_METRICS_DEPENDENCIES = frozenset({"grimp", "radon", "complexipy", "lizard"})
+_CODE_METRICS_DEPENDENCIES = frozenset({"grimp", "radon", "complexipy", "lizard", "ruff", "mypy"})
 
 
 def _handle_verify(args: argparse.Namespace) -> int:
@@ -100,6 +100,8 @@ def _code_metrics_config(path: str | None) -> Any:
         raise ConfigurationError(str(error)) from error
     if not isinstance(raw, dict):
         raise ConfigurationError("config must be an object")
+    if not all(isinstance(key, str) for key in raw):
+        raise ConfigurationError("config keys must be strings")
     allowed = {"clone_min_lines", "clone_min_tokens", "ruff_ignore", "components"}
     if set(raw) - allowed:
         raise ConfigurationError(f"unknown config keys: {sorted(set(raw) - allowed)}")
@@ -137,13 +139,10 @@ def _code_metrics_config(path: str | None) -> Any:
 
 
 def _with_exclusions(report: Any, excluded: tuple[str, ...]) -> Any:
-    return report.model_copy(
-        update={
-            "configuration": report.configuration.model_copy(
-                update={"excluded_directories": excluded}
-            )
-        }
+    configuration = type(report.configuration).model_validate(
+        {**report.configuration.model_dump(), "excluded_directories": excluded}
     )
+    return report.model_copy(update={"configuration": configuration})
 
 
 def _handle_code_metrics_snapshot(args: argparse.Namespace) -> int:

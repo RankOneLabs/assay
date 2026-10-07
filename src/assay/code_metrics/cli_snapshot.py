@@ -6,7 +6,11 @@ import os
 from fnmatch import fnmatchcase
 from pathlib import Path
 
-from .models import Snapshot
+from pydantic import TypeAdapter
+
+from .models import RepoPath, Snapshot
+
+_EXCLUDE_PATH = TypeAdapter(RepoPath)
 
 DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
     {
@@ -33,9 +37,16 @@ def snapshot_directory(
     root = Path(path)
     if not root.is_dir():
         raise ValueError(f"{root} is not a directory")
+    for pattern in exclude:
+        try:
+            _EXCLUDE_PATH.validate_python(pattern)
+        except ValueError as error:
+            raise ValueError(f"invalid exclude glob {pattern!r}: {error}") from error
     resolved = tuple(sorted(DEFAULT_EXCLUDED_DIRECTORIES | set(exclude)))
     files: dict[str, str] = {}
-    for directory, directories, filenames in os.walk(root, followlinks=False):
+    for directory, directories, filenames in os.walk(
+        root, followlinks=False, onerror=_raise_walk_error
+    ):
         relative = Path(directory).relative_to(root)
         directories[:] = sorted(
             name
@@ -49,6 +60,10 @@ def snapshot_directory(
             if not _excluded(key, name, exclude):
                 files[key] = (Path(directory) / name).read_text(encoding="utf-8")
     return files, resolved
+
+
+def _raise_walk_error(error: OSError) -> None:
+    raise error
 
 
 def _excluded(path: str, name: str, patterns: tuple[str, ...]) -> bool:
