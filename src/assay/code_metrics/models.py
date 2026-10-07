@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import io
 import re
 import sys
 from collections.abc import Mapping
@@ -38,30 +39,31 @@ def validate_snapshot(snapshot: Snapshot) -> dict[str, str]:
     return validate_repository(snapshot, max_files=sys.maxsize, max_total_bytes=sys.maxsize)
 
 
-_DECODED = "# decoded source"
-_CODING = re.compile(r"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)", re.ASCII)
+_CODING = re.compile(r"^[ \t\f]*#.*?(coding)[:=][ \t]*([-\w.]+)", re.ASCII)
 
 
 def utf8_source(source: str) -> str:
-    """*source* for a UTF-8 file, with a declaration of another encoding replaced.
+    """*source* for a UTF-8 file, with any declaration of another encoding disarmed.
 
     A snapshot holds decoded text, so a Latin-1 declaration no longer describes
-    it: analyzers would decode the UTF-8 copy as Latin-1, and Grimp 3.17 panics
-    on any non-UTF-8 declaration. The declaration becomes a plain comment (an
-    empty one would itself be a ruff finding), so every line number is unchanged.
+    it: analyzers would decode the UTF-8 copy as Latin-1. Grimp 3.17 also panics
+    on a non-UTF-8 declaration in either of the first two physical lines, even
+    one Python ignores or one inside a string. Capitalizing the ``c`` of
+    ``coding`` ends the match while keeping every line's length and syntax.
     """
-    lines = source.splitlines(keepends=True)
+    lines = io.StringIO(source, newline="").readlines()
     for index, line in enumerate(lines[:2]):
-        match = _CODING.match(line)
-        if match is None:
-            continue
-        try:
-            utf8 = codecs.lookup(match.group(1)).name == "utf-8"
-        except LookupError:
-            utf8 = False
-        if not utf8:
-            lines[index] = _DECODED + line[len(line.rstrip("\r\n")) :]
+        while (match := _CODING.match(line)) and not _is_utf8(match.group(2)):
+            line = f"{line[: match.start(1)]}C{line[match.start(1) + 1 :]}"
+        lines[index] = line
     return "".join(lines)
+
+
+def _is_utf8(name: str) -> bool:
+    try:
+        return codecs.lookup(name).name == "utf-8"
+    except LookupError:
+        return False
 
 
 class _Config(NamedTuple):

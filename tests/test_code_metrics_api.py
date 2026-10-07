@@ -1,5 +1,6 @@
 """Public report and comparison behavior."""
 
+import ast
 import json
 from pathlib import Path
 
@@ -141,11 +142,36 @@ def test_non_utf8_coding_declaration_does_not_abort_analysis(coding: str) -> Non
     assert report.existing_metrics.ruff_violations == plain.existing_metrics.ruff_violations
 
 
-def test_utf8_source_rewrites_only_foreign_declarations() -> None:
-    assert utf8_source("#!/usr/bin/env python\n# coding: latin-1\r\nx = 1\n") == (
-        "#!/usr/bin/env python\n# decoded source\r\nx = 1\n"
-    )
-    assert utf8_source("# coding: utf-8\nx = 1\n") == "# coding: utf-8\nx = 1\n"
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "#!/usr/bin/env python\n# coding: latin-1\r\nx = 1\n",
+            "#!/usr/bin/env python\n# Coding: latin-1\r\nx = 1\n",
+        ),
+        ("# coding: utf-8\nx = 1\n", "# coding: utf-8\nx = 1\n"),
+        # Python splits physical lines only at CR and LF, so the form feed
+        # leaves the declaration on line two.
+        ("# header\n\f# coding: latin-1\nx = 1\n", "# header\n\f# Coding: latin-1\nx = 1\n"),
+        ("# header\r# coding: latin-1\rx = 1\r", "# header\r# Coding: latin-1\rx = 1\r"),
+        # Grimp reads line two even inside a string; the string stays terminated.
+        ('DOC = """\n# coding: latin-1"""\n', 'DOC = """\n# Coding: latin-1"""\n'),
+        # U+2028 is not a physical line break, so nothing here starts a line.
+        ('x = "a\u2028# coding: latin-1"\n', 'x = "a\u2028# coding: latin-1"\n'),
+        ("# coding: latin-1 coding: cp1252\n", "# Coding: latin-1 Coding: cp1252\n"),
+    ],
+)
+def test_utf8_source_disarms_only_foreign_declarations(source: str, expected: str) -> None:
+    assert utf8_source(source) == expected
+    ast.parse(utf8_source(source))
+
+
+def test_coding_text_inside_a_string_is_analyzed() -> None:
+    source = 'DOC = """\n# coding: latin-1"""\nimport pkg\n'
+    report = analyze({"pkg/__init__.py": "", "pkg/m.py": source})
+    assert [(edge.importer, edge.imported) for edge in report.architecture.graph.edges] == [
+        ("pkg.m", "pkg")
+    ]
 
 
 def test_snapshot_of_only_unimportable_packages_is_measured() -> None:
