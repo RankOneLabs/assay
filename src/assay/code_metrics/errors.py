@@ -3,13 +3,14 @@
 | Condition | Outcome |
 | --- | --- |
 | Escaping or unsafe snapshot path | SnapshotPathError(ValueError) |
+| Python file that does not parse | SnapshotSyntaxError(ValueError) |
 | Malformed or duplicate component configuration | MalformedComponentConfig(ConfigurationError) |
 | Reserved `unassigned` component name | ReservedComponentName(ConfigurationError) |
 | Overlapping component claims | AmbiguousComponentConfig(ConfigurationError) |
 | Component pattern matching zero modules | EmptyComponentPattern(ConfigurationError) |
 | Resolved tool version differs from its pin | ToolVersionMismatch(RuntimeError) |
 | Node/npx unavailable or jscpd fetch fails | ToolUnavailable(RuntimeError) |
-| mypy exits outside 0 or 1 | AnalyzerFailed(RuntimeError) |
+| mypy exits outside 0 or 1, ruff errors, unreadable jscpd report | AnalyzerFailed(RuntimeError) |
 | No first-party package | Report: empty graph; propagation_cost and grimp.imports null |
 | Python file outside discovered packages | Report: path in coverage.files_without_module |
 | Afferent + efferent equals zero | Report: instability null |
@@ -27,6 +28,16 @@ class SnapshotPathError(ValueError):
 
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.operation} snapshot path: {message}")
+
+
+class SnapshotSyntaxError(ValueError):
+    """A snapshot Python file is not valid Python source."""
+
+    operation = "parse snapshot"
+
+    def __init__(self, path: str, error: SyntaxError) -> None:
+        self.path = path
+        super().__init__(f"{self.operation} {path}, line {error.lineno}: {error.msg}")
 
 
 class ConfigurationError(ValueError):

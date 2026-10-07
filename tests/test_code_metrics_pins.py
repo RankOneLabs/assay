@@ -4,6 +4,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from code_metrics_fixtures import stub_jscpd
 
 from assay.code_metrics import analyze, tools
 from assay.code_metrics.errors import ToolVersionMismatch
@@ -43,11 +44,7 @@ def test_snapshot_cache_is_bounded_and_empty_results_are_fresh(
         tools, "_ruff", lambda root, ignore: {"ruff.violations": 0, "ruff.magic_values": 0}
     )
     monkeypatch.setattr(tools, "_mypy", lambda root: 0)
-    monkeypatch.setattr(
-        tools,
-        "_jscpd",
-        lambda root, config: {"jscpd.clones": 0, "jscpd.duplicated_lines": 0, "cloned_lines": {}},
-    )
+    stub_jscpd(monkeypatch)
     monkeypatch.setattr(tools, "_functions", lambda root: [])
     tools._CACHE.clear()
     try:

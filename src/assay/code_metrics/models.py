@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping
 from typing import Annotated, Literal, NamedTuple
 
 from pydantic import Field, StringConstraints
 
 from assay.models import Identifier, NonEmpty, WireModel
+from assay.repository import validate_repository
 
 # Keep the promoted API's public metric order stable.
 DELTAS = (
@@ -27,6 +29,11 @@ DELTAS = (
 NEW_CODE = ("new_lines", "new_duplicated_lines", "new_max_nesting_depth")
 METRICS = DELTAS + NEW_CODE
 Snapshot = Mapping[str, str]
+
+
+def validate_snapshot(snapshot: Snapshot) -> dict[str, str]:
+    """Apply the repository path boundary without the study-sized file and byte caps."""
+    return validate_repository(snapshot, max_files=sys.maxsize, max_total_bytes=sys.maxsize)
 
 
 class _Config(NamedTuple):

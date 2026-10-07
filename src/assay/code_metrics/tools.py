@@ -13,7 +13,6 @@ from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import Any
 
-import grimp
 import lizard  # type: ignore[import-untyped]
 from complexipy import code_complexity
 from radon.complexity import add_inner_blocks  # type: ignore[import-untyped]
@@ -21,8 +20,8 @@ from radon.metrics import h_visit, mi_visit  # type: ignore[import-untyped]
 from radon.raw import analyze  # type: ignore[import-untyped]
 from radon.visitors import ComplexityVisitor, Function  # type: ignore[import-untyped]
 
-from ._imports import IMPORT_LOCK
-from .errors import AnalyzerFailed, SnapshotPathError
+from .errors import AnalyzerFailed, SnapshotPathError, ToolUnavailable
+from .graph import build_import_graph
 from .models import DELTAS, ModuleGraph, Snapshot, _Config
 from .pins import JSCPD
 
@@ -126,12 +125,7 @@ def _imports(
     packages = sorted(p.parent.name for p in base.glob("*/__init__.py"))
     if not packages:
         return None
-    with IMPORT_LOCK:
-        sys.path.insert(0, str(base))
-        try:
-            imports = grimp.build_graph(*packages, include_external_packages=True, cache_dir=None)
-        finally:
-            sys.path.remove(str(base))
+    imports = build_import_graph(base, packages)
     return sum(len(imports.find_modules_directly_imported_by(module)) for module in imports.modules)
 
 
@@ -140,8 +134,10 @@ def _ruff(root: Path, ignore: tuple[str, ...]) -> dict[str, int]:
     completed = subprocess.run(
         [sys.executable, "-m", "ruff", "check", "--isolated", "--extend-select", "PLR2004",
          *ignored, "--output-format", "json", "--exit-zero", "."],
-        cwd=root, capture_output=True, text=True, check=True,
+        cwd=root, capture_output=True, text=True, check=False,
     )  # fmt: skip
+    if completed.returncode != 0:
+        raise AnalyzerFailed(f"ruff failed: {completed.stderr.strip()}")
     codes = [finding["code"] for finding in json.loads(completed.stdout)]
     return {
         "ruff.violations": sum(code != "PLR2004" for code in codes),
@@ -164,23 +160,32 @@ def _mypy(root: Path) -> int:
 
 def _jscpd(root: Path, config: _Config) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as output:
-        subprocess.run(
-            ["npx", "--yes", JSCPD, "--silent", "--format", "python", "--reporters", "json",
-             "--min-lines", str(config.clone_min_lines),
-             "--min-tokens", str(config.clone_min_tokens),
-             "--output", output, "."],
-            cwd=root, capture_output=True, text=True, check=True,
-        )  # fmt: skip
-        report = json.loads((Path(output) / "jscpd-report.json").read_text())
-    cloned: dict[str, set[int]] = {}
-    for clone in report["duplicates"]:
-        for side in (clone["firstFile"], clone["secondFile"]):
-            path = Path(side["name"]).as_posix()
-            cloned.setdefault(path, set()).update(range(side["start"], side["end"] + 1))
-    total = report["statistics"]["total"]
+        try:
+            subprocess.run(
+                ["npx", "--yes", JSCPD, "--silent", "--format", "python", "--reporters", "json",
+                 "--min-lines", str(config.clone_min_lines),
+                 "--min-tokens", str(config.clone_min_tokens),
+                 "--output", output, "."],
+                cwd=root, capture_output=True, text=True, check=True,
+            )  # fmt: skip
+        except subprocess.CalledProcessError as error:
+            raise ToolUnavailable(JSCPD, (error.stderr or str(error)).strip()) from error
+        except OSError as error:
+            raise ToolUnavailable(JSCPD, str(error)) from error
+        try:
+            report = json.loads((Path(output) / "jscpd-report.json").read_text())
+            cloned: dict[str, set[int]] = {}
+            for clone in report["duplicates"]:
+                for side in (clone["firstFile"], clone["secondFile"]):
+                    path = Path(side["name"]).as_posix()
+                    cloned.setdefault(path, set()).update(range(side["start"], side["end"] + 1))
+            total = report["statistics"]["total"]
+            clones, duplicated_lines = total["clones"], total["duplicatedLines"]
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise AnalyzerFailed(f"jscpd report unreadable: {error!r}") from error
     return {
-        "jscpd.clones": total["clones"],
-        "jscpd.duplicated_lines": total["duplicatedLines"],
+        "jscpd.clones": clones,
+        "jscpd.duplicated_lines": duplicated_lines,
         "cloned_lines": cloned,
     }
 

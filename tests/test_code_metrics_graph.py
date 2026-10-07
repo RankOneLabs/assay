@@ -16,8 +16,6 @@ from assay.code_metrics.graph import build_module_graph
     {"pkg/a.py": "", "pkg/a.py/b.py": ""},
     {"pkg/A.py": "", "pkg/a.py": ""},
     {"../notes.txt": "", "pkg/__init__.py": ""},
-    {f"file{i}.txt": "" for i in range(201)},
-    {"notes.txt": "x" * 1_000_001},
 ])
 def test_invalid_snapshot_is_rejected_before_materialization(snapshot, monkeypatch) -> None:
     from assay.code_metrics import graph as extractor
@@ -28,6 +26,28 @@ def test_invalid_snapshot_is_rejected_before_materialization(snapshot, monkeypat
     monkeypatch.setattr(extractor.tempfile, "TemporaryDirectory", materialize)
     with pytest.raises(ValueError):
         build_module_graph(snapshot)
+
+
+def test_snapshot_beyond_study_repository_caps_is_accepted() -> None:
+    snapshot = {f"pkg/m{i}.py": "" for i in range(250)} | {
+        "pkg/__init__.py": "",
+        "pkg/big.py": "x = 1\n" * 200_000,
+    }
+    graph, coverage = build_module_graph(snapshot)
+    assert len(graph.modules) == 252
+    assert coverage.python_files_seen == 252
+
+
+def test_package_named_like_an_imported_module_graphs_the_snapshot() -> None:
+    # assay and pydantic are already imported here; the snapshot must still win.
+    for package in ("assay", "pydantic"):
+        assert package in sys.modules
+        graph, coverage = build_module_graph(
+            package_snapshot(package, {"a": ("b",), "b": ()})
+        )
+        assert _nodes(graph) == (package, f"{package}.a", f"{package}.b")
+        assert _edges(graph) == ((f"{package}.a", f"{package}.b"),)
+        assert coverage.files_without_module == ()
 
 
 def _nodes(graph: object) -> tuple[str, ...]:

@@ -3,6 +3,7 @@
 import subprocess
 
 import pytest
+from code_metrics_fixtures import stub_jscpd
 
 from assay.code_metrics import analyze, api, graph, tools
 from assay.code_metrics.api import CodeMetricsConfig
@@ -14,22 +15,20 @@ from assay.code_metrics.errors import (
     MalformedComponentConfig,
     ReservedComponentName,
     SnapshotPathError,
+    SnapshotSyntaxError,
     ToolUnavailable,
     ToolVersionMismatch,
 )
 from assay.code_metrics.pins import PINS
 
 PACKAGE = {"src/pkg/__init__.py": "", "src/pkg/a.py": "x = 1\n"}
+REAL_JSCPD = tools._jscpd
 
 
 @pytest.fixture(autouse=True)
 def stub_clones(monkeypatch: pytest.MonkeyPatch) -> None:
     tools._CACHE.clear()
-    monkeypatch.setattr(
-        tools,
-        "_jscpd",
-        lambda *args: {"jscpd.clones": 0, "jscpd.duplicated_lines": 0, "cloned_lines": {}},
-    )
+    stub_jscpd(monkeypatch)
 
 
 def test_preflight_unavailable_before_analyzers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -105,15 +104,41 @@ def test_version_mismatch_names_tool(monkeypatch: pytest.MonkeyPatch) -> None:
         analyze(PACKAGE)
 
 
+def _fail_command(
+    monkeypatch: pytest.MonkeyPatch, marker: str, failure: subprocess.CompletedProcess[str] | None
+) -> None:
+    original_run = subprocess.run
+
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        command = args[0]
+        if isinstance(command, list) and marker in command:
+            if failure is None:
+                raise subprocess.CalledProcessError(1, command, stderr="npm fetch failed")
+            return failure
+        return original_run(*args, **kwargs)  # type: ignore[call-overload,no-any-return]
+
+    monkeypatch.setattr(tools.subprocess, "run", run)
+
+
 def test_jscpd_fetch_failure_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
-    from assay.code_metrics import tools
-
-    def fail(*args: object) -> object:
-        raise subprocess.CalledProcessError(1, "npx")
-
-    monkeypatch.setattr(tools, "_jscpd", fail)
-    with pytest.raises(ToolUnavailable, match=r"jscpd@5\.4\.0"):
+    monkeypatch.setattr(tools, "_jscpd", REAL_JSCPD)
+    _fail_command(monkeypatch, "npx", None)
+    with pytest.raises(ToolUnavailable, match=r"jscpd@5\.4\.0: npm fetch failed"):
         analyze(PACKAGE)
+
+
+def test_ruff_failure_is_not_reported_as_jscpd(monkeypatch: pytest.MonkeyPatch) -> None:
+    failure = subprocess.CompletedProcess(args=[], returncode=2, stdout="", stderr="ruff crashed")
+    _fail_command(monkeypatch, "ruff", failure)
+    with pytest.raises(AnalyzerFailed, match="ruff failed: ruff crashed"):
+        analyze(PACKAGE)
+
+
+def test_unparsable_source_names_the_snapshot_path() -> None:
+    expected = r"parse snapshot src/pkg/bad\.py, line 1"
+    with pytest.raises(SnapshotSyntaxError, match=expected) as caught:
+        analyze({**PACKAGE, "src/pkg/bad.py": "def f(:\n"})
+    assert "/tmp" not in str(caught.value)
 
 
 def test_mypy_abnormal_exit_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:

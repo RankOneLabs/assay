@@ -2,25 +2,24 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import shutil
 import statistics
-import subprocess
 import sys
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from importlib.metadata import version
 from typing import Any
 
-from assay.repository import validate_repository
-
-from .components import ComponentConfig, analyze_components
+from .components import ComponentConfig, analyze_components, require_pattern_matches
 from .cycles import analyze_cycles
 from .errors import (
     AnalyzerFailed,
     MalformedComponentConfig,
     ReservedComponentName,
     SnapshotPathError,
+    SnapshotSyntaxError,
     ToolUnavailable,
 )
 from .models import (
@@ -38,6 +37,7 @@ from .models import (
     SnapshotCoverage,
     ToolVersions,
     _Config,
+    validate_snapshot,
 )
 from .pins import JSCPD, assert_pinned_tools, tool_versions
 from .propagation import analyze_propagation
@@ -64,7 +64,7 @@ def _validate_paths(snapshot: Snapshot) -> dict[str, str]:
     if not snapshot:
         return {}
     try:
-        return validate_repository(snapshot)
+        return validate_snapshot(snapshot)
     except ValueError as error:
         if "path" not in str(error) and "collides" not in str(error):
             raise
@@ -99,7 +99,7 @@ def _validate_config(config: CodeMetricsConfig) -> None:
 
 
 def _analyze(
-    snapshot: Snapshot, config: CodeMetricsConfig
+    snapshot: Snapshot, config: CodeMetricsConfig, *, require_matches: bool = True
 ) -> tuple[CodeMetricsReportV2, dict[str, Any]]:
     _preflight()
     _validate_config(config)
@@ -108,6 +108,11 @@ def _analyze(
     from .graph import extract_module_graph
 
     files = {path: snapshot[path] for path in sorted(snapshot) if path.endswith(".py")}
+    for path, source in files.items():
+        try:
+            ast.parse(source, filename=path)
+        except SyntaxError as error:
+            raise SnapshotSyntaxError(path, error) from error
     if snapshot:
         extracted = extract_module_graph(snapshot, python_files_analyzed=files)
         graph, coverage = extracted.graph, extracted.coverage
@@ -128,13 +133,11 @@ def _analyze(
                 files, legacy_config, graph=graph, direct_import_count=direct_import_count
             )
         )
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError) as error:
-        raise ToolUnavailable(JSCPD, str(error)) from error
     except AnalyzerFailed as error:
         raise AnalyzerFailed(f"analyze snapshot {', '.join(files)}: {error}") from error
     mi = dict(sorted(payload["mi"].items()))
     payload["radon.mi"] = statistics.fmean(mi.values()) if mi else None
-    components = analyze_components(graph, config.components)
+    components = analyze_components(graph, config.components, require_matches=require_matches)
     architecture = ArchitectureReport(
         graph=graph,
         module_coupling=components.module_coupling,
@@ -189,8 +192,11 @@ def analyze(snapshot: Snapshot, *, config: CodeMetricsConfig | None = None) -> C
 def _compare(
     before: Snapshot, after: Snapshot, config: CodeMetricsConfig
 ) -> DetailedCodeMetricsComparison:
-    old_report, old = _analyze(before, config)
-    new_report, new = _analyze(after, config)
+    old_report, old = _analyze(before, config, require_matches=False)
+    new_report, new = _analyze(after, config, require_matches=False)
+    require_pattern_matches(
+        (old_report.architecture.graph, new_report.architecture.graph), config.components
+    )
     shared = tuple(sorted(old["mi"].keys() & new["mi"].keys()))
     deltas = []
     for key in DELTAS:

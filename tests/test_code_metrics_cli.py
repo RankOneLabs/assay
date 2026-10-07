@@ -5,10 +5,11 @@ import sys
 from pathlib import Path
 
 import pytest
+from code_metrics_fixtures import stub_jscpd
 from jsonschema import Draft202012Validator
 
 from assay import cli
-from assay.code_metrics import analyze, cli_snapshot, tools
+from assay.code_metrics import analyze, cli_snapshot
 from assay.code_metrics.cli_snapshot import DEFAULT_EXCLUDED_DIRECTORIES, snapshot_directory
 
 
@@ -28,14 +29,24 @@ def _run(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], *a
     return json.loads(capsys.readouterr().out)
 
 
+def test_unparsable_file_fails_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub_jscpd(monkeypatch)
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg/__init__.py").write_text("")
+    (tmp_path / "pkg/bad.py").write_text("def f(:\n")
+    monkeypatch.setattr(sys, "argv", ["assay", "code-metrics", "snapshot", str(tmp_path)])
+    assert cli.main() == 1
+    assert capsys.readouterr().out == (
+        "code_metrics_snapshot_failed: parse snapshot pkg/bad.py, line 1: invalid syntax\n"
+    )
+
+
 def test_snapshot_and_compare_cli_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(
-        tools,
-        "_jscpd",
-        lambda *args: {"jscpd.clones": 0, "jscpd.duplicated_lines": 0, "cloned_lines": {}},
-    )
+    stub_jscpd(monkeypatch)
     before = tmp_path / "before"
     after = tmp_path / "after"
     for root in (before, after):

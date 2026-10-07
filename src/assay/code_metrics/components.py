@@ -14,6 +14,7 @@ from .models import (
     ComponentMetricsReport,
     ModuleComponent,
     ModuleCoupling,
+    ModuleEntry,
     ModuleGraph,
 )
 
@@ -24,30 +25,49 @@ class ComponentConfig:
     patterns: tuple[str, ...]
 
 
+def _target(entry: ModuleEntry) -> str:
+    # A namespace entry has no filesystem path; its dotted prefix is the
+    # only truthful target for matching.
+    return entry.path if entry.path is not None else entry.module
+
+
+def require_pattern_matches(
+    graphs: Sequence[ModuleGraph], configuration: Sequence[ComponentConfig]
+) -> None:
+    """Reject a pattern that matches no module in any of *graphs*."""
+    targets = [_target(entry) for graph in graphs for entry in graph.modules]
+    for component in configuration:
+        for pattern in component.patterns:
+            if not any(fnmatchcase(target, pattern) for target in targets):
+                raise EmptyComponentPattern(
+                    f"component {component.name} pattern {pattern!r} matched zero modules"
+                )
+
+
 def assign_components(
-    graph: ModuleGraph, configuration: Sequence[ComponentConfig]
+    graph: ModuleGraph,
+    configuration: Sequence[ComponentConfig],
+    *,
+    require_matches: bool = True,
 ) -> tuple[ModuleComponent, ...]:
-    """Resolve path globs, preserving real paths and assigning every module once."""
+    """Resolve path globs, preserving real paths and assigning every module once.
+
+    A comparison passes ``require_matches=False`` and checks the patterns
+    against both snapshots, so a component may exist on only one side.
+    """
     if any(item.name == "unassigned" for item in configuration):
         raise ConfigurationError("'unassigned' is a reserved component name")
     names = [item.name for item in configuration]
     if len(names) != len(set(names)):
         raise ConfigurationError("component names must be unique")
-    hits: dict[tuple[str, str], int] = Counter()
     assigned: list[ModuleComponent] = []
     for entry in sorted(graph.modules, key=lambda item: item.module):
-        # A namespace entry has no filesystem path; its dotted prefix is the
-        # only truthful target for matching.
-        target = entry.path if entry.path is not None else entry.module
-        claimants: list[str] = []
-        for component in configuration:
-            matched = False
-            for pattern in component.patterns:
-                if fnmatchcase(target, pattern):
-                    hits[(component.name, pattern)] += 1
-                    matched = True
-            if matched:
-                claimants.append(component.name)
+        target = _target(entry)
+        claimants = [
+            component.name
+            for component in configuration
+            if any(fnmatchcase(target, pattern) for pattern in component.patterns)
+        ]
         if len(claimants) > 1:
             raise AmbiguousComponentConfig(
                 f"module {entry.module} claimed by components {', '.join(sorted(claimants))}"
@@ -59,20 +79,19 @@ def assign_components(
                 component=claimants[0] if claimants else "unassigned",
             )
         )
-    for component in configuration:
-        for pattern in component.patterns:
-            if hits[(component.name, pattern)] == 0:
-                raise EmptyComponentPattern(
-                    f"component {component.name} pattern {pattern!r} matched zero modules"
-                )
+    if require_matches:
+        require_pattern_matches((graph,), configuration)
     return tuple(assigned)
 
 
 def analyze_components(
-    graph: ModuleGraph, configuration: Sequence[ComponentConfig]
+    graph: ModuleGraph,
+    configuration: Sequence[ComponentConfig],
+    *,
+    require_matches: bool = True,
 ) -> ComponentMetricsReport:
     """Count distinct neighboring modules and raw edges for each component."""
-    assignments = assign_components(graph, configuration)
+    assignments = assign_components(graph, configuration, require_matches=require_matches)
     owner = {entry.module: entry.component for entry in assignments}
     members: dict[str, list[str]] = defaultdict(list)
     for entry in assignments:

@@ -4,22 +4,20 @@ import json
 from pathlib import Path
 
 import pytest
+from code_metrics_fixtures import stub_jscpd
 from jsonschema import Draft202012Validator
 
-from assay.code_metrics import analyze, compare, graph, measure, tools
+from assay.code_metrics import analyze, compare, graph, measure
 from assay.code_metrics.api import CodeMetricsConfig
 from assay.code_metrics.components import ComponentConfig
+from assay.code_metrics.errors import EmptyComponentPattern
 
 PACKAGE = {"src/pkg/__init__.py": "", "src/pkg/a.py": "x = 1\n"}
 
 
 @pytest.fixture(autouse=True)
 def stub_clones(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        tools,
-        "_jscpd",
-        lambda *args: {"jscpd.clones": 0, "jscpd.duplicated_lines": 0, "cloned_lines": {}},
-    )
+    stub_jscpd(monkeypatch)
 
 
 def test_absolute_report_and_partial_graph() -> None:
@@ -42,6 +40,26 @@ def test_component_zero_denominators_and_unmapped_file() -> None:
     assert alpha.internal_dependency_density is None
     assert alpha.internal_edge_share is None
     assert report.coverage.files_without_module == ("loose.py",)
+
+
+def test_compared_component_may_exist_on_one_side() -> None:
+    after = {**PACKAGE, "src/pkg/plugins/__init__.py": "", "src/pkg/plugins/x.py": "pass\n"}
+    config = CodeMetricsConfig(
+        components=(
+            ComponentConfig("core", ("src/pkg/a.py",)),
+            ComponentConfig("plugins", ("src/pkg/plugins/*",)),
+        )
+    )
+    added = compare(PACKAGE, after, config=config).structural_changes
+    removed = compare(after, PACKAGE, config=config).structural_changes
+    assert added.components_added == ("plugins",)
+    assert removed.components_removed == ("plugins",)
+    with pytest.raises(EmptyComponentPattern, match="missing"):
+        compare(
+            PACKAGE,
+            after,
+            config=CodeMetricsConfig(components=(ComponentConfig("gone", ("missing/*",)),)),
+        )
 
 
 def test_mi_shared_intersection_and_explicit_structure() -> None:

@@ -1,6 +1,26 @@
 """Package-qualified, importable source snapshots for architecture tests."""
 
+import shutil
 from collections.abc import Mapping
+
+import pytest
+
+from assay.code_metrics import api, tools
+
+
+def stub_jscpd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace jscpd and its Node preflight so a test needs neither Node nor network."""
+    which = shutil.which
+
+    def stub_which(name: str) -> str | None:
+        return f"/stub/{name}" if name in {"node", "npx"} else which(name)
+
+    monkeypatch.setattr(api.shutil, "which", stub_which)
+    monkeypatch.setattr(
+        tools,
+        "_jscpd",
+        lambda *args: {"jscpd.clones": 0, "jscpd.duplicated_lines": 0, "cloned_lines": {}},
+    )
 
 
 def package_snapshot(package: str, adjacency: Mapping[str, tuple[str, ...]]) -> Mapping[str, str]:

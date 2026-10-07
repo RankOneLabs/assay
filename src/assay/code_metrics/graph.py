@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import sys
 import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 import grimp
-
-from assay.repository import validate_repository
+from grimp.application.config import settings
+from grimp.application.ports.filesystem import AbstractFileSystem
+from grimp.application.ports.packagefinder import AbstractPackageFinder
 
 from ._imports import IMPORT_LOCK
 from .models import (
@@ -20,7 +20,37 @@ from .models import (
     ModuleGraph,
     Snapshot,
     SnapshotCoverage,
+    validate_snapshot,
 )
+
+
+class _SnapshotPackageFinder(AbstractPackageFinder):
+    """Resolve each package inside the snapshot, never from ``sys.modules`` or ``sys.path``.
+
+    Grimp's default finder uses ``importlib.util.find_spec``, which returns an
+    already-imported module's spec, so a snapshot package named like anything
+    loaded in this process (``assay`` itself, ``pydantic``) would graph the
+    installed code instead.
+    """
+
+    def __init__(self, base: Path) -> None:
+        self._base = base
+
+    def determine_package_directories(
+        self, package_name: str, file_system: AbstractFileSystem
+    ) -> set[str]:
+        return {str(self._base / package_name)}
+
+
+def build_import_graph(base: Path, packages: Iterable[str]) -> grimp.ImportGraph:
+    """Build one Grimp graph of the top-level packages directly under *base*."""
+    with IMPORT_LOCK:
+        previous = settings.PACKAGE_FINDER
+        settings.configure(PACKAGE_FINDER=_SnapshotPackageFinder(base))
+        try:
+            return grimp.build_graph(*packages, include_external_packages=True, cache_dir=None)
+        finally:
+            settings.configure(PACKAGE_FINDER=previous)
 
 
 @dataclass(frozen=True)
@@ -44,7 +74,7 @@ def extract_module_graph(
     snapshot: Snapshot, *, python_files_analyzed: Iterable[str] | None = None
 ) -> GraphExtraction:
     """Extract public evidence and the legacy direct-import scalar together."""
-    validated = validate_repository(snapshot)
+    validated = validate_snapshot(snapshot)
     files = {path: text for path, text in validated.items() if path.endswith(".py")}
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -64,14 +94,7 @@ def _extract(
         graph = ModuleGraph(modules=(), edges=(), external_dependencies=())
         direct_import_count: int | None = None
     else:
-        with IMPORT_LOCK:
-            sys.path.insert(0, str(base))
-            try:
-                imports = grimp.build_graph(
-                    *packages, include_external_packages=True, cache_dir=None
-                )
-            finally:
-                sys.path.remove(str(base))
+        imports = build_import_graph(base, packages)
         first_party = sorted(
             module
             for module in imports.modules

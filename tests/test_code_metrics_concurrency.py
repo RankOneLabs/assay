@@ -8,8 +8,9 @@ from threading import Barrier, Lock
 from types import SimpleNamespace
 
 import pytest
+from code_metrics_fixtures import stub_jscpd
 
-from assay.code_metrics import analyze, tools
+from assay.code_metrics import analyze, graph, tools
 from assay.code_metrics.graph import build_module_graph
 
 
@@ -35,11 +36,7 @@ def test_parallel_snapshots_survive_cache_eviction(monkeypatch: pytest.MonkeyPat
         tools, "_ruff", lambda root, ignore: {"ruff.violations": 0, "ruff.magic_values": 0}
     )
     monkeypatch.setattr(tools, "_mypy", lambda root: 0)
-    monkeypatch.setattr(
-        tools,
-        "_jscpd",
-        lambda root, config: {"jscpd.clones": 0, "jscpd.duplicated_lines": 0, "cloned_lines": {}},
-    )
+    stub_jscpd(monkeypatch)
     monkeypatch.setattr(tools, "_functions", lambda root: [])
 
     def snapshot(number: int) -> int:
@@ -65,12 +62,12 @@ def test_parallel_import_graphs_use_their_own_snapshot(
         package.mkdir(parents=True)
         (package / "__init__.py").write_text("")
         (package / "store.py").write_text("import os\n" * index)
-    build_graph = tools.grimp.build_graph
+    build_graph = graph.grimp.build_graph
     active = 0
     maximum_active = 0
     counter_lock = Lock()
 
-    def delayed_build_graph(*args: str, **kwargs: object) -> tools.grimp.ImportGraph:
+    def delayed_build_graph(*args: str, **kwargs: object) -> graph.grimp.ImportGraph:
         nonlocal active, maximum_active
         base = sys.path[0]
         with counter_lock:
@@ -85,7 +82,7 @@ def test_parallel_import_graphs_use_their_own_snapshot(
             with counter_lock:
                 active -= 1
 
-    monkeypatch.setattr(tools.grimp, "build_graph", delayed_build_graph)
+    monkeypatch.setattr(graph.grimp, "build_graph", delayed_build_graph)
     original_path = sys.path.copy()
 
     def extract(index: int) -> int:
@@ -112,15 +109,15 @@ def test_import_graph_failure_restores_path_and_releases_lock(
     package = tmp_path / "shop"
     package.mkdir()
     (package / "__init__.py").write_text("")
-    build_graph = tools.grimp.build_graph
+    build_graph = graph.grimp.build_graph
 
     def fail(*args: str, **kwargs: object) -> None:
         raise RuntimeError("graph failed")
 
     original_path = sys.path.copy()
-    monkeypatch.setattr(tools.grimp, "build_graph", fail)
+    monkeypatch.setattr(graph.grimp, "build_graph", fail)
     with pytest.raises(RuntimeError, match="graph failed"):
         tools._imports(tmp_path)
     assert sys.path == original_path
-    monkeypatch.setattr(tools.grimp, "build_graph", build_graph)
+    monkeypatch.setattr(graph.grimp, "build_graph", build_graph)
     assert tools._imports(tmp_path) == 0

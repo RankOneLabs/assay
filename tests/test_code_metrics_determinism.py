@@ -6,6 +6,7 @@ import sys
 from collections import Counter
 
 import pytest
+from code_metrics_fixtures import stub_jscpd
 
 from assay.code_metrics import api, graph, tools
 
@@ -19,11 +20,7 @@ SNAPSHOT = {
 @pytest.fixture(autouse=True)
 def stub_clones(monkeypatch: pytest.MonkeyPatch) -> None:
     tools._CACHE.clear()
-    monkeypatch.setattr(
-        tools,
-        "_jscpd",
-        lambda *args: {"jscpd.clones": 0, "jscpd.duplicated_lines": 0, "cloned_lines": {}},
-    )
+    stub_jscpd(monkeypatch)
 
 
 def test_one_graph_and_each_tool_per_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,7 +57,8 @@ def test_one_graph_and_each_tool_per_snapshot(monkeypatch: pytest.MonkeyPatch) -
 
 def test_hash_seed_does_not_change_report() -> None:
     code = (
-        "from assay.code_metrics import analyze, tools; "
+        "from assay.code_metrics import analyze, api, tools; "
+        "api._preflight = api.assert_pinned_tools; "
         "tools._jscpd = lambda *args: {'jscpd.clones': 0, "
         "'jscpd.duplicated_lines': 0, 'cloned_lines': {}}; "
         f"print(analyze({SNAPSHOT!r}).model_dump_json())"
