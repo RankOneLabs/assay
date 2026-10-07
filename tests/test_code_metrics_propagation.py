@@ -4,7 +4,7 @@ import pytest
 from code_metrics_fixtures import FIXTURE_A, FIXTURE_H
 
 from assay.code_metrics.graph import build_module_graph
-from assay.code_metrics.models import ModuleGraph
+from assay.code_metrics.models import ImportEdge, ModuleEntry, ModuleGraph
 from assay.code_metrics.propagation import analyze_propagation
 
 
@@ -40,3 +40,21 @@ def test_empty_and_single_module() -> None:
     report = analyze_propagation(single)
     assert report.propagation_cost == 1.0
     assert [(item.reaches, item.reached_by) for item in report.module_visibility] == [(1, 1)]
+
+
+def test_iterative_chain_of_200() -> None:
+    names = tuple(f"pkg.m{i:03}" for i in range(200))
+    graph = ModuleGraph(
+        modules=tuple(ModuleEntry(module=name, path=None) for name in names),
+        edges=tuple(
+            ImportEdge(importer=names[index], imported=names[index + 1])
+            for index in range(len(names) - 1)
+        ),
+        external_dependencies=(),
+    )
+    report = analyze_propagation(graph)
+    assert report.module_visibility[0].reaches == 200
+    assert report.module_visibility[-1].reaches == 1
+    assert report.module_visibility[0].reached_by == 1
+    assert report.module_visibility[-1].reached_by == 200
+    assert report.propagation_cost == pytest.approx(sum(range(1, 201)) / 200**2)

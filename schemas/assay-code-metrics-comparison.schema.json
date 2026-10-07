@@ -21,15 +21,11 @@
           "type": "array"
         },
         "module_components": {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-              "type": "string"
-            }
+          "items": {
+            "$ref": "#/$defs/ModuleComponent"
           },
           "title": "Module Components",
-          "type": "object"
+          "type": "array"
         },
         "boundaries": {
           "items": {
@@ -236,8 +232,12 @@
           "type": "integer"
         },
         "modules_in_cycles": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+            "type": "string"
+          },
           "title": "Modules In Cycles",
-          "type": "integer"
+          "type": "array"
         }
       },
       "required": [
@@ -451,6 +451,40 @@
         "provenance"
       ],
       "title": "MetricDelta",
+      "type": "object"
+    },
+    "ModuleComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+          "title": "Module",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "pattern": "^[^/\\\\][^\\\\]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Component",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "path",
+        "component"
+      ],
+      "title": "ModuleComponent",
       "type": "object"
     },
     "ModuleCoupling": {

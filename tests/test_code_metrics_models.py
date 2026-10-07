@@ -15,6 +15,7 @@ from assay.code_metrics.models import (
     CycleReport,
     ExistingMetrics,
     MetricDelta,
+    ModuleComponent,
     ModuleGraph,
     NewCodeMetrics,
     PropagationReport,
@@ -46,9 +47,9 @@ def _report() -> CodeMetricsReport:
             graph=ModuleGraph(modules=(), edges=(), external_dependencies=()),
             module_coupling=(),
             component_coupling=(),
-            module_components={},
+            module_components=(),
             boundaries=(),
-            cycles=CycleReport(components=(), cyclic_component_count=0, modules_in_cycles=0),
+            cycles=CycleReport(components=(), cyclic_component_count=0, modules_in_cycles=()),
             propagation=PropagationReport(module_visibility=(), propagation_cost=None),
         ),
         coverage=SnapshotCoverage(
@@ -121,12 +122,14 @@ def test_denominator_fields_are_nullable() -> None:
             assert set(get_args(hints[name])) == {float, type(None)}
 
 
-@pytest.mark.parametrize(("section", "field", "valid", "invalid"), [
-    ("configuration", "components", {"core": ["src/pkg"]}, {"bad key": []}),
-    ("versions", "tools", {"grimp": "3.17"}, {"bad key": "3.17"}),
-    ("existing_metrics", "maintainability_index", {"pkg/a.py": 100.0}, {"/a.py": 100.0}),
-    ("architecture", "module_components", {"pkg.a": "core"}, {"pkg..a": "core"}),
-])
+@pytest.mark.parametrize(
+    ("section", "field", "valid", "invalid"),
+    [
+        ("configuration", "components", {"core": ["src/pkg"]}, {"bad key": []}),
+        ("versions", "tools", {"grimp": "3.17"}, {"bad key": "3.17"}),
+        ("existing_metrics", "maintainability_index", {"pkg/a.py": 100.0}, {"/a.py": 100.0}),
+    ],
+)
 def test_mapping_keys_match_published_schema(section, field, valid, invalid) -> None:
     schema = CodeMetricsReport.model_json_schema()
     Draft202012Validator.check_schema(schema)
@@ -140,3 +143,25 @@ def test_mapping_keys_match_published_schema(section, field, valid, invalid) -> 
         validator.validate(payload)
     with pytest.raises(ValidationError):
         CodeMetricsReport.model_validate(payload)
+
+
+def test_architecture_module_components_include_path_on_wire() -> None:
+    item = ModuleComponent(module="pkg.a", path="src/pkg/a.py", component="core")
+    report = _report().model_copy(
+        update={
+            "architecture": _report().architecture.model_copy(update={"module_components": (item,)})
+        }
+    )
+    payload = report.model_dump(mode="json")
+    Draft202012Validator(CodeMetricsReport.model_json_schema()).validate(payload)
+    assert CodeMetricsReport.model_validate(payload) == report
+    payload["architecture"]["module_components"][0]["module"] = "pkg..a"
+    with pytest.raises(SchemaValidationError):
+        Draft202012Validator(CodeMetricsReport.model_json_schema()).validate(payload)
+    with pytest.raises(ValidationError):
+        CodeMetricsReport.model_validate(payload)
+
+
+def test_cycle_modules_in_cycles_rejects_integer() -> None:
+    with pytest.raises(ValidationError):
+        CycleReport(components=(), cyclic_component_count=0, modules_in_cycles=0)  # type: ignore[arg-type]

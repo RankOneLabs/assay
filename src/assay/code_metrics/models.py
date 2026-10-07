@@ -111,7 +111,7 @@ class StronglyConnectedComponent(WireModel):
 class CycleReport(WireModel):
     components: tuple[StronglyConnectedComponent, ...]
     cyclic_component_count: int
-    modules_in_cycles: tuple[ModuleName, ...] | int
+    modules_in_cycles: tuple[ModuleName, ...]
 
 
 class ModuleVisibility(WireModel):
@@ -194,9 +194,7 @@ class ArchitectureReport(WireModel):
     graph: ModuleGraph
     module_coupling: tuple[ModuleCoupling, ...]
     component_coupling: tuple[ComponentCoupling, ...]
-    module_components: Mapping[ModuleName, ComponentName] = Field(
-        json_schema_extra={"additionalProperties": False}
-    )
+    module_components: tuple[ModuleComponent, ...]
     boundaries: tuple[BoundaryPair, ...]
     cycles: CycleReport
     propagation: PropagationReport
