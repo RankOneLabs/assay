@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from assay.code_metrics import tools
+from assay.code_metrics import analyze, tools
 from assay.code_metrics.errors import ToolVersionMismatch
 from assay.code_metrics.models import _Config
 from assay.code_metrics.pins import PINS, assert_pinned_tools
@@ -36,19 +36,24 @@ def test_snapshot_cache_is_bounded_and_empty_results_are_fresh(
     first["mi"]["injected"] = 1
     assert second["mi"] == {}
 
-    monkeypatch.setattr(tools, "_radon", lambda files: {})
     monkeypatch.setattr(
         tools, "code_complexity", lambda text: type("Result", (), {"complexity": 0})()
     )
-    monkeypatch.setattr(tools, "_imports", lambda root: None)
-    monkeypatch.setattr(tools, "_ruff", lambda root, ignore: {})
+    monkeypatch.setattr(
+        tools, "_ruff", lambda root, ignore: {"ruff.violations": 0, "ruff.magic_values": 0}
+    )
     monkeypatch.setattr(tools, "_mypy", lambda root: 0)
-    monkeypatch.setattr(tools, "_jscpd", lambda root, config: {})
+    monkeypatch.setattr(
+        tools,
+        "_jscpd",
+        lambda root, config: {"jscpd.clones": 0, "jscpd.duplicated_lines": 0, "cloned_lines": {}},
+    )
     monkeypatch.setattr(tools, "_functions", lambda root: [])
     tools._CACHE.clear()
     try:
         for number in range(9):
-            tools._snapshot({"module.py": f"x = {number}\n"}, config)
+            report = analyze({"module.py": f"x = {number}\n"})
+            assert report.existing_metrics.radon_sloc == 1
         assert len(tools._CACHE) == 8
     finally:
         tools._CACHE.clear()

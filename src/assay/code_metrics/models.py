@@ -290,10 +290,10 @@ class DetailedMetricDelta(MetricDelta):
 
 
 class DetailedCodeMetricsComparison(WireModel):
-    """Comparison with complete structural evidence."""
+    """Published 0.3.0 comparison with complete structural evidence."""
 
-    schema_version: Literal["assay-code-metrics-comparison/0.2.0"] = (
-        "assay-code-metrics-comparison/0.2.0"
+    schema_version: Literal["assay-code-metrics-comparison/0.3.0"] = (
+        "assay-code-metrics-comparison/0.3.0"
     )
     before: CodeMetricsReportV2
     after: CodeMetricsReportV2

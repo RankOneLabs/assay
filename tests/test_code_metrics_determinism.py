@@ -18,6 +18,7 @@ SNAPSHOT = {
 
 @pytest.fixture(autouse=True)
 def stub_clones(monkeypatch: pytest.MonkeyPatch) -> None:
+    tools._CACHE.clear()
     monkeypatch.setattr(
         tools,
         "_jscpd",
@@ -50,7 +51,10 @@ def test_one_graph_and_each_tool_per_snapshot(monkeypatch: pytest.MonkeyPatch) -
     second = api.analyze(SNAPSHOT).model_dump_json()
     assert first == second
     assert calls == Counter(
-        {name: 2 for name in ("build_graph", "_radon", "_ruff", "_mypy", "_jscpd", "_functions")}
+        {
+            "build_graph": 2,
+            **{name: 1 for name in ("_radon", "_ruff", "_mypy", "_jscpd", "_functions")},
+        }
     )
 
 

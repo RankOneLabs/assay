@@ -1,4 +1,5 @@
 """Metric analyzer runners and the bounded snapshot cache."""
+
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +23,7 @@ from radon.visitors import ComplexityVisitor, Function  # type: ignore[import-un
 
 from ._imports import IMPORT_LOCK
 from .errors import AnalyzerFailed, SnapshotPathError
-from .models import DELTAS, Snapshot, _Config
+from .models import DELTAS, ModuleGraph, Snapshot, _Config
 from .pins import JSCPD
 
 
@@ -44,8 +45,11 @@ def _empty() -> dict[str, Any]:
     }
 
 
-def _snapshot(snapshot: Snapshot, config: _Config) -> dict[str, Any]:
-    files = _python(snapshot)
+def _snapshot(
+    snapshot: Snapshot, config: _Config, *, graph: ModuleGraph | None = None
+) -> dict[str, Any]:
+    """Assemble one cached analyzer payload for the public and legacy APIs."""
+    files = dict(sorted(_python(snapshot).items()))
     for path in files:
         parts = PurePosixPath(path).parts
         if PurePosixPath(path).is_absolute() or ".." in parts or "\\" in path:
@@ -69,11 +73,11 @@ def _snapshot(snapshot: Snapshot, config: _Config) -> dict[str, Any]:
         result = {
             **_radon(files),
             "complexipy.cognitive": sum(code_complexity(t).complexity for t in files.values()),
-            "grimp.imports": _imports(root),
+            "grimp.imports": _imports(root) if graph is None else _imports(root, graph),
             **_ruff(root, config.ruff_ignore),
             "mypy.errors": _mypy(root),
             **_jscpd(root, config),
-            "functions": _functions(root),
+            "functions": sorted(_functions(root)),
         }
     with _CACHE_LOCK:
         result = _CACHE.setdefault(key, result)
@@ -104,8 +108,10 @@ def _cyclomatic(text: str) -> int:
     return sum(block.complexity for block in blocks if isinstance(block, Function))
 
 
-def _imports(root: Path) -> int | None:
+def _imports(root: Path, graph: ModuleGraph | None = None) -> int | None:
     """Direct import dependencies among the snapshot's packages and to anything outside."""
+    if graph is not None:
+        return len(graph.edges) + len(graph.external_dependencies) if graph.modules else None
     base = root / "src" if (root / "src").is_dir() else root
     packages = sorted(p.parent.name for p in base.glob("*/__init__.py"))
     if not packages:
@@ -113,10 +119,10 @@ def _imports(root: Path) -> int | None:
     with IMPORT_LOCK:
         sys.path.insert(0, str(base))
         try:
-            graph = grimp.build_graph(*packages, include_external_packages=True, cache_dir=None)
+            imports = grimp.build_graph(*packages, include_external_packages=True, cache_dir=None)
         finally:
             sys.path.remove(str(base))
-    return sum(len(graph.find_modules_directly_imported_by(module)) for module in graph.modules)
+    return sum(len(imports.find_modules_directly_imported_by(module)) for module in imports.modules)
 
 
 def _ruff(root: Path, ignore: tuple[str, ...]) -> dict[str, int]:

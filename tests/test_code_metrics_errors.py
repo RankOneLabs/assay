@@ -1,7 +1,6 @@
 """Hard failures are typed and identify their input."""
 
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -25,6 +24,7 @@ PACKAGE = {"src/pkg/__init__.py": "", "src/pkg/a.py": "x = 1\n"}
 
 @pytest.fixture(autouse=True)
 def stub_clones(monkeypatch: pytest.MonkeyPatch) -> None:
+    tools._CACHE.clear()
     monkeypatch.setattr(
         tools,
         "_jscpd",
@@ -42,8 +42,9 @@ def test_preflight_unavailable_before_analyzers(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_invalid_path_and_component_configurations() -> None:
-    with pytest.raises(SnapshotPathError, match=r"relative.*escape\.py"):
+    with pytest.raises(SnapshotPathError, match=r"relative.*escape\.py") as path_error:
         analyze({"../escape.py": ""})
+    assert str(path_error.value).count("analyze snapshot path") == 1
     with pytest.raises(ReservedComponentName, match="unassigned"):
         analyze(
             PACKAGE,
@@ -93,9 +94,18 @@ def test_jscpd_fetch_failure_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_mypy_abnormal_exit_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_run = subprocess.run
+
     def fail(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(args=["mypy"], returncode=2, stdout="", stderr="fatal")
+        command = args[0]
+        if isinstance(command, list) and "mypy" in command:
+            return subprocess.CompletedProcess(
+                args=command, returncode=2, stdout="", stderr="fatal"
+            )
+        return original_run(*args, **kwargs)
 
     monkeypatch.setattr(tools.subprocess, "run", fail)
-    with pytest.raises(AnalyzerFailed, match="mypy"):
-        tools._mypy(Path("."))
+    with pytest.raises(AnalyzerFailed) as caught:
+        analyze(PACKAGE)
+    assert "mypy" in str(caught.value)
+    assert "src/pkg/a.py" in str(caught.value)

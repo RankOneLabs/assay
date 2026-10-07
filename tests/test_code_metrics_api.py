@@ -1,6 +1,10 @@
 """Public report and comparison behavior."""
 
+import json
+from pathlib import Path
+
 import pytest
+from jsonschema import Draft202012Validator
 
 from assay.code_metrics import analyze, compare, measure, tools
 from assay.code_metrics.api import CodeMetricsConfig
@@ -24,6 +28,8 @@ def test_absolute_report_and_partial_graph() -> None:
     assert report.architecture.propagation.propagation_cost is None
     assert report.existing_metrics.grimp_imports is None
     assert report.coverage.files_without_module == ("solo.py",)
+    assert "excluded_directories" not in CodeMetricsConfig.__dataclass_fields__
+    assert report.configuration.excluded_directories == ()
 
 
 def test_component_zero_denominators_and_unmapped_file() -> None:
@@ -59,3 +65,11 @@ def test_mi_shared_intersection_and_explicit_structure() -> None:
     assert result.structural_changes.modules_removed == ("pkg.old",)
     assert result.model_dump()["structural_changes"]["modules_added"] == ("pkg.new", "pkg.second")
     assert result.new_code.new_lines == 3
+    version = result.schema_version.rsplit("/", 1)[1].rsplit(".", 1)[0]
+    schema_path = (
+        Path(__file__).parents[1]
+        / "schemas"
+        / f"assay-code-metrics-comparison-v{version}.schema.json"
+    )
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    Draft202012Validator(schema).validate(result.model_dump(mode="json"))

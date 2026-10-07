@@ -7,16 +7,16 @@ import shutil
 import statistics
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from importlib.metadata import version
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Any
 
 from .components import ComponentConfig, analyze_components
 from .cycles import analyze_cycles
 from .errors import (
+    AnalyzerFailed,
     MalformedComponentConfig,
     ReservedComponentName,
     SnapshotPathError,
@@ -50,7 +50,6 @@ class CodeMetricsConfig:
     clone_min_tokens: int = 50
     ruff_ignore: tuple[str, ...] = ()
     components: tuple[ComponentConfig, ...] = ()
-    excluded_directories: tuple[str, ...] = ()
 
 
 def _preflight() -> None:
@@ -68,9 +67,7 @@ def _validate_paths(snapshot: Snapshot) -> None:
             or "\\" in path
             or any(part in ("", ".") for part in path.split("/"))
         ):
-            raise SnapshotPathError(
-                f"analyze snapshot path must be relative and inside the repository: {path}"
-            )
+            raise SnapshotPathError(f"must be relative and inside the repository: {path}")
 
 
 def _validate_config(config: CodeMetricsConfig) -> None:
@@ -95,8 +92,6 @@ def _analyze(
     _preflight()
     _validate_config(config)
     _validate_paths(snapshot)
-    from complexipy import code_complexity
-
     from . import tools
     from .graph import build_module_graph
 
@@ -112,32 +107,12 @@ def _analyze(
             files_without_module=(),
         )
     legacy_config = _Config(config.clone_min_lines, config.clone_min_tokens, config.ruff_ignore)
-    if files:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for path, source in files.items():
-                target = root / path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(source, encoding="utf-8")
-            try:
-                clones = tools._jscpd(root, legacy_config)
-            except (subprocess.CalledProcessError, FileNotFoundError, OSError) as error:
-                raise ToolUnavailable(JSCPD, str(error)) from error
-            payload = {
-                **tools._radon(files),
-                "complexipy.cognitive": sum(
-                    code_complexity(source).complexity for source in files.values()
-                ),
-                "grimp.imports": (
-                    len(graph.edges) + len(graph.external_dependencies) if graph.modules else None
-                ),
-                **tools._ruff(root, config.ruff_ignore),
-                "mypy.errors": tools._mypy(root),
-                **clones,
-                "functions": sorted(tools._functions(root)),
-            }
-    else:
-        payload = tools._empty()
+    try:
+        payload = dict(tools._snapshot(files, legacy_config, graph=graph))
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError) as error:
+        raise ToolUnavailable(JSCPD, str(error)) from error
+    except AnalyzerFailed as error:
+        raise AnalyzerFailed(f"analyze snapshot {', '.join(files)}: {error}") from error
     mi = dict(sorted(payload["mi"].items()))
     payload["radon.mi"] = statistics.fmean(mi.values()) if mi else None
     components = analyze_components(graph, config.components)
@@ -176,7 +151,7 @@ def _analyze(
                 item.name: tuple(sorted(item.patterns))
                 for item in sorted(config.components, key=lambda item: item.name)
             },
-            excluded_directories=tuple(sorted(config.excluded_directories)),
+            excluded_directories=(),
         ),
         versions=ToolVersions(
             assay=version("assay"),
