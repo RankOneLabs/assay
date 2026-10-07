@@ -1,7 +1,7 @@
 """Transitive visibility over graph-builder evidence."""
 
 import pytest
-from code_metrics_fixtures import FIXTURE_A, FIXTURE_H
+from code_metrics_fixtures import FIXTURE_A, FIXTURE_B_AFTER, FIXTURE_B_BEFORE, FIXTURE_H
 
 from assay.code_metrics.graph import build_module_graph
 from assay.code_metrics.models import ImportEdge, ModuleEntry, ModuleGraph
@@ -58,3 +58,32 @@ def test_iterative_chain_of_200() -> None:
     assert report.module_visibility[0].reached_by == 1
     assert report.module_visibility[-1].reached_by == 200
     assert report.propagation_cost == pytest.approx(sum(range(1, 201)) / 200**2)
+
+
+def test_fixture_b_propagation_cost_rises_with_the_added_edge() -> None:
+    before, _ = build_module_graph(FIXTURE_B_BEFORE)
+    after, _ = build_module_graph(FIXTURE_B_AFTER)
+    for graph in (before, after):
+        assert tuple(entry.module for entry in graph.modules) == (
+            "pkg",
+            "pkg.a",
+            "pkg.b",
+            "pkg.c",
+        )
+    assert tuple((edge.importer, edge.imported) for edge in before.edges) == (("pkg.a", "pkg.b"),)
+    assert tuple((edge.importer, edge.imported) for edge in after.edges) == (
+        ("pkg.a", "pkg.b"),
+        ("pkg.a", "pkg.c"),
+    )
+    assert analyze_propagation(before).propagation_cost == pytest.approx(5 / 16)
+    assert analyze_propagation(after).propagation_cost == pytest.approx(6 / 16)
+    # The package initializer is a fourth isolated module. Take the induced
+    # three-module graph to assert the fixture's requested arithmetic exactly.
+    before_induced = ModuleGraph(
+        modules=before.modules[1:], edges=before.edges, external_dependencies=()
+    )
+    after_induced = ModuleGraph(
+        modules=after.modules[1:], edges=after.edges, external_dependencies=()
+    )
+    assert analyze_propagation(before_induced).propagation_cost == pytest.approx(4 / 9)
+    assert analyze_propagation(after_induced).propagation_cost == pytest.approx(5 / 9)
