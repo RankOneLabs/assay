@@ -10,10 +10,10 @@ from fnmatch import fnmatchcase
 from .errors import AmbiguousComponentConfig, ConfigurationError, EmptyComponentPattern
 from .models import (
     BoundaryPair,
-    ComponentCoupling,
+    ComponentCouplingV3,
     ComponentMetricsReport,
     ModuleComponent,
-    ModuleCoupling,
+    ModuleCouplingV3,
     ModuleEntry,
     ModuleGraph,
 )
@@ -124,7 +124,7 @@ def analyze_components(
         ca, ce = len(incoming_modules[name]), len(outgoing_modules[name])
         total_edges = r + incoming[name] + outgoing[name]
         coupling.append(
-            ComponentCoupling(
+            ComponentCouplingV3(
                 component=name,
                 modules=tuple(members[name]),
                 afferent=ca,
@@ -141,7 +141,7 @@ def analyze_components(
         )
     return ComponentMetricsReport(
         module_coupling=tuple(
-            ModuleCoupling(
+            ModuleCouplingV3(
                 module=entry.module, fan_in=fan_in[entry.module], fan_out=fan_out[entry.module]
             )
             for entry in assignments

@@ -14,8 +14,8 @@ from typing import Any
 
 from assay.repository import RepositoryPathError
 
-from .components import ComponentConfig, analyze_components, require_pattern_matches
-from .cycles import analyze_cycles
+from .architecture import analyze_architecture, compare_architecture, structural_changes
+from .components import ComponentConfig, require_pattern_matches
 from .errors import (
     AnalyzerFailed,
     ConfigurationError,
@@ -27,11 +27,9 @@ from .errors import (
 )
 from .models import (
     DELTAS,
-    ArchitectureReport,
-    CodeMetricsReportV2,
-    DetailedCodeMetricsComparison,
+    CodeMetricsComparisonV4,
+    CodeMetricsReportV3,
     DetailedMetricDelta,
-    DetailedStructuralChanges,
     ExistingMetrics,
     ModuleGraph,
     NewCodeMetrics,
@@ -43,7 +41,6 @@ from .models import (
     validate_snapshot,
 )
 from .pins import JSCPD, assert_pinned_tools, tool_versions
-from .propagation import analyze_propagation
 
 
 @dataclass(frozen=True)
@@ -107,7 +104,7 @@ def _validate_config(config: CodeMetricsConfig) -> None:
 
 def _analyze(
     snapshot: Snapshot, config: CodeMetricsConfig, *, require_matches: bool = True
-) -> tuple[CodeMetricsReportV2, dict[str, Any]]:
+) -> tuple[CodeMetricsReportV3, dict[str, Any]]:
     _validate_config(config)
     _preflight()
     snapshot = _validate_paths(snapshot)
@@ -145,17 +142,8 @@ def _analyze(
         raise AnalyzerFailed(f"analyze snapshot of {len(files)} Python files: {detail}") from error
     mi = dict(sorted(payload["mi"].items()))
     payload["radon.mi"] = statistics.fmean(mi.values()) if mi else None
-    components = analyze_components(graph, config.components, require_matches=require_matches)
-    architecture = ArchitectureReport(
-        graph=graph,
-        module_coupling=components.module_coupling,
-        component_coupling=components.component_coupling,
-        module_components=components.module_components,
-        boundaries=components.boundaries,
-        cycles=analyze_cycles(graph),
-        propagation=analyze_propagation(graph),
-    )
-    report = CodeMetricsReportV2(
+    architecture = analyze_architecture(graph, config.components, require_matches=require_matches)
+    report = CodeMetricsReportV3(
         existing_metrics=ExistingMetrics(
             radon_sloc=payload["radon.sloc"],
             radon_lloc=payload["radon.lloc"],
@@ -192,14 +180,14 @@ def _analyze(
     return report, payload
 
 
-def analyze(snapshot: Snapshot, *, config: CodeMetricsConfig | None = None) -> CodeMetricsReportV2:
+def analyze(snapshot: Snapshot, *, config: CodeMetricsConfig | None = None) -> CodeMetricsReportV3:
     """Measure one snapshot and assemble its absolute metric and architecture report."""
     return _analyze(snapshot, config or CodeMetricsConfig())[0]
 
 
 def _compare(
     before: Snapshot, after: Snapshot, config: CodeMetricsConfig
-) -> DetailedCodeMetricsComparison:
+) -> CodeMetricsComparisonV4:
     old_report, old = _analyze(before, config, require_matches=False)
     new_report, new = _analyze(after, config, require_matches=False)
     require_pattern_matches(
@@ -244,45 +232,21 @@ def _compare(
             default=0,
         ),
     )
-    old_graph, new_graph = old_report.architecture.graph, new_report.architecture.graph
-    old_modules = {entry.module for entry in old_graph.modules}
-    new_modules = {entry.module for entry in new_graph.modules}
-    old_edges, new_edges = set(old_graph.edges), set(new_graph.edges)
-    old_components = {entry.component for entry in old_report.architecture.component_coupling}
-    new_components = {entry.component for entry in new_report.architecture.component_coupling}
-    old_cycles = {
-        item.modules for item in old_report.architecture.cycles.components if item.is_cyclic
-    }
-    new_cycles = {
-        item.modules for item in new_report.architecture.cycles.components if item.is_cyclic
-    }
-    changes = DetailedStructuralChanges(
-        modules_added=tuple(sorted(new_modules - old_modules)),
-        modules_removed=tuple(sorted(old_modules - new_modules)),
-        edges_added=tuple(
-            sorted(new_edges - old_edges, key=lambda item: (item.importer, item.imported))
-        ),
-        edges_removed=tuple(
-            sorted(old_edges - new_edges, key=lambda item: (item.importer, item.imported))
-        ),
-        components_added=tuple(sorted(new_components - old_components)),
-        components_removed=tuple(sorted(old_components - new_components)),
-        cycles_created=tuple(sorted(new_cycles - old_cycles)),
-        cycles_resolved=tuple(sorted(old_cycles - new_cycles)),
-    )
-    return DetailedCodeMetricsComparison(
+    old_architecture, new_architecture = old_report.architecture, new_report.architecture
+    return CodeMetricsComparisonV4(
         before=old_report,
         after=new_report,
         deltas=tuple(deltas),
+        architecture_deltas=compare_architecture(old_architecture, new_architecture),
         new_code=new_code,
-        structural_changes=changes,
+        structural_changes=structural_changes(old_architecture, new_architecture),
     )
 
 
 def compare(
     before: Snapshot, after: Snapshot, *, config: CodeMetricsConfig | None = None
-) -> DetailedCodeMetricsComparison:
-    """Compare absolute reports and retain explicit structural change evidence."""
+) -> CodeMetricsComparisonV4:
+    """Compare absolute reports with explicit architecture deltas and structural evidence."""
     return _compare(before, after, config or CodeMetricsConfig())
 
 

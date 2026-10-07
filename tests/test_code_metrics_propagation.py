@@ -32,6 +32,30 @@ def test_package_chain_arithmetic() -> None:
     assert full.propagation_cost == pytest.approx(7 / 16)
 
 
+def test_visibility_is_normalized_by_module_count_including_self() -> None:
+    graph, _ = build_module_graph(FIXTURE_A)
+    report = analyze_propagation(graph)
+    assert len(report.module_visibility) == 4
+    assert [
+        (
+            item.module,
+            item.reaches,
+            item.reached_by,
+            item.fan_out_visibility,
+            item.fan_in_visibility,
+        )
+        for item in report.module_visibility
+    ] == [
+        ("pkg", 1, 1, 0.25, 0.25),
+        ("pkg.a", 3, 1, 0.75, 0.25),
+        ("pkg.b", 2, 2, 0.5, 0.5),
+        ("pkg.c", 1, 3, 0.25, 0.75),
+    ]
+    assert report.propagation_cost == pytest.approx(
+        sum(item.fan_out_visibility for item in report.module_visibility) / 4
+    )
+
+
 def test_empty_and_single_module() -> None:
     empty, _ = build_module_graph({"solo.py": "pass\n"})
     assert analyze_propagation(empty).propagation_cost is None

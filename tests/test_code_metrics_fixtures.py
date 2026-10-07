@@ -24,20 +24,35 @@ from code_metrics_fixtures import (
     FIXTURE_H,
     FIXTURE_I,
     FIXTURE_J,
+    FIXTURE_K_AFTER,
+    FIXTURE_K_BEFORE,
 )
 
-from assay.code_metrics.components import ComponentConfig, analyze_components
+from assay.code_metrics.architecture import (
+    analyze_architecture,
+    compare_architecture,
+    structural_changes,
+)
+from assay.code_metrics.components import ComponentConfig
 from assay.code_metrics.cycles import analyze_cycles
 from assay.code_metrics.graph import build_module_graph
 from assay.code_metrics.models import (
     METRICS,
+    ArchitectureDeltas,
+    ArchitectureReportV3,
     BoundaryPair,
-    ComponentCoupling,
-    CycleReport,
-    ModuleCoupling,
-    ModuleVisibility,
-    PropagationReport,
+    BoundaryPairDelta,
+    ComponentCouplingV3,
+    ComponentMetricDeltas,
+    CycleReportV3,
+    DetailedStructuralChanges,
+    ModuleCouplingDelta,
+    ModuleCouplingV3,
+    ModuleVisibilityV3,
+    PropagationReportV3,
     Snapshot,
+    StructuralChangesV4,
+    SystemArchitectureDeltas,
 )
 from assay.code_metrics.propagation import analyze_propagation
 
@@ -102,6 +117,22 @@ _GRAPH_EVIDENCE = (
         "cycles",
         0,
     ),
+    _GraphEvidenceCase(
+        "FIXTURE_K_BEFORE",
+        FIXTURE_K_BEFORE,
+        _FOUR_LEAF,
+        (("pkg.a", "pkg.b"), ("pkg.b", "pkg.c"), ("pkg.d", "pkg.a")),
+        "propagation",
+        11 / 25,
+    ),
+    _GraphEvidenceCase(
+        "FIXTURE_K_AFTER",
+        FIXTURE_K_AFTER,
+        _FOUR_LEAF,
+        (("pkg.a", "pkg.b"), ("pkg.b", "pkg.c"), ("pkg.b", "pkg.d"), ("pkg.d", "pkg.a")),
+        "propagation",
+        14 / 25,
+    ),
 )
 
 
@@ -150,15 +181,15 @@ def test_every_public_metric_has_a_specific_golden_case() -> None:
         assert metric in golden[case]["metrics"], (metric, case)
 
 
+_ALPHA_AB_BETA_CD = (
+    ComponentConfig("alpha", ("src/pkg/a.py", "src/pkg/b.py")),
+    ComponentConfig("beta", ("src/pkg/c.py", "src/pkg/d.py")),
+)
+
+
 def test_every_architecture_metric_has_a_specific_fixture() -> None:
     coupling_graph, _ = build_module_graph(FIXTURE_COUPLING)
-    coupling = analyze_components(
-        coupling_graph,
-        (
-            ComponentConfig("alpha", ("src/pkg/a.py", "src/pkg/b.py")),
-            ComponentConfig("beta", ("src/pkg/c.py", "src/pkg/d.py")),
-        ),
-    )
+    coupling = analyze_architecture(coupling_graph, _ALPHA_AB_BETA_CD)
     module = next(item for item in coupling.module_coupling if item.module == "pkg.a")
     component = next(item for item in coupling.component_coupling if item.component == "alpha")
     boundary = next(item for item in coupling.boundaries if item.importer_component == "alpha")
@@ -171,6 +202,17 @@ def test_every_architecture_metric_has_a_specific_fixture() -> None:
     # Each key is a numeric or derived architecture field; the fixture name
     # identifies the snapshot whose specific scalar is asserted here.
     coverage = {
+        "architecture.module_count": ("FIXTURE_COUPLING", coupling.module_count, 5),
+        "architecture.first_party_edge_count": (
+            "FIXTURE_COUPLING",
+            coupling.first_party_edge_count,
+            3,
+        ),
+        "architecture.cross_component_edge_count": (
+            "FIXTURE_COUPLING",
+            coupling.cross_component_edge_count,
+            2,
+        ),
         "module_coupling.fan_in": ("FIXTURE_COUPLING", module.fan_in, 1),
         "module_coupling.fan_out": ("FIXTURE_COUPLING", module.fan_out, 1),
         "component_coupling.afferent": ("FIXTURE_COUPLING", component.afferent, 1),
@@ -202,27 +244,50 @@ def test_every_architecture_metric_has_a_specific_fixture() -> None:
             cycles.modules_in_cycles,
             ("pkg.a", "pkg.b", "pkg.c"),
         ),
+        "cycles.scc_count": ("FIXTURE_C_AFTER", cycles.scc_count, 2),
+        "cycles.cyclic_scc_count": ("FIXTURE_C_AFTER", cycles.cyclic_scc_count, 1),
+        "cycles.cyclic_module_count": ("FIXTURE_C_AFTER", cycles.cyclic_module_count, 3),
+        "cycles.largest_cyclic_scc_size": ("FIXTURE_C_AFTER", cycles.largest_cyclic_scc_size, 3),
         "propagation.module_visibility.reaches": ("FIXTURE_A", visibility.reaches, 3),
         "propagation.module_visibility.reached_by": ("FIXTURE_A", visibility.reached_by, 1),
+        "propagation.module_visibility.fan_out_visibility": (
+            "FIXTURE_A",
+            visibility.fan_out_visibility,
+            0.75,
+        ),
+        "propagation.module_visibility.fan_in_visibility": (
+            "FIXTURE_A",
+            visibility.fan_in_visibility,
+            0.25,
+        ),
         "propagation.propagation_cost": ("FIXTURE_A", propagation.propagation_cost, 7 / 16),
     }
     expected_fields = {
-        *(f"module_coupling.{field}" for field in ModuleCoupling.model_fields if field != "module"),
+        *(
+            f"architecture.{name}"
+            for name, field in ArchitectureReportV3.model_fields.items()
+            if field.annotation is int
+        ),
+        *(
+            f"module_coupling.{field}"
+            for field in ModuleCouplingV3.model_fields
+            if field != "module"
+        ),
         *(
             f"component_coupling.{field}"
-            for field in ComponentCoupling.model_fields
+            for field in ComponentCouplingV3.model_fields
             if field not in {"component", "modules"}
         ),
         *(f"boundaries.{field}" for field in BoundaryPair.model_fields if field == "edge_count"),
-        *(f"cycles.{field}" for field in CycleReport.model_fields if field != "components"),
+        *(f"cycles.{field}" for field in CycleReportV3.model_fields if field != "components"),
         *(
             f"propagation.module_visibility.{field}"
-            for field in ModuleVisibility.model_fields
+            for field in ModuleVisibilityV3.model_fields
             if field != "module"
         ),
         *(
             f"propagation.{field}"
-            for field in PropagationReport.model_fields
+            for field in PropagationReportV3.model_fields
             if field != "module_visibility"
         ),
     }
@@ -230,3 +295,92 @@ def test_every_architecture_metric_has_a_specific_fixture() -> None:
     for metric, (fixture, actual, expected) in coverage.items():
         assert fixture in {"FIXTURE_A", "FIXTURE_C_AFTER", "FIXTURE_COUPLING"}
         assert actual == expected, (metric, fixture)
+
+
+def test_every_architecture_delta_has_a_specific_fixture() -> None:
+    """Fixture K pins every delta field, each to its before, after, and delta."""
+    before_graph, _ = build_module_graph(FIXTURE_K_BEFORE)
+    after_graph, _ = build_module_graph(FIXTURE_K_AFTER)
+    before = analyze_architecture(before_graph, _ALPHA_AB_BETA_CD)
+    after = analyze_architecture(after_graph, _ALPHA_AB_BETA_CD)
+    deltas = compare_architecture(before, after)
+    changes = structural_changes(before, after)
+    alpha = next(item.metrics for item in deltas.components if item.component == "alpha")
+    module = next(item for item in deltas.modules if item.module == "pkg.b")
+    boundary = next(item for item in deltas.boundaries if item.importer_component == "alpha")
+
+    def triple(value: object) -> tuple[object, object, object]:
+        return (value.before, value.after, value.delta)  # type: ignore[attr-defined]
+
+    coverage = {
+        "system.propagation_cost": (
+            triple(deltas.system.propagation_cost),
+            pytest.approx((11 / 25, 14 / 25, 3 / 25)),
+        ),
+        "system.first_party_edge_count": (triple(deltas.system.first_party_edge_count), (3, 4, 1)),
+        "system.cross_component_edge_count": (
+            triple(deltas.system.cross_component_edge_count),
+            (2, 3, 1),
+        ),
+        "system.cyclic_scc_count": (triple(deltas.system.cyclic_scc_count), (0, 1, 1)),
+        "system.cyclic_module_count": (triple(deltas.system.cyclic_module_count), (0, 3, 3)),
+        "system.largest_cyclic_scc_size": (
+            triple(deltas.system.largest_cyclic_scc_size),
+            (0, 3, 3),
+        ),
+        "components.afferent": (triple(alpha.afferent), (1, 1, 0)),
+        "components.efferent": (triple(alpha.efferent), (1, 2, 1)),
+        "components.instability": (
+            triple(alpha.instability),
+            pytest.approx((1 / 2, 2 / 3, 1 / 6)),
+        ),
+        "components.internal_edges": (triple(alpha.internal_edges), (1, 1, 0)),
+        "components.incoming_edges": (triple(alpha.incoming_edges), (1, 1, 0)),
+        "components.outgoing_edges": (triple(alpha.outgoing_edges), (1, 2, 1)),
+        "components.relational_cohesion": (triple(alpha.relational_cohesion), (1.0, 1.0, 0.0)),
+        "components.internal_dependency_density": (
+            triple(alpha.internal_dependency_density),
+            (0.5, 0.5, 0.0),
+        ),
+        "components.internal_edge_share": (
+            triple(alpha.internal_edge_share),
+            pytest.approx((1 / 3, 1 / 4, -1 / 12)),
+        ),
+        "modules.fan_in": (triple(module.fan_in), (1, 1, 0)),
+        "modules.fan_out": (triple(module.fan_out), (1, 2, 1)),
+        "boundaries.edge_count": (triple(boundary), (1, 2, 1)),
+        "structural_changes.cross_component_edges_added": (
+            tuple(
+                (e.importer, e.imported, e.importer_component, e.imported_component)
+                for e in changes.cross_component_edges_added
+            ),
+            (("pkg.b", "pkg.d", "alpha", "beta"),),
+        ),
+        "structural_changes.cross_component_edges_removed": (
+            changes.cross_component_edges_removed,
+            (),
+        ),
+    }
+    expected_fields = {
+        *(f"system.{field}" for field in SystemArchitectureDeltas.model_fields),
+        *(f"components.{field}" for field in ComponentMetricDeltas.model_fields),
+        *(f"modules.{field}" for field in ModuleCouplingDelta.model_fields if field != "module"),
+        "boundaries.edge_count",
+        *(
+            f"structural_changes.{field}"
+            for field in StructuralChangesV4.model_fields
+            if field not in DetailedStructuralChanges.model_fields
+        ),
+    }
+    assert set(ArchitectureDeltas.model_fields) == {"system", "components", "modules", "boundaries"}
+    # A boundary delta carries one edge count's before, after, and delta.
+    assert set(BoundaryPairDelta.model_fields) == {
+        "importer_component",
+        "imported_component",
+        "before",
+        "after",
+        "delta",
+    }
+    assert set(coverage) == expected_fields
+    for field, (actual, expected) in coverage.items():
+        assert actual == expected, field

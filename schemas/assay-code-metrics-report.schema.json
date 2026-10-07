@@ -7,6 +7,9 @@
     },
     {
       "$ref": "https://assay.dev/schemas/assay-code-metrics-report-v0.2.schema.json"
+    },
+    {
+      "$ref": "https://assay.dev/schemas/assay-code-metrics-report-v0.3.schema.json"
     }
   ]
 }

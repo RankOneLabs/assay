@@ -93,7 +93,7 @@ def test_snapshot_and_compare_cli_reports(
     assert (
         result["existing_metrics"] == analyze(snapshot).model_dump(mode="json")["existing_metrics"]
     )
-    schema_path = Path(__file__).parents[1] / "schemas/assay-code-metrics-report-v0.2.schema.json"
+    schema_path = Path(__file__).parents[1] / "schemas/assay-code-metrics-report-v0.3.schema.json"
     schema = json.loads(schema_path.read_text())
     Draft202012Validator(schema).validate(result)
     compared = _run(monkeypatch, capsys, "compare", str(before), str(after), "--exclude", "skip")
@@ -101,7 +101,7 @@ def test_snapshot_and_compare_cli_reports(
     assert compared["after"]["configuration"]["excluded_directories"] == list(excluded)
     schema = json.loads(
         (
-            Path(__file__).parents[1] / "schemas/assay-code-metrics-comparison-v0.3.schema.json"
+            Path(__file__).parents[1] / "schemas/assay-code-metrics-comparison-v0.4.schema.json"
         ).read_text()
     )
     Draft202012Validator(schema).validate(compared)
