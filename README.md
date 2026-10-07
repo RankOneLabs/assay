@@ -16,8 +16,9 @@ Python 3.13+, Git, and uv 0.10.2 are required. Install the tested uv version wit
 pinned to immutable upstream commits over public HTTPS; sibling checkouts and
 provider credentials are not required.
 
-The code-metrics tests also require Node.js and npm, with `npx` on PATH.
-JSCPD runs through `npx`, which downloads the pinned version on first use.
+The optional [code-metrics CLI and API](docs/code-metrics.md) measure repository
+snapshots and comparisons. They require Node.js and npm, with `npx` on PATH.
+JSCPD downloads the pinned version on first use, so that run needs network access.
 
 ```sh
 uv sync --locked --extra review --extra legacy --extra code-metrics
