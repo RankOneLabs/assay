@@ -4,21 +4,102 @@ Reproducible, paired experiments for agent systems. Assay materializes a study,
 compiles an immutable content-addressed plan, executes the authorized grid via
 narrow worker/evaluator adapters, and emits auditable PAA evidence.
 
-The library API is authoritative. See the
-[review remediation plan](docs/remediation-plan.md). Local design notes remain
-in the intentionally untracked `comms/` directory.
+## Install
 
-## Install and check
+Python 3.13+, Git, and uv 0.10.2 are required (`python -m pip install "uv==0.10.2"`).
 
-Python 3.13+, Git, and uv 0.10.2 are required. Install the tested uv version with
-`python -m pip install "uv==0.10.2"` before running the commands below. CI and
-`tool.uv.required-version` enforce the same version. Jig and the development PAA schema corpus are
-pinned to immutable upstream commits over public HTTPS; sibling checkouts and
-provider credentials are not required.
+```sh
+uv sync --locked
+```
 
-The optional [code-metrics CLI and API](docs/code-metrics.md) measure repository
-snapshots and comparisons. They require Node.js and npm, with `npx` on PATH.
-JSCPD downloads the pinned version on first use, so that run needs network access.
+Optional extras:
+
+| extra | adds |
+|---|---|
+| `review` | the browser review UI (`assay review serve`) |
+| `code-metrics` | repository snapshot and comparison metrics ([docs](docs/code-metrics.md)); also needs Node.js and npm with `npx` on PATH |
+
+## How it works
+
+1. **Study.** Publish inputs and schemas into `assay.store.ObjectStore`, then
+   materialize a `StudySnapshot` binding subject digests, arm configurations,
+   evaluator identities, realizations, and pinned PAA schemas.
+2. **Plan.** `assay.planning.compile_plan` takes the snapshot reference, worker
+   repeats, concurrency, exclusions, and optional per-arm cost estimates.
+   Unpriced arms are explicitly unavailable; when supplying estimates, include
+   every arm — the total is derived, not set.
+3. **Authorize and execute.** Serialize the plan with `canonical_json`, authorize
+   those exact bytes by their `digest_bytes` hash, and pass both to
+   `execute_plan` along with adapters whose `configuration()` matches the
+   declared settings.
+4. **Inspect.** Execution returns `RunSucceeded` or `RunFailed`. Adapter failures
+   are typed results, and failed workers produce explicit unavailable
+   evaluations. A persistence failure stops new scheduling, settles in-flight
+   calls, and returns recoverable progress.
+5. **Report.** Build a `ReportConfig` with manifest and evaluator-record refs,
+   reference/candidate arms, repeat aggregations, and a seeded `paired-v2`
+   statistical profile, then call `persist_report`.
+
+An incomplete run lists its missing coordinates, stays inspectable through
+`RunFailed`, and cannot be exported or reported on as a complete run.
+
+## Reports
+
+- **Scalar** reports aggregate evaluator repeats, then worker repeats, then
+  bootstrap over paired subjects. They require an explicit `scalar_direction`
+  (`higher_is_better` or `lower_is_better`). Below 10 common subjects, inference
+  is descriptive only.
+- **Ordinal** reports use an exact paired sign test with no numeric mapping.
+- **Classification** reports include confusion matrices and an exact paired
+  correctness test.
+
+Holm correction covers the declared candidate family; confidence intervals are
+unadjusted. Missingness and cost coverage are reported separately from effects,
+and unknown cost is never treated as zero. Bootstrap sampling follows the
+versioned [paired-v2 contract](docs/statistical-profile.md), independent of
+NumPy.
+
+Reports can pool population shards only when task, scope, contracts, arm and
+evaluator declarations, repeat counts, and pricing assumptions all match.
+
+## Export and verify
+
+Export a manifest or report together with its full immutable reference closure,
+then verify the bundle offline:
+
+```sh
+assay export STORE sha256:ROOT_DIGEST DESTINATION
+assay verify DESTINATION sha256:ROOT_DIGEST
+```
+
+The destination must be empty. Verification needs no network access or installed
+PAA package: it uses the schemas pinned in the bundle, validates record
+bindings, rejects inserted or missing objects, and recomputes reports. It proves
+integrity relative to the supplied plan, not producer identity.
+
+Closure follows the declared reference fields of each artifact, not strings that
+happen to look like hashes. Extension JSON can declare extra dependencies with
+a reserved `assay_object_refs` array; see
+[object references](docs/object-references.md).
+
+## Review UI
+
+```sh
+uv sync --locked --extra review
+uv run assay review serve /path/to/store
+```
+
+Open <http://127.0.0.1:7557>. The store path is the directory containing
+`objects/`.
+
+## Integrations
+
+- [Pier](docs/pier-integration.md) — runs studies on the third-party Pier
+  execution provider.
+- [Code metrics](docs/code-metrics.md) — `assay code-metrics snapshot` and
+  `assay code-metrics compare` for measuring repository changes.
+
+## Development
 
 ```sh
 uv sync --locked --extra review --extra legacy --extra code-metrics
@@ -28,42 +109,11 @@ uv run pytest -q
 uv build
 ```
 
-### Run-receipt tests
+Wire schemas are generated from the models; regenerate them with
+`uv run python -m assay.schema_export` (`--check` verifies they are current).
 
-Published relevance receipts live in a separate local checkout of
-`RankOneLabs/run-receipts`. Set `ASSAY_RUN_RECEIPTS` to that checkout (the
-directory containing the `typesafe-relevance-*-2026-09` bundles) to run the
-receipt-dependent primary, fitted-rerun, arms, and census tests:
-
-```sh
-cd experiments
-ASSAY_RUN_RECEIPTS=/path/to/run-receipts uv run pytest -q \
-  typesafe_relevance/tests/test_evidence_manifests.py \
-  typesafe_relevance/tests/test_relevance_primary.py \
-  typesafe_relevance/tests/test_relevance_fitted_rerun.py \
-  typesafe_relevance/tests/test_relevance_packet.py
-```
-
-Without the variable, receipt-dependent tests skip explicitly. The manifest
-walker still checks the in-tree `evidence/` directory when it is present.
-
-## Run the review UI
-
-The review UI reads runs and reports from an Assay object store. Install the
-optional server dependencies and start it with the path to your store:
-
-```sh
-uv sync --locked --extra review
-uv run assay review serve /path/to/store
-```
-
-Then open <http://127.0.0.1:7557>. Replace `/path/to/store` with the directory
-containing the store's `objects/` directory (for example, `.assay` when that is
-where the experiment wrote its data). Stop the server with Ctrl-C.
-
-The browser assets are committed in `src/assay/review/static`, so Bun is not
-needed just to run the UI. When changing files under `web/src`, install Bun
-1.3.10 and rebuild the packaged assets before refreshing the server:
+The review UI's built assets are committed in `src/assay/review/static`. After
+changing `web/src`, rebuild them with Bun 1.3.10:
 
 ```sh
 cd web
@@ -71,159 +121,3 @@ bun install --frozen-lockfile
 bun run typecheck
 bun run build
 ```
-
-## Library workflow
-
-1. Publish inputs and schemas into `assay.store.ObjectStore`. Materialize a
-   `StudySnapshot` binding subject digests, arm configurations, evaluator
-   identities, all realizations, and pinned PAA schemas.
-2. Call `assay.planning.compile_plan` with the published snapshot reference,
-   worker repeats, Jig revision, concurrency, exclusions, and optional per-arm
-   cost estimates. Unpriced arms are explicitly unavailable. When supplying
-   estimates, include every arm; the total is derived, not independently set.
-3. Inspect the plan, serialize with `canonical_json`, and authorize those exact
-   bytes by their `digest_bytes` hash. Pass both to `execute_plan`, alongside
-   adapters whose `configuration()` matches the declared live settings.
-4. Inspect `RunSucceeded` or `RunFailed`. Adapter failures are typed results;
-   failed workers produce explicit unavailable evaluations. Persistence failure
-   stops new scheduling, settles active calls, and returns recoverable progress.
-5. Build a `ReportConfig` containing exact manifest and evaluator-record refs,
-   reference/candidate arms, both repeat aggregations, and a seeded `paired-v2`
-   statistical profile. Numeric reports require an explicit `scalar_direction`
-   (`higher_is_better` or `lower_is_better`). Call `persist_report` to publish
-   the config, common-subject sets, and reproducible report.
-
-Scalar reports aggregate evaluator repeats before worker repeats, then resample
-paired subjects. Below 10 common subjects inference is descriptive-only (the
-arithmetic helper itself has no reporting floor). Ordinal categories are ordered
-low to high and use an exact paired sign test without a numeric mapping.
-Classification reports include confusion matrices and an exact paired
-correctness test. Holm correction covers the declared candidate family;
-confidence intervals are explicitly unadjusted. Missingness and cost coverage
-are reported separately from effects. Unknown cost is never measured zero.
-
-Export one manifest or report and its complete immutable reference closure:
-
-```sh
-assay export STORE sha256:ROOT_DIGEST DESTINATION
-assay verify DESTINATION sha256:ROOT_DIGEST
-```
-
-Replace `sha256:ROOT_DIGEST` with the actual published reference. The destination
-must be empty. Verification needs no network or installed PAA package: it uses
-pinned schemas in the bundle, validates record bindings, rejects inserted or
-missing objects, and recomputes reports. It proves integrity relative to the
-supplied plan, not producer identity or that omitted real-world attempts never
-happened. A working store can hold multiple roots; export before strict bundle
-verification.
-
-Object closure follows the declared reference fields of each governed artifact,
-not strings that happen to look like hashes. Extension JSON (worker configuration,
-interventions, input/output/trace data, evaluator details, and pricing data) can
-declare additional dependencies using a reserved `assay_object_refs` array of
-`sha256:` addresses at any object level. Each referenced extension object follows
-the same convention; binary artifacts are leaves. Free-text labels, categories,
-schema examples/defaults, and descriptions are not links. See
-[object references](docs/object-references.md) for the traversal contract.
-
-Reports can combine population shards and complementary exclusions, but require
-matching task/scope/contracts, selected arm/evaluator declarations, worker repeat
-count, concurrency, preparation mode, Jig/Assay versions, and pricing assumptions
-and catalog. Different task revisions cannot be pooled merely because the arm
-and evaluator names match.
-
-An incomplete manifest lists missing terminal coordinates and missing accounting
-coordinates (`worker:<cell>` or `evaluator:<evaluation>`). Accounting is expected
-for each recorded worker and each recorded evaluation of a successful worker;
-unavailable evaluations after failed workers do not claim an evaluator attempt.
-Consistent partial progress produces `incomplete_run`, remains inspectable through
-`RunFailed`, and cannot be exported or used to build a report as a complete run.
-
-Governed models own recursively read-only JSON containers, including copied model
-updates. `model_dump(mode="json")` returns a detached, mutable serialization for
-building a new declaration. As with Pydantic's frozen models, this is an API
-invariant, not a security boundary against hostile Python extensions deliberately
-bypassing the mutation guards.
-
-## Reproducibility and schema maintenance
-
-Bootstrap sampling and arithmetic follow the versioned
-[paired-v2 contract](docs/statistical-profile.md), independent of NumPy. Legacy
-`paired-v1` report configurations are rejected rather than silently recomputed
-using a changed algorithm. Existing run evidence can support a newly configured
-v2 report.
-
-Publication uses `staging/` outside `objects/sha256/`; interrupted-publication
-residue there is not a committed bundle object. Unexpected entries in the
-committed namespace are still rejected. Verification/report/export operations
-share a bounded 16 MiB verified-byte cache, discarded after the operation;
-evicted bytes are hash-checked again when read. Reference metadata is retained
-for the operation. Execution retains output references, not payloads, and each
-evaluation decodes the hash-verified published output afresh.
-
-Wire schemas have an explicit seven-file inventory. Regenerate with
-`uv run python -m assay.schema_export`; CI enforces
-`uv run python -m assay.schema_export --check`. Tests anchor schema paths to the
-repository rather than the invoking working directory.
-
-## Consistency investigation and boundaries
-
-`assay.investigations.consistency.materialize_consistency` supplies local
-cosmetic, architectural, and semantic coding tasks under clean/inconsistent
-repository conditions. `StructuralEvaluator` measures syntactic abstraction
-reuse, not functional correctness; ambiguous implementations require an
-explicitly configured judge. The end-to-end example in
-[test_consistency.py](tests/test_consistency.py) covers both repeat axes,
-an exclusion, an injected failure, ordinal reporting, and offline export.
-Its synthetic worker tests the machinery; its results are not experimental
-evidence about a real coding agent.
-
-The [OpenRouter smoke integration](experiments/consistency_pilot/openrouter-smoke.md) provides the initial
-Qwen/Novita factory, with fixed routing, explicit rate caps, and offline transport
-tests. Live runs still require independent plan and spending approval.
-
-The [single-file pilot workflow](experiments/consistency_pilot/consistency-pilot.md) adds a
-`ConsistencyWorker` that renders repository/task inputs, calls Jig with isolated
-attempt state, and extracts structured source output. Provider factories and any
-ambiguity judges remain caller-supplied. The generic `JigWorker` accepts
-already-materialized prompt strings; it does not
-silently stringify repository JSON. A coding-agent worker for the consistency
-investigation must explicitly bind its repository/task input rendering and
-output-source extraction in its configuration. Jig resources must expose stable
-configuration, and system prompts must be static before authorization. Jig's
-unqualified default cost totals are retained in traces but marked unavailable
-for spend reporting. Authorized preparation stages and component-level PAA cost
-aggregation are not supported; they are rejected explicitly. No paid or
-production-agent experiment is included in acceptance testing. The pilot's tests
-exercise the real Jig runner with a fake provider; they do not run generated code.
-
-The [full DRY experiment](experiments/consistency_pilot/dry-experiment.md) adds a 12-subject balanced
-population, a declared counterbalanced schedule, and separate abstraction and
-finite-case correctness reports. Generated code is evaluated only inside a
-digest-pinned, resource-bounded Docker container with no network or host mounts.
-The live experiment still requires review, exact-plan approval, and an explicit
-paid-run decision.
-
-The [realistic repository pilot](experiments/consistency_pilot/realistic-pilot.md) extends the same
-governed path to deterministic 1,225-line multi-file repositories. A four-call
-GPT-OSS smoke gate checks the complete operational path before the four-subject
-Haiku qualification grid validates repository navigation and sandboxed package
-execution ahead of a new confirmatory study.
-
-## Pier integration
-
-`integrations/pier` is an isolated bridge to the third-party Pier execution
-provider. `integrations/pier/scripts/qualify_local.py` runs a fail-closed
-local qualification -- exact lock/image identity, real-container trial
-lifecycle and no-reinstall checks, effective Docker controls, a fake-HTTP
-guarded-route boundary, and artifact/accounting/cancellation round trips --
-and only publishes a `QualificationInventory` once every probe passes.
-`experiments/pier_qualification/tests/test_pier_acceptance.py` is the
-credential-free acceptance matrix CI
-runs on every change; it never sets an OpenRouter credential and never
-authorizes a paid dispatch. CI also syncs, type-checks, and tests the standalone
-[`experiments`](experiments/README.md) project against its own lock. See
-[the Pier integration guide](docs/pier-integration.md)
-for preparation through recovery -- one-subject smoke, four-task
-qualification, and full study execution are each a distinct, explicit,
-separately paid operator decision, none of them performed by CI.
