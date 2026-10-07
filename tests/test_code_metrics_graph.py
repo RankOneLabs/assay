@@ -102,6 +102,35 @@ def test_external_dependency_is_evidence_only() -> None:
     ]
 
 
+def test_unicode_module_names_are_graphed() -> None:
+    snapshot = {"pkg/__init__.py": "", "pkg/café.py": "import pkg\n"}
+    graph, coverage = build_module_graph(snapshot)
+    assert _nodes(graph) == ("pkg", "pkg.café")
+    assert _edges(graph) == (("pkg.café", "pkg"),)
+    assert coverage.files_without_module == ()
+
+
+def test_non_identifier_names_stay_outside_the_graph() -> None:
+    snapshot = {
+        "my-pkg/__init__.py": "import json\n",
+        "pkg/__init__.py": "",
+        "pkg/my-mod.py": "import pkg\n",
+    }
+    graph, coverage = build_module_graph(snapshot)
+    assert _nodes(graph) == ("pkg",)
+    assert _edges(graph) == ()
+    assert coverage.files_without_module == ("my-pkg/__init__.py", "pkg/my-mod.py")
+
+
+def test_relative_import_above_top_level_package_is_dropped() -> None:
+    snapshot = {"pkg/__init__.py": "from .. import nothing\nimport json\n"}
+    graph, _ = build_module_graph(snapshot)
+    assert _nodes(graph) == ("pkg",)
+    assert [(item.module, item.package) for item in graph.external_dependencies] == [
+        ("pkg", "json")
+    ]
+
+
 def test_namespace_module_has_no_synthetic_path(monkeypatch) -> None:
     from assay.code_metrics import graph as extractor
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tokenize
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -33,7 +34,11 @@ DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
 def snapshot_directory(
     path: str | Path, *, exclude: tuple[str, ...] = ()
 ) -> tuple[Snapshot, tuple[str, ...]]:
-    """Read Python files under *path*, pruning named directories and globs."""
+    """Read Python files under *path*, pruning named directories and globs.
+
+    Symlinks are skipped, files as well as directories, so every source read
+    lies inside *path*.
+    """
     root = Path(path)
     if not root.is_dir():
         raise ValueError(f"{root} is not a directory")
@@ -57,9 +62,19 @@ def snapshot_directory(
             if not name.endswith(".py"):
                 continue
             key = (relative / name).as_posix()
-            if not _excluded(key, name, exclude):
-                files[key] = (Path(directory) / name).read_text(encoding="utf-8")
+            source = Path(directory) / name
+            if not source.is_symlink() and not _excluded(key, name, exclude):
+                files[key] = _read_source(source, key)
     return files, resolved
+
+
+def _read_source(path: Path, key: str) -> str:
+    """Decode as the interpreter would: a coding declaration or BOM, else UTF-8."""
+    try:
+        with tokenize.open(path) as handle:
+            return handle.read()
+    except (SyntaxError, UnicodeDecodeError) as error:
+        raise ValueError(f"decode {key}: {error}") from error
 
 
 def _raise_walk_error(error: OSError) -> None:

@@ -127,6 +127,24 @@ def test_jscpd_fetch_failure_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
         analyze(PACKAGE)
 
 
+def test_jscpd_analysis_failure_is_not_reported_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tools, "_jscpd", REAL_JSCPD)
+    original_run = subprocess.run
+
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        command = args[0]
+        if isinstance(command, list) and "npx" in command:
+            returncode = 0 if "--version" in command else 1
+            return subprocess.CompletedProcess(command, returncode, "", "jscpd crashed")
+        return original_run(*args, **kwargs)  # type: ignore[call-overload,no-any-return]
+
+    monkeypatch.setattr(tools.subprocess, "run", run)
+    with pytest.raises(AnalyzerFailed, match="jscpd failed: jscpd crashed"):
+        analyze(PACKAGE)
+
+
 def test_ruff_failure_is_not_reported_as_jscpd(monkeypatch: pytest.MonkeyPatch) -> None:
     failure = subprocess.CompletedProcess(args=[], returncode=2, stdout="", stderr="ruff crashed")
     _fail_command(monkeypatch, "ruff", failure)

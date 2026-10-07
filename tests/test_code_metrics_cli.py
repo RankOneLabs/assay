@@ -23,6 +23,32 @@ def test_snapshot_prunes_default_directories_and_extends_globs(tmp_path: Path) -
     assert excluded == tuple(sorted(DEFAULT_EXCLUDED_DIRECTORIES | {"skip"}))
 
 
+def test_snapshot_decodes_sources_as_python_does(tmp_path: Path) -> None:
+    (tmp_path / "latin.py").write_bytes(b"# -*- coding: latin-1 -*-\nname = 'caf\xe9'\n")
+    (tmp_path / "bom.py").write_bytes(b"\xef\xbb\xbfvalue = 1\n")
+    files, _ = snapshot_directory(tmp_path)
+    assert files == {
+        "bom.py": "value = 1\n",
+        "latin.py": "# -*- coding: latin-1 -*-\nname = 'café'\n",
+    }
+
+
+def test_snapshot_rejects_an_unknown_coding_as_value_error(tmp_path: Path) -> None:
+    (tmp_path / "odd.py").write_bytes(b"# -*- coding: no-such-codec -*-\n")
+    with pytest.raises(ValueError, match="decode odd.py"):
+        snapshot_directory(tmp_path)
+
+
+def test_snapshot_skips_symlinked_files(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (tmp_path / "outside.py").write_text("secret = 1\n")
+    (root / "inside.py").write_text("value = 1\n")
+    (root / "leak.py").symlink_to(tmp_path / "outside.py")
+    files, _ = snapshot_directory(root)
+    assert files == {"inside.py": "value = 1\n"}
+
+
 def _run(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], *args: str) -> dict:
     monkeypatch.setattr(sys, "argv", ["assay", "code-metrics", *args])
     assert cli.main() == 0

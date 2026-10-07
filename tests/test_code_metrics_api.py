@@ -1,5 +1,6 @@
 """Public report and comparison behavior."""
 
+import ast
 import json
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from assay.code_metrics import analyze, compare, graph, measure
 from assay.code_metrics.api import CodeMetricsConfig
 from assay.code_metrics.components import ComponentConfig
 from assay.code_metrics.errors import EmptyComponentPattern
+from assay.code_metrics.models import utf8_source
 
 PACKAGE = {"src/pkg/__init__.py": "", "src/pkg/a.py": "x = 1\n"}
 
@@ -109,3 +111,71 @@ def test_uncollapsed_direct_import_count(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert report.existing_metrics.grimp_imports == 2
     assert len(report.architecture.graph.external_dependencies) == 1
+
+
+def test_unicode_and_unimportable_names_do_not_abort_analysis() -> None:
+    snapshot = {
+        "pkg/__init__.py": "from .. import nothing\n",
+        "pkg/café.py": "import pkg\n",
+        "pkg/my-mod.py": "x = 1\n",
+        "my-pkg/__init__.py": "",
+    }
+    report = analyze(snapshot)
+    assert [entry.module for entry in report.architecture.graph.modules] == ["pkg", "pkg.café"]
+    assert report.coverage.files_without_module == ("my-pkg/__init__.py", "pkg/my-mod.py")
+    assert report.existing_metrics.mypy_errors is None
+    result = compare(PACKAGE | {"pkg/__init__.py": ""}, snapshot)
+    assert "pkg.café" in result.structural_changes.modules_added
+
+
+@pytest.mark.parametrize("coding", ["latin-1", "no-such-codec"])
+def test_non_utf8_coding_declaration_does_not_abort_analysis(coding: str) -> None:
+    source = f"# -*- coding: {coding} -*-\nimport pkg\nname = 'café'\n"
+    report = analyze({"pkg/__init__.py": "", "pkg/m.py": source})
+    assert [entry.module for entry in report.architecture.graph.modules] == ["pkg", "pkg.m"]
+    assert [(edge.importer, edge.imported) for edge in report.architecture.graph.edges] == [
+        ("pkg.m", "pkg")
+    ]
+    assert report.existing_metrics.mypy_errors == 0
+    plain_source = source.replace(f"coding: {coding}", "notes")
+    plain = analyze({"pkg/__init__.py": "", "pkg/m.py": plain_source})
+    assert report.existing_metrics.ruff_violations == plain.existing_metrics.ruff_violations
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "#!/usr/bin/env python\n# coding: latin-1\r\nx = 1\n",
+            "#!/usr/bin/env python\n# Coding: latin-1\r\nx = 1\n",
+        ),
+        ("# coding: utf-8\nx = 1\n", "# coding: utf-8\nx = 1\n"),
+        # Python splits physical lines only at CR and LF, so the form feed
+        # leaves the declaration on line two.
+        ("# header\n\f# coding: latin-1\nx = 1\n", "# header\n\f# Coding: latin-1\nx = 1\n"),
+        ("# header\r# coding: latin-1\rx = 1\r", "# header\r# Coding: latin-1\rx = 1\r"),
+        # Grimp reads line two even inside a string; the string stays terminated.
+        ('DOC = """\n# coding: latin-1"""\n', 'DOC = """\n# Coding: latin-1"""\n'),
+        # U+2028 is not a physical line break, so nothing here starts a line.
+        ('x = "a\u2028# coding: latin-1"\n', 'x = "a\u2028# coding: latin-1"\n'),
+        ("# coding: latin-1 coding: cp1252\n", "# Coding: latin-1 Coding: cp1252\n"),
+    ],
+)
+def test_utf8_source_disarms_only_foreign_declarations(source: str, expected: str) -> None:
+    assert utf8_source(source) == expected
+    ast.parse(utf8_source(source))
+
+
+def test_coding_text_inside_a_string_is_analyzed() -> None:
+    source = 'DOC = """\n# coding: latin-1"""\nimport pkg\n'
+    report = analyze({"pkg/__init__.py": "", "pkg/m.py": source})
+    assert [(edge.importer, edge.imported) for edge in report.architecture.graph.edges] == [
+        ("pkg.m", "pkg")
+    ]
+
+
+def test_snapshot_of_only_unimportable_packages_is_measured() -> None:
+    report = analyze({"my-pkg/__init__.py": "x = 1\n"})
+    assert report.architecture.graph.modules == ()
+    assert report.coverage.files_without_module == ("my-pkg/__init__.py",)
+    assert report.existing_metrics.mypy_errors == 0
