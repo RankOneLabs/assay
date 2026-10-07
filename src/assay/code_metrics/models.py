@@ -268,3 +268,35 @@ class CodeMetricsComparisonV2(WireModel):
     deltas: tuple[MetricDelta, ...]
     new_code: NewCodeMetrics
     structural_changes: StructuralChanges
+
+
+class DetailedStructuralChanges(WireModel):
+    """Explicit structural additions and removals, including components and cycles."""
+
+    modules_added: tuple[ModuleName, ...]
+    modules_removed: tuple[ModuleName, ...]
+    edges_added: tuple[ImportEdge, ...]
+    edges_removed: tuple[ImportEdge, ...]
+    components_added: tuple[ComponentName, ...]
+    components_removed: tuple[ComponentName, ...]
+    cycles_created: tuple[tuple[ModuleName, ...], ...]
+    cycles_resolved: tuple[tuple[ModuleName, ...], ...]
+
+
+class DetailedMetricDelta(MetricDelta):
+    """A metric delta with an explicit shared-file count for legacy MI."""
+
+    shared_file_count: int | None = None
+
+
+class DetailedCodeMetricsComparison(WireModel):
+    """Comparison with complete structural evidence."""
+
+    schema_version: Literal["assay-code-metrics-comparison/0.2.0"] = (
+        "assay-code-metrics-comparison/0.2.0"
+    )
+    before: CodeMetricsReportV2
+    after: CodeMetricsReportV2
+    deltas: tuple[DetailedMetricDelta, ...]
+    new_code: NewCodeMetrics
+    structural_changes: DetailedStructuralChanges
