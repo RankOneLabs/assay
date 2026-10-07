@@ -2,8 +2,8 @@
 
 from .api import CodeMetricsConfig, analyze, compare, measure
 from .models import DELTAS, METRICS, NEW_CODE, Snapshot
-from .models import CodeMetricsReportV2 as CodeMetricsReport
-from .models import DetailedCodeMetricsComparison as CodeMetricsComparison
+from .models import CodeMetricsComparisonV4 as CodeMetricsComparison
+from .models import CodeMetricsReportV3 as CodeMetricsReport
 from .pins import tool_versions
 
 __all__ = [

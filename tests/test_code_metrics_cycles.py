@@ -30,6 +30,10 @@ def _assert_side(snapshot: Mapping[str, str], cyclic: bool) -> None:
     assert tuple(item.modules for item in report.components if item.is_cyclic) == (
         (("pkg.a", "pkg.b", "pkg.c"),) if cyclic else ()
     )
+    assert report.scc_count == (2 if cyclic else 4)
+    assert report.cyclic_scc_count == int(cyclic)
+    assert report.cyclic_module_count == (3 if cyclic else 0)
+    assert report.largest_cyclic_scc_size == (3 if cyclic else 0)
 
 
 def test_fixture_c_creates_cycle() -> None:

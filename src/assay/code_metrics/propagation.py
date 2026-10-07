@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .models import ModuleGraph, ModuleVisibility, PropagationReport
+from .models import ModuleGraph, ModuleVisibilityV3, PropagationReportV3
 
 
-def analyze_propagation(graph: ModuleGraph) -> PropagationReport:
+def analyze_propagation(graph: ModuleGraph) -> PropagationReportV3:
     """Count each node's reachable set, then discard that set before the next node."""
     nodes = tuple(sorted(entry.module for entry in graph.modules))
     if not nodes:
-        return PropagationReport(module_visibility=(), propagation_cost=None)
+        return PropagationReportV3(module_visibility=(), propagation_cost=None)
     adjacency: dict[str, list[str]] = defaultdict(list)
     for edge in graph.edges:
         adjacency[edge.importer].append(edge.imported)
@@ -30,9 +30,16 @@ def analyze_propagation(graph: ModuleGraph) -> PropagationReport:
         reaches[module] = len(visible)
         for target in visible:
             reached_by[target] += 1
-    return PropagationReport(
+    # Visibility counts include the module itself, as propagation cost does.
+    return PropagationReportV3(
         module_visibility=tuple(
-            ModuleVisibility(module=module, reaches=reaches[module], reached_by=reached_by[module])
+            ModuleVisibilityV3(
+                module=module,
+                reaches=reaches[module],
+                reached_by=reached_by[module],
+                fan_out_visibility=reaches[module] / len(nodes),
+                fan_in_visibility=reached_by[module] / len(nodes),
+            )
             for module in nodes
         ),
         propagation_cost=sum(reaches.values()) / (len(nodes) ** 2),

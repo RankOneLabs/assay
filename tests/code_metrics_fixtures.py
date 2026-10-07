@@ -64,3 +64,8 @@ FIXTURE_I = package_snapshot("pkg", {"a": ()})
 FIXTURE_J = package_snapshot("pkg", {"a": ("b",), "b": ()})
 # Exact four-leaf coupling and cohesion fixture; pkg itself is unassigned.
 FIXTURE_COUPLING = package_snapshot("pkg", {"a": ("b",), "b": ("c",), "c": (), "d": ("a",)})
+# Fixture K adds pkg.b -> pkg.d to the coupling fixture under the same
+# alpha={a,b} / beta={c,d} split: alpha's Ce gains pkg.d, beta's incoming
+# edges rise while its Ca stays {pkg.b}, and {a,b,d} closes into a cycle.
+FIXTURE_K_BEFORE = FIXTURE_COUPLING
+FIXTURE_K_AFTER = package_snapshot("pkg", {"a": ("b",), "b": ("c", "d"), "c": (), "d": ("a",)})

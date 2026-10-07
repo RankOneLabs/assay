@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 
-from .models import CycleReport, ModuleGraph, StronglyConnectedComponent
+from .models import CycleReportV3, ModuleGraph, StronglyConnectedComponent
 
 
 def strongly_connected_components(
@@ -61,8 +61,8 @@ def strongly_connected_components(
     return tuple(sorted(found, key=lambda item: item.modules))
 
 
-def analyze_cycles(graph: ModuleGraph) -> CycleReport:
-    """Report every SCC and the modules belonging to cyclic SCCs."""
+def analyze_cycles(graph: ModuleGraph) -> CycleReportV3:
+    """Report every SCC, the modules belonging to cyclic SCCs, and their counts."""
     adjacency: dict[str, list[str]] = defaultdict(list)
     for entry in graph.modules:
         adjacency[entry.module]
@@ -70,10 +70,16 @@ def analyze_cycles(graph: ModuleGraph) -> CycleReport:
         adjacency[edge.importer].append(edge.imported)
     components = strongly_connected_components(adjacency)
     cyclic = tuple(component for component in components if component.is_cyclic)
-    return CycleReport(
+    # SCCs partition the modules, so no module repeats across cyclic SCCs.
+    modules_in_cycles = tuple(
+        sorted(module for component in cyclic for module in component.modules)
+    )
+    return CycleReportV3(
         components=components,
         cyclic_component_count=len(cyclic),
-        modules_in_cycles=tuple(
-            sorted(module for component in cyclic for module in component.modules)
-        ),
+        modules_in_cycles=modules_in_cycles,
+        scc_count=len(components),
+        cyclic_scc_count=len(cyclic),
+        cyclic_module_count=len(modules_in_cycles),
+        largest_cyclic_scc_size=max((len(component.modules) for component in cyclic), default=0),
     )

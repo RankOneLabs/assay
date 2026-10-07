@@ -1,0 +1,1316 @@
+{
+  "$defs": {
+    "ArchitectureDeltas": {
+      "additionalProperties": false,
+      "description": "Before, after, and difference for architecture scalars, without interpretation.\n\nComponents and modules appear only when both sides have them; a boundary\npair appears when either side has it, its edge count zero on the other.",
+      "properties": {
+        "system": {
+          "$ref": "#/$defs/SystemArchitectureDeltas"
+        },
+        "components": {
+          "items": {
+            "$ref": "#/$defs/ComponentDelta"
+          },
+          "title": "Components",
+          "type": "array"
+        },
+        "modules": {
+          "items": {
+            "$ref": "#/$defs/ModuleCouplingDelta"
+          },
+          "title": "Modules",
+          "type": "array"
+        },
+        "boundaries": {
+          "items": {
+            "$ref": "#/$defs/BoundaryPairDelta"
+          },
+          "title": "Boundaries",
+          "type": "array"
+        }
+      },
+      "required": [
+        "system",
+        "components",
+        "modules",
+        "boundaries"
+      ],
+      "title": "ArchitectureDeltas",
+      "type": "object"
+    },
+    "ArchitectureReportV3": {
+      "additionalProperties": false,
+      "description": "The 0.3.0 architecture shape with graph-level counts.\n\n``first_party_edge_count`` counts every first-party module-to-module edge;\n``cross_component_edge_count`` counts those whose two ends have different\nowning components (``unassigned`` included as an owner).",
+      "properties": {
+        "graph": {
+          "$ref": "#/$defs/ModuleGraph"
+        },
+        "module_count": {
+          "title": "Module Count",
+          "type": "integer"
+        },
+        "first_party_edge_count": {
+          "title": "First Party Edge Count",
+          "type": "integer"
+        },
+        "cross_component_edge_count": {
+          "title": "Cross Component Edge Count",
+          "type": "integer"
+        },
+        "module_coupling": {
+          "items": {
+            "$ref": "#/$defs/ModuleCouplingV3"
+          },
+          "title": "Module Coupling",
+          "type": "array"
+        },
+        "component_coupling": {
+          "items": {
+            "$ref": "#/$defs/ComponentCouplingV3"
+          },
+          "title": "Component Coupling",
+          "type": "array"
+        },
+        "module_components": {
+          "items": {
+            "$ref": "#/$defs/ModuleComponent"
+          },
+          "title": "Module Components",
+          "type": "array"
+        },
+        "boundaries": {
+          "items": {
+            "$ref": "#/$defs/BoundaryPair"
+          },
+          "title": "Boundaries",
+          "type": "array"
+        },
+        "cycles": {
+          "$ref": "#/$defs/CycleReportV3"
+        },
+        "propagation": {
+          "$ref": "#/$defs/PropagationReportV3"
+        }
+      },
+      "required": [
+        "graph",
+        "module_count",
+        "first_party_edge_count",
+        "cross_component_edge_count",
+        "module_coupling",
+        "component_coupling",
+        "module_components",
+        "boundaries",
+        "cycles",
+        "propagation"
+      ],
+      "title": "ArchitectureReportV3",
+      "type": "object"
+    },
+    "BoundaryPair": {
+      "additionalProperties": false,
+      "properties": {
+        "importer_component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Importer Component",
+          "type": "string"
+        },
+        "imported_component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Imported Component",
+          "type": "string"
+        },
+        "edge_count": {
+          "title": "Edge Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "importer_component",
+        "imported_component",
+        "edge_count"
+      ],
+      "title": "BoundaryPair",
+      "type": "object"
+    },
+    "BoundaryPairDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "importer_component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Importer Component",
+          "type": "string"
+        },
+        "imported_component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Imported Component",
+          "type": "string"
+        },
+        "before": {
+          "title": "Before",
+          "type": "integer"
+        },
+        "after": {
+          "title": "After",
+          "type": "integer"
+        },
+        "delta": {
+          "title": "Delta",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "importer_component",
+        "imported_component",
+        "before",
+        "after",
+        "delta"
+      ],
+      "title": "BoundaryPairDelta",
+      "type": "object"
+    },
+    "CodeMetricsReportV3": {
+      "additionalProperties": false,
+      "description": "Absolute snapshot report with derived cycle, visibility, and edge scalars.",
+      "properties": {
+        "schema_version": {
+          "const": "assay-code-metrics-report/0.3.0",
+          "default": "assay-code-metrics-report/0.3.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "existing_metrics": {
+          "$ref": "#/$defs/ExistingMetrics"
+        },
+        "architecture": {
+          "$ref": "#/$defs/ArchitectureReportV3"
+        },
+        "coverage": {
+          "$ref": "#/$defs/SnapshotCoverage"
+        },
+        "configuration": {
+          "$ref": "#/$defs/ResolvedConfiguration"
+        },
+        "versions": {
+          "$ref": "#/$defs/ToolVersions"
+        }
+      },
+      "required": [
+        "existing_metrics",
+        "architecture",
+        "coverage",
+        "configuration",
+        "versions"
+      ],
+      "title": "CodeMetricsReportV3",
+      "type": "object"
+    },
+    "ComponentCouplingV3": {
+      "additionalProperties": false,
+      "description": "Coupling and cohesion of one component, with the coupling semantics stated.",
+      "properties": {
+        "component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Component",
+          "type": "string"
+        },
+        "modules": {
+          "items": {
+            "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+            "type": "string"
+          },
+          "title": "Modules",
+          "type": "array"
+        },
+        "afferent": {
+          "description": "Ca: distinct modules outside the component that directly import one in it.",
+          "title": "Afferent",
+          "type": "integer"
+        },
+        "efferent": {
+          "description": "Ce: distinct modules outside the component that a module in it directly imports (the imported modules, not the importing members).",
+          "title": "Efferent",
+          "type": "integer"
+        },
+        "instability": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Ce / (Ca + Ce); null when Ca + Ce is 0.",
+          "title": "Instability"
+        },
+        "internal_edges": {
+          "title": "Internal Edges",
+          "type": "integer"
+        },
+        "incoming_edges": {
+          "title": "Incoming Edges",
+          "type": "integer"
+        },
+        "outgoing_edges": {
+          "title": "Outgoing Edges",
+          "type": "integer"
+        },
+        "module_count": {
+          "title": "Module Count",
+          "type": "integer"
+        },
+        "relational_cohesion": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Relational Cohesion"
+        },
+        "internal_dependency_density": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Internal Dependency Density"
+        },
+        "internal_edge_share": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Internal Edge Share"
+        }
+      },
+      "required": [
+        "component",
+        "modules",
+        "afferent",
+        "efferent",
+        "instability",
+        "internal_edges",
+        "incoming_edges",
+        "outgoing_edges",
+        "module_count",
+        "relational_cohesion",
+        "internal_dependency_density",
+        "internal_edge_share"
+      ],
+      "title": "ComponentCouplingV3",
+      "type": "object"
+    },
+    "ComponentDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Component",
+          "type": "string"
+        },
+        "metrics": {
+          "$ref": "#/$defs/ComponentMetricDeltas"
+        }
+      },
+      "required": [
+        "component",
+        "metrics"
+      ],
+      "title": "ComponentDelta",
+      "type": "object"
+    },
+    "ComponentMetricDeltas": {
+      "additionalProperties": false,
+      "properties": {
+        "afferent": {
+          "$ref": "#/$defs/CountDelta"
+        },
+        "efferent": {
+          "$ref": "#/$defs/CountDelta"
+        },
+        "instability": {
+          "$ref": "#/$defs/RatioDelta"
+        },
+        "internal_edges": {
+          "$ref": "#/$defs/CountDelta"
+        },
+        "incoming_edges": {
+          "$ref": "#/$defs/CountDelta"
+        },
+        "outgoing_edges": {
+          "$ref": "#/$defs/CountDelta"
+        },
+        "relational_cohesion": {
+          "$ref": "#/$defs/RatioDelta"
+        },
+        "internal_dependency_density": {
+          "$ref": "#/$defs/RatioDelta"
+        },
+        "internal_edge_share": {
+          "$ref": "#/$defs/RatioDelta"
+        }
+      },
+      "required": [
+        "afferent",
+        "efferent",
+        "instability",
+        "internal_edges",
+        "incoming_edges",
+        "outgoing_edges",
+        "relational_cohesion",
+        "internal_dependency_density",
+        "internal_edge_share"
+      ],
+      "title": "ComponentMetricDeltas",
+      "type": "object"
+    },
+    "CountDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "before": {
+          "title": "Before",
+          "type": "integer"
+        },
+        "after": {
+          "title": "After",
+          "type": "integer"
+        },
+        "delta": {
+          "title": "Delta",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "before",
+        "after",
+        "delta"
+      ],
+      "title": "CountDelta",
+      "type": "object"
+    },
+    "CrossComponentEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "importer": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Importer",
+          "type": "string"
+        },
+        "imported": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Imported",
+          "type": "string"
+        },
+        "importer_component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Importer Component",
+          "type": "string"
+        },
+        "imported_component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Imported Component",
+          "type": "string"
+        }
+      },
+      "required": [
+        "importer",
+        "imported",
+        "importer_component",
+        "imported_component"
+      ],
+      "title": "CrossComponentEdge",
+      "type": "object"
+    },
+    "CycleReportV3": {
+      "additionalProperties": false,
+      "description": "The 0.3.0 cycle shape: full SCC evidence plus scalars derived from it.",
+      "properties": {
+        "components": {
+          "items": {
+            "$ref": "#/$defs/StronglyConnectedComponent"
+          },
+          "title": "Components",
+          "type": "array"
+        },
+        "cyclic_component_count": {
+          "title": "Cyclic Component Count",
+          "type": "integer"
+        },
+        "modules_in_cycles": {
+          "items": {
+            "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+            "type": "string"
+          },
+          "title": "Modules In Cycles",
+          "type": "array"
+        },
+        "scc_count": {
+          "title": "Scc Count",
+          "type": "integer"
+        },
+        "cyclic_scc_count": {
+          "title": "Cyclic Scc Count",
+          "type": "integer"
+        },
+        "cyclic_module_count": {
+          "title": "Cyclic Module Count",
+          "type": "integer"
+        },
+        "largest_cyclic_scc_size": {
+          "title": "Largest Cyclic Scc Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "components",
+        "cyclic_component_count",
+        "modules_in_cycles",
+        "scc_count",
+        "cyclic_scc_count",
+        "cyclic_module_count",
+        "largest_cyclic_scc_size"
+      ],
+      "title": "CycleReportV3",
+      "type": "object"
+    },
+    "DetailedMetricDelta": {
+      "additionalProperties": false,
+      "description": "A metric delta with an explicit shared-file count for legacy MI.",
+      "properties": {
+        "metric": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Metric",
+          "type": "string"
+        },
+        "before": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Before"
+        },
+        "after": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "After"
+        },
+        "delta": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Delta"
+        },
+        "provenance": {
+          "enum": [
+            "absolute_difference",
+            "shared_file_mean"
+          ],
+          "title": "Provenance",
+          "type": "string"
+        },
+        "shared_files": {
+          "default": [],
+          "items": {
+            "pattern": "^[^/\\\\][^\\\\]*$",
+            "type": "string"
+          },
+          "title": "Shared Files",
+          "type": "array"
+        },
+        "shared_file_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shared File Count"
+        }
+      },
+      "required": [
+        "metric",
+        "before",
+        "after",
+        "delta",
+        "provenance"
+      ],
+      "title": "DetailedMetricDelta",
+      "type": "object"
+    },
+    "ExistingMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "radon_sloc": {
+          "title": "Radon Sloc",
+          "type": "integer"
+        },
+        "radon_lloc": {
+          "title": "Radon Lloc",
+          "type": "integer"
+        },
+        "radon_cc": {
+          "title": "Radon Cc",
+          "type": "integer"
+        },
+        "radon_halstead_volume": {
+          "title": "Radon Halstead Volume",
+          "type": "number"
+        },
+        "complexipy_cognitive": {
+          "title": "Complexipy Cognitive",
+          "type": "integer"
+        },
+        "grimp_imports": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Grimp Imports"
+        },
+        "ruff_violations": {
+          "title": "Ruff Violations",
+          "type": "integer"
+        },
+        "ruff_magic_values": {
+          "title": "Ruff Magic Values",
+          "type": "integer"
+        },
+        "mypy_errors": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mypy Errors"
+        },
+        "jscpd_clones": {
+          "title": "Jscpd Clones",
+          "type": "integer"
+        },
+        "jscpd_duplicated_lines": {
+          "title": "Jscpd Duplicated Lines",
+          "type": "integer"
+        },
+        "maintainability_index": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[^/\\\\][^\\\\]*$": {
+              "type": "number"
+            }
+          },
+          "title": "Maintainability Index",
+          "type": "object"
+        },
+        "maintainability_index_mean": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Maintainability Index Mean"
+        }
+      },
+      "required": [
+        "radon_sloc",
+        "radon_lloc",
+        "radon_cc",
+        "radon_halstead_volume",
+        "complexipy_cognitive",
+        "grimp_imports",
+        "ruff_violations",
+        "ruff_magic_values",
+        "mypy_errors",
+        "jscpd_clones",
+        "jscpd_duplicated_lines",
+        "maintainability_index",
+        "maintainability_index_mean"
+      ],
+      "title": "ExistingMetrics",
+      "type": "object"
+    },
+    "ExternalDependency": {
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Module",
+          "type": "string"
+        },
+        "package": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Package",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "package"
+      ],
+      "title": "ExternalDependency",
+      "type": "object"
+    },
+    "ImportEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "importer": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Importer",
+          "type": "string"
+        },
+        "imported": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Imported",
+          "type": "string"
+        }
+      },
+      "required": [
+        "importer",
+        "imported"
+      ],
+      "title": "ImportEdge",
+      "type": "object"
+    },
+    "ModuleComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Module",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "pattern": "^[^/\\\\][^\\\\]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Component",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "path",
+        "component"
+      ],
+      "title": "ModuleComponent",
+      "type": "object"
+    },
+    "ModuleCouplingDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Module",
+          "type": "string"
+        },
+        "fan_in": {
+          "$ref": "#/$defs/CountDelta"
+        },
+        "fan_out": {
+          "$ref": "#/$defs/CountDelta"
+        }
+      },
+      "required": [
+        "module",
+        "fan_in",
+        "fan_out"
+      ],
+      "title": "ModuleCouplingDelta",
+      "type": "object"
+    },
+    "ModuleCouplingV3": {
+      "additionalProperties": false,
+      "description": "Direct first-party import counts of one module.",
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Module",
+          "type": "string"
+        },
+        "fan_in": {
+          "description": "Distinct first-party modules that directly import this one.",
+          "title": "Fan In",
+          "type": "integer"
+        },
+        "fan_out": {
+          "description": "Distinct first-party modules this one directly imports.",
+          "title": "Fan Out",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "module",
+        "fan_in",
+        "fan_out"
+      ],
+      "title": "ModuleCouplingV3",
+      "type": "object"
+    },
+    "ModuleEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Module",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "pattern": "^[^/\\\\][^\\\\]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        }
+      },
+      "required": [
+        "module",
+        "path"
+      ],
+      "title": "ModuleEntry",
+      "type": "object"
+    },
+    "ModuleGraph": {
+      "additionalProperties": false,
+      "properties": {
+        "modules": {
+          "items": {
+            "$ref": "#/$defs/ModuleEntry"
+          },
+          "title": "Modules",
+          "type": "array"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/ImportEdge"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "external_dependencies": {
+          "items": {
+            "$ref": "#/$defs/ExternalDependency"
+          },
+          "title": "External Dependencies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "modules",
+        "edges",
+        "external_dependencies"
+      ],
+      "title": "ModuleGraph",
+      "type": "object"
+    },
+    "ModuleVisibilityV3": {
+      "additionalProperties": false,
+      "description": "Raw reach counts and the same counts over the module total, self included.",
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+          "title": "Module",
+          "type": "string"
+        },
+        "reaches": {
+          "title": "Reaches",
+          "type": "integer"
+        },
+        "reached_by": {
+          "title": "Reached By",
+          "type": "integer"
+        },
+        "fan_out_visibility": {
+          "title": "Fan Out Visibility",
+          "type": "number"
+        },
+        "fan_in_visibility": {
+          "title": "Fan In Visibility",
+          "type": "number"
+        }
+      },
+      "required": [
+        "module",
+        "reaches",
+        "reached_by",
+        "fan_out_visibility",
+        "fan_in_visibility"
+      ],
+      "title": "ModuleVisibilityV3",
+      "type": "object"
+    },
+    "NewCodeMetrics": {
+      "additionalProperties": false,
+      "description": "Metrics of added lines; only a comparison can define these values.",
+      "properties": {
+        "new_lines": {
+          "title": "New Lines",
+          "type": "integer"
+        },
+        "new_duplicated_lines": {
+          "title": "New Duplicated Lines",
+          "type": "integer"
+        },
+        "new_max_nesting_depth": {
+          "title": "New Max Nesting Depth",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "new_lines",
+        "new_duplicated_lines",
+        "new_max_nesting_depth"
+      ],
+      "title": "NewCodeMetrics",
+      "type": "object"
+    },
+    "PropagationReportV3": {
+      "additionalProperties": false,
+      "properties": {
+        "module_visibility": {
+          "items": {
+            "$ref": "#/$defs/ModuleVisibilityV3"
+          },
+          "title": "Module Visibility",
+          "type": "array"
+        },
+        "propagation_cost": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Propagation Cost"
+        }
+      },
+      "required": [
+        "module_visibility",
+        "propagation_cost"
+      ],
+      "title": "PropagationReportV3",
+      "type": "object"
+    },
+    "RatioDelta": {
+      "additionalProperties": false,
+      "description": "A ratio on both sides; ``delta`` is null when either side is undefined.",
+      "properties": {
+        "before": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Before"
+        },
+        "after": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "After"
+        },
+        "delta": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Delta"
+        }
+      },
+      "required": [
+        "before",
+        "after",
+        "delta"
+      ],
+      "title": "RatioDelta",
+      "type": "object"
+    },
+    "ResolvedConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "clone_min_lines": {
+          "title": "Clone Min Lines",
+          "type": "integer"
+        },
+        "clone_min_tokens": {
+          "title": "Clone Min Tokens",
+          "type": "integer"
+        },
+        "ruff_ignore": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          "title": "Ruff Ignore",
+          "type": "array"
+        },
+        "components": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_.-]*$": {
+              "items": {
+                "pattern": "^[^/\\\\][^\\\\]*$",
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "title": "Components",
+          "type": "object"
+        },
+        "excluded_directories": {
+          "items": {
+            "pattern": "^[^/\\\\][^\\\\]*$",
+            "type": "string"
+          },
+          "title": "Excluded Directories",
+          "type": "array"
+        }
+      },
+      "required": [
+        "clone_min_lines",
+        "clone_min_tokens",
+        "ruff_ignore",
+        "components",
+        "excluded_directories"
+      ],
+      "title": "ResolvedConfiguration",
+      "type": "object"
+    },
+    "SnapshotCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "python_files_seen": {
+          "title": "Python Files Seen",
+          "type": "integer"
+        },
+        "python_files_analyzed": {
+          "title": "Python Files Analyzed",
+          "type": "integer"
+        },
+        "modules_discovered": {
+          "title": "Modules Discovered",
+          "type": "integer"
+        },
+        "files_without_module": {
+          "items": {
+            "pattern": "^[^/\\\\][^\\\\]*$",
+            "type": "string"
+          },
+          "title": "Files Without Module",
+          "type": "array"
+        }
+      },
+      "required": [
+        "python_files_seen",
+        "python_files_analyzed",
+        "modules_discovered",
+        "files_without_module"
+      ],
+      "title": "SnapshotCoverage",
+      "type": "object"
+    },
+    "StronglyConnectedComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "modules": {
+          "items": {
+            "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+            "type": "string"
+          },
+          "title": "Modules",
+          "type": "array"
+        },
+        "is_cyclic": {
+          "title": "Is Cyclic",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "modules",
+        "is_cyclic"
+      ],
+      "title": "StronglyConnectedComponent",
+      "type": "object"
+    },
+    "StructuralChangesV4": {
+      "additionalProperties": false,
+      "description": "Structural changes with the cross-component edges each side lacks.",
+      "properties": {
+        "modules_added": {
+          "items": {
+            "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+            "type": "string"
+          },
+          "title": "Modules Added",
+          "type": "array"
+        },
+        "modules_removed": {
+          "items": {
+            "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+            "type": "string"
+          },
+          "title": "Modules Removed",
+          "type": "array"
+        },
+        "edges_added": {
+          "items": {
+            "$ref": "#/$defs/ImportEdge"
+          },
+          "title": "Edges Added",
+          "type": "array"
+        },
+        "edges_removed": {
+          "items": {
+            "$ref": "#/$defs/ImportEdge"
+          },
+          "title": "Edges Removed",
+          "type": "array"
+        },
+        "components_added": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          "title": "Components Added",
+          "type": "array"
+        },
+        "components_removed": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          "title": "Components Removed",
+          "type": "array"
+        },
+        "cycles_created": {
+          "items": {
+            "items": {
+              "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Cycles Created",
+          "type": "array"
+        },
+        "cycles_resolved": {
+          "items": {
+            "items": {
+              "pattern": "^[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*(\\.[^\\x00-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F][^\\x00-\\x2F\\x3A-\\x40\\x5B-\\x5E\\x60\\x7B-\\x7F]*)*$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Cycles Resolved",
+          "type": "array"
+        },
+        "cross_component_edges_added": {
+          "items": {
+            "$ref": "#/$defs/CrossComponentEdge"
+          },
+          "title": "Cross Component Edges Added",
+          "type": "array"
+        },
+        "cross_component_edges_removed": {
+          "items": {
+            "$ref": "#/$defs/CrossComponentEdge"
+          },
+          "title": "Cross Component Edges Removed",
+          "type": "array"
+        }
+      },
+      "required": [
+        "modules_added",
+        "modules_removed",
+        "edges_added",
+        "edges_removed",
+        "components_added",
+        "components_removed",
+        "cycles_created",
+        "cycles_resolved",
+        "cross_component_edges_added",
+        "cross_component_edges_removed"
+      ],
+      "title": "StructuralChangesV4",
+      "type": "object"
+    },
+    "SystemArchitectureDeltas": {
+      "additionalProperties": false,
+      "properties": {
+        "propagation_cost": {
+          "$ref": "#/$defs/RatioDelta"
+        },
+        "first_party_edge_count": {
+          "$ref": "#/$defs/CountDelta"
+        },
+        "cross_component_edge_count": {
+          "$ref": "#/$defs/CountDelta"
+        },
+        "cyclic_scc_count": {
+          "$ref": "#/$defs/CountDelta"
+        },
+        "cyclic_module_count": {
+          "$ref": "#/$defs/CountDelta"
+        },
+        "largest_cyclic_scc_size": {
+          "$ref": "#/$defs/CountDelta"
+        }
+      },
+      "required": [
+        "propagation_cost",
+        "first_party_edge_count",
+        "cross_component_edge_count",
+        "cyclic_scc_count",
+        "cyclic_module_count",
+        "largest_cyclic_scc_size"
+      ],
+      "title": "SystemArchitectureDeltas",
+      "type": "object"
+    },
+    "ToolVersions": {
+      "additionalProperties": false,
+      "properties": {
+        "assay": {
+          "minLength": 1,
+          "title": "Assay",
+          "type": "string"
+        },
+        "python": {
+          "minLength": 1,
+          "title": "Python",
+          "type": "string"
+        },
+        "tools": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_.-]*$": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "title": "Tools",
+          "type": "object"
+        }
+      },
+      "required": [
+        "assay",
+        "python",
+        "tools"
+      ],
+      "title": "ToolVersions",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Published 0.4.0 comparison with explicit architecture deltas.",
+  "properties": {
+    "schema_version": {
+      "const": "assay-code-metrics-comparison/0.4.0",
+      "default": "assay-code-metrics-comparison/0.4.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "before": {
+      "$ref": "#/$defs/CodeMetricsReportV3"
+    },
+    "after": {
+      "$ref": "#/$defs/CodeMetricsReportV3"
+    },
+    "deltas": {
+      "items": {
+        "$ref": "#/$defs/DetailedMetricDelta"
+      },
+      "title": "Deltas",
+      "type": "array"
+    },
+    "architecture_deltas": {
+      "$ref": "#/$defs/ArchitectureDeltas"
+    },
+    "new_code": {
+      "$ref": "#/$defs/NewCodeMetrics"
+    },
+    "structural_changes": {
+      "$ref": "#/$defs/StructuralChangesV4"
+    }
+  },
+  "required": [
+    "before",
+    "after",
+    "deltas",
+    "architecture_deltas",
+    "new_code",
+    "structural_changes",
+    "schema_version"
+  ],
+  "title": "CodeMetricsComparisonV4",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-code-metrics-comparison-v0.4.schema.json"
+}

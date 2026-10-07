@@ -140,6 +140,28 @@ class ComponentCoupling(WireModel):
     internal_edge_share: float | None
 
 
+class ModuleCouplingV3(ModuleCoupling):
+    """Direct first-party import counts of one module."""
+
+    fan_in: int = Field(description="Distinct first-party modules that directly import this one.")
+    fan_out: int = Field(description="Distinct first-party modules this one directly imports.")
+
+
+class ComponentCouplingV3(ComponentCoupling):
+    """Coupling and cohesion of one component, with the coupling semantics stated."""
+
+    afferent: int = Field(
+        description="Ca: distinct modules outside the component that directly import one in it."
+    )
+    efferent: int = Field(
+        description=(
+            "Ce: distinct modules outside the component that a module in it directly imports"
+            " (the imported modules, not the importing members)."
+        )
+    )
+    instability: float | None = Field(description="Ce / (Ca + Ce); null when Ca + Ce is 0.")
+
+
 class BoundaryPair(WireModel):
     importer_component: ComponentName
     imported_component: ComponentName
@@ -153,8 +175,8 @@ class ModuleComponent(WireModel):
 
 
 class ComponentMetricsReport(WireModel):
-    module_coupling: tuple[ModuleCoupling, ...]
-    component_coupling: tuple[ComponentCoupling, ...]
+    module_coupling: tuple[ModuleCouplingV3, ...]
+    component_coupling: tuple[ComponentCouplingV3, ...]
     module_components: tuple[ModuleComponent, ...]
     boundaries: tuple[BoundaryPair, ...]
 
@@ -356,3 +378,150 @@ class DetailedCodeMetricsComparison(WireModel):
     deltas: tuple[DetailedMetricDelta, ...]
     new_code: NewCodeMetrics
     structural_changes: DetailedStructuralChanges
+
+
+class CycleReportV3(CycleReport):
+    """The 0.3.0 cycle shape: full SCC evidence plus scalars derived from it."""
+
+    scc_count: int
+    cyclic_scc_count: int
+    cyclic_module_count: int
+    largest_cyclic_scc_size: int
+
+
+class ModuleVisibilityV3(ModuleVisibility):
+    """Raw reach counts and the same counts over the module total, self included."""
+
+    fan_out_visibility: float
+    fan_in_visibility: float
+
+
+class PropagationReportV3(WireModel):
+    module_visibility: tuple[ModuleVisibilityV3, ...]
+    propagation_cost: float | None
+
+
+class ArchitectureReportV3(WireModel):
+    """The 0.3.0 architecture shape with graph-level counts.
+
+    ``first_party_edge_count`` counts every first-party module-to-module edge;
+    ``cross_component_edge_count`` counts those whose two ends have different
+    owning components (``unassigned`` included as an owner).
+    """
+
+    graph: ModuleGraph
+    module_count: int
+    first_party_edge_count: int
+    cross_component_edge_count: int
+    module_coupling: tuple[ModuleCouplingV3, ...]
+    component_coupling: tuple[ComponentCouplingV3, ...]
+    module_components: tuple[ModuleComponent, ...]
+    boundaries: tuple[BoundaryPair, ...]
+    cycles: CycleReportV3
+    propagation: PropagationReportV3
+
+
+class CodeMetricsReportV3(WireModel):
+    """Absolute snapshot report with derived cycle, visibility, and edge scalars."""
+
+    schema_version: Literal["assay-code-metrics-report/0.3.0"] = "assay-code-metrics-report/0.3.0"
+    existing_metrics: ExistingMetrics
+    architecture: ArchitectureReportV3
+    coverage: SnapshotCoverage
+    configuration: ResolvedConfiguration
+    versions: ToolVersions
+
+
+class CountDelta(WireModel):
+    before: int
+    after: int
+    delta: int
+
+
+class RatioDelta(WireModel):
+    """A ratio on both sides; ``delta`` is null when either side is undefined."""
+
+    before: float | None
+    after: float | None
+    delta: float | None
+
+
+class SystemArchitectureDeltas(WireModel):
+    propagation_cost: RatioDelta
+    first_party_edge_count: CountDelta
+    cross_component_edge_count: CountDelta
+    cyclic_scc_count: CountDelta
+    cyclic_module_count: CountDelta
+    largest_cyclic_scc_size: CountDelta
+
+
+class ComponentMetricDeltas(WireModel):
+    afferent: CountDelta
+    efferent: CountDelta
+    instability: RatioDelta
+    internal_edges: CountDelta
+    incoming_edges: CountDelta
+    outgoing_edges: CountDelta
+    relational_cohesion: RatioDelta
+    internal_dependency_density: RatioDelta
+    internal_edge_share: RatioDelta
+
+
+class ComponentDelta(WireModel):
+    component: ComponentName
+    metrics: ComponentMetricDeltas
+
+
+class ModuleCouplingDelta(WireModel):
+    module: ModuleName
+    fan_in: CountDelta
+    fan_out: CountDelta
+
+
+class BoundaryPairDelta(WireModel):
+    importer_component: ComponentName
+    imported_component: ComponentName
+    before: int
+    after: int
+    delta: int
+
+
+class ArchitectureDeltas(WireModel):
+    """Before, after, and difference for architecture scalars, without interpretation.
+
+    Components and modules appear only when both sides have them; a boundary
+    pair appears when either side has it, its edge count zero on the other.
+    """
+
+    system: SystemArchitectureDeltas
+    components: tuple[ComponentDelta, ...]
+    modules: tuple[ModuleCouplingDelta, ...]
+    boundaries: tuple[BoundaryPairDelta, ...]
+
+
+class CrossComponentEdge(WireModel):
+    importer: ModuleName
+    imported: ModuleName
+    importer_component: ComponentName
+    imported_component: ComponentName
+
+
+class StructuralChangesV4(DetailedStructuralChanges):
+    """Structural changes with the cross-component edges each side lacks."""
+
+    cross_component_edges_added: tuple[CrossComponentEdge, ...]
+    cross_component_edges_removed: tuple[CrossComponentEdge, ...]
+
+
+class CodeMetricsComparisonV4(WireModel):
+    """Published 0.4.0 comparison with explicit architecture deltas."""
+
+    schema_version: Literal["assay-code-metrics-comparison/0.4.0"] = (
+        "assay-code-metrics-comparison/0.4.0"
+    )
+    before: CodeMetricsReportV3
+    after: CodeMetricsReportV3
+    deltas: tuple[DetailedMetricDelta, ...]
+    architecture_deltas: ArchitectureDeltas
+    new_code: NewCodeMetrics
+    structural_changes: StructuralChangesV4
