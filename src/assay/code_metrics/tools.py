@@ -46,7 +46,11 @@ def _empty() -> dict[str, Any]:
 
 
 def _snapshot(
-    snapshot: Snapshot, config: _Config, *, graph: ModuleGraph | None = None
+    snapshot: Snapshot,
+    config: _Config,
+    *,
+    graph: ModuleGraph | None = None,
+    direct_import_count: int | None = None,
 ) -> dict[str, Any]:
     """Assemble one cached analyzer payload for the public and legacy APIs."""
     files = dict(sorted(_python(snapshot).items()))
@@ -73,7 +77,9 @@ def _snapshot(
         result = {
             **_radon(files),
             "complexipy.cognitive": sum(code_complexity(t).complexity for t in files.values()),
-            "grimp.imports": _imports(root) if graph is None else _imports(root, graph),
+            "grimp.imports": (
+                _imports(root) if graph is None else _imports(root, graph, direct_import_count)
+            ),
             **_ruff(root, config.ruff_ignore),
             "mypy.errors": _mypy(root),
             **_jscpd(root, config),
@@ -108,9 +114,13 @@ def _cyclomatic(text: str) -> int:
     return sum(block.complexity for block in blocks if isinstance(block, Function))
 
 
-def _imports(root: Path, graph: ModuleGraph | None = None) -> int | None:
+def _imports(
+    root: Path, graph: ModuleGraph | None = None, direct_import_count: int | None = None
+) -> int | None:
     """Direct import dependencies among the snapshot's packages and to anything outside."""
     if graph is not None:
+        if direct_import_count is not None:
+            return direct_import_count
         return len(graph.edges) + len(graph.external_dependencies) if graph.modules else None
     base = root / "src" if (root / "src").is_dir() else root
     packages = sorted(p.parent.name for p in base.glob("*/__init__.py"))

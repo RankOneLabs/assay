@@ -10,8 +10,9 @@ import sys
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from importlib.metadata import version
-from pathlib import PurePosixPath
 from typing import Any
+
+from assay.repository import validate_repository
 
 from .components import ComponentConfig, analyze_components
 from .cycles import analyze_cycles
@@ -58,23 +59,29 @@ def _preflight() -> None:
     assert_pinned_tools()
 
 
-def _validate_paths(snapshot: Snapshot) -> None:
-    for path in snapshot:
-        parts = PurePosixPath(path).parts
-        if (
-            PurePosixPath(path).is_absolute()
-            or ".." in parts
-            or "\\" in path
-            or any(part in ("", ".") for part in path.split("/"))
-        ):
-            raise SnapshotPathError(f"must be relative and inside the repository: {path}")
+def _validate_paths(snapshot: Snapshot) -> dict[str, str]:
+    """Use the repository boundary while retaining the public path error type."""
+    if not snapshot:
+        return {}
+    try:
+        return validate_repository(snapshot)
+    except ValueError as error:
+        if "path" not in str(error) and "collides" not in str(error):
+            raise
+        raise SnapshotPathError(
+            f"must be relative and inside the repository: {error}; paths={tuple(snapshot)!r}"
+        ) from error
 
 
 def _validate_config(config: CodeMetricsConfig) -> None:
     names: set[str] = set()
+    if not isinstance(config.components, tuple):
+        raise MalformedComponentConfig(f"components {config.components!r} must be a tuple")
     for component in config.components:
         if not isinstance(component, ComponentConfig):
             raise MalformedComponentConfig(f"component {component!r} is malformed")
+        if not isinstance(component.name, str):
+            raise MalformedComponentConfig(f"component name {component.name!r} must be a string")
         if component.name == "unassigned":
             raise ReservedComponentName("component 'unassigned' is reserved")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", component.name):
@@ -82,8 +89,13 @@ def _validate_config(config: CodeMetricsConfig) -> None:
         if component.name in names:
             raise MalformedComponentConfig(f"component {component.name!r} is duplicated")
         names.add(component.name)
-        if not component.patterns or any(not pattern for pattern in component.patterns):
+        if not isinstance(component.patterns, tuple) or not component.patterns:
             raise MalformedComponentConfig(f"component {component.name!r} has empty patterns")
+        for pattern in component.patterns:
+            if not isinstance(pattern, str) or not pattern:
+                raise MalformedComponentConfig(
+                    f"component {component.name!r} has malformed pattern {pattern!r}"
+                )
 
 
 def _analyze(
@@ -91,13 +103,15 @@ def _analyze(
 ) -> tuple[CodeMetricsReportV2, dict[str, Any]]:
     _preflight()
     _validate_config(config)
-    _validate_paths(snapshot)
+    snapshot = _validate_paths(snapshot)
     from . import tools
-    from .graph import build_module_graph
+    from .graph import extract_module_graph
 
     files = {path: snapshot[path] for path in sorted(snapshot) if path.endswith(".py")}
     if snapshot:
-        graph, coverage = build_module_graph(snapshot, python_files_analyzed=files)
+        extracted = extract_module_graph(snapshot, python_files_analyzed=files)
+        graph, coverage = extracted.graph, extracted.coverage
+        direct_import_count = extracted.direct_import_count
     else:
         graph = ModuleGraph(modules=(), edges=(), external_dependencies=())
         coverage = SnapshotCoverage(
@@ -106,9 +120,14 @@ def _analyze(
             modules_discovered=0,
             files_without_module=(),
         )
+        direct_import_count = None
     legacy_config = _Config(config.clone_min_lines, config.clone_min_tokens, config.ruff_ignore)
     try:
-        payload = dict(tools._snapshot(files, legacy_config, graph=graph))
+        payload = dict(
+            tools._snapshot(
+                files, legacy_config, graph=graph, direct_import_count=direct_import_count
+            )
+        )
     except (subprocess.CalledProcessError, FileNotFoundError, OSError) as error:
         raise ToolUnavailable(JSCPD, str(error)) from error
     except AnalyzerFailed as error:

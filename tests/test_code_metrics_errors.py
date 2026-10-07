@@ -35,7 +35,7 @@ def stub_clones(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_preflight_unavailable_before_analyzers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(api.shutil, "which", lambda name: None)
     monkeypatch.setattr(
-        graph, "build_module_graph", lambda *args, **kwargs: pytest.fail("graph ran")
+        graph, "extract_module_graph", lambda *args, **kwargs: pytest.fail("graph ran")
     )
     with pytest.raises(ToolUnavailable, match=r"jscpd@5\.4\.0.*npx"):
         analyze(PACKAGE)
@@ -45,6 +45,15 @@ def test_invalid_path_and_component_configurations() -> None:
     with pytest.raises(SnapshotPathError, match=r"relative.*escape\.py") as path_error:
         analyze({"../escape.py": ""})
     assert str(path_error.value).count("analyze snapshot path") == 1
+    for snapshot, offending in (
+        ({"bad\n.py": ""}, "bad"),
+        ({f"{'a' * 256}.py": ""}, "a" * 256),
+        ({"pkg.py": "", "pkg.py/a.py": ""}, "pkg.py/a.py"),
+    ):
+        with pytest.raises(SnapshotPathError) as caught:
+            analyze(snapshot)
+        assert offending in str(caught.value)
+    assert analyze({}).architecture.graph.modules == ()
     with pytest.raises(ReservedComponentName, match="unassigned"):
         analyze(
             PACKAGE,
@@ -56,6 +65,20 @@ def test_invalid_path_and_component_configurations() -> None:
         analyze(
             PACKAGE,
             config=CodeMetricsConfig(components=(ComponentConfig("bad name", ("src/pkg/a.py",)),)),
+        )
+    with pytest.raises(MalformedComponentConfig, match="42"):
+        analyze(
+            PACKAGE,
+            config=CodeMetricsConfig(
+                components=(ComponentConfig(42, ("src/pkg/a.py",)),)  # type: ignore[arg-type]
+            ),
+        )
+    with pytest.raises(MalformedComponentConfig, match="42"):
+        analyze(
+            PACKAGE,
+            config=CodeMetricsConfig(
+                components=(ComponentConfig("alpha", (42,)),)  # type: ignore[arg-type]
+            ),
         )
     with pytest.raises(EmptyComponentPattern, match="missing.py"):
         analyze(

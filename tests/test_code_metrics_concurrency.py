@@ -30,7 +30,7 @@ def test_parallel_snapshots_survive_cache_eviction(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(tools, "_radon", radon)
     monkeypatch.setattr(tools, "code_complexity", lambda text: SimpleNamespace(complexity=0))
-    monkeypatch.setattr(tools, "_imports", lambda root, graph=None: None)
+    monkeypatch.setattr(tools, "_imports", lambda root, graph=None, direct_import_count=None: None)
     monkeypatch.setattr(
         tools, "_ruff", lambda root, ignore: {"ruff.violations": 0, "ruff.magic_values": 0}
     )

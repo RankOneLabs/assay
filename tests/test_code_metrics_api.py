@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from assay.code_metrics import analyze, compare, measure, tools
+from assay.code_metrics import analyze, compare, graph, measure, tools
 from assay.code_metrics.api import CodeMetricsConfig
 from assay.code_metrics.components import ComponentConfig
 
@@ -73,3 +73,21 @@ def test_mi_shared_intersection_and_explicit_structure() -> None:
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     Draft202012Validator(schema).validate(result.model_dump(mode="json"))
+
+
+def test_uncollapsed_direct_import_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeGraph:
+        modules = {"pkg", "pkg.a"}
+
+        def find_modules_directly_imported_by(self, module: str) -> set[str]:
+            return {"ext.a", "ext.b"} if module == "pkg.a" else set()
+
+    monkeypatch.setattr(graph.grimp, "build_graph", lambda *args, **kwargs: FakeGraph())
+    report = analyze(
+        {
+            "src/pkg/__init__.py": "",
+            "src/pkg/a.py": "import ext.a\nimport ext.b\n",
+        }
+    )
+    assert report.existing_metrics.grimp_imports == 2
+    assert len(report.architecture.graph.external_dependencies) == 1
