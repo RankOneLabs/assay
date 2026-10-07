@@ -20,7 +20,7 @@ jobs:
       # Both extras: mypy/pytest exercise the legacy Jig/OpenRouter adapters and
       # investigations too, not just the core+review surface. core-wheel below
       # separately proves the published wheel needs neither by default.
-      - run: uv sync --locked --extra review --extra legacy
+      - run: uv sync --locked --extra review --extra legacy --extra code-metrics
       - name: Prepare dependency cache for offline wheel acceptance
         run: |
           uv build --wheel
@@ -60,11 +60,26 @@ jobs:
           from importlib.metadata import distribution
           from importlib.util import find_spec
           from importlib.resources import files
+          import subprocess
 
           import assay.review
+          import assay.code_metrics.errors
+          import assay.code_metrics.pins
+          import assay.code_metrics.models
 
           assert find_spec("fastapi") is None
+          assert find_spec("grimp") is None
+          assert find_spec("assay.code_metrics") is not None
           installed = distribution("assay").files or ()
+          assert any(str(path) == "assay/code_metrics/models.py" for path in installed)
+          assert assay.code_metrics.models.CodeMetricsReportV2
+          result = subprocess.run(
+              ["assay-core/bin/assay", "code-metrics", "snapshot", "."],
+              capture_output=True, text=True,
+          )
+          assert result.returncode != 0
+          assert "install assay[code-metrics]" in result.stdout
+          assert "Traceback" not in result.stderr
           assert any(str(path).startswith("assay/schemas/") for path in installed)
           static = files("assay.review").joinpath("static")
           assert static.is_dir()

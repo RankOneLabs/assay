@@ -10,6 +10,10 @@ from typing import Any
 from unicodedata import category
 
 
+class RepositoryPathError(ValueError):
+    """A repository path is unsafe, non-portable, or collides with another path."""
+
+
 def validate_repository(
     value: Any,
     *,
@@ -24,8 +28,10 @@ def validate_repository(
     repository: dict[str, str] = {}
     total = 0
     for raw_path, source in value.items():
-        if not isinstance(raw_path, str) or not isinstance(source, str):
-            raise ValueError("repository paths and contents must be strings")
+        if not isinstance(raw_path, str):
+            raise RepositoryPathError(f"repository path must be a string: {raw_path!r}")
+        if not isinstance(source, str):
+            raise ValueError(f"repository contents must be a string: {raw_path}")
         path = PurePosixPath(raw_path)
         raw_parts = raw_path.split("/")
         if (
@@ -38,7 +44,7 @@ def validate_repository(
             or len(raw_path.encode("utf-8")) > 4_096
             or any(len(part.encode("utf-8")) > 255 for part in raw_parts)
         ):
-            raise ValueError(f"unsafe repository path: {raw_path}")
+            raise RepositoryPathError(f"unsafe repository path: {raw_path}")
         try:
             source_size = len(source.encode("utf-8"))
         except UnicodeEncodeError as error:
@@ -51,12 +57,12 @@ def validate_repository(
     for raw_path in paths:
         parts = raw_path.split("/")
         if any("/".join(parts[:index]) in paths for index in range(1, len(parts))):
-            raise ValueError("repository path collides with a directory")
+            raise RepositoryPathError(f"repository path collides with a directory: {raw_path}")
     normalized_seen: dict[str, str] = {}
     for raw_path in paths:
         normalized = unicodedata.normalize("NFC", raw_path).casefold()
         if normalized in normalized_seen and normalized_seen[normalized] != raw_path:
-            raise ValueError(
+            raise RepositoryPathError(
                 f"duplicate repository path under case/unicode folding: {raw_path!r} "
                 f"collides with {normalized_seen[normalized]!r}"
             )

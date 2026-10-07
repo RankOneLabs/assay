@@ -10,6 +10,13 @@ from typing import Any
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from assay.code_metrics.models import (
+    CodeMetricsComparison,
+    CodeMetricsComparisonV2,
+    CodeMetricsReport,
+    CodeMetricsReportV2,
+    DetailedCodeMetricsComparison,
+)
 from assay.models import (
     Arm,
     EvaluationFailure,
@@ -37,6 +44,18 @@ SCHEMA_MODELS: dict[str, type[WireModel]] = {
 PLAN_SCHEMA_MODELS: dict[str, type[WireModel]] = {
     "assay-execution-plan-v0.1": ExecutionPlan,
     "assay-execution-plan-v0.2": ExecutionPlanV2,
+}
+
+CODE_METRICS_SCHEMA_MODELS: dict[str, dict[str, type[WireModel]]] = {
+    "assay-code-metrics-report": {
+        "assay-code-metrics-report-v0.1": CodeMetricsReport,
+        "assay-code-metrics-report-v0.2": CodeMetricsReportV2,
+    },
+    "assay-code-metrics-comparison": {
+        "assay-code-metrics-comparison-v0.1": CodeMetricsComparison,
+        "assay-code-metrics-comparison-v0.2": CodeMetricsComparisonV2,
+        "assay-code-metrics-comparison-v0.3": DetailedCodeMetricsComparison,
+    },
 }
 
 
@@ -74,6 +93,18 @@ def schema_documents() -> dict[str, bytes]:
     documents["assay-execution-plan.schema.json"] = (
         json.dumps(plan_union, indent=2) + "\n"
     ).encode()
+    for root_name, versions in CODE_METRICS_SCHEMA_MODELS.items():
+        for name, model in versions.items():
+            schema = _schema_document(name, model, require_version=True)
+            documents[f"{name}.schema.json"] = (json.dumps(schema, indent=2) + "\n").encode()
+        root = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": f"https://assay.dev/schemas/{root_name}.schema.json",
+            "oneOf": [
+                {"$ref": f"https://assay.dev/schemas/{name}.schema.json"} for name in versions
+            ],
+        }
+        documents[f"{root_name}.schema.json"] = (json.dumps(root, indent=2) + "\n").encode()
     return documents
 
 

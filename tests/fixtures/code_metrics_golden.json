@@ -1,0 +1,170 @@
+{
+  "unchanged": {
+    "metrics": {
+      "radon.sloc": 0,
+      "radon.lloc": 0,
+      "radon.cc": 0,
+      "radon.halstead_volume": 0.0,
+      "radon.mi": 0.0,
+      "complexipy.cognitive": 0,
+      "grimp.imports": 0,
+      "ruff.violations": 0,
+      "ruff.magic_values": 0,
+      "mypy.errors": 0,
+      "jscpd.clones": 0,
+      "jscpd.duplicated_lines": 0,
+      "new_lines": 0,
+      "new_duplicated_lines": 0,
+      "new_max_nesting_depth": 0
+    },
+    "tool_versions": {
+      "radon": "6.0.1",
+      "complexipy": "8.0.1",
+      "lizard": "1.24.0",
+      "grimp": "3.17",
+      "ruff": "0.16.8",
+      "mypy": "2.3.1",
+      "jscpd": "5.4.0"
+    }
+  },
+  "delegating": {
+    "metrics": {
+      "radon.sloc": 2,
+      "radon.lloc": 2,
+      "radon.cc": 1,
+      "radon.halstead_volume": 0.0,
+      "radon.mi": 0.0,
+      "complexipy.cognitive": 0,
+      "grimp.imports": 0,
+      "ruff.violations": 0,
+      "ruff.magic_values": 0,
+      "mypy.errors": 0,
+      "jscpd.clones": 0,
+      "jscpd.duplicated_lines": 0,
+      "new_lines": 2,
+      "new_duplicated_lines": 0,
+      "new_max_nesting_depth": 0
+    },
+    "tool_versions": {
+      "radon": "6.0.1",
+      "complexipy": "8.0.1",
+      "lizard": "1.24.0",
+      "grimp": "3.17",
+      "ruff": "0.16.8",
+      "mypy": "2.3.1",
+      "jscpd": "5.4.0"
+    }
+  },
+  "inlined": {
+    "metrics": {
+      "radon.sloc": 11,
+      "radon.lloc": 14,
+      "radon.cc": 4,
+      "radon.halstead_volume": 13.932,
+      "radon.mi": -8.847,
+      "complexipy.cognitive": 4,
+      "grimp.imports": 1,
+      "ruff.violations": 0,
+      "ruff.magic_values": 0,
+      "mypy.errors": 0,
+      "jscpd.clones": 1,
+      "jscpd.duplicated_lines": 4,
+      "new_lines": 11,
+      "new_duplicated_lines": 4,
+      "new_max_nesting_depth": 2
+    },
+    "tool_versions": {
+      "radon": "6.0.1",
+      "complexipy": "8.0.1",
+      "lizard": "1.24.0",
+      "grimp": "3.17",
+      "ruff": "0.16.8",
+      "mypy": "2.3.1",
+      "jscpd": "5.4.0"
+    }
+  },
+  "first_python_file": {
+    "metrics": {
+      "radon.sloc": 1,
+      "radon.lloc": 1,
+      "radon.cc": 0,
+      "radon.halstead_volume": 0,
+      "radon.mi": 0.0,
+      "complexipy.cognitive": 0,
+      "grimp.imports": null,
+      "ruff.violations": 0,
+      "ruff.magic_values": 0,
+      "mypy.errors": 0,
+      "jscpd.clones": 0,
+      "jscpd.duplicated_lines": 0,
+      "new_lines": 1,
+      "new_duplicated_lines": 0,
+      "new_max_nesting_depth": 0
+    },
+    "tool_versions": {
+      "radon": "6.0.1",
+      "complexipy": "8.0.1",
+      "lizard": "1.24.0",
+      "grimp": "3.17",
+      "ruff": "0.16.8",
+      "mypy": "2.3.1",
+      "jscpd": "5.4.0"
+    }
+  },
+  "last_python_file": {
+    "metrics": {
+      "radon.sloc": -1,
+      "radon.lloc": -1,
+      "radon.cc": 0,
+      "radon.halstead_volume": 0,
+      "radon.mi": 0.0,
+      "complexipy.cognitive": 0,
+      "grimp.imports": null,
+      "ruff.violations": 0,
+      "ruff.magic_values": 0,
+      "mypy.errors": 0,
+      "jscpd.clones": 0,
+      "jscpd.duplicated_lines": 0,
+      "new_lines": 0,
+      "new_duplicated_lines": 0,
+      "new_max_nesting_depth": 0
+    },
+    "tool_versions": {
+      "radon": "6.0.1",
+      "complexipy": "8.0.1",
+      "lizard": "1.24.0",
+      "grimp": "3.17",
+      "ruff": "0.16.8",
+      "mypy": "2.3.1",
+      "jscpd": "5.4.0"
+    }
+  },
+  "single_module": {
+    "metrics": {
+      "radon.sloc": 1,
+      "radon.lloc": 1,
+      "radon.cc": 0,
+      "radon.halstead_volume": 0,
+      "radon.mi": 0.0,
+      "complexipy.cognitive": 0,
+      "grimp.imports": null,
+      "ruff.violations": 2,
+      "ruff.magic_values": 0,
+      "mypy.errors": 0,
+      "jscpd.clones": 0,
+      "jscpd.duplicated_lines": 0,
+      "new_lines": 1,
+      "new_duplicated_lines": 0,
+      "new_max_nesting_depth": 0
+    },
+    "tool_versions": {
+      "radon": "6.0.1",
+      "complexipy": "8.0.1",
+      "lizard": "1.24.0",
+      "grimp": "3.17",
+      "ruff": "0.16.8",
+      "mypy": "2.3.1",
+      "jscpd": "5.4.0"
+    }
+  }
+}

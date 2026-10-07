@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-code-metrics-comparison.schema.json",
+  "oneOf": [
+    {
+      "$ref": "https://assay.dev/schemas/assay-code-metrics-comparison-v0.1.schema.json"
+    },
+    {
+      "$ref": "https://assay.dev/schemas/assay-code-metrics-comparison-v0.2.schema.json"
+    },
+    {
+      "$ref": "https://assay.dev/schemas/assay-code-metrics-comparison-v0.3.schema.json"
+    }
+  ]
+}
