@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from .models import RepoPath, Snapshot
+from .models import RepoPath, Snapshot, language_of
 
 _EXCLUDE_PATH = TypeAdapter(RepoPath)
 
@@ -34,7 +34,7 @@ DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
 def snapshot_directory(
     path: str | Path, *, exclude: tuple[str, ...] = ()
 ) -> tuple[Snapshot, tuple[str, ...]]:
-    """Read Python files under *path*, pruning named directories and globs.
+    """Read the supported languages' files under *path*, pruning named directories and globs.
 
     Symlinks are skipped, files as well as directories, so every source read
     lies inside *path*.
@@ -59,7 +59,7 @@ def snapshot_directory(
             if not _excluded((relative / name).as_posix(), name, resolved)
         )
         for name in sorted(filenames):
-            if not name.endswith(".py"):
+            if language_of(name) is None:
                 continue
             key = (relative / name).as_posix()
             source = Path(directory) / name
@@ -69,8 +69,11 @@ def snapshot_directory(
 
 
 def _read_source(path: Path, key: str) -> str:
-    """Decode as the interpreter would: a coding declaration or BOM, else UTF-8."""
+    """Decode Python as the interpreter would (a coding declaration or BOM, else
+    UTF-8) and every other language as UTF-8 without a BOM."""
     try:
+        if language_of(key) != "python":
+            return path.read_text(encoding="utf-8-sig")
         with tokenize.open(path) as handle:
             return handle.read()
     except (SyntaxError, UnicodeDecodeError) as error:

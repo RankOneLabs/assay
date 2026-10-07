@@ -10,10 +10,10 @@ from fnmatch import fnmatchcase
 from .errors import AmbiguousComponentConfig, ConfigurationError, EmptyComponentPattern
 from .models import (
     BoundaryPair,
-    ComponentCouplingV3,
-    ComponentMetricsReport,
-    ModuleComponent,
-    ModuleCouplingV3,
+    ComponentCouplingV4,
+    ComponentMetricsReportV2,
+    ModuleComponentV2,
+    ModuleCouplingV4,
     ModuleEntry,
     ModuleGraph,
 )
@@ -49,7 +49,7 @@ def assign_components(
     configuration: Sequence[ComponentConfig],
     *,
     require_matches: bool = True,
-) -> tuple[ModuleComponent, ...]:
+) -> tuple[ModuleComponentV2, ...]:
     """Resolve path globs, preserving real paths and assigning every module once.
 
     A comparison passes ``require_matches=False`` and checks the patterns
@@ -60,7 +60,7 @@ def assign_components(
     names = [item.name for item in configuration]
     if len(names) != len(set(names)):
         raise ConfigurationError("component names must be unique")
-    assigned: list[ModuleComponent] = []
+    assigned: list[ModuleComponentV2] = []
     for entry in sorted(graph.modules, key=lambda item: item.module):
         target = _target(entry)
         claimants = [
@@ -73,7 +73,7 @@ def assign_components(
                 f"module {entry.module} claimed by components {', '.join(sorted(claimants))}"
             )
         assigned.append(
-            ModuleComponent(
+            ModuleComponentV2(
                 module=entry.module,
                 path=entry.path,
                 component=claimants[0] if claimants else "unassigned",
@@ -89,7 +89,7 @@ def analyze_components(
     configuration: Sequence[ComponentConfig],
     *,
     require_matches: bool = True,
-) -> ComponentMetricsReport:
+) -> ComponentMetricsReportV2:
     """Count distinct neighboring modules and raw edges for each component."""
     assignments = assign_components(graph, configuration, require_matches=require_matches)
     owner = {entry.module: entry.component for entry in assignments}
@@ -124,7 +124,7 @@ def analyze_components(
         ca, ce = len(incoming_modules[name]), len(outgoing_modules[name])
         total_edges = r + incoming[name] + outgoing[name]
         coupling.append(
-            ComponentCouplingV3(
+            ComponentCouplingV4(
                 component=name,
                 modules=tuple(members[name]),
                 afferent=ca,
@@ -139,9 +139,9 @@ def analyze_components(
                 internal_edge_share=r / total_edges if total_edges else None,
             )
         )
-    return ComponentMetricsReport(
+    return ComponentMetricsReportV2(
         module_coupling=tuple(
-            ModuleCouplingV3(
+            ModuleCouplingV4(
                 module=entry.module, fan_in=fan_in[entry.module], fan_out=fan_out[entry.module]
             )
             for entry in assignments

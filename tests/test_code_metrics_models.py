@@ -216,9 +216,7 @@ def test_published_v1_shapes_remain_distinct_from_v2() -> None:
         new_code=old_comparison.new_code,
         structural_changes=old_comparison.structural_changes,
     )
-    documents = {
-        name: json.loads(data) for name, data in schema_documents().items()
-    }
+    documents = {name: json.loads(data) for name, data in schema_documents().items()}
     registry: Registry = Registry()
     for name, schema in documents.items():
         if name.startswith("assay-code-metrics-"):
@@ -269,3 +267,18 @@ def test_module_names_follow_python_identifiers(module: str, valid: bool) -> Non
             validator.validate(payload)
         with pytest.raises(ValidationError):
             CodeMetricsReportV2.model_validate(payload)
+
+
+def test_module_ids_follow_their_language() -> None:
+    from assay.code_metrics.models import ModuleEntryV2
+
+    for module, language in (
+        ("pkg.sub", "python"),
+        ("web/src/run-state.ts", "typescript"),
+        ("oakridge_core::executor", "rust"),
+    ):
+        assert ModuleEntryV2(module=module, path=None, language=language).module == module
+    with pytest.raises(ValidationError):
+        ModuleEntryV2(module="web/src/app.ts", path=None, language="python")
+    with pytest.raises(ValidationError):
+        ModuleEntryV2(module="bad\nid", path=None, language="typescript")

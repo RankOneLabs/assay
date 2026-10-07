@@ -14,6 +14,8 @@
 | No first-party package | Report: empty graph; propagation_cost and grimp.imports null |
 | Python file outside discovered packages | Report: path in coverage.files_without_module |
 | Package or module name not a Python identifier | Report: path in files_without_module |
+| File of a language without a graph extractor | Report: path in files_without_module |
+| Snapshot without a Python file | Report: Python analyzer metrics null |
 | Relative import above its top-level package | Report: no edge; mypy_errors null |
 | Afferent + efferent equals zero | Report: instability null |
 | Component has at most one module | Report: internal_dependency_density null |

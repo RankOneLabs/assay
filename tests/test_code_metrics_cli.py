@@ -88,12 +88,18 @@ def test_snapshot_and_compare_cli_reports(
     (after / "src/pkg/a.py").write_text("value = 2\n")
     snapshot, excluded = snapshot_directory(before, exclude=("skip",))
     result = _run(monkeypatch, capsys, "snapshot", str(before), "--exclude", "skip", "--json")
-    assert result["coverage"]["python_files_seen"] == 2
+    assert result["coverage"]["languages"][0] == {
+        "language": "python",
+        "files_seen": 2,
+        "files_analyzed": 2,
+        "modules_discovered": 2,
+        "files_without_module": [],
+    }
     assert result["configuration"]["excluded_directories"] == list(excluded)
     assert (
         result["existing_metrics"] == analyze(snapshot).model_dump(mode="json")["existing_metrics"]
     )
-    schema_path = Path(__file__).parents[1] / "schemas/assay-code-metrics-report-v0.3.schema.json"
+    schema_path = Path(__file__).parents[1] / "schemas/assay-code-metrics-report-v0.4.schema.json"
     schema = json.loads(schema_path.read_text())
     Draft202012Validator(schema).validate(result)
     compared = _run(monkeypatch, capsys, "compare", str(before), str(after), "--exclude", "skip")
@@ -101,7 +107,7 @@ def test_snapshot_and_compare_cli_reports(
     assert compared["after"]["configuration"]["excluded_directories"] == list(excluded)
     schema = json.loads(
         (
-            Path(__file__).parents[1] / "schemas/assay-code-metrics-comparison-v0.4.schema.json"
+            Path(__file__).parents[1] / "schemas/assay-code-metrics-comparison-v0.5.schema.json"
         ).read_text()
     )
     Draft202012Validator(schema).validate(compared)
@@ -190,3 +196,18 @@ def test_snapshot_walk_errors_are_not_silently_skipped(
     monkeypatch.setattr(cli_snapshot.os, "walk", failed_walk)
     with pytest.raises(OSError, match="cannot scan subtree"):
         snapshot_directory(tmp_path)
+
+
+def test_snapshot_reads_supported_languages_only(tmp_path: Path) -> None:
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web/app.ts").write_bytes(b"\xef\xbb\xbfexport const x = 1;\n")
+    (tmp_path / "web/view.tsx").write_text("export {};\n")
+    (tmp_path / "lib.rs").write_text("mod a;\n")
+    (tmp_path / "notes.md").write_text("# notes\n")
+    (tmp_path / "app.js").write_text("module.exports = 1;\n")
+    snapshot, _ = snapshot_directory(tmp_path)
+    assert snapshot == {
+        "lib.rs": "mod a;\n",
+        "web/app.ts": "export const x = 1;\n",
+        "web/view.tsx": "export {};\n",
+    }

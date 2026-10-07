@@ -7,9 +7,9 @@ import io
 import re
 import sys
 from collections.abc import Mapping
-from typing import Annotated, Literal, NamedTuple
+from typing import Annotated, Literal, NamedTuple, Self
 
-from pydantic import AfterValidator, Field, StringConstraints
+from pydantic import AfterValidator, Field, StringConstraints, model_validator
 
 from assay.models import Identifier, NonEmpty, WireModel
 from assay.repository import validate_repository
@@ -525,3 +525,209 @@ class CodeMetricsComparisonV4(WireModel):
     architecture_deltas: ArchitectureDeltas
     new_code: NewCodeMetrics
     structural_changes: StructuralChangesV4
+
+
+# Report 0.4.0 and comparison 0.5.0 carry graphs of more than one language.
+# A Python module keeps its dotted name; other languages' extractors choose
+# ids that cannot collide with one (a Python name never contains "/" or "::").
+Language = Literal["python", "rust", "typescript"]
+LANGUAGES: tuple[Language, ...] = ("python", "rust", "typescript")
+LANGUAGE_EXTENSIONS: Mapping[Language, tuple[str, ...]] = {
+    "python": (".py",),
+    "rust": (".rs",),
+    "typescript": (".ts", ".tsx", ".mts", ".cts"),
+}
+
+
+def language_of(path: str) -> Language | None:
+    """The supported language a snapshot path's extension names, if any."""
+    for language in LANGUAGES:
+        if path.endswith(LANGUAGE_EXTENSIONS[language]):
+            return language
+    return None
+
+
+ModuleId = Annotated[str, StringConstraints(pattern=r"^[^\x00-\x1F\x7F]+$")]
+PackageName = Annotated[str, StringConstraints(pattern=r"^[^\x00-\x1F\x7F]+$")]
+
+
+class ModuleEntryV2(ModuleEntry):
+    """A first-party module, its source path, and the language it is written in."""
+
+    module: ModuleId
+    language: Language
+
+    @model_validator(mode="after")
+    def python_name(self) -> Self:
+        if self.language == "python":
+            _module_name(self.module)
+        return self
+
+
+class ImportEdgeV2(ImportEdge):
+    importer: ModuleId
+    imported: ModuleId
+
+
+class ExternalDependencyV2(ExternalDependency):
+    module: ModuleId
+    package: PackageName
+
+
+class ModuleGraphV2(ModuleGraph):
+    modules: tuple[ModuleEntryV2, ...]
+    edges: tuple[ImportEdgeV2, ...]
+    external_dependencies: tuple[ExternalDependencyV2, ...]
+
+
+class ModuleCouplingV4(ModuleCouplingV3):
+    module: ModuleId
+
+
+class ComponentCouplingV4(ComponentCouplingV3):
+    modules: tuple[ModuleId, ...]
+
+
+class ModuleComponentV2(ModuleComponent):
+    module: ModuleId
+
+
+class ComponentMetricsReportV2(WireModel):
+    module_coupling: tuple[ModuleCouplingV4, ...]
+    component_coupling: tuple[ComponentCouplingV4, ...]
+    module_components: tuple[ModuleComponentV2, ...]
+    boundaries: tuple[BoundaryPair, ...]
+
+
+class StronglyConnectedComponentV2(StronglyConnectedComponent):
+    modules: tuple[ModuleId, ...]
+
+
+class CycleReportV4(CycleReportV3):
+    components: tuple[StronglyConnectedComponentV2, ...]
+    modules_in_cycles: tuple[ModuleId, ...]
+
+
+class ModuleVisibilityV4(ModuleVisibilityV3):
+    module: ModuleId
+
+
+class PropagationReportV4(PropagationReportV3):
+    module_visibility: tuple[ModuleVisibilityV4, ...]
+
+
+class ArchitectureReportV4(ArchitectureReportV3):
+    """The 0.3.0 architecture shape over a graph whose modules name their language."""
+
+    graph: ModuleGraphV2
+    module_coupling: tuple[ModuleCouplingV4, ...]
+    component_coupling: tuple[ComponentCouplingV4, ...]
+    module_components: tuple[ModuleComponentV2, ...]
+    cycles: CycleReportV4
+    propagation: PropagationReportV4
+
+
+class LanguageCoverage(WireModel):
+    """How much of one language's source the graph extraction reached.
+
+    ``files_seen`` counts snapshot files with the language's extensions and
+    ``files_analyzed`` those an analyzer read. A language without a graph
+    extractor analyzes none, so every file it sees is without a module.
+    """
+
+    language: Language
+    files_seen: int
+    files_analyzed: int
+    modules_discovered: int
+    files_without_module: tuple[RepoPath, ...]
+
+
+class SnapshotCoverageV2(WireModel):
+    """One coverage entry per supported language, in name order, zeros included."""
+
+    languages: tuple[LanguageCoverage, ...]
+
+
+class ExistingMetricsV2(WireModel):
+    """The Python analyzers' metrics over the snapshot's Python files.
+
+    Every analyzer here reads Python only, so each value is null, and the
+    maintainability index map empty, when the snapshot has no Python file.
+    """
+
+    radon_sloc: int | None
+    radon_lloc: int | None
+    radon_cc: int | None
+    radon_halstead_volume: float | None
+    complexipy_cognitive: int | None
+    grimp_imports: int | None
+    ruff_violations: int | None
+    ruff_magic_values: int | None
+    mypy_errors: int | None
+    jscpd_clones: int | None
+    jscpd_duplicated_lines: int | None
+    maintainability_index: Mapping[RepoPath, float] = Field(
+        json_schema_extra={"additionalProperties": False}
+    )
+    maintainability_index_mean: float | None
+
+
+class CodeMetricsReportV4(WireModel):
+    """Absolute snapshot report whose graph and coverage name each module's language."""
+
+    schema_version: Literal["assay-code-metrics-report/0.4.0"] = "assay-code-metrics-report/0.4.0"
+    existing_metrics: ExistingMetricsV2
+    architecture: ArchitectureReportV4
+    coverage: SnapshotCoverageV2
+    configuration: ResolvedConfiguration
+    versions: ToolVersions
+
+
+class NewCodeMetricsV2(WireModel):
+    """Metrics of added Python lines; null when the after side has no Python file."""
+
+    new_lines: int | None
+    new_duplicated_lines: int | None
+    new_max_nesting_depth: int | None
+
+
+class ModuleCouplingDeltaV2(ModuleCouplingDelta):
+    module: ModuleId
+
+
+class ArchitectureDeltasV2(ArchitectureDeltas):
+    modules: tuple[ModuleCouplingDeltaV2, ...]
+
+
+class CrossComponentEdgeV2(CrossComponentEdge):
+    importer: ModuleId
+    imported: ModuleId
+
+
+class StructuralChangesV5(StructuralChangesV4):
+    modules_added: tuple[ModuleId, ...]
+    modules_removed: tuple[ModuleId, ...]
+    edges_added: tuple[ImportEdgeV2, ...]
+    edges_removed: tuple[ImportEdgeV2, ...]
+    cycles_created: tuple[tuple[ModuleId, ...], ...]
+    cycles_resolved: tuple[tuple[ModuleId, ...], ...]
+    cross_component_edges_added: tuple[CrossComponentEdgeV2, ...]
+    cross_component_edges_removed: tuple[CrossComponentEdgeV2, ...]
+
+
+class CodeMetricsComparisonV5(WireModel):
+    """Comparison of two 0.4.0 reports.
+
+    A Python-analyzer delta's side is null when that side has no Python file,
+    and its ``delta`` null when either side is.
+    """
+
+    schema_version: Literal["assay-code-metrics-comparison/0.5.0"] = (
+        "assay-code-metrics-comparison/0.5.0"
+    )
+    before: CodeMetricsReportV4
+    after: CodeMetricsReportV4
+    deltas: tuple[DetailedMetricDelta, ...]
+    architecture_deltas: ArchitectureDeltasV2
+    new_code: NewCodeMetricsV2
+    structural_changes: StructuralChangesV5

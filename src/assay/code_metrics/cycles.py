@@ -5,12 +5,12 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 
-from .models import CycleReportV3, ModuleGraph, StronglyConnectedComponent
+from .models import CycleReportV4, ModuleGraph, StronglyConnectedComponentV2
 
 
 def strongly_connected_components(
     adjacency: Mapping[str, Iterable[str]],
-) -> tuple[StronglyConnectedComponent, ...]:
+) -> tuple[StronglyConnectedComponentV2, ...]:
     """Tarjan's algorithm with explicit traversal frames instead of recursion."""
     neighbors = {name: tuple(sorted(set(targets))) for name, targets in adjacency.items()}
     nodes = sorted(set(neighbors).union(*(set(targets) for targets in neighbors.values())))
@@ -20,7 +20,7 @@ def strongly_connected_components(
     low: dict[str, int] = {}
     stack: list[str] = []
     on_stack: set[str] = set()
-    found: list[StronglyConnectedComponent] = []
+    found: list[StronglyConnectedComponentV2] = []
     for root in nodes:
         if root in indices:
             continue
@@ -53,7 +53,7 @@ def strongly_connected_components(
                         break
                 ordered = tuple(sorted(members))
                 found.append(
-                    StronglyConnectedComponent(
+                    StronglyConnectedComponentV2(
                         modules=ordered,
                         is_cyclic=len(ordered) > 1 or node in neighbors[node],
                     )
@@ -61,7 +61,7 @@ def strongly_connected_components(
     return tuple(sorted(found, key=lambda item: item.modules))
 
 
-def analyze_cycles(graph: ModuleGraph) -> CycleReportV3:
+def analyze_cycles(graph: ModuleGraph) -> CycleReportV4:
     """Report every SCC, the modules belonging to cyclic SCCs, and their counts."""
     adjacency: dict[str, list[str]] = defaultdict(list)
     for entry in graph.modules:
@@ -74,7 +74,7 @@ def analyze_cycles(graph: ModuleGraph) -> CycleReportV3:
     modules_in_cycles = tuple(
         sorted(module for component in cyclic for module in component.modules)
     )
-    return CycleReportV3(
+    return CycleReportV4(
         components=components,
         cyclic_component_count=len(cyclic),
         modules_in_cycles=modules_in_cycles,

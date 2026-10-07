@@ -30,7 +30,7 @@ from assay.code_metrics.models import (
     ArchitectureDeltas,
     ArchitectureReportV3,
     ComponentMetricDeltas,
-    CrossComponentEdge,
+    CrossComponentEdgeV2,
     Snapshot,
 )
 
@@ -145,7 +145,7 @@ def test_cohesion_deltas(before, after, configuration, expected) -> None:
 def test_cross_component_edges_added_and_removed() -> None:
     before = _architecture(FIXTURE_B_BEFORE, ALPHA_AB_BETA_C)
     after = _architecture(FIXTURE_B_AFTER, ALPHA_AB_BETA_C)
-    edge = CrossComponentEdge(
+    edge = CrossComponentEdgeV2(
         importer="pkg.a", imported="pkg.c", importer_component="alpha", imported_component="beta"
     )
     forward = structural_changes(before, after)
@@ -163,7 +163,7 @@ def test_cross_component_edges_follow_owner_changes() -> None:
     changes = structural_changes(split, merged)
     assert changes.edges_added == changes.edges_removed == ()
     assert changes.cross_component_edges_removed == (
-        CrossComponentEdge(
+        CrossComponentEdgeV2(
             importer="pkg.a",
             imported="pkg.c",
             importer_component="alpha",
@@ -222,13 +222,13 @@ def test_comparison_wires_deltas_and_validates_against_new_schemas(
     stub_jscpd(monkeypatch)
     config = CodeMetricsConfig(components=ALPHA_AB_BETA_CD)
     result = compare(FIXTURE_K_BEFORE, FIXTURE_K_AFTER, config=config)
-    assert result.schema_version == "assay-code-metrics-comparison/0.4.0"
-    assert result.before.schema_version == "assay-code-metrics-report/0.3.0"
+    assert result.schema_version == "assay-code-metrics-comparison/0.5.0"
+    assert result.before.schema_version == "assay-code-metrics-report/0.4.0"
     assert result.architecture_deltas == compare_architecture(
         result.before.architecture, result.after.architecture
     )
     assert result.structural_changes.cross_component_edges_added == (
-        CrossComponentEdge(
+        CrossComponentEdgeV2(
             importer="pkg.b",
             imported="pkg.d",
             importer_component="alpha",
@@ -236,11 +236,11 @@ def test_comparison_wires_deltas_and_validates_against_new_schemas(
         ),
     )
     comparison_schema = json.loads(
-        (SCHEMAS / "assay-code-metrics-comparison-v0.4.schema.json").read_text(encoding="utf-8")
+        (SCHEMAS / "assay-code-metrics-comparison-v0.5.schema.json").read_text(encoding="utf-8")
     )
     Draft202012Validator(comparison_schema).validate(result.model_dump(mode="json"))
     report_schema = json.loads(
-        (SCHEMAS / "assay-code-metrics-report-v0.3.schema.json").read_text(encoding="utf-8")
+        (SCHEMAS / "assay-code-metrics-report-v0.4.schema.json").read_text(encoding="utf-8")
     )
     report = analyze(FIXTURE_K_AFTER, config=config)
     Draft202012Validator(report_schema).validate(report.model_dump(mode="json"))
