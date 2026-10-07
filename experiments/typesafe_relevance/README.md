@@ -1,19 +1,19 @@
-# Typesafe relevance primary study
+# Typesafe relevance study
 
-The reference implementation lives in `typesafe_relevance`. Its
-catalogue loader computes a canonical-JSON version, `state.build_state` is the pure
-state projection copied by consumers, and `mappings` contains the pure decision
-functions. Published reproduction bundles live in the
-`RankOneLabs/run-receipts` repository and are selected with `ASSAY_RUN_RECEIPTS`.
-The original in-tree evidence remains at
-[`evidence/typesafe-relevance-primary-2026-09/`](../../evidence/typesafe-relevance-primary-2026-09/).
+The reference implementation for the Typesafe relevance study:
 
-The private population is not repository material. To reproduce provider calls,
-export the two pinned Scout snapshots, exclude the agent-evals `GAIA` route, verify
-the population digest recorded in the plan, and invoke `run_primary` with the two
-JSONL files. The command requires `TYPESAFE_API_KEY`; `typesafe-sdk` is a direct
-dependency of this experiments project.
+- the catalogue loader computes a canonical-JSON version;
+- `state.build_state` is the pure state projection consumers copy;
+- `mappings` contains the pure decision functions.
 
-The 2026-09-18 report is negative: Typesafe did not meet the registered adoption
-rule. Consumers may adopt the catalogue and mappings for reproducibility, but must
-not enable a Typesafe backend on the strength of this report.
+The study population is not distributed with this repository. To reproduce the
+provider calls, supply the two population JSONL files, check that their digest
+matches the one recorded in the plan, and invoke `run_primary` with them.
+`TYPESAFE_API_KEY` must be set.
+
+Tests that check the published reproduction bundles skip unless
+`ASSAY_RUN_RECEIPTS` points at a checkout containing them.
+
+**Result:** Typesafe did not meet the registered adoption rule. The catalogue
+and mappings may be reused for reproducibility, but this result does not support
+enabling a Typesafe backend.

@@ -8,9 +8,6 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_BUNDLES: set[PurePosixPath] = set()
 RUN_RECEIPTS_PROSE = {
-    PurePosixPath("README.md"),
-    PurePosixPath("experiments/README.md"),
-    PurePosixPath("experiments/typesafe_relevance/README.md"),
     PurePosixPath("experiments/typesafe_relevance/run_packet.py"),
     PurePosixPath("experiments/conftest.py"),
     PurePosixPath("tests/test_results_ownership.py"),

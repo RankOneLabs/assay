@@ -52,7 +52,7 @@ converts back to `WorkerFailure`. External cancellation propagates.
 
 ## Prepare and inspect — no provider calls
 
-Use uv 0.10.2, as pinned in the [installation instructions](../README.md#install-and-check),
+Use uv 0.10.2, as pinned in the [installation instructions](../../README.md#install),
 project configuration, and CI. Older uv versions can omit the requested Git
 revision from installation metadata. Upgrading uv alone does not repair an
 existing installation: if Jig's `direct_url.json` lacks `requested_revision`, run

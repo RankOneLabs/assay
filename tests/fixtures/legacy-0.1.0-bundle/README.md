@@ -7,7 +7,7 @@ snapshot (see `test_execution.execution_fixture`) and then `export_bundle`.
 
 It exists to give `tests/test_legacy_bundle.py` a byte-for-byte fixed
 compatibility baseline: a bundle that predates (and is untouched by) the
-0.2.0 plan work in this change, verified/exported/indexed/rendered/recomputed
+0.2.0 plan format, verified/exported/indexed/rendered/recomputed
 entirely offline, in a process that never imports Jig. The 0.1.0 wire shapes,
 report engine and review stack must keep reading it exactly as before.
 
