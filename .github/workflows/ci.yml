@@ -63,6 +63,8 @@ jobs:
           import subprocess
 
           import assay.review
+          import assay.code_metrics.errors
+          import assay.code_metrics.pins
           import assay.code_metrics.models
 
           assert find_spec("fastapi") is None
