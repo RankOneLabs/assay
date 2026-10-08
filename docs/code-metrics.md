@@ -34,7 +34,8 @@ components:
 
 Clone detection uses pinned jscpd through `npx`, and a snapshot with
 TypeScript files is graphed by pinned dependency-cruiser and TypeScript through
-`npx`. Both need Node.js, npm, and network access for the first download.
+`npx`. Both need Node.js, npm, and network access for the first download;
+dependency-cruiser 18.4.0 needs Node.js 22, 24, or 26 and later.
 
 ## Metric definitions
 

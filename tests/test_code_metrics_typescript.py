@@ -22,7 +22,11 @@ APP = {
         'import { Q } from "@scope/pkg/sub";\n'
         'export * from "./lib/reexport";\n'
         'export const lazy = () => import("./lib/lazy");\n'
+        'import cjs = require("./lib/cjs.cjs");\n'
+        'export const req = require("./lib/req");\n'
     ),
+    "app/lib/cjs.cts": "export = 1;\n",
+    "app/lib/req.ts": "export const r = 1;\n",
     "app/lib/a.ts": 'import { u } from "../util/index";\nexport const a = u;\n',
     "app/lib/types.ts": "export type T = number;\n",
     "app/lib/reexport.mts": "export const re = 1;\n",
@@ -42,13 +46,15 @@ def test_typescript_modules_edges_and_external_dependencies() -> None:
     assert [(entry.module, entry.path, entry.language) for entry in graph.modules] == [
         (path, path, "typescript") for path in sorted(APP)
     ]
-    # Type-only imports, re-exports, dynamic imports, and ".js" specifiers of
-    # TypeScript sources are all edges.
+    # Type-only imports, re-exports, dynamic imports, require, import-equals,
+    # and ".js" or ".cjs" specifiers of TypeScript sources are all edges.
     assert [(edge.importer, edge.imported) for edge in graph.edges] == [
         ("app/lib/a.ts", "app/util/index.ts"),
         ("app/main.ts", "app/lib/a.ts"),
+        ("app/main.ts", "app/lib/cjs.cts"),
         ("app/main.ts", "app/lib/lazy.tsx"),
         ("app/main.ts", "app/lib/reexport.mts"),
+        ("app/main.ts", "app/lib/req.ts"),
         ("app/main.ts", "app/lib/types.ts"),
         ("app/main.ts", "app/util/index.ts"),
         ("app/util/index.ts", "app/lib/a.ts"),
@@ -62,7 +68,7 @@ def test_typescript_modules_edges_and_external_dependencies() -> None:
     assert report.architecture.cycles.cyclic_scc_count == 1
     assert report.architecture.cycles.largest_cyclic_scc_size == 2
     coverage = {entry.language: entry for entry in report.coverage.languages}
-    assert coverage["typescript"].files_seen == coverage["typescript"].files_analyzed == 6
+    assert coverage["typescript"].files_seen == coverage["typescript"].files_analyzed == 8
     assert coverage["typescript"].files_without_module == ()
     assert report.versions.tools["dependency-cruiser"] == "18.4.0"
 
