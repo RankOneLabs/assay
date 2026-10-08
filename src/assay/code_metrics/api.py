@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import posixpath
 import re
 import shutil
 import statistics
@@ -32,7 +33,6 @@ from .models import (
     CodeMetricsReportV4,
     DetailedMetricDelta,
     ExistingMetricsV2,
-    Language,
     LanguageCoverage,
     ModuleGraphV2,
     NewCodeMetricsV2,
@@ -44,7 +44,13 @@ from .models import (
     language_of,
     validate_snapshot,
 )
-from .pins import JSCPD, assert_pinned_tools, tool_versions, typescript_tool_versions
+from .pins import (
+    JSCPD,
+    assert_pinned_tools,
+    rust_tool_versions,
+    tool_versions,
+    typescript_tool_versions,
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +120,7 @@ def _analyze(
     snapshot = _validate_paths(snapshot)
     from . import tools
     from .graph import extract_module_graph
+    from .rust import MANIFEST, extract_rust_graph
     from .typescript import extract_typescript_graph
 
     files = {path: snapshot[path] for path in sorted(snapshot) if path.endswith(".py")}
@@ -128,20 +135,31 @@ def _analyze(
         direct_import_count = extracted.direct_import_count
     else:
         graph = ModuleGraphV2(modules=(), edges=(), external_dependencies=())
-        python_coverage = _unextracted("python", {})
+        python_coverage = LanguageCoverage(
+            language="python",
+            files_seen=0,
+            files_analyzed=0,
+            modules_discovered=0,
+            files_without_module=(),
+        )
         direct_import_count = None
     typescript_files = {
         path: source for path, source in snapshot.items() if language_of(path) == "typescript"
     }
     typescript = extract_typescript_graph(typescript_files)
-    graph = _merge(graph, typescript.graph)
-    # Rust has no graph extractor yet; its files are counted and listed without a module.
-    extracted_coverage = {"python": python_coverage, "typescript": typescript.coverage}
+    rust_files = {path: source for path, source in snapshot.items() if language_of(path) == "rust"}
+    rust = extract_rust_graph(
+        rust_files,
+        {path: source for path, source in snapshot.items() if posixpath.basename(path) == MANIFEST},
+    )
+    graph = _merge(_merge(graph, typescript.graph), rust.graph)
+    extracted_coverage = {
+        "python": python_coverage,
+        "rust": rust.coverage,
+        "typescript": typescript.coverage,
+    }
     coverage = SnapshotCoverageV2(
-        languages=tuple(
-            extracted_coverage.get(language) or _unextracted(language, snapshot)
-            for language in LANGUAGES
-        )
+        languages=tuple(extracted_coverage[language] for language in LANGUAGES)
     )
     legacy_config = _Config(config.clone_min_lines, config.clone_min_tokens, config.ruff_ignore)
     try:
@@ -159,6 +177,8 @@ def _analyze(
     versions = tool_versions()
     if typescript_files:
         versions |= typescript_tool_versions()
+    if rust_files:
+        versions |= rust_tool_versions()
     # The analyzers read Python only, so without a Python file nothing was measured.
     measured = {key: payload[key] if files else None for key in DELTAS}
     report = CodeMetricsReportV4(
@@ -211,17 +231,6 @@ def _merge(first: ModuleGraphV2, second: ModuleGraphV2) -> ModuleGraphV2:
                 key=lambda item: (item.module, item.package),
             )
         ),
-    )
-
-
-def _unextracted(language: Language, snapshot: Snapshot) -> LanguageCoverage:
-    paths = tuple(sorted(path for path in snapshot if language_of(path) == language))
-    return LanguageCoverage(
-        language=language,
-        files_seen=len(paths),
-        files_analyzed=0,
-        modules_discovered=0,
-        files_without_module=paths,
     )
 
 

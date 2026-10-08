@@ -13,10 +13,11 @@
 | dependency-cruiser fetch fails, with a TypeScript file | ToolUnavailable(RuntimeError) |
 | mypy crashes, ruff or jscpd errors, unreadable jscpd report | AnalyzerFailed(RuntimeError) |
 | dependency-cruiser errors or its report is unreadable | AnalyzerFailed(RuntimeError) |
+| Cargo.toml that is not valid TOML | AnalyzerFailed(RuntimeError) |
 | No first-party package | Report: empty graph; propagation_cost and grimp.imports null |
 | Python file outside discovered packages | Report: path without module (below) |
 | Package or module name not a Python identifier | Report: path without module (below) |
-| File of a language without a graph extractor | Report: path without module (below) |
+| Rust file no Cargo target reaches through mod declarations | Report: path without module (below) |
 | Snapshot without a Python file | Report: Python analyzer metrics null |
 | Relative import above its top-level package | Report: no edge; mypy_errors null |
 | Afferent + efferent equals zero | Report: instability null |

@@ -203,10 +203,12 @@ def test_snapshot_reads_supported_languages_only(tmp_path: Path) -> None:
     (tmp_path / "web/app.ts").write_bytes(b"\xef\xbb\xbfexport const x = 1;\n")
     (tmp_path / "web/view.tsx").write_text("export {};\n")
     (tmp_path / "lib.rs").write_text("mod a;\n")
+    (tmp_path / "Cargo.toml").write_text("[package]\n")
     (tmp_path / "notes.md").write_text("# notes\n")
     (tmp_path / "app.js").write_text("module.exports = 1;\n")
     snapshot, _ = snapshot_directory(tmp_path)
     assert snapshot == {
+        "Cargo.toml": "[package]\n",
         "lib.rs": "mod a;\n",
         "web/app.ts": "export const x = 1;\n",
         "web/view.tsx": "export {};\n",
