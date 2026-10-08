@@ -105,7 +105,13 @@ def _code_metrics_config(path: str | None) -> Any:
         raise ConfigurationError("config must be an object")
     if not all(isinstance(key, str) for key in raw):
         raise ConfigurationError("config keys must be strings")
-    allowed = {"clone_min_lines", "clone_min_tokens", "ruff_ignore", "components"}
+    allowed = {
+        "clone_min_lines",
+        "clone_min_tokens",
+        "ruff_ignore",
+        "components",
+        "allow_unmatched_patterns",
+    }
     if set(raw) - allowed:
         raise ConfigurationError(f"unknown config keys: {sorted(set(raw) - allowed)}")
     values: dict[str, Any] = {
@@ -113,6 +119,7 @@ def _code_metrics_config(path: str | None) -> Any:
         "clone_min_tokens": 50,
         "ruff_ignore": (),
         "components": (),
+        "allow_unmatched_patterns": False,
     }
     values.update(raw)
     for key in ("clone_min_lines", "clone_min_tokens"):
@@ -122,6 +129,8 @@ def _code_metrics_config(path: str | None) -> Any:
         raise ConfigurationError("ruff_ignore must be a list of strings")
     if not all(isinstance(item, str) for item in values["ruff_ignore"]):
         raise ConfigurationError("ruff_ignore must be a list of strings")
+    if type(values["allow_unmatched_patterns"]) is not bool:
+        raise ConfigurationError("allow_unmatched_patterns must be a bool")
     if not isinstance(values["components"], list) and values["components"] != ():
         raise ConfigurationError("components must be a list")
     components = []
@@ -138,6 +147,7 @@ def _code_metrics_config(path: str | None) -> Any:
         clone_min_tokens=values["clone_min_tokens"],
         ruff_ignore=tuple(values["ruff_ignore"]),
         components=tuple(components),
+        allow_unmatched_patterns=values["allow_unmatched_patterns"],
     )
 
 

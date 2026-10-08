@@ -61,6 +61,7 @@ def assign_components(
     configuration: Sequence[ComponentConfig],
     *,
     require_matches: bool = True,
+    unmatched_patterns: list[tuple[str, str]] | None = None,
 ) -> tuple[ModuleComponentV2, ...]:
     """Resolve path globs, preserving real paths and assigning every module once.
 
@@ -91,6 +92,8 @@ def assign_components(
                 component=claimants[0] if claimants else "unassigned",
             )
         )
+    if unmatched_patterns is not None:
+        unmatched_patterns.extend(collect_unmatched_patterns((graph,), configuration))
     if require_matches:
         require_pattern_matches((graph,), configuration)
     return tuple(assigned)
@@ -101,9 +104,15 @@ def analyze_components(
     configuration: Sequence[ComponentConfig],
     *,
     require_matches: bool = True,
+    unmatched_patterns: list[tuple[str, str]] | None = None,
 ) -> ComponentMetricsReportV2:
     """Count distinct neighboring modules and raw edges for each component."""
-    assignments = assign_components(graph, configuration, require_matches=require_matches)
+    assignments = assign_components(
+        graph,
+        configuration,
+        require_matches=require_matches,
+        unmatched_patterns=unmatched_patterns,
+    )
     owner = {entry.module: entry.component for entry in assignments}
     members: dict[str, list[str]] = defaultdict(list)
     for entry in assignments:

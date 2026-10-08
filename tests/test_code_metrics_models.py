@@ -4,12 +4,14 @@ import json
 from typing import get_args, get_type_hints
 
 import pytest
+from code_metrics_fixtures import stub_jscpd
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as SchemaValidationError
 from pydantic import ValidationError
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from assay.code_metrics import analyze
 from assay.code_metrics.models import (
     ArchitectureReport,
     ArchitectureReportV1,
@@ -17,6 +19,8 @@ from assay.code_metrics.models import (
     CodeMetricsComparisonV2,
     CodeMetricsReport,
     CodeMetricsReportV2,
+    CodeMetricsReportV4,
+    CodeMetricsReportV5,
     ComponentCoupling,
     CycleReport,
     CycleReportV1,
@@ -243,6 +247,39 @@ def test_published_v1_shapes_remain_distinct_from_v2() -> None:
             Draft202012Validator(old_schema).validate(new_payload)
         with pytest.raises(SchemaValidationError):
             Draft202012Validator(new_schema).validate(old_payload)
+
+
+def test_pinned_v4_and_v5_report_schemas_reject_each_others_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub_jscpd(monkeypatch)
+    new_payload = analyze({"pkg/__init__.py": "", "pkg/a.py": "x = 1\n"}).model_dump(
+        mode="json"
+    )
+    old_payload = {
+        **new_payload,
+        "schema_version": "assay-code-metrics-report/0.4.0",
+        "configuration": {
+            key: value
+            for key, value in new_payload["configuration"].items()
+            if key not in {"allow_unmatched_patterns", "unmatched_patterns"}
+        },
+    }
+    documents = {name: json.loads(data) for name, data in schema_documents().items()}
+    old_schema = Draft202012Validator(documents["assay-code-metrics-report-v0.4.schema.json"])
+    new_schema = Draft202012Validator(documents["assay-code-metrics-report-v0.5.schema.json"])
+    old_schema.validate(old_payload)
+    new_schema.validate(new_payload)
+    assert CodeMetricsReportV4.model_validate(old_payload).model_dump(mode="json") == old_payload
+    assert CodeMetricsReportV5.model_validate(new_payload).model_dump(mode="json") == new_payload
+    with pytest.raises(SchemaValidationError):
+        old_schema.validate(new_payload)
+    with pytest.raises(SchemaValidationError):
+        new_schema.validate(old_payload)
+    with pytest.raises(ValidationError):
+        CodeMetricsReportV4.model_validate(new_payload)
+    with pytest.raises(ValidationError):
+        CodeMetricsReportV5.model_validate(old_payload)
 
 
 @pytest.mark.parametrize(

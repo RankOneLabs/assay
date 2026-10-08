@@ -8,6 +8,7 @@
 | Reserved `unassigned` component name | ReservedComponentName(ConfigurationError) |
 | Overlapping component claims | AmbiguousComponentConfig(ConfigurationError) |
 | Component pattern matching zero modules | EmptyComponentPattern(ConfigurationError) |
+| Zero-match pattern with flag enabled | Report: pattern in `configuration.unmatched_patterns` |
 | Resolved tool version differs from its pin | ToolVersionMismatch(RuntimeError) |
 | Node/npx unavailable or jscpd fetch fails | ToolUnavailable(RuntimeError) |
 | dependency-cruiser fetch fails, with a TypeScript file | ToolUnavailable(RuntimeError) |
