@@ -1,0 +1,56 @@
+clone_min_lines: 5
+clone_min_tokens: 50
+ruff_ignore: []
+allow_unmatched_patterns: true
+components:
+  - name: orchestration
+    patterns:
+      - kbbl/core/orchestrator/**
+      - kbbl/core/runtime*.ts
+      - oakridge-core/src/executor/**
+      - oakridge-core/src/registry/**
+      - oakridge-core/src/scheduler.rs
+      - oakridge-dbos/src/runtime/**
+      - oakridge-dbos/src/workflows/**
+      - workflow-core/crates/orchestrator/**
+  - name: decision
+    patterns:
+      - oakridge-dbos/src/decision/**
+      - oakridge-dbos/src/compiler/**
+      - workflow-core/crates/decision/**
+  - name: review
+    patterns:
+      - kbbl/core/review/**
+      - workflow-core/crates/review/**
+  - name: collaboration
+    patterns:
+      - oakridge-core/src/collab/**
+      - oakridge-dbos/src/domain/collaboration.ts
+      - workflow-core/crates/collab/**
+  - name: adapters
+    patterns:
+      - kbbl/adapters/**
+      - oakridge-dbos/src/adapters/**
+      - workflow-core/crates/adapters/**
+  - name: acp
+    patterns:
+      - kbbl/core/acp/**
+      - workflow-core/crates/acp/**
+  - name: skills
+    patterns:
+      - kbbl/core/skills/**
+      - workflow-core/crates/skills/**
+  - name: worktree
+    patterns:
+      - kbbl/core/worktree/**
+      - workflow-core/crates/worktree/**
+  - name: shared
+    patterns:
+      - kbbl/core/shared/**
+      - kbbl/core/types/**
+      - oakridge-core/src/types.rs
+      - workflow-core/crates/shared/**
+  - name: stream
+    patterns:
+      - kbbl/core/stream/**
+      - workflow-core/crates/stream/**
