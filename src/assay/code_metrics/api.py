@@ -44,7 +44,7 @@ from .models import (
     language_of,
     validate_snapshot,
 )
-from .pins import JSCPD, assert_pinned_tools, tool_versions
+from .pins import JSCPD, assert_pinned_tools, tool_versions, typescript_tool_versions
 
 
 @dataclass(frozen=True)
@@ -114,6 +114,7 @@ def _analyze(
     snapshot = _validate_paths(snapshot)
     from . import tools
     from .graph import extract_module_graph
+    from .typescript import extract_typescript_graph
 
     files = {path: snapshot[path] for path in sorted(snapshot) if path.endswith(".py")}
     for path, source in files.items():
@@ -129,11 +130,16 @@ def _analyze(
         graph = ModuleGraphV2(modules=(), edges=(), external_dependencies=())
         python_coverage = _unextracted("python", {})
         direct_import_count = None
-    # Only Python has a graph extractor; other languages' files are counted
-    # and listed without a module.
+    typescript_files = {
+        path: source for path, source in snapshot.items() if language_of(path) == "typescript"
+    }
+    typescript = extract_typescript_graph(typescript_files)
+    graph = _merge(graph, typescript.graph)
+    # Rust has no graph extractor yet; its files are counted and listed without a module.
+    extracted_coverage = {"python": python_coverage, "typescript": typescript.coverage}
     coverage = SnapshotCoverageV2(
         languages=tuple(
-            python_coverage if language == "python" else _unextracted(language, snapshot)
+            extracted_coverage.get(language) or _unextracted(language, snapshot)
             for language in LANGUAGES
         )
     )
@@ -150,6 +156,9 @@ def _analyze(
     mi = dict(sorted(payload["mi"].items()))
     payload["radon.mi"] = statistics.fmean(mi.values()) if mi else None
     architecture = analyze_architecture(graph, config.components, require_matches=require_matches)
+    versions = tool_versions()
+    if typescript_files:
+        versions |= typescript_tool_versions()
     # The analyzers read Python only, so without a Python file nothing was measured.
     measured = {key: payload[key] if files else None for key in DELTAS}
     report = CodeMetricsReportV4(
@@ -183,10 +192,26 @@ def _analyze(
         versions=ToolVersions(
             assay=version("assay"),
             python=".".join(map(str, sys.version_info[:3])),
-            tools=dict(sorted(tool_versions().items())),
+            tools=dict(sorted(versions.items())),
         ),
     )
     return report, payload
+
+
+def _merge(first: ModuleGraphV2, second: ModuleGraphV2) -> ModuleGraphV2:
+    """One graph of two languages' graphs, in the order each graph keeps alone."""
+    return ModuleGraphV2(
+        modules=tuple(sorted((*first.modules, *second.modules), key=lambda item: item.module)),
+        edges=tuple(
+            sorted((*first.edges, *second.edges), key=lambda item: (item.importer, item.imported))
+        ),
+        external_dependencies=tuple(
+            sorted(
+                (*first.external_dependencies, *second.external_dependencies),
+                key=lambda item: (item.module, item.package),
+            )
+        ),
+    )
 
 
 def _unextracted(language: Language, snapshot: Snapshot) -> LanguageCoverage:

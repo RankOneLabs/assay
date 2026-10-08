@@ -32,8 +32,10 @@ components:
     patterns: ["src/assay/*.py"]
 ```
 
-Clone detection uses pinned jscpd through `npx`. It needs Node.js, npm, and
-network access for the first download.
+Clone detection uses pinned jscpd through `npx`, and a snapshot with
+TypeScript files is graphed by pinned dependency-cruiser and TypeScript through
+`npx`. Both need Node.js, npm, and network access for the first download;
+dependency-cruiser 18.4.0 needs Node.js 22, 24, or 26 and later.
 
 ## Metric definitions
 
@@ -46,8 +48,19 @@ listed in `graph.external_dependencies` and do not enter these counts.
 ### Languages
 
 Each graph module names its `language`: `python`, `rust`, or `typescript`. A
-Python module is identified by its dotted name. Only Python has a graph
-extractor so far, so a TypeScript or Rust file contributes no module or edge.
+Python module is identified by its dotted name. Rust has no graph extractor
+yet, so a Rust file contributes no module or edge.
+
+A TypeScript module is one file, identified by its snapshot path. Every
+TypeScript file is first-party. An edge is any import that resolves to another
+snapshot file: static and type-only imports, re-exports, dynamic `import()`,
+`require`, and `import x = require()`. A `.js` specifier resolves to its
+TypeScript source, and a directory to its `index.ts`. Any other import is an
+external dependency: a package by its name (`zod`, `@scope/name`, `fs`,
+`bun:test`), and a relative import of a file that is not TypeScript, such as a
+stylesheet, by its path from the snapshot root. No `tsconfig.json` is read, so
+a path alias or a workspace package imported by name is reported as an
+external package, not an edge.
 
 `coverage.languages` has one entry per language, zeros included. `files_seen`
 counts the snapshot's files with that language's extensions, `files_analyzed`
