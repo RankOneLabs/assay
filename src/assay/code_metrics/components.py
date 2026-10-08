@@ -31,17 +31,29 @@ def _target(entry: ModuleEntry) -> str:
     return entry.path if entry.path is not None else entry.module
 
 
+def collect_unmatched_patterns(
+    graphs: Sequence[ModuleGraph], configuration: Sequence[ComponentConfig]
+) -> tuple[tuple[str, str], ...]:
+    """Return every component pattern that matches no module in any graph."""
+    targets = [_target(entry) for graph in graphs for entry in graph.modules]
+    return tuple(
+        (component.name, pattern)
+        for component in configuration
+        for pattern in component.patterns
+        if not any(fnmatchcase(target, pattern) for target in targets)
+    )
+
+
 def require_pattern_matches(
     graphs: Sequence[ModuleGraph], configuration: Sequence[ComponentConfig]
 ) -> None:
-    """Reject a pattern that matches no module in any of *graphs*."""
-    targets = [_target(entry) for graph in graphs for entry in graph.modules]
-    for component in configuration:
-        for pattern in component.patterns:
-            if not any(fnmatchcase(target, pattern) for target in targets):
-                raise EmptyComponentPattern(
-                    f"component {component.name} pattern {pattern!r} matched zero modules"
-                )
+    """Reject the first pattern that matches no module in any graph."""
+    unmatched = collect_unmatched_patterns(graphs, configuration)
+    if unmatched:
+        component, pattern = unmatched[0]
+        raise EmptyComponentPattern(
+            f"component {component} pattern {pattern!r} matched zero modules"
+        )
 
 
 def assign_components(
