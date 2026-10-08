@@ -28,9 +28,15 @@ def analyze_architecture(
     configuration: Sequence[ComponentConfig],
     *,
     require_matches: bool = True,
+    unmatched_patterns: list[tuple[str, str]] | None = None,
 ) -> ArchitectureReportV4:
     """Assemble coupling, cycle, propagation, and graph-count evidence for one graph."""
-    components = analyze_components(graph, configuration, require_matches=require_matches)
+    components = analyze_components(
+        graph,
+        configuration,
+        require_matches=require_matches,
+        unmatched_patterns=unmatched_patterns,
+    )
     return ArchitectureReportV4(
         graph=graph,
         module_count=len(graph.modules),

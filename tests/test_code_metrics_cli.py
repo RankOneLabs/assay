@@ -99,7 +99,7 @@ def test_snapshot_and_compare_cli_reports(
     assert (
         result["existing_metrics"] == analyze(snapshot).model_dump(mode="json")["existing_metrics"]
     )
-    schema_path = Path(__file__).parents[1] / "schemas/assay-code-metrics-report-v0.4.schema.json"
+    schema_path = Path(__file__).parents[1] / "schemas/assay-code-metrics-report-v0.5.schema.json"
     schema = json.loads(schema_path.read_text())
     Draft202012Validator(schema).validate(result)
     compared = _run(monkeypatch, capsys, "compare", str(before), str(after), "--exclude", "skip")
@@ -107,10 +107,61 @@ def test_snapshot_and_compare_cli_reports(
     assert compared["after"]["configuration"]["excluded_directories"] == list(excluded)
     schema = json.loads(
         (
-            Path(__file__).parents[1] / "schemas/assay-code-metrics-comparison-v0.5.schema.json"
+            Path(__file__).parents[1] / "schemas/assay-code-metrics-comparison-v0.6.schema.json"
         ).read_text()
     )
     Draft202012Validator(schema).validate(compared)
+
+
+def test_allow_unmatched_config_and_exclusions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub_jscpd(monkeypatch)
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    for root in (before, after):
+        (root / "pkg").mkdir(parents=True)
+        (root / "pkg/__init__.py").write_text("")
+        (root / "pkg/a.py").write_text("x = 1\n")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "allow_unmatched_patterns: true\n"
+        "components:\n  - name: absent\n    patterns: ['missing/*']\n"
+    )
+    snapshot = _run(
+        monkeypatch, capsys, "snapshot", str(before), "--config", str(config),
+        "--exclude", "skip",
+    )
+    assert snapshot["configuration"]["allow_unmatched_patterns"] is True
+    assert snapshot["configuration"]["unmatched_patterns"] == [
+        {"component": "absent", "pattern": "missing/*"}
+    ]
+    assert "skip" in snapshot["configuration"]["excluded_directories"]
+    compared = _run(
+        monkeypatch, capsys, "compare", str(before), str(after), "--config", str(config)
+    )
+    for side in ("before", "after"):
+        assert compared[side]["configuration"]["unmatched_patterns"] == [
+            {"component": "absent", "pattern": "missing/*"}
+        ]
+
+
+@pytest.mark.parametrize("command", ["snapshot", "compare"])
+def test_allow_unmatched_config_requires_bool(
+    command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = tmp_path / "bad.yaml"
+    config.write_text("allow_unmatched_patterns: 1\n")
+    paths = [str(tmp_path)] if command == "snapshot" else [str(tmp_path), str(tmp_path)]
+    monkeypatch.setattr(
+        sys, "argv", ["assay", "code-metrics", command, *paths, "--config", str(config)]
+    )
+    assert cli.main() == 1
+    assert capsys.readouterr().out == (
+        f"code_metrics_{command}_failed: configure components: "
+        "allow_unmatched_patterns must be a bool\n"
+    )
 
 
 def test_malformed_config_is_clean_failure(

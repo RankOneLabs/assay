@@ -228,6 +228,16 @@ class ResolvedConfiguration(WireModel):
     excluded_directories: tuple[RepoPath, ...]
 
 
+class UnmatchedPattern(WireModel):
+    component: ComponentName
+    pattern: RepoPath
+
+
+class ResolvedConfigurationV2(ResolvedConfiguration):
+    allow_unmatched_patterns: bool
+    unmatched_patterns: tuple[UnmatchedPattern, ...]
+
+
 class ToolVersions(WireModel):
     assay: NonEmpty
     python: NonEmpty
@@ -735,6 +745,31 @@ class CodeMetricsComparisonV5(WireModel):
     )
     before: CodeMetricsReportV4
     after: CodeMetricsReportV4
+    deltas: tuple[DetailedMetricDelta, ...]
+    architecture_deltas: ArchitectureDeltasV2
+    new_code: NewCodeMetricsV2
+    structural_changes: StructuralChangesV5
+
+
+class CodeMetricsReportV5(WireModel):
+    """Absolute snapshot report including pattern resolution for this graph."""
+
+    schema_version: Literal["assay-code-metrics-report/0.5.0"] = "assay-code-metrics-report/0.5.0"
+    existing_metrics: ExistingMetricsV2
+    architecture: ArchitectureReportV4
+    coverage: SnapshotCoverageV2
+    configuration: ResolvedConfigurationV2
+    versions: ToolVersions
+
+
+class CodeMetricsComparisonV6(WireModel):
+    """Comparison of two 0.5.0 reports."""
+
+    schema_version: Literal["assay-code-metrics-comparison/0.6.0"] = (
+        "assay-code-metrics-comparison/0.6.0"
+    )
+    before: CodeMetricsReportV5
+    after: CodeMetricsReportV5
     deltas: tuple[DetailedMetricDelta, ...]
     architecture_deltas: ArchitectureDeltasV2
     new_code: NewCodeMetricsV2

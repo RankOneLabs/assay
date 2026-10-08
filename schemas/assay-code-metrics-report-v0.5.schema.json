@@ -1,0 +1,900 @@
+{
+  "$defs": {
+    "ArchitectureReportV4": {
+      "additionalProperties": false,
+      "description": "The 0.3.0 architecture shape over a graph whose modules name their language.",
+      "properties": {
+        "graph": {
+          "$ref": "#/$defs/ModuleGraphV2"
+        },
+        "module_count": {
+          "title": "Module Count",
+          "type": "integer"
+        },
+        "first_party_edge_count": {
+          "title": "First Party Edge Count",
+          "type": "integer"
+        },
+        "cross_component_edge_count": {
+          "title": "Cross Component Edge Count",
+          "type": "integer"
+        },
+        "module_coupling": {
+          "items": {
+            "$ref": "#/$defs/ModuleCouplingV4"
+          },
+          "title": "Module Coupling",
+          "type": "array"
+        },
+        "component_coupling": {
+          "items": {
+            "$ref": "#/$defs/ComponentCouplingV4"
+          },
+          "title": "Component Coupling",
+          "type": "array"
+        },
+        "module_components": {
+          "items": {
+            "$ref": "#/$defs/ModuleComponentV2"
+          },
+          "title": "Module Components",
+          "type": "array"
+        },
+        "boundaries": {
+          "items": {
+            "$ref": "#/$defs/BoundaryPair"
+          },
+          "title": "Boundaries",
+          "type": "array"
+        },
+        "cycles": {
+          "$ref": "#/$defs/CycleReportV4"
+        },
+        "propagation": {
+          "$ref": "#/$defs/PropagationReportV4"
+        }
+      },
+      "required": [
+        "graph",
+        "module_count",
+        "first_party_edge_count",
+        "cross_component_edge_count",
+        "module_coupling",
+        "component_coupling",
+        "module_components",
+        "boundaries",
+        "cycles",
+        "propagation"
+      ],
+      "title": "ArchitectureReportV4",
+      "type": "object"
+    },
+    "BoundaryPair": {
+      "additionalProperties": false,
+      "properties": {
+        "importer_component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Importer Component",
+          "type": "string"
+        },
+        "imported_component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Imported Component",
+          "type": "string"
+        },
+        "edge_count": {
+          "title": "Edge Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "importer_component",
+        "imported_component",
+        "edge_count"
+      ],
+      "title": "BoundaryPair",
+      "type": "object"
+    },
+    "ComponentCouplingV4": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Component",
+          "type": "string"
+        },
+        "modules": {
+          "items": {
+            "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+            "type": "string"
+          },
+          "title": "Modules",
+          "type": "array"
+        },
+        "afferent": {
+          "description": "Ca: distinct modules outside the component that directly import one in it.",
+          "title": "Afferent",
+          "type": "integer"
+        },
+        "efferent": {
+          "description": "Ce: distinct modules outside the component that a module in it directly imports (the imported modules, not the importing members).",
+          "title": "Efferent",
+          "type": "integer"
+        },
+        "instability": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Ce / (Ca + Ce); null when Ca + Ce is 0.",
+          "title": "Instability"
+        },
+        "internal_edges": {
+          "title": "Internal Edges",
+          "type": "integer"
+        },
+        "incoming_edges": {
+          "title": "Incoming Edges",
+          "type": "integer"
+        },
+        "outgoing_edges": {
+          "title": "Outgoing Edges",
+          "type": "integer"
+        },
+        "module_count": {
+          "title": "Module Count",
+          "type": "integer"
+        },
+        "relational_cohesion": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Relational Cohesion"
+        },
+        "internal_dependency_density": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Internal Dependency Density"
+        },
+        "internal_edge_share": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Internal Edge Share"
+        }
+      },
+      "required": [
+        "component",
+        "modules",
+        "afferent",
+        "efferent",
+        "instability",
+        "internal_edges",
+        "incoming_edges",
+        "outgoing_edges",
+        "module_count",
+        "relational_cohesion",
+        "internal_dependency_density",
+        "internal_edge_share"
+      ],
+      "title": "ComponentCouplingV4",
+      "type": "object"
+    },
+    "CycleReportV4": {
+      "additionalProperties": false,
+      "properties": {
+        "components": {
+          "items": {
+            "$ref": "#/$defs/StronglyConnectedComponentV2"
+          },
+          "title": "Components",
+          "type": "array"
+        },
+        "cyclic_component_count": {
+          "title": "Cyclic Component Count",
+          "type": "integer"
+        },
+        "modules_in_cycles": {
+          "items": {
+            "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+            "type": "string"
+          },
+          "title": "Modules In Cycles",
+          "type": "array"
+        },
+        "scc_count": {
+          "title": "Scc Count",
+          "type": "integer"
+        },
+        "cyclic_scc_count": {
+          "title": "Cyclic Scc Count",
+          "type": "integer"
+        },
+        "cyclic_module_count": {
+          "title": "Cyclic Module Count",
+          "type": "integer"
+        },
+        "largest_cyclic_scc_size": {
+          "title": "Largest Cyclic Scc Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "components",
+        "cyclic_component_count",
+        "modules_in_cycles",
+        "scc_count",
+        "cyclic_scc_count",
+        "cyclic_module_count",
+        "largest_cyclic_scc_size"
+      ],
+      "title": "CycleReportV4",
+      "type": "object"
+    },
+    "ExistingMetricsV2": {
+      "additionalProperties": false,
+      "description": "The Python analyzers' metrics over the snapshot's Python files.\n\nEvery analyzer here reads Python only, so each value is null, and the\nmaintainability index map empty, when the snapshot has no Python file.",
+      "properties": {
+        "radon_sloc": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Radon Sloc"
+        },
+        "radon_lloc": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Radon Lloc"
+        },
+        "radon_cc": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Radon Cc"
+        },
+        "radon_halstead_volume": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Radon Halstead Volume"
+        },
+        "complexipy_cognitive": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Complexipy Cognitive"
+        },
+        "grimp_imports": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Grimp Imports"
+        },
+        "ruff_violations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ruff Violations"
+        },
+        "ruff_magic_values": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ruff Magic Values"
+        },
+        "mypy_errors": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mypy Errors"
+        },
+        "jscpd_clones": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Jscpd Clones"
+        },
+        "jscpd_duplicated_lines": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Jscpd Duplicated Lines"
+        },
+        "maintainability_index": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[^/\\\\][^\\\\]*$": {
+              "type": "number"
+            }
+          },
+          "title": "Maintainability Index",
+          "type": "object"
+        },
+        "maintainability_index_mean": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Maintainability Index Mean"
+        }
+      },
+      "required": [
+        "radon_sloc",
+        "radon_lloc",
+        "radon_cc",
+        "radon_halstead_volume",
+        "complexipy_cognitive",
+        "grimp_imports",
+        "ruff_violations",
+        "ruff_magic_values",
+        "mypy_errors",
+        "jscpd_clones",
+        "jscpd_duplicated_lines",
+        "maintainability_index",
+        "maintainability_index_mean"
+      ],
+      "title": "ExistingMetricsV2",
+      "type": "object"
+    },
+    "ExternalDependencyV2": {
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+          "title": "Module",
+          "type": "string"
+        },
+        "package": {
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+          "title": "Package",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "package"
+      ],
+      "title": "ExternalDependencyV2",
+      "type": "object"
+    },
+    "ImportEdgeV2": {
+      "additionalProperties": false,
+      "properties": {
+        "importer": {
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+          "title": "Importer",
+          "type": "string"
+        },
+        "imported": {
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+          "title": "Imported",
+          "type": "string"
+        }
+      },
+      "required": [
+        "importer",
+        "imported"
+      ],
+      "title": "ImportEdgeV2",
+      "type": "object"
+    },
+    "LanguageCoverage": {
+      "additionalProperties": false,
+      "description": "How much of one language's source the graph extraction reached.\n\n``files_seen`` counts snapshot files with the language's extensions and\n``files_analyzed`` those an analyzer read. A language without a graph\nextractor analyzes none, so every file it sees is without a module.",
+      "properties": {
+        "language": {
+          "enum": [
+            "python",
+            "rust",
+            "typescript"
+          ],
+          "title": "Language",
+          "type": "string"
+        },
+        "files_seen": {
+          "title": "Files Seen",
+          "type": "integer"
+        },
+        "files_analyzed": {
+          "title": "Files Analyzed",
+          "type": "integer"
+        },
+        "modules_discovered": {
+          "title": "Modules Discovered",
+          "type": "integer"
+        },
+        "files_without_module": {
+          "items": {
+            "pattern": "^[^/\\\\][^\\\\]*$",
+            "type": "string"
+          },
+          "title": "Files Without Module",
+          "type": "array"
+        }
+      },
+      "required": [
+        "language",
+        "files_seen",
+        "files_analyzed",
+        "modules_discovered",
+        "files_without_module"
+      ],
+      "title": "LanguageCoverage",
+      "type": "object"
+    },
+    "ModuleComponentV2": {
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+          "title": "Module",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "pattern": "^[^/\\\\][^\\\\]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Component",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "path",
+        "component"
+      ],
+      "title": "ModuleComponentV2",
+      "type": "object"
+    },
+    "ModuleCouplingV4": {
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+          "title": "Module",
+          "type": "string"
+        },
+        "fan_in": {
+          "description": "Distinct first-party modules that directly import this one.",
+          "title": "Fan In",
+          "type": "integer"
+        },
+        "fan_out": {
+          "description": "Distinct first-party modules this one directly imports.",
+          "title": "Fan Out",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "module",
+        "fan_in",
+        "fan_out"
+      ],
+      "title": "ModuleCouplingV4",
+      "type": "object"
+    },
+    "ModuleEntryV2": {
+      "additionalProperties": false,
+      "description": "A first-party module, its source path, and the language it is written in.",
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+          "title": "Module",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "pattern": "^[^/\\\\][^\\\\]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "language": {
+          "enum": [
+            "python",
+            "rust",
+            "typescript"
+          ],
+          "title": "Language",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "path",
+        "language"
+      ],
+      "title": "ModuleEntryV2",
+      "type": "object"
+    },
+    "ModuleGraphV2": {
+      "additionalProperties": false,
+      "properties": {
+        "modules": {
+          "items": {
+            "$ref": "#/$defs/ModuleEntryV2"
+          },
+          "title": "Modules",
+          "type": "array"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/ImportEdgeV2"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "external_dependencies": {
+          "items": {
+            "$ref": "#/$defs/ExternalDependencyV2"
+          },
+          "title": "External Dependencies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "modules",
+        "edges",
+        "external_dependencies"
+      ],
+      "title": "ModuleGraphV2",
+      "type": "object"
+    },
+    "ModuleVisibilityV4": {
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+          "title": "Module",
+          "type": "string"
+        },
+        "reaches": {
+          "title": "Reaches",
+          "type": "integer"
+        },
+        "reached_by": {
+          "title": "Reached By",
+          "type": "integer"
+        },
+        "fan_out_visibility": {
+          "title": "Fan Out Visibility",
+          "type": "number"
+        },
+        "fan_in_visibility": {
+          "title": "Fan In Visibility",
+          "type": "number"
+        }
+      },
+      "required": [
+        "module",
+        "reaches",
+        "reached_by",
+        "fan_out_visibility",
+        "fan_in_visibility"
+      ],
+      "title": "ModuleVisibilityV4",
+      "type": "object"
+    },
+    "PropagationReportV4": {
+      "additionalProperties": false,
+      "properties": {
+        "module_visibility": {
+          "items": {
+            "$ref": "#/$defs/ModuleVisibilityV4"
+          },
+          "title": "Module Visibility",
+          "type": "array"
+        },
+        "propagation_cost": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Propagation Cost"
+        }
+      },
+      "required": [
+        "module_visibility",
+        "propagation_cost"
+      ],
+      "title": "PropagationReportV4",
+      "type": "object"
+    },
+    "ResolvedConfigurationV2": {
+      "additionalProperties": false,
+      "properties": {
+        "clone_min_lines": {
+          "title": "Clone Min Lines",
+          "type": "integer"
+        },
+        "clone_min_tokens": {
+          "title": "Clone Min Tokens",
+          "type": "integer"
+        },
+        "ruff_ignore": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          "title": "Ruff Ignore",
+          "type": "array"
+        },
+        "components": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_.-]*$": {
+              "items": {
+                "pattern": "^[^/\\\\][^\\\\]*$",
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "title": "Components",
+          "type": "object"
+        },
+        "excluded_directories": {
+          "items": {
+            "pattern": "^[^/\\\\][^\\\\]*$",
+            "type": "string"
+          },
+          "title": "Excluded Directories",
+          "type": "array"
+        },
+        "allow_unmatched_patterns": {
+          "title": "Allow Unmatched Patterns",
+          "type": "boolean"
+        },
+        "unmatched_patterns": {
+          "items": {
+            "$ref": "#/$defs/UnmatchedPattern"
+          },
+          "title": "Unmatched Patterns",
+          "type": "array"
+        }
+      },
+      "required": [
+        "clone_min_lines",
+        "clone_min_tokens",
+        "ruff_ignore",
+        "components",
+        "excluded_directories",
+        "allow_unmatched_patterns",
+        "unmatched_patterns"
+      ],
+      "title": "ResolvedConfigurationV2",
+      "type": "object"
+    },
+    "SnapshotCoverageV2": {
+      "additionalProperties": false,
+      "description": "One coverage entry per supported language, in name order, zeros included.",
+      "properties": {
+        "languages": {
+          "items": {
+            "$ref": "#/$defs/LanguageCoverage"
+          },
+          "title": "Languages",
+          "type": "array"
+        }
+      },
+      "required": [
+        "languages"
+      ],
+      "title": "SnapshotCoverageV2",
+      "type": "object"
+    },
+    "StronglyConnectedComponentV2": {
+      "additionalProperties": false,
+      "properties": {
+        "modules": {
+          "items": {
+            "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+            "type": "string"
+          },
+          "title": "Modules",
+          "type": "array"
+        },
+        "is_cyclic": {
+          "title": "Is Cyclic",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "modules",
+        "is_cyclic"
+      ],
+      "title": "StronglyConnectedComponentV2",
+      "type": "object"
+    },
+    "ToolVersions": {
+      "additionalProperties": false,
+      "properties": {
+        "assay": {
+          "minLength": 1,
+          "title": "Assay",
+          "type": "string"
+        },
+        "python": {
+          "minLength": 1,
+          "title": "Python",
+          "type": "string"
+        },
+        "tools": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_.-]*$": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "title": "Tools",
+          "type": "object"
+        }
+      },
+      "required": [
+        "assay",
+        "python",
+        "tools"
+      ],
+      "title": "ToolVersions",
+      "type": "object"
+    },
+    "UnmatchedPattern": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Component",
+          "type": "string"
+        },
+        "pattern": {
+          "pattern": "^[^/\\\\][^\\\\]*$",
+          "title": "Pattern",
+          "type": "string"
+        }
+      },
+      "required": [
+        "component",
+        "pattern"
+      ],
+      "title": "UnmatchedPattern",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Absolute snapshot report including pattern resolution for this graph.",
+  "properties": {
+    "schema_version": {
+      "const": "assay-code-metrics-report/0.5.0",
+      "default": "assay-code-metrics-report/0.5.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "existing_metrics": {
+      "$ref": "#/$defs/ExistingMetricsV2"
+    },
+    "architecture": {
+      "$ref": "#/$defs/ArchitectureReportV4"
+    },
+    "coverage": {
+      "$ref": "#/$defs/SnapshotCoverageV2"
+    },
+    "configuration": {
+      "$ref": "#/$defs/ResolvedConfigurationV2"
+    },
+    "versions": {
+      "$ref": "#/$defs/ToolVersions"
+    }
+  },
+  "required": [
+    "existing_metrics",
+    "architecture",
+    "coverage",
+    "configuration",
+    "versions",
+    "schema_version"
+  ],
+  "title": "CodeMetricsReportV5",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-code-metrics-report-v0.5.schema.json"
+}

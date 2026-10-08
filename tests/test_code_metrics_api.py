@@ -59,16 +59,63 @@ def test_compared_component_may_exist_on_one_side() -> None:
             ComponentConfig("plugins", ("src/pkg/plugins/*",)),
         )
     )
-    added = compare(PACKAGE, after, config=config).structural_changes
+    comparison = compare(PACKAGE, after, config=config)
+    added = comparison.structural_changes
     removed = compare(after, PACKAGE, config=config).structural_changes
     assert added.components_added == ("plugins",)
     assert removed.components_removed == ("plugins",)
+    assert comparison.before.configuration.unmatched_patterns[0].model_dump() == {
+        "component": "plugins", "pattern": "src/pkg/plugins/*"
+    }
+    assert comparison.after.configuration.unmatched_patterns == ()
     with pytest.raises(EmptyComponentPattern, match="missing"):
         compare(
             PACKAGE,
             after,
             config=CodeMetricsConfig(components=(ComponentConfig("gone", ("missing/*",)),)),
         )
+
+
+def test_allow_unmatched_patterns_on_analyze_and_compare() -> None:
+    config = CodeMetricsConfig(
+        components=(
+            ComponentConfig("present", ("src/pkg/a.py",)),
+            ComponentConfig("missing", ("missing/*",)),
+        ),
+        allow_unmatched_patterns=True,
+    )
+    with pytest.raises(
+        EmptyComponentPattern,
+        match=r"configure components: component missing pattern 'missing/\*' matched zero modules",
+    ):
+        analyze(PACKAGE, config=CodeMetricsConfig(components=config.components))
+    report = analyze(PACKAGE, config=config)
+    assert report.schema_version == "assay-code-metrics-report/0.5.0"
+    assert report.configuration.allow_unmatched_patterns is True
+    expected = ({"component": "missing", "pattern": "missing/*"},)
+    assert tuple(item.model_dump() for item in report.configuration.unmatched_patterns) == expected
+    comparison = compare(PACKAGE, PACKAGE, config=config)
+    assert comparison.schema_version == "assay-code-metrics-comparison/0.6.0"
+    assert tuple(
+        item.model_dump() for item in comparison.before.configuration.unmatched_patterns
+    ) == expected
+    assert tuple(
+        item.model_dump() for item in comparison.after.configuration.unmatched_patterns
+    ) == expected
+
+
+@pytest.mark.parametrize("allow", [False, True])
+def test_one_sided_pattern_resolution_is_reported_on_its_own_side(allow: bool) -> None:
+    after = {**PACKAGE, "src/pkg/plugins/__init__.py": "", "src/pkg/plugins/x.py": "pass\n"}
+    config = CodeMetricsConfig(
+        components=(ComponentConfig("plugins", ("src/pkg/plugins/*",)),),
+        allow_unmatched_patterns=allow,
+    )
+    comparison = compare(PACKAGE, after, config=config)
+    assert comparison.before.configuration.unmatched_patterns[0].model_dump() == {
+        "component": "plugins", "pattern": "src/pkg/plugins/*"
+    }
+    assert comparison.after.configuration.unmatched_patterns == ()
 
 
 def test_mi_shared_intersection_and_explicit_structure() -> None:

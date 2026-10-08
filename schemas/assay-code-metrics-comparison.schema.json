@@ -16,6 +16,9 @@
     },
     {
       "$ref": "https://assay.dev/schemas/assay-code-metrics-comparison-v0.5.schema.json"
+    },
+    {
+      "$ref": "https://assay.dev/schemas/assay-code-metrics-comparison-v0.6.schema.json"
     }
   ]
 }

@@ -222,8 +222,8 @@ def test_comparison_wires_deltas_and_validates_against_new_schemas(
     stub_jscpd(monkeypatch)
     config = CodeMetricsConfig(components=ALPHA_AB_BETA_CD)
     result = compare(FIXTURE_K_BEFORE, FIXTURE_K_AFTER, config=config)
-    assert result.schema_version == "assay-code-metrics-comparison/0.5.0"
-    assert result.before.schema_version == "assay-code-metrics-report/0.4.0"
+    assert result.schema_version == "assay-code-metrics-comparison/0.6.0"
+    assert result.before.schema_version == "assay-code-metrics-report/0.5.0"
     assert result.architecture_deltas == compare_architecture(
         result.before.architecture, result.after.architecture
     )
@@ -236,11 +236,11 @@ def test_comparison_wires_deltas_and_validates_against_new_schemas(
         ),
     )
     comparison_schema = json.loads(
-        (SCHEMAS / "assay-code-metrics-comparison-v0.5.schema.json").read_text(encoding="utf-8")
+        (SCHEMAS / "assay-code-metrics-comparison-v0.6.schema.json").read_text(encoding="utf-8")
     )
     Draft202012Validator(comparison_schema).validate(result.model_dump(mode="json"))
     report_schema = json.loads(
-        (SCHEMAS / "assay-code-metrics-report-v0.4.schema.json").read_text(encoding="utf-8")
+        (SCHEMAS / "assay-code-metrics-report-v0.5.schema.json").read_text(encoding="utf-8")
     )
     report = analyze(FIXTURE_K_AFTER, config=config)
     Draft202012Validator(report_schema).validate(report.model_dump(mode="json"))
