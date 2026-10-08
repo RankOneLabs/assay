@@ -34,7 +34,8 @@ DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
 def snapshot_directory(
     path: str | Path, *, exclude: tuple[str, ...] = ()
 ) -> tuple[Snapshot, tuple[str, ...]]:
-    """Read the supported languages' files under *path*, pruning named directories and globs.
+    """Read the supported languages' files and Cargo manifests under *path*, pruning
+    named directories and globs.
 
     Symlinks are skipped, files as well as directories, so every source read
     lies inside *path*.
@@ -59,7 +60,7 @@ def snapshot_directory(
             if not _excluded((relative / name).as_posix(), name, resolved)
         )
         for name in sorted(filenames):
-            if language_of(name) is None:
+            if language_of(name) is None and name != "Cargo.toml":
                 continue
             key = (relative / name).as_posix()
             source = Path(directory) / name

@@ -13,7 +13,9 @@ from assay.store import ObjectIntegrityError, ObjectStore
 from assay.verify import export_bundle, verify_bundle
 
 _REVIEW_SERVER_DEPENDENCIES = frozenset({"fastapi", "uvicorn"})
-_CODE_METRICS_DEPENDENCIES = frozenset({"grimp", "radon", "complexipy", "lizard", "ruff", "mypy"})
+_CODE_METRICS_DEPENDENCIES = frozenset(
+    {"grimp", "radon", "complexipy", "lizard", "ruff", "mypy", "tree_sitter", "tree_sitter_rust"}
+)
 
 
 def _handle_verify(args: argparse.Namespace) -> int:

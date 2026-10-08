@@ -10,9 +10,9 @@ assay code-metrics compare BEFORE_PATH AFTER_PATH [--config FILE] [--exclude GLO
 ```
 
 Each path is a directory. The CLI reads its Python (`.py`), TypeScript (`.ts`,
-`.tsx`, `.mts`, `.cts`), and Rust (`.rs`) files into a snapshot keyed by
-relative path. It decodes Python as Python does (a coding declaration or BOM,
-otherwise UTF-8) and the other languages as UTF-8 without a BOM. It skips symlinks and the `.git`, `.venv`, `venv`,
+`.tsx`, `.mts`, `.cts`), and Rust (`.rs`) files, and every `Cargo.toml`, into a
+snapshot keyed by relative path. It decodes Python as Python does (a coding
+declaration or BOM, otherwise UTF-8) and the rest as UTF-8 without a BOM. It skips symlinks and the `.git`, `.venv`, `venv`,
 `node_modules`, `__pycache__`, `.assay`, `.claude`, `dist`, `build`,
 `.mypy_cache`, `.pytest_cache`, and `.ruff_cache` directories. Each `--exclude`
 adds a file or directory glob; the report's `configuration.excluded_directories` lists the
@@ -48,8 +48,7 @@ listed in `graph.external_dependencies` and do not enter these counts.
 ### Languages
 
 Each graph module names its `language`: `python`, `rust`, or `typescript`. A
-Python module is identified by its dotted name. Rust has no graph extractor
-yet, so a Rust file contributes no module or edge.
+Python module is identified by its dotted name.
 
 A TypeScript module is one file, identified by its snapshot path. Every
 TypeScript file is first-party. An edge is any import that resolves to another
@@ -61,6 +60,24 @@ external dependency: a package by its name (`zod`, `@scope/name`, `fs`,
 stylesheet, by its path from the snapshot root. No `tsconfig.json` is read, so
 a path alias or a workspace package imported by name is reported as an
 external package, not an edge.
+
+A Rust module is one file, identified by its snapshot path, and parsed with
+pinned tree-sitter-rust. Crates come from each `Cargo.toml` with a `[package]`
+table: its library (`[lib]` or `src/lib.rs`), its binaries, tests, examples,
+benches, and build script, declared or found in Cargo's default places. A file
+is a module when a target's root reaches it through `mod` declarations,
+`#[path]` included; an inline `mod name { ... }` belongs to the file holding
+it, and a file no target reaches has no module. An edge is any path that names
+another file's module: in a `use`, an expression or type, or a macro's tokens.
+`crate::`, `self::`, `super::`, a child module, a `use` alias of a module, and
+a snapshot library by its crate name all resolve, each to the file holding the
+longest module prefix of the path; a path naming its own file adds no edge. A
+name reached through a `pub use` re-export is attributed to the module the path
+names, not the one defining the item, as a Python or TypeScript import of a
+re-exported name is. A
+path starting with a declared dependency or a sysroot crate (`std`, `core`,
+`alloc`) is an external dependency on that crate. Code a macro generates is not
+seen.
 
 `coverage.languages` has one entry per language, zeros included. `files_seen`
 counts the snapshot's files with that language's extensions, `files_analyzed`

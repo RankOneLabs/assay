@@ -9,13 +9,13 @@ from code_metrics_fixtures import stub_jscpd
 from assay.code_metrics import analyze, tools
 from assay.code_metrics.errors import ToolVersionMismatch
 from assay.code_metrics.models import _Config
-from assay.code_metrics.pins import PINS, assert_pinned_tools
+from assay.code_metrics.pins import PINS, RUST_PINS, assert_pinned_tools
 
 
 def test_pins_match_declared_extra() -> None:
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     extra = project["project"]["optional-dependencies"]["code-metrics"]
-    assert {name: pin for name, pin in (item.split("==") for item in extra)} == PINS
+    assert {name: pin for name, pin in (item.split("==") for item in extra)} == PINS | RUST_PINS
 
 
 def test_version_mismatch_names_all_values(monkeypatch: pytest.MonkeyPatch) -> None:
