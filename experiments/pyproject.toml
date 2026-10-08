@@ -30,7 +30,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["code_metrics", "consistency_pilot", "pier_qualification", "typesafe_relevance"]
+packages = ["code_metrics", "consistency_pilot", "oakridge_history", "pier_qualification", "typesafe_relevance"]
 include = ["typesafe_relevance/catalogues/*.yaml"]
 
 [tool.hatch.metadata]
@@ -41,6 +41,7 @@ asyncio_mode = "auto"
 testpaths = [
   "code_metrics/tests",
   "consistency_pilot/tests",
+  "oakridge_history/tests",
   "pier_qualification/tests",
   "typesafe_relevance/tests",
 ]
