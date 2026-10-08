@@ -41,22 +41,22 @@ couple to. The scope is about present code, not which engine was live.
 Components are roles, not implementations. The same role can claim paths from
 KBbL, Rust v2, and DBOS. Unclaimed modules remain `unassigned`; component
 patterns intentionally cover the role-bearing subsets of the scoped trees.
-Each mapping below was checked against source paths in the named snapshot's
-Git tree; the role labels describe the code's purpose and should be reviewed
-with the source when changed.
+Each mapping below was checked against the named snapshot's Git tree and a
+representative source file at that commit. The role labels describe the code's
+purpose and should be reviewed with the source when changed.
 
-| Component | Source-path check snapshot |
+| Component | Source read at snapshot |
 | --- | --- |
-| orchestration | `s1-v2-introduced` (`kbbl/core/orchestrator`, Rust executor/registry); `s3-dbos-repaired` (DBOS runtime/workflows) |
-| decision | `s4-decision-rewrite` (DBOS decision/compiler) |
-| review | `s1-v2-introduced` (`kbbl/core/review`) |
-| collaboration | `s2-pre-dbos` (Rust `collab`); `s5-single-engine` (DBOS collaboration domain) |
-| adapters | `s1-v2-introduced` (KBbL adapters); `s3-dbos-repaired` (DBOS adapters) |
-| acp | `s5-single-engine` |
-| skills | `s2-pre-dbos` and `s5-single-engine` |
-| worktree | `s5-single-engine` |
-| shared | `s1-v2-introduced` (KBbL types, Rust types); `s2-pre-dbos` (KBbL shared) |
-| stream | `s1-v2-introduced` |
+| orchestration | `s1-v2-introduced`: `kbbl/core/orchestrator/backends/dispatcher.ts`, `oakridge-core/src/executor/mod.rs`; `s3-dbos-repaired`: `oakridge-dbos/src/runtime/artifact-notifications.ts` |
+| decision | `s4-decision-rewrite`: `oakridge-dbos/src/decision/commands.ts`, `oakridge-dbos/src/compiler/compile-workflow.ts` |
+| review | `s1-v2-introduced`: `kbbl/core/review/atoms.ts` |
+| collaboration | `s2-pre-dbos`: `oakridge-core/src/collab/mod.rs`; `s3-dbos-repaired`: `oakridge-dbos/src/domain/collaboration.ts` |
+| adapters | `s1-v2-introduced`: `kbbl/adapters/claude-code/event-classifier.ts`; `s3-dbos-repaired`: `oakridge-dbos/src/adapters/kbbl.ts` |
+| acp | `s5-single-engine`: `kbbl/core/acp/controller.ts` |
+| skills | `s2-pre-dbos`: `kbbl/core/skills/registry.ts` |
+| worktree | `s5-single-engine`: `kbbl/core/worktree/service.ts` |
+| shared | `s1-v2-introduced`: `oakridge-core/src/types.rs`; `s2-pre-dbos`: `kbbl/core/shared/cohort-merge-contract.ts` |
+| stream | `s1-v2-introduced`: `kbbl/core/stream/artifact-event-bus.ts` |
 
 All `workflow-core/crates/` patterns are explicitly `post_rewrite_only`.
 They are expected to match no module at these six snapshots.
