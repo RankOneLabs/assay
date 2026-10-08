@@ -22,8 +22,11 @@ mapping directly and does not apply these exclusions.
 `--config` accepts JSON or YAML with `clone_min_lines`, `clone_min_tokens`,
 `ruff_ignore` (a list of rule names), `components` (a list of objects with
 `name` and `patterns`), and `allow_unmatched_patterns` (a boolean, default
-`false`). When enabled, patterns that match no module are listed with their
-component in each report's `configuration.unmatched_patterns`. For example:
+`false`). Every successful report lists the patterns that match no module in
+that snapshot, with their components, in `configuration.unmatched_patterns`.
+By default, `analyze` rejects an unmatched pattern and `compare` rejects a
+pattern unmatched across both snapshots. Set `allow_unmatched_patterns: true`
+to permit those cases. For example:
 
 ```yaml
 clone_min_lines: 5
