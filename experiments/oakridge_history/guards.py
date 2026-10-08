@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from fnmatch import fnmatchcase
 
 from .model import ComponentSpec, ScopeSpec
 
@@ -72,15 +71,69 @@ def check_union_coverage(
     )
 
 
-def check_pairwise_overlap(
-    components: Iterable[ComponentSpec], module_paths: Iterable[str]
-) -> tuple[GuardFailure, ...]:
-    """Detect competing component claims on known module paths using Assay's matcher."""
+def _collapse_stars(pattern: str) -> str:
+    result: list[str] = []
+    for character in pattern:
+        if character != "*" or not result or result[-1] != "*":
+            result.append(character)
+    return "".join(result)
+
+
+def _star_globs_overlap(first: str, second: str) -> bool:
+    """Decide whether two literal-and-star globs accept a common path.
+
+    Assay's ``fnmatchcase`` treats every star, including ``**``, as matching
+    across ``/``. A star can consume any character or advance without one.
+    """
+    first = _collapse_stars(first)
+    second = _collapse_stars(second)
+    pending = [(0, 0)]
+    visited: set[tuple[int, int]] = set()
+    while pending:
+        left, right = pending.pop()
+        if (left, right) in visited:
+            continue
+        visited.add((left, right))
+        if left == len(first) and right == len(second):
+            return True
+        if left < len(first) and first[left] == "*":
+            pending.append((left + 1, right))
+        if right < len(second) and second[right] == "*":
+            pending.append((left, right + 1))
+        if left == len(first) or right == len(second):
+            continue
+        if first[left] == "*" and second[right] != "*":
+            pending.append((left, right + 1))
+        elif second[right] == "*" and first[left] != "*":
+            pending.append((left + 1, right))
+        elif first[left] == second[right] and first[left] != "*":
+            pending.append((left + 1, right + 1))
+    return False
+
+
+def check_pairwise_overlap(components: Iterable[ComponentSpec]) -> tuple[GuardFailure, ...]:
+    """Reject cross-component glob overlap without sampling modules.
+
+    Literal characters and ``*`` are checked exactly. Other fnmatch operators
+    fail closed until this checker explicitly supports them.
+    """
     components = tuple(components)
     failures: list[GuardFailure] = []
-    for path in module_paths:
-        claimants = [component.name for component in components
-                     if any(fnmatchcase(path, pattern) for pattern in component.patterns)]
-        if len(claimants) > 1:
-            failures.append(GuardFailure(path, f"claimed by {', '.join(claimants)}"))
+    for component in components:
+        for pattern in component.patterns:
+            if any(character in pattern for character in "?[]"):
+                failures.append(GuardFailure(
+                    pattern, "unsupported glob operator in static overlap check"
+                ))
+    if failures:
+        return tuple(failures)
+    for index, first in enumerate(components):
+        for second in components[index + 1:]:
+            for left in first.patterns:
+                for right in second.patterns:
+                    if _star_globs_overlap(left, right):
+                        failures.append(GuardFailure(
+                            left, f"overlaps {right!r} in component {second.name}; "
+                            f"claimed by {first.name} and {second.name}"
+                        ))
     return tuple(failures)

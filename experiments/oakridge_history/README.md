@@ -64,8 +64,10 @@ They are expected to match no module at these six snapshots.
 Assay uses `fnmatchcase` for component assignment. Its `*` can cross `/` and
 is not path-aware. For example, `kbbl/core/runtime*.ts` would also match a
 future path beneath a `kbbl/core/runtime/` directory. A module claimed by two
-components makes Assay fail with `AmbiguousComponentConfig`; pattern changes
-must rerun the overlap test against real module paths.
+components makes Assay fail with `AmbiguousComponentConfig`. The static
+pattern-pair guard checks cross-component overlap without sampling modules.
+It exactly handles literals and stars, including `**`; other fnmatch
+operators fail closed until explicitly supported.
 
 ## Pattern guard
 

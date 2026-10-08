@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from fnmatch import fnmatchcase
-
 from oakridge_history.config import Ok, load_components, load_scope
 from oakridge_history.guards import (
     check_containment,
@@ -46,15 +44,34 @@ def test_union_coverage_exempts_only_post_rewrite_roots() -> None:
                for f in check_union_coverage(components, scope, (missing,) * 6))
 
 
-def test_committed_patterns_do_not_overlap_on_glob_witnesses() -> None:
+def test_committed_patterns_have_no_cross_component_overlap() -> None:
     components, _ = _inputs()
-    # A witness for each committed pattern, plus runtime files that demonstrate
-    # fnmatchcase's non-path-aware '*' behavior.
-    witnesses = [pattern.replace("**", "sample.py").replace("*", "sample")
-                 for pattern in patterns(components)]
-    witnesses += ["kbbl/core/runtime.ts", "kbbl/core/runtime-interface.ts",
-                  "kbbl/core/runtime.conformance.ts"]
-    assert not check_pairwise_overlap(components, witnesses)
-    for path in witnesses:
-        claims = [c.name for c in components if any(fnmatchcase(path, p) for p in c.patterns)]
-        assert len(claims) <= 1
+    assert not check_pairwise_overlap(components)
+
+
+def test_broad_future_pattern_is_rejected_without_a_witness_path() -> None:
+    components = (
+        ComponentSpec("review", ("kbbl/core/review/**",)),
+        ComponentSpec("future", ("kbbl/core/**",)),
+    )
+    failures = check_pairwise_overlap(components)
+    assert len(failures) == 1
+    assert failures[0].pattern == "kbbl/core/review/**"
+    assert "kbbl/core/**" in failures[0].detail
+
+
+def test_star_can_cross_slash_and_partial_overlap_is_detected() -> None:
+    components = (
+        ComponentSpec("runtime", ("kbbl/core/runtime*.ts",)),
+        ComponentSpec("other", ("kbbl/core/runtime/**",)),
+    )
+    assert check_pairwise_overlap(components)
+    assert not check_pairwise_overlap((
+        ComponentSpec("runtime", ("kbbl/core/runtime*.ts",)),
+        ComponentSpec("review", ("kbbl/core/review/**",)),
+    ))
+
+
+def test_unhandled_glob_operator_fails_closed() -> None:
+    failures = check_pairwise_overlap((ComponentSpec("future", ("kbbl/core/[ab]/**",)),))
+    assert failures and "unsupported" in failures[0].detail
