@@ -15,6 +15,7 @@ WORKSPACE = {
     "Cargo.toml": '[workspace]\nmembers = ["crates/model", "crates/cli"]\n',
     "crates/model/Cargo.toml": (
         '[package]\nname = "workflow-model"\nversion = "0.1.0"\n\n[dependencies]\nserde = "1"\n'
+        "[target.'cfg(unix)'.dependencies]\nlibc = \"0.2\"\n"
     ),
     "crates/model/src/lib.rs": (
         "pub mod values;\n"
@@ -33,7 +34,7 @@ WORKSPACE = {
         "use super::super::values;\n"
         'pub fn save() { values::names(); std::fs::write("x", "y").ok(); }\n'
     ),
-    "crates/model/src/legacy/old_names.rs": "pub fn all() {}\n",
+    "crates/model/src/legacy/old_names.rs": "pub fn all() { unsafe { libc::getpid() }; }\n",
     "crates/model/src/orphan.rs": "pub fn unused() {}\n",
     "crates/model/tests/semantics.rs": "use workflow_model::Value;\n",
     "crates/cli/Cargo.toml": (
@@ -94,7 +95,9 @@ def test_rust_edges_resolve_paths_to_the_files_that_hold_them() -> None:
     ]
     # Only declared dependencies and sysroot crates are external; `Vec::new`
     # names neither.
+    # A crate declared under [target.<cfg>.dependencies] is a dependency too.
     assert [(item.module, item.package) for item in graph.external_dependencies] == [
+        ("crates/model/src/legacy/old_names.rs", "libc"),
         ("crates/model/src/store/disk.rs", "std"),
         ("crates/model/src/values.rs", "serde"),
     ]

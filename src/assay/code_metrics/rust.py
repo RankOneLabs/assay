@@ -117,10 +117,16 @@ def _crates(
         if not isinstance(package, dict) or not isinstance(package.get("name"), str):
             continue  # a virtual workspace manifest
         directory = posixpath.dirname(manifest_path)
+        # Dependencies are declared per package and per [target.<cfg>] table.
+        scopes = [
+            manifest,
+            *(t for t in _table(manifest, "target").values() if isinstance(t, dict)),
+        ]
         dependencies = frozenset(
             _crate_name(name)
+            for scope in scopes
             for table in ("dependencies", "dev-dependencies", "build-dependencies")
-            for name in _table(manifest, table)
+            for name in _table(scope, table)
         )
         library = _table(manifest, "lib")
         library_root = _join(directory, str(library.get("path", "src/lib.rs")))
