@@ -76,6 +76,13 @@ def load_snapshots(path: Path | None = None) -> Ok[tuple[SnapshotSpec, ...]] | E
         row = _mapping(item, path, key)
         if isinstance(row, Err):
             return row
+        unknown = set(row.value) - {
+            "id", "sha", "date", "pr_number", "event", "selection_reason",
+            "provisional", "final_sha",
+        }
+        if unknown:
+            field = sorted(unknown)[0]
+            return Err(ConfigError(str(path), f"{key}.{field}", "unknown snapshot field"))
         fields: dict[str, str] = {}
         for field in ("id", "sha", "event", "selection_reason"):
             parsed = _text(row.value.get(field), path, f"{key}.{field}")
@@ -126,6 +133,14 @@ def load_scope(path: Path | None = None) -> Ok[ScopeSpec] | Err[ConfigError]:
         row = _mapping(item, path, key)
         if isinstance(row, Err):
             return row
+        unknown = set(row.value) - {
+            "prefix", "implementation", "include_path", "post_rewrite_only",
+        }
+        if unknown:
+            field = sorted(unknown)[0]
+            return Err(ConfigError(
+                str(path), f"{key}.{field}", "unknown implementation-root field"
+            ))
         fields: dict[str, str] = {}
         for field in ("prefix", "implementation", "include_path"):
             parsed = _text(row.value.get(field), path, f"{key}.{field}")

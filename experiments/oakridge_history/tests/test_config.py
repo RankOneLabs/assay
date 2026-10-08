@@ -45,3 +45,33 @@ def test_missing_file_returns_error(tmp_path: Path) -> None:
     result = load_scope(tmp_path / "missing.yaml")
     assert isinstance(result, Err)
     assert result.error.key == "$"
+
+
+def test_unknown_snapshot_field_is_rejected(tmp_path: Path) -> None:
+    source = Path(__file__).parents[1] / "snapshots.yaml"
+    path = tmp_path / "snapshots.yaml"
+    path.write_text(
+        source.read_text(encoding="utf-8").replace("provisional: true", "provisonal: true"),
+        encoding="utf-8",
+    )
+    result = load_snapshots(path)
+    assert isinstance(result, Err)
+    assert result.error.file == str(path)
+    assert result.error.key == "snapshots[5].provisonal"
+    assert "unknown" in result.error.detail
+
+
+def test_unknown_implementation_root_field_is_rejected(tmp_path: Path) -> None:
+    source = Path(__file__).parents[1] / "scope.yaml"
+    path = tmp_path / "scope.yaml"
+    path.write_text(
+        source.read_text(encoding="utf-8").replace(
+            "post_rewrite_only: true", "post_rewite_only: true"
+        ),
+        encoding="utf-8",
+    )
+    result = load_scope(path)
+    assert isinstance(result, Err)
+    assert result.error.file == str(path)
+    assert result.error.key == "implementation_roots[4].post_rewite_only"
+    assert "unknown" in result.error.detail
