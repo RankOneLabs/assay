@@ -114,8 +114,6 @@ Rust files whose outgoing graph edges come only from inline `#[cfg(test)]` modul
 
 ## s5-single-engine → pre-rewrite
 
-- Interpretation: TypeScript test files are excluded by glob, while Rust inline `#[cfg(test)]` modules remain in the graph. Role-based Rust/TypeScript component edge and cohesion counts therefore have asymmetric test coverage; compare each role’s per-component values and raw graph with that bound in mind.
-
 - Before: implementations: kbbl, oakridge-dbos; languages: typescript
 - After: implementations: kbbl, oakridge-dbos; languages: typescript
 - Modules: +83 / -23; edges: +385 / -70.

@@ -65,7 +65,8 @@ test_note = (
     "component edge and cohesion counts therefore have asymmetric test coverage; "
     "compare each role’s per-component values and raw graph with that bound in mind.\n"
 )
-for pair in pairs:
+# The final pair contains TypeScript only, so the cross-language note stops here.
+for pair in pairs[:-1]:
     heading = f"## {pair}\n\n"
     text = text.replace(heading, heading + test_note + "\n", 1)
 island_note = (
@@ -382,7 +383,7 @@ Reproducibility method: the second run used the same machine, Node, Python envir
 | `summary/components.csv` | 1383 | `4de0614ab258ab6aa67e2e78a0e45be80a55d28f743a18360ea4e871fa50dd54` |
 | `summary/coverage.csv` | 702 | `95d8c547f1fda038345a85a660de5d7f3b8d3be2211ed23d3896d0b0d27576db` |
 | `summary/system.csv` | 4396 | `1d74cc97553b17e479aa43f89f527c84f49887419e4a79678100d5632cc053a1` |
-| `summary.md` | 6547 | `9dafb85bc6681e7b36282c148fda1e33cc67949950d82bbbe7574c66a3e74184` |
+| `summary.md` | 6237 | `ff2337062fb5c8a45548f407f5c088bff3250d84c29e19e4f399dad39dc05d3b` |
 
 The table lists every committed data artifact size and digest. The three CSVs contain only their declared summary columns; full reports remain in the JSON files. The measured in-scope file counts are 452 at `s4-decision-rewrite` and 369 at `pre-rewrite`. The component config has ten `workflow-core` patterns, all unmatched in every snapshot; earlier brief estimates of 236 and 151 files and seven patterns did not describe these measured artifacts.
 
