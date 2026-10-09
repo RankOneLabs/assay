@@ -16,6 +16,75 @@ reads only those stored JSON files and writes `summary/system.csv`,
 containment guard stops a snapshot; a failed union-coverage guard stops the
 summary.
 
+The runner's `results/` tree is the input to `--summarize`: it reads comparison
+files named `<before>--<after>.json` there. The committed data is a copy at the
+package root, with comparison files named `<before>__<after>.json`. After the
+full run and `--summarize`, use this publication step from `experiments/` to
+regenerate the committed layout:
+
+```bash
+cd oakridge_history
+mkdir -p snapshots comparisons summary
+cp -a results/snapshots/. snapshots/
+for source in results/comparisons/*--*.json; do
+  name=${source##*/}
+  cp "$source" "comparisons/${name/--/__}"
+done
+cp -a results/summary/. summary/
+cp results/summary.md summary.md
+```
+
+The committed `summary.md` also has the study's inline-test and island
+interpretation notes. After the copy, apply those notes with this deterministic
+step to reproduce the committed file:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+
+path = Path("summary.md")
+text = path.read_text()
+intro = "Deltas are descriptive; code presence and parser coverage can change between snapshots.\n"
+counts = (
+    "\nRust files whose outgoing graph edges come only from inline `#[cfg(test)]` "
+    "modules, measured by removing those modules from a temporary source copy "
+    "and rebuilding the Rust graph: s1 `0`, s2 `0`, s3 `0`, s4 `0`; s5 and "
+    "pre-rewrite contain no Rust files.\n"
+)
+text = text.replace(intro, intro + counts, 1)
+pairs = (
+    "s1-v2-introduced → s2-pre-dbos",
+    "s2-pre-dbos → s3-dbos-repaired",
+    "s3-dbos-repaired → s4-decision-rewrite",
+    "s4-decision-rewrite → s5-single-engine",
+    "s5-single-engine → pre-rewrite",
+)
+test_note = (
+    "- Interpretation: TypeScript test files are excluded by glob, while Rust "
+    "inline `#[cfg(test)]` modules remain in the graph. Role-based Rust/TypeScript "
+    "component edge and cohesion counts therefore have asymmetric test coverage; "
+    "compare each role’s per-component values and raw graph with that bound in mind.\n"
+)
+for pair in pairs:
+    heading = f"## {pair}\n\n"
+    text = text.replace(heading, heading + test_note + "\n", 1)
+island_note = (
+    "- Island caveat: an implementation is added or removed in this pair. "
+    "System propagation cost averages over all graph islands; changing the "
+    "module count `N` by adding or removing a disconnected implementation can "
+    "move that scalar without a corresponding change in coupling. Inspect the "
+    "per-component propagation values and raw graph in the committed reports.\n"
+)
+for pair in (pairs[1], pairs[3]):
+    heading = f"## {pair}\n\n{test_note}\n"
+    text = text.replace(heading, heading + island_note + "\n", 1)
+path.write_text(text)
+PY
+```
+
+Run `--summarize` before this copy; it reads the `--` names in `results/`, not
+the renamed comparison files in the committed `comparisons/` directory.
+
 Warm the npx cache before a measurement on a machine with network access:
 
 ```sh
@@ -143,7 +212,7 @@ third-party tool versions can alter results independently of code quality.
 
 ## Validation record (Sec 12, executed)
 
-Environment captured before the first measurement: Node `v22.21.1`, npx `10.9.4`, dependency-cruiser `18.4.0`, TypeScript `6.0.3`, jscpd `5.4.0`; Assay Git SHA `1258981940c43f677b4ddf97eedf70892ac3cf08`; `experiments/uv.lock` SHA-256 `de693e3666469621870e6703e7d8777fbd7947a3e9cff3048cd51b104b6cbc28`. The installed Python dependencies passed Assay’s pinned-tool check. The registry was unavailable (`EAI_AGAIN`), so the already cached exact-version analyzer binaries were invoked via a temporary npx shim; the locked experiments virtual environment was used directly because `uv run --locked --offline` could not write to the sandboxed uv cache. Both runs used that same environment and shim.
+All six metadata files record measured Node `v22.21.1` (matching its reference pin) and measured npx `9.2.0` (diverging from its reference pin `10.9.4`), dependency-cruiser `18.4.0`, Assay Git SHA `1258981940c43f677b4ddf97eedf70892ac3cf08`, and `experiments/uv.lock` SHA-256 `de693e3666469621870e6703e7d8777fbd7947a3e9cff3048cd51b104b6cbc28`. The initial shell version check returned npx `10.9.4`, but the temporary shim used for both measured runs routed `npx --version` to `/usr/bin/npx`, which returned `9.2.0`; `build_metadata(..., strict_runtime_pins=True)` was not enabled and would have rejected that divergence. The cached analyzers themselves were dependency-cruiser `18.4.0`, TypeScript `6.0.3`, and jscpd `5.4.0`. The installed Python dependencies passed Assay’s pinned-tool check. The registry was unavailable (`EAI_AGAIN`), so the exact-version analyzer binaries were invoked via that shim; the locked experiments virtual environment was used directly because `uv run --locked --offline` could not write to the sandboxed uv cache. Both runs used that same environment and shim.
 
 The executed checks were: six pinned SHAs resolved and archived; all six metadata and reports and five adjacent comparisons completed; archive file-list SHA-256 digests and environment fields were present in each metadata file; report Assay version and committed component configuration were constant (language-conditional `versions.tools` entries vary with the language mix); the three-part pattern guard passed; each `module_components` assignment was checked against its snapshot Git tree directory listing and its unique configured role pattern; no `AmbiguousComponentConfig` occurred; coverage was reviewed for every language and pair; null existing and new-code fields were confirmed; the summary CSV and Markdown values were checked against the committed reports and comparisons; the second full run reproduced all eleven report/comparison files byte-for-byte.
 
@@ -315,7 +384,7 @@ Reproducibility method: the second run used the same machine, Node, Python envir
 | `summary/system.csv` | 4396 | `1d74cc97553b17e479aa43f89f527c84f49887419e4a79678100d5632cc053a1` |
 | `summary.md` | 6547 | `9dafb85bc6681e7b36282c148fda1e33cc67949950d82bbbe7574c66a3e74184` |
 
-The table lists every committed data artifact size and digest. The three CSVs contain only their declared summary columns; full reports remain in the JSON files.
+The table lists every committed data artifact size and digest. The three CSVs contain only their declared summary columns; full reports remain in the JSON files. The measured in-scope file counts are 452 at `s4-decision-rewrite` and 369 at `pre-rewrite`. The component config has ten `workflow-core` patterns, all unmatched in every snapshot; earlier brief estimates of 236 and 151 files and seven patterns did not describe these measured artifacts.
 
 `pre-rewrite` remains provisional at `f3b3ffca43e43672ff2f58ab797d65c7532aaed8` (`final_sha: null`). For a final boundary, verify the candidate commit and date against its PR, set `final_sha` in `snapshots.yaml` and update the manifest date/PR as needed, then regenerate the `pre-rewrite` report and its adjacent comparison from the archive and rerun the guards and summary. Record both the provisional and final SHAs; never patch the old JSON in place.
 
