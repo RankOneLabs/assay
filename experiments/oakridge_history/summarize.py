@@ -142,10 +142,6 @@ def summarize(output: Path) -> None:
             **{key: len(getattr(changes, key)) for key in PAIR_COLUMNS[2:12]},
             **{key: getattr(comparison.new_code, key) for key in PAIR_COLUMNS[12:]},
         }
-        for metric in comparison.deltas:
-            name = metric.metric.replace(".", "_")
-            for field in ("before", "after", "delta", "provenance", "shared_file_count"):
-                row[f"{name}_{field}"] = getattr(metric, field)
         lines.extend((
             f"## {before.id} → {after.id}", "",
             f"- Before: {_presence(metadata[before.id], reports[before.id], scope.value)}",

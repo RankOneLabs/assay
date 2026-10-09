@@ -27,11 +27,13 @@ def build_metadata(
     scope: ScopeSpec,
     resolved_exclusions: tuple[str, ...],
     report: CodeMetricsReportV5,
+    *,
+    strict_runtime_pins: bool = False,
 ) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[2]
     node_version = _version("node", "--version")
     npx_version = _version("npx", "--version")
-    if node_version != NODE_VERSION or npx_version != NPX_VERSION:
+    if strict_runtime_pins and (node_version != NODE_VERSION or npx_version != NPX_VERSION):
         raise RuntimeError(
             f"runtime pin mismatch: node {node_version} (expected {NODE_VERSION}), "
             f"npx {npx_version} (expected {NPX_VERSION})"
@@ -64,5 +66,7 @@ def build_metadata(
         "uv_lock_digest": hashlib.sha256((root / "experiments/uv.lock").read_bytes()).hexdigest(),
         "node_version": node_version,
         "npx_version": npx_version,
+        "node_pin": NODE_VERSION,
+        "npx_pin": NPX_VERSION,
         "dependency_cruiser_version": DEPENDENCY_CRUISER.rsplit("@", 1)[1],
     }

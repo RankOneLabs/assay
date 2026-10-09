@@ -4,7 +4,7 @@ This package fixes the inputs for a six-snapshot comparison of Oakridge's
 workflow implementations. `run.py` resolves and archives pinned commits
 without changing the Oakridge checkout, then calls the Assay Python API for
 analysis and adjacent comparisons. Results are written under
-`experiments/oakridge_history/results/`; keep real Oakridge results out of Git.
+`experiments/oakridge_history/results/`, which Git ignores.
 
 Run from `experiments/` with
 `uv run python oakridge_history/run.py --oakridge PATH`. Add `--snapshot ID`
@@ -23,8 +23,10 @@ npx --yes jscpd@5.4.0 --version
 npx --yes dependency-cruiser@18.4.0 --version
 ```
 
-Use Node v22.21.1 and npx 10.9.4. `metadata.json` records both versions and
-dependency-cruiser 18.4.0, plus the Assay Git SHA and `uv.lock` digest. Assay's
+Node v22.21.1 and npx 10.9.4 are the reference pins. `metadata.json` records
+the actual and reference versions, dependency-cruiser 18.4.0, the Assay Git
+SHA, and the `uv.lock` digest. `build_metadata(..., strict_runtime_pins=True)`
+can enforce exact Node and npx pins for a controlled measurement. Assay's
 `_preflight` requires `node` and `npx` on PATH for every run, even when jscpd
 has no Python sources to analyze.
 
@@ -122,14 +124,10 @@ The snapshot system and component summary columns together are `snapshot_id`, `c
 `ruff_violations`, `ruff_magic_values`, `mypy_errors`, `jscpd_clones`,
 `jscpd_duplicated_lines`, and `maintainability_index_mean`.
 
-The adjacent-pair summary columns are `before_snapshot_id`,
-`after_snapshot_id`, `modules_added`, `modules_removed`, `edges_added`,
-`edges_removed`, `components_added`, `components_removed`, `cycles_created`,
-`cycles_resolved`, `cross_component_edges_added`,
-`cross_component_edges_removed`, `new_lines`, `new_duplicated_lines`,
-`new_max_nesting_depth`, and each metric's `before`, `after`, `delta`,
-`provenance`, and `shared_file_count`. The runner should take values from
-Assay's report and comparison fields, preserving nulls.
+`summary.md` displays each adjacent pair's structural counts, new-code
+counts, and each metric's `before`, `after`, and `delta` values. The stored
+comparison JSON also retains Assay's `provenance` and `shared_file_count`
+fields, including nulls.
 
 ## Interpretation limits
 

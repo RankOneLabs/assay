@@ -10,3 +10,4 @@ node_modules/
 .assay/
 /.env
 .trial-runs/
+experiments/oakridge_history/results/

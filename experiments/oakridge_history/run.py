@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -128,7 +129,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.oakridge is None:
                 parser.error("--oakridge is required unless --summarize is used")
             run(args.oakridge, tuple(args.snapshot))
-    except (RuntimeError, OSError, ValueError, json.JSONDecodeError) as error:
+    except (RuntimeError, OSError, ValueError, json.JSONDecodeError,
+            subprocess.CalledProcessError) as error:
         print(f"oakridge history: {error}", file=sys.stderr)
         return 1
     return 0

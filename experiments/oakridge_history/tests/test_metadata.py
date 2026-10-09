@@ -12,17 +12,7 @@ from oakridge_history.metadata import build_metadata
 from oakridge_history.model import ScopeSpec, SnapshotSpec
 
 
-def test_metadata_records_resolved_inputs_and_environment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original_version = metadata_module._version
-    monkeypatch.setattr(
-        metadata_module, "_version",
-        lambda *command: (
-            "v22.21.1" if command[0] == "node" else
-            "10.9.4" if command[0] == "npx" else original_version(*command)
-        ),
-    )
+def test_metadata_records_resolved_inputs_and_environment() -> None:
     commit = ResolvedCommit(
         SnapshotSpec("s", "a" * 40, None, 7, "event", "reason"),
         "a" * 40, "2026-01-01T00:00:00+00:00", "subject", True,
@@ -45,3 +35,27 @@ def test_metadata_records_resolved_inputs_and_environment(
     assert metadata["dependency_cruiser_version"] == "18.4.0"
     assert len(metadata["uv_lock_digest"]) == 64
     assert len(metadata["assay_git_sha"]) == 40
+
+
+def test_strict_runtime_pin_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_version = metadata_module._version
+    monkeypatch.setattr(
+        metadata_module, "_version",
+        lambda *command: "v999" if command[0] in ("node", "npx")
+        else original_version(*command),
+    )
+    commit = ResolvedCommit(
+        SnapshotSpec("s", "a" * 40, None, None, "", ""),
+        "a" * 40, "2026-01-01T00:00:00+00:00", "subject", True,
+        (), (), (), (),
+    )
+    report = SimpleNamespace(coverage=SimpleNamespace(languages=()))
+    recorded = build_metadata(
+        commit, ScopeSpec((), (), ()), (), report
+    )  # type: ignore[arg-type]
+    assert recorded["node_version"] == "v999"
+    assert recorded["npx_version"] == "v999"
+    with pytest.raises(RuntimeError, match="runtime pin mismatch"):
+        build_metadata(
+            commit, ScopeSpec((), (), ()), (), report, strict_runtime_pins=True
+        )  # type: ignore[arg-type]
