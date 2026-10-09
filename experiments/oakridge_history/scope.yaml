@@ -5,11 +5,16 @@ include_paths:
   - oakridge-dbos/src
   - workflow-core
 exclude_globs:
+  - 'tests'
+  - '__tests__'
+  - '__fixtures__'
   - '**/tests/**'
   - '**/test/**'
   - '**/fixtures/**'
   - '**/__tests__/**'
   - '**/*.test.ts'
+  - '*.test.ts'
+  - '*.test.tsx'
   - '**/*.spec.ts'
   - '**/test_*.py'
   - '**/*_test.rs'

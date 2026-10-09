@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import Err, Ok
@@ -49,7 +49,7 @@ def resolve_commit(
         return Err(GitError(snapshot.id, snapshot.sha, detail.stderr.strip()))
     author_date, subject = detail.stdout.splitlines()[:2]
     # Normalize to UTC so the record is independent of the author's offset.
-    author_date = datetime.fromisoformat(author_date).astimezone(timezone.utc).isoformat()
+    author_date = datetime.fromisoformat(author_date).astimezone(UTC).isoformat()
     first_parent_history = _git(repo, "rev-list", "--first-parent", "HEAD")
     if first_parent_history.returncode:
         return Err(GitError(snapshot.id, snapshot.sha, first_parent_history.stderr.strip()))

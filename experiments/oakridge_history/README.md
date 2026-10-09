@@ -1,8 +1,32 @@
 # Oakridge history study: versioned design record
 
 This package fixes the inputs for a six-snapshot comparison of Oakridge's
-workflow implementations. It contains configuration, typed loaders, and pure
-pattern guards only. A later runner produces reports outside this package.
+workflow implementations. `run.py` resolves and archives pinned commits
+without changing the Oakridge checkout, then calls the Assay Python API for
+analysis and adjacent comparisons. Results are written under
+`experiments/oakridge_history/results/`; keep real Oakridge results out of Git.
+
+Run from `experiments/` with
+`uv run python oakridge_history/run.py --oakridge PATH`. Add `--snapshot ID`
+one or more times to regenerate selected snapshots
+and available adjacent comparisons. After all six snapshots and five comparisons
+exist, run `uv run python oakridge_history/run.py --summarize`. Summarization
+reads only those stored JSON files and writes `summary/system.csv`,
+`summary/components.csv`, `summary/coverage.csv`, and `summary.md`. A failed
+containment guard stops a snapshot; a failed union-coverage guard stops the
+summary.
+
+Warm the npx cache before a measurement on a machine with network access:
+
+```sh
+npx --yes jscpd@5.4.0 --version
+npx --yes dependency-cruiser@18.4.0 --version
+```
+
+Use Node v22.21.1 and npx 10.9.4. `metadata.json` records both versions and
+dependency-cruiser 18.4.0, plus the Assay Git SHA and `uv.lock` digest. Assay's
+`_preflight` requires `node` and `npx` on PATH for every run, even when jscpd
+has no Python sources to analyze.
 
 ## Snapshot selection
 
@@ -89,7 +113,7 @@ appeared or had already retired.
 
 ## Summary columns
 
-The snapshot summary columns are `snapshot_id`, `commit_sha`, `date`,
+The snapshot system and component summary columns together are `snapshot_id`, `commit_sha`, `date`,
 `pr_number`, `resolved_include_paths`, `files_seen`, `files_analyzed`,
 `modules_discovered`, `files_without_module`, `module_count`, `edge_count`,
 `component`, `component_module_count`, `unmatched_patterns`, `cycle_count`,
