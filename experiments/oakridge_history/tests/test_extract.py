@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from assay.code_metrics import CodeMetricsConfig
 from assay.code_metrics.cli_snapshot import snapshot_directory
+from oakridge_history import metadata as metadata_module
 from oakridge_history.config import Ok
 from oakridge_history.extract import archive_commit
 from oakridge_history.git_resolve import resolve_commit
@@ -45,7 +49,17 @@ def test_archive_and_pruned_snapshot_leave_git_state_untouched(tmp_path: Path) -
     assert _git(repo, "status", "--porcelain") == ""
 
 
-def test_runner_writes_reports_only_after_valid_commit(tmp_path: Path) -> None:
+def test_runner_writes_reports_only_after_valid_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_version = metadata_module._version
+    monkeypatch.setattr(
+        metadata_module, "_version",
+        lambda *command: (
+            "v22.21.1" if command[0] == "node" else
+            "10.9.4" if command[0] == "npx" else original_version(*command)
+        ),
+    )
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
@@ -59,7 +73,6 @@ def test_runner_writes_reports_only_after_valid_commit(tmp_path: Path) -> None:
     sha = _git(repo, "rev-parse", "HEAD")
     scope = ScopeSpec(("kbbl/core", "missing"), (), ())
     output = tmp_path / "output"
-    import pytest
     with pytest.raises(RuntimeError, match="missing-snapshot 000000"):
         run_snapshot(repo, SnapshotSpec("missing-snapshot", "0" * 40, None, None,
                                         "", ""), scope, CodeMetricsConfig(), (), output)
@@ -69,7 +82,6 @@ def test_runner_writes_reports_only_after_valid_commit(tmp_path: Path) -> None:
     target = output / "snapshots/s"
     assert (target / "code-metrics.json").is_file()
     assert (target / "metadata.json").is_file()
-    import json
     metadata = json.loads((target / "metadata.json").read_bytes())
     assert metadata["resolved_away_include_paths"] == ["missing"]
     assert _git(repo, "status", "--porcelain") == ""

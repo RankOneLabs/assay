@@ -3,13 +3,26 @@ from __future__ import annotations
 import hashlib
 from types import SimpleNamespace
 
+import pytest
+
 from assay.canonical import canonical_json
+from oakridge_history import metadata as metadata_module
 from oakridge_history.git_resolve import ResolvedCommit
 from oakridge_history.metadata import build_metadata
 from oakridge_history.model import ScopeSpec, SnapshotSpec
 
 
-def test_metadata_records_resolved_inputs_and_environment() -> None:
+def test_metadata_records_resolved_inputs_and_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_version = metadata_module._version
+    monkeypatch.setattr(
+        metadata_module, "_version",
+        lambda *command: (
+            "v22.21.1" if command[0] == "node" else
+            "10.9.4" if command[0] == "npx" else original_version(*command)
+        ),
+    )
     commit = ResolvedCommit(
         SnapshotSpec("s", "a" * 40, None, 7, "event", "reason"),
         "a" * 40, "2026-01-01T00:00:00+00:00", "subject", True,
