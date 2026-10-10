@@ -10,6 +10,8 @@ from pathlib import Path
 from .config import Err, Ok
 from .model import ScopeSpec, SnapshotSpec
 
+HISTORY_REF = "origin/main"
+
 
 @dataclass(frozen=True, slots=True)
 class GitError:
@@ -50,7 +52,8 @@ def resolve_commit(
     author_date, subject = detail.stdout.splitlines()[:2]
     # Normalize to UTC so the record is independent of the author's offset.
     author_date = datetime.fromisoformat(author_date).astimezone(UTC).isoformat()
-    first_parent_history = _git(repo, "rev-list", "--first-parent", "HEAD")
+    # A fixed ref keeps the record independent of the checkout's current branch.
+    first_parent_history = _git(repo, "rev-list", "--first-parent", HISTORY_REF)
     if first_parent_history.returncode:
         return Err(GitError(snapshot.id, snapshot.sha, first_parent_history.stderr.strip()))
     first_parent = snapshot.sha in first_parent_history.stdout.splitlines()

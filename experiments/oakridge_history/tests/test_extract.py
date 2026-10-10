@@ -39,6 +39,7 @@ def test_archive_and_pruned_snapshot_leave_git_state_untouched(
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "test tree")
     sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/main", sha)
     scope = ScopeSpec(("kbbl/core", "absent"),
                       ("tests", "__tests__", "__fixtures__", "*.test.ts", "**/tests/**"), ())
     resolved = resolve_commit(repo, SnapshotSpec("s", sha, None, None, "", ""), scope)
@@ -76,6 +77,7 @@ def test_runner_writes_reports_only_after_valid_commit(tmp_path: Path) -> None:
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "source")
     sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/main", sha)
     scope = ScopeSpec(("kbbl/core", "missing"), (), ())
     output = tmp_path / "output"
     with pytest.raises(RuntimeError, match="missing-snapshot 000000"):
@@ -107,6 +109,7 @@ def test_runner_containment_failure_writes_no_output(
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "source")
     sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/main", sha)
     scope = ScopeSpec(
         ("kbbl/core", "missing"), (),
         (ImplementationRoot("missing/", "missing", "missing"),),

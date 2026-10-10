@@ -27,6 +27,7 @@ def test_resolves_each_path_at_pinned_commit_without_touching_checkout(tmp_path:
     _git(tmp_path, "add", ".")
     _git(tmp_path, "commit", "-qm", "second")
     head = _git(tmp_path, "rev-parse", "HEAD")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", head)
     spec = SnapshotSpec("s1", sha, None, None, "first", "test")
     scope = ScopeSpec(("kbbl/core", "dbos"), (), ())
     result = resolve_commit(tmp_path, spec, scope)

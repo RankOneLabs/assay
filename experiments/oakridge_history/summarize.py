@@ -93,6 +93,9 @@ def summarize(output: Path) -> None:
             raise RuntimeError(
                 f"{spec.id}: stored result is for {meta['commit_sha']}, manifest pins {spec.sha}"
             )
+        if (meta["requested_include_paths"] != list(scope.value.include_paths)
+                or meta["exclude_globs"] != list(scope.value.exclude_globs)):
+            raise RuntimeError(f"{spec.id}: stored result used a different scope")
         if dict(report.configuration.components) != expected_components:
             raise RuntimeError(f"{spec.id}: stored result used a different component config")
         reports[spec.id] = report
