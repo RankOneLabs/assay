@@ -78,7 +78,7 @@ def load_snapshots(path: Path | None = None) -> Ok[tuple[SnapshotSpec, ...]] | E
             return row
         unknown = set(row.value) - {
             "id", "sha", "date", "pr_number", "event", "selection_reason",
-            "provisional", "final_sha",
+            "provisional",
         }
         if unknown:
             field = sorted(unknown)[0]
@@ -100,11 +100,8 @@ def load_snapshots(path: Path | None = None) -> Ok[tuple[SnapshotSpec, ...]] | E
         provisional = row.value.get("provisional", False)
         if type(provisional) is not bool:
             return Err(ConfigError(str(path), f"{key}.provisional", "must be a boolean"))
-        final_sha = row.value.get("final_sha")
-        if final_sha is not None and not isinstance(final_sha, str):
-            return Err(ConfigError(str(path), f"{key}.final_sha", "must be a string or null"))
         snapshots.append(SnapshotSpec(**fields, date=raw_date, pr_number=number,
-                                      provisional=provisional, final_sha=final_sha))
+                                      provisional=provisional))
     if len({item.id for item in snapshots}) != len(snapshots):
         return Err(ConfigError(str(path), "snapshots", "ids must be unique"))
     return Ok(tuple(snapshots))

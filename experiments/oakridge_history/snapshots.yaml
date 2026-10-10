@@ -36,4 +36,3 @@ snapshots:
     event: pre-rewrite branch tip
     selection_reason: Provisional comparison point before the rewrite.
     provisional: true
-    final_sha: null

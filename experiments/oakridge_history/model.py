@@ -15,7 +15,6 @@ class SnapshotSpec:
     event: str
     selection_reason: str
     provisional: bool = False
-    final_sha: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -76,6 +76,8 @@ def summarize(output: Path) -> None:
     assert not isinstance(snapshots, Err)
     assert not isinstance(scope, Err)
     assert not isinstance(components, Err)
+    # Assay stores each component's patterns sorted.
+    expected_components = {item.name: tuple(sorted(item.patterns)) for item in components.value}
     reports: dict[str, CodeMetricsReportV5] = {}
     metadata: dict[str, dict[str, Any]] = {}
     system_rows: list[dict[str, Any]] = []
@@ -87,6 +89,12 @@ def summarize(output: Path) -> None:
             (directory / "code-metrics.json").read_bytes()
         )
         meta: dict[str, Any] = json.loads((directory / "metadata.json").read_bytes())
+        if meta["commit_sha"] != spec.sha:
+            raise RuntimeError(
+                f"{spec.id}: stored result is for {meta['commit_sha']}, manifest pins {spec.sha}"
+            )
+        if dict(report.configuration.components) != expected_components:
+            raise RuntimeError(f"{spec.id}: stored result used a different component config")
         reports[spec.id] = report
         metadata[spec.id] = meta
         coverage = report.coverage.languages
@@ -136,6 +144,10 @@ def summarize(output: Path) -> None:
         comparison = CodeMetricsComparisonV6.model_validate_json(
             (output / "comparisons" / f"{before.id}--{after.id}.json").read_bytes()
         )
+        if (comparison.before, comparison.after) != (reports[before.id], reports[after.id]):
+            raise RuntimeError(
+                f"{before.id} → {after.id}: comparison does not match stored reports"
+            )
         changes = comparison.structural_changes
         row: dict[str, Any] = {
             "before_snapshot_id": before.id, "after_snapshot_id": after.id,

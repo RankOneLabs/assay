@@ -118,12 +118,13 @@ were used to choose these snapshots. The selections are historical events and
 their pinned commits, rather than metric extrema.
 
 `pre-rewrite` is provisional. Its manifest SHA is the observed `origin/main`
-tip at #571; `final_sha: null` deliberately records that the final pin has not
-been made. Before a final run, resolve the intended pre-rewrite boundary,
-verify the candidate commit and date against its PR, put the immutable commit
-in `final_sha`, update the manifest date and PR if necessary, rerun all six
-snapshots and the guards, and record the changed pin in review. Do not silently
-use the then-current branch tip.
+tip at #571; `provisional: true` records that the final pin has not been
+made. Before a final run, resolve the intended pre-rewrite boundary, verify the
+candidate commit and date against its PR, replace `sha` with the immutable
+commit, set `provisional: false`, update the manifest date and PR if necessary,
+rerun all six snapshots and the guards, and record the old and new pins in
+review. The runner measures only `sha`. Do not silently use the then-current
+branch tip.
 
 ## Scope and assignment
 
@@ -387,6 +388,6 @@ Reproducibility method: the second run used the same machine, Node, Python envir
 
 The table lists every committed data artifact size and digest. The three CSVs contain only their declared summary columns; full reports remain in the JSON files. The measured in-scope file counts are 452 at `s4-decision-rewrite` and 369 at `pre-rewrite`. The component config has ten `workflow-core` patterns, all unmatched in every snapshot; earlier brief estimates of 236 and 151 files and seven patterns did not describe these measured artifacts.
 
-`pre-rewrite` remains provisional at `f3b3ffca43e43672ff2f58ab797d65c7532aaed8` (`final_sha: null`). For a final boundary, verify the candidate commit and date against its PR, set `final_sha` in `snapshots.yaml` and update the manifest date/PR as needed, then regenerate the `pre-rewrite` report and its adjacent comparison from the archive and rerun the guards and summary. Record both the provisional and final SHAs; never patch the old JSON in place.
+`pre-rewrite` remains provisional at `f3b3ffca43e43672ff2f58ab797d65c7532aaed8` (`provisional: true`). For a final boundary, verify the candidate commit and date against its PR, replace `sha` in `snapshots.yaml`, set `provisional: false`, and update the manifest date/PR as needed, then regenerate the `pre-rewrite` report and its adjacent comparison from the archive and rerun the guards and summary. Record both the provisional and final SHAs; never patch the old JSON in place.
 
 Validation gates: root Ruff, mypy, and schema-export checks passed; root pytest passed (`689 passed`); Oakridge-history pytest passed (`20 passed`). The virtual environments were reused with `--no-sync` and `PYTHONPATH` set to this worktree because a fresh `uv run` could not write the sandboxed uv cache.

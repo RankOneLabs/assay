@@ -24,7 +24,6 @@ def test_committed_inputs_load_and_match_assay_cli() -> None:
     assert isinstance(config, Ok)
     assert len(snapshots.value) == 6
     assert snapshots.value[-1].provisional
-    assert snapshots.value[-1].final_sha is None
     assert len(scope.value.implementation_roots) == 5
     assert config.value.allow_unmatched_patterns
     config_path = Path(__file__).parents[1] / "code-metrics.yaml"
