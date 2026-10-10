@@ -1,0 +1,38 @@
+snapshots:
+  - id: s1-v2-introduced
+    sha: d3c2ef813d03b3bfd8dba4a3eec60edcf748193f
+    date: 2026-05-31
+    pr_number: 207
+    event: v2 introduced
+    selection_reason: First committed v2 implementation.
+  - id: s2-pre-dbos
+    sha: a74055c4228517794f93cca840dabe471ab4c99a
+    date: 2026-08-14
+    pr_number: 415
+    event: before DBOS
+    selection_reason: Baseline immediately before the DBOS implementation.
+  - id: s3-dbos-repaired
+    sha: f101e6e36f1bd5d727aa8d1b744ffa88f0000096
+    date: 2026-08-17
+    pr_number: 434
+    event: DBOS repaired
+    selection_reason: Captures the repaired DBOS implementation.
+  - id: s4-decision-rewrite
+    sha: c060ba43252b88c70309344570c6688eb4d32fe6
+    date: 2026-08-30
+    pr_number: 469
+    event: decision rewrite
+    selection_reason: Captures the decision rewrite boundary.
+  - id: s5-single-engine
+    sha: 4fdb4505d6ebe33282ff98b3c84cdbec94800b5b
+    date: 2026-09-14
+    pr_number: 485
+    event: single engine
+    selection_reason: Captures the single-engine implementation.
+  - id: pre-rewrite
+    sha: f3b3ffca43e43672ff2f58ab797d65c7532aaed8
+    date: 2026-10-07
+    pr_number: 571
+    event: pre-rewrite branch tip
+    selection_reason: Provisional comparison point before the rewrite.
+    provisional: true

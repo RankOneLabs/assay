@@ -20,8 +20,13 @@ resolved default names and supplied globs. The Python API accepts a snapshot
 mapping directly and does not apply these exclusions.
 
 `--config` accepts JSON or YAML with `clone_min_lines`, `clone_min_tokens`,
-`ruff_ignore` (a list of rule names), and `components` (a list of objects with
-`name` and `patterns`). For example:
+`ruff_ignore` (a list of rule names), `components` (a list of objects with
+`name` and `patterns`), and `allow_unmatched_patterns` (a boolean, default
+`false`). Every successful report lists the patterns that match no module in
+that snapshot, with their components, in `configuration.unmatched_patterns`.
+By default, `analyze` rejects an unmatched pattern and `compare` rejects a
+pattern unmatched across both snapshots. Set `allow_unmatched_patterns: true`
+to permit those cases. For example:
 
 ```yaml
 clone_min_lines: 5
@@ -30,6 +35,7 @@ ruff_ignore: []
 components:
   - name: library
     patterns: ["src/assay/*.py"]
+allow_unmatched_patterns: false
 ```
 
 Clone detection uses pinned jscpd through `npx`, and a snapshot with
@@ -39,8 +45,8 @@ dependency-cruiser 18.4.0 needs Node.js 22, 24, or 26 and later.
 
 ## Metric definitions
 
-`analyze` returns an `assay-code-metrics-report/0.4.0` report and `compare`
-an `assay-code-metrics-comparison/0.5.0` comparison. Earlier schema versions
+`analyze` returns an `assay-code-metrics-report/0.5.0` report and `compare`
+an `assay-code-metrics-comparison/0.6.0` comparison. Earlier schema versions
 stay in `schemas/`. Every graph count below is over first-party modules: the
 modules of top-level packages in the snapshot. Imports of anything else are
 listed in `graph.external_dependencies` and do not enter these counts.

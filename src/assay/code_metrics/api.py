@@ -29,17 +29,18 @@ from .errors import (
 from .models import (
     DELTAS,
     LANGUAGES,
-    CodeMetricsComparisonV5,
-    CodeMetricsReportV4,
+    CodeMetricsComparisonV6,
+    CodeMetricsReportV5,
     DetailedMetricDelta,
     ExistingMetricsV2,
     LanguageCoverage,
     ModuleGraphV2,
     NewCodeMetricsV2,
-    ResolvedConfiguration,
+    ResolvedConfigurationV2,
     Snapshot,
     SnapshotCoverageV2,
     ToolVersions,
+    UnmatchedPattern,
     _Config,
     language_of,
     validate_snapshot,
@@ -61,6 +62,7 @@ class CodeMetricsConfig:
     clone_min_tokens: int = 50
     ruff_ignore: tuple[str, ...] = ()
     components: tuple[ComponentConfig, ...] = ()
+    allow_unmatched_patterns: bool = False
 
 
 def _preflight() -> None:
@@ -88,6 +90,8 @@ def _validate_config(config: CodeMetricsConfig) -> None:
         isinstance(rule, str) for rule in config.ruff_ignore
     ):
         raise ConfigurationError(f"ruff_ignore {config.ruff_ignore!r} must be a tuple of strings")
+    if type(config.allow_unmatched_patterns) is not bool:
+        raise ConfigurationError("allow_unmatched_patterns must be a bool")
     names: set[str] = set()
     if not isinstance(config.components, tuple):
         raise MalformedComponentConfig(f"components {config.components!r} must be a tuple")
@@ -114,7 +118,7 @@ def _validate_config(config: CodeMetricsConfig) -> None:
 
 def _analyze(
     snapshot: Snapshot, config: CodeMetricsConfig, *, require_matches: bool = True
-) -> tuple[CodeMetricsReportV4, dict[str, Any]]:
+) -> tuple[CodeMetricsReportV5, dict[str, Any]]:
     _validate_config(config)
     _preflight()
     snapshot = _validate_paths(snapshot)
@@ -173,7 +177,13 @@ def _analyze(
         raise AnalyzerFailed(f"analyze snapshot of {len(files)} Python files: {detail}") from error
     mi = dict(sorted(payload["mi"].items()))
     payload["radon.mi"] = statistics.fmean(mi.values()) if mi else None
-    architecture = analyze_architecture(graph, config.components, require_matches=require_matches)
+    unmatched_patterns: list[tuple[str, str]] = []
+    architecture = analyze_architecture(
+        graph,
+        config.components,
+        require_matches=require_matches and not config.allow_unmatched_patterns,
+        unmatched_patterns=unmatched_patterns,
+    )
     versions = tool_versions()
     if typescript_files:
         versions |= typescript_tool_versions()
@@ -181,7 +191,7 @@ def _analyze(
         versions |= rust_tool_versions()
     # The analyzers read Python only, so without a Python file nothing was measured.
     measured = {key: payload[key] if files else None for key in DELTAS}
-    report = CodeMetricsReportV4(
+    report = CodeMetricsReportV5(
         existing_metrics=ExistingMetricsV2(
             radon_sloc=measured["radon.sloc"],
             radon_lloc=measured["radon.lloc"],
@@ -199,7 +209,7 @@ def _analyze(
         ),
         architecture=architecture,
         coverage=coverage,
-        configuration=ResolvedConfiguration(
+        configuration=ResolvedConfigurationV2(
             clone_min_lines=config.clone_min_lines,
             clone_min_tokens=config.clone_min_tokens,
             ruff_ignore=tuple(sorted(config.ruff_ignore)),
@@ -208,6 +218,11 @@ def _analyze(
                 for item in sorted(config.components, key=lambda item: item.name)
             },
             excluded_directories=(),
+            allow_unmatched_patterns=config.allow_unmatched_patterns,
+            unmatched_patterns=tuple(
+                UnmatchedPattern(component=component, pattern=pattern)
+                for component, pattern in unmatched_patterns
+            ),
         ),
         versions=ToolVersions(
             assay=version("assay"),
@@ -234,20 +249,21 @@ def _merge(first: ModuleGraphV2, second: ModuleGraphV2) -> ModuleGraphV2:
     )
 
 
-def analyze(snapshot: Snapshot, *, config: CodeMetricsConfig | None = None) -> CodeMetricsReportV4:
+def analyze(snapshot: Snapshot, *, config: CodeMetricsConfig | None = None) -> CodeMetricsReportV5:
     """Measure one snapshot and assemble its absolute metric and architecture report."""
     return _analyze(snapshot, config or CodeMetricsConfig())[0]
 
 
 def _compare(
     before: Snapshot, after: Snapshot, config: CodeMetricsConfig
-) -> tuple[CodeMetricsComparisonV5, dict[str, float | None]]:
+) -> tuple[CodeMetricsComparisonV6, dict[str, float | None]]:
     """The comparison and the legacy delta mapping, which counts a side without Python as 0."""
     old_report, old = _analyze(before, config, require_matches=False)
     new_report, new = _analyze(after, config, require_matches=False)
-    require_pattern_matches(
-        (old_report.architecture.graph, new_report.architecture.graph), config.components
-    )
+    if not config.allow_unmatched_patterns:
+        require_pattern_matches(
+            (old_report.architecture.graph, new_report.architecture.graph), config.components
+        )
     shared = tuple(sorted(old["mi"].keys() & new["mi"].keys()))
     old_python = _has_python(before)
     new_python = _has_python(after)
@@ -304,7 +320,7 @@ def _compare(
         else NewCodeMetricsV2(new_lines=None, new_duplicated_lines=None, new_max_nesting_depth=None)
     )
     old_architecture, new_architecture = old_report.architecture, new_report.architecture
-    comparison = CodeMetricsComparisonV5(
+    comparison = CodeMetricsComparisonV6(
         before=old_report,
         after=new_report,
         deltas=tuple(deltas),
@@ -321,7 +337,7 @@ def _has_python(snapshot: Snapshot) -> bool:
 
 def compare(
     before: Snapshot, after: Snapshot, *, config: CodeMetricsConfig | None = None
-) -> CodeMetricsComparisonV5:
+) -> CodeMetricsComparisonV6:
     """Compare absolute reports with explicit architecture deltas and structural evidence."""
     return _compare(before, after, config or CodeMetricsConfig())[0]
 

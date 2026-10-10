@@ -31,17 +31,29 @@ def _target(entry: ModuleEntry) -> str:
     return entry.path if entry.path is not None else entry.module
 
 
+def collect_unmatched_patterns(
+    graphs: Sequence[ModuleGraph], configuration: Sequence[ComponentConfig]
+) -> tuple[tuple[str, str], ...]:
+    """Return every component pattern that matches no module in any graph."""
+    targets = [_target(entry) for graph in graphs for entry in graph.modules]
+    return tuple(
+        (component.name, pattern)
+        for component in configuration
+        for pattern in component.patterns
+        if not any(fnmatchcase(target, pattern) for target in targets)
+    )
+
+
 def require_pattern_matches(
     graphs: Sequence[ModuleGraph], configuration: Sequence[ComponentConfig]
 ) -> None:
-    """Reject a pattern that matches no module in any of *graphs*."""
-    targets = [_target(entry) for graph in graphs for entry in graph.modules]
-    for component in configuration:
-        for pattern in component.patterns:
-            if not any(fnmatchcase(target, pattern) for target in targets):
-                raise EmptyComponentPattern(
-                    f"component {component.name} pattern {pattern!r} matched zero modules"
-                )
+    """Reject the first pattern that matches no module in any graph."""
+    unmatched = collect_unmatched_patterns(graphs, configuration)
+    if unmatched:
+        component, pattern = unmatched[0]
+        raise EmptyComponentPattern(
+            f"component {component} pattern {pattern!r} matched zero modules"
+        )
 
 
 def assign_components(
@@ -49,6 +61,7 @@ def assign_components(
     configuration: Sequence[ComponentConfig],
     *,
     require_matches: bool = True,
+    unmatched_patterns: list[tuple[str, str]] | None = None,
 ) -> tuple[ModuleComponentV2, ...]:
     """Resolve path globs, preserving real paths and assigning every module once.
 
@@ -79,6 +92,8 @@ def assign_components(
                 component=claimants[0] if claimants else "unassigned",
             )
         )
+    if unmatched_patterns is not None:
+        unmatched_patterns.extend(collect_unmatched_patterns((graph,), configuration))
     if require_matches:
         require_pattern_matches((graph,), configuration)
     return tuple(assigned)
@@ -89,9 +104,15 @@ def analyze_components(
     configuration: Sequence[ComponentConfig],
     *,
     require_matches: bool = True,
+    unmatched_patterns: list[tuple[str, str]] | None = None,
 ) -> ComponentMetricsReportV2:
     """Count distinct neighboring modules and raw edges for each component."""
-    assignments = assign_components(graph, configuration, require_matches=require_matches)
+    assignments = assign_components(
+        graph,
+        configuration,
+        require_matches=require_matches,
+        unmatched_patterns=unmatched_patterns,
+    )
     owner = {entry.module: entry.component for entry in assignments}
     members: dict[str, list[str]] = defaultdict(list)
     for entry in assignments:

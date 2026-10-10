@@ -20,7 +20,12 @@ from code_metrics_fixtures import (
     FIXTURE_J,
 )
 
-from assay.code_metrics.components import ComponentConfig, analyze_components, assign_components
+from assay.code_metrics.components import (
+    ComponentConfig,
+    analyze_components,
+    assign_components,
+    collect_unmatched_patterns,
+)
 from assay.code_metrics.errors import (
     AmbiguousComponentConfig,
     ConfigurationError,
@@ -101,6 +106,24 @@ def test_configuration_errors() -> None:
         assign_components(graph, (ComponentConfig("alpha", ("src/pkg/missing.py",)),))
     with pytest.raises(ConfigurationError, match="unassigned"):
         assign_components(graph, (ComponentConfig("unassigned", ("src/pkg/a.py",)),))
+
+
+def test_collects_every_unmatched_pair_in_configuration_order() -> None:
+    graph, _ = build_module_graph(FIXTURE_I)
+    configuration = (
+        ComponentConfig("alpha", ("missing/*", "src/pkg/a.py", "absent/*")),
+        ComponentConfig("beta", ("missing/*",)),
+    )
+    assert collect_unmatched_patterns((graph,), configuration) == (
+        ("alpha", "missing/*"),
+        ("alpha", "absent/*"),
+        ("beta", "missing/*"),
+    )
+    with pytest.raises(
+        EmptyComponentPattern,
+        match=r"configure components: component alpha pattern 'missing/\*' matched zero modules",
+    ):
+        assign_components(graph, configuration)
 
 
 def test_exact_coupling_and_cohesion_fixture() -> None:

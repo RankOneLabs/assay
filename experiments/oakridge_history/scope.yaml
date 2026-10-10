@@ -1,0 +1,41 @@
+include_paths:
+  - kbbl/core
+  - kbbl/adapters
+  - oakridge-core
+  - oakridge-dbos/src
+  - workflow-core
+exclude_globs:
+  - 'tests'
+  - '__tests__'
+  - '__fixtures__'
+  - '**/tests/**'
+  - '**/test/**'
+  - '**/fixtures/**'
+  - '**/__tests__/**'
+  - '**/*.test.ts'
+  - '*.test.ts'
+  - '*.test.tsx'
+  - '**/*.spec.ts'
+  - '**/test_*.py'
+  - '**/*_test.rs'
+implementation_roots:
+  - prefix: kbbl/core/
+    implementation: kbbl
+    include_path: kbbl/core
+    post_rewrite_only: false
+  - prefix: kbbl/adapters/
+    implementation: kbbl
+    include_path: kbbl/adapters
+    post_rewrite_only: false
+  - prefix: oakridge-core/src/
+    implementation: oakridge-core
+    include_path: oakridge-core
+    post_rewrite_only: false
+  - prefix: oakridge-dbos/src/
+    implementation: oakridge-dbos
+    include_path: oakridge-dbos/src
+    post_rewrite_only: false
+  - prefix: workflow-core/crates/
+    implementation: workflow-core
+    include_path: workflow-core
+    post_rewrite_only: true
