@@ -302,6 +302,65 @@ _PROBE_ATTRIBUTES = (
 )
 
 
+def test_qualification_rejects_a_stale_paid_image_pin(
+    monkeypatch: pytest.MonkeyPatch, qualify_local: ModuleType
+) -> None:
+    from assay_pier_bridge import identity
+
+    m = qualify_local.Measurements(
+        pier_revision="0.3.1",
+        mini_swe_agent_revision="a83fcae",
+        lock_digest="sha256:" + "a" * 64,
+    )
+    monkeypatch.setattr(identity, "observed_image_digest", lambda ref: "sha256:" + "b" * 64)
+
+    with pytest.raises(qualify_local.QualificationFailed, match="ImageDigestMismatchError"):
+        qualify_local.probe_image_identity(m, image_tag="bridge:test")
+
+
+def test_qualification_uses_the_prebuilt_image(
+    monkeypatch: pytest.MonkeyPatch, qualify_local: ModuleType
+) -> None:
+    from assay_pier_bridge import identity
+    from pier_qualification.pier_experiment import PIER_BRIDGE_IMAGE_DIGEST
+
+    m = qualify_local.Measurements(
+        pier_revision="0.3.1",
+        mini_swe_agent_revision="a83fcae",
+        lock_digest="sha256:" + "a" * 64,
+    )
+    monkeypatch.setattr(identity, "observed_image_digest", lambda ref: PIER_BRIDGE_IMAGE_DIGEST)
+    monkeypatch.setattr(
+        qualify_local,
+        "_run",
+        lambda *args, **kwargs: pytest.fail("qualification must not rebuild the pinned image"),
+    )
+
+    qualify_local.probe_image_identity(m, image_tag="bridge:test")
+
+    assert m.bridge_image_digest == PIER_BRIDGE_IMAGE_DIGEST
+
+
+def test_inventory_producer_reinspects_image_before_publication(
+    monkeypatch: pytest.MonkeyPatch, qualify_local: ModuleType
+) -> None:
+    from assay_pier_bridge import identity
+
+    m = qualify_local.Measurements(
+        pier_revision="0.3.1",
+        mini_swe_agent_revision="a83fcae",
+        lock_digest="sha256:" + "a" * 64,
+        bridge_image_digest="sha256:" + "b" * 64,
+        docker_version="28.0.0",
+        uid=1000,
+        gid=1000,
+    )
+    monkeypatch.setattr(identity, "observed_image_digest", lambda ref: "sha256:" + "c" * 64)
+
+    with pytest.raises(qualify_local.QualificationFailed, match="ImageDigestMismatchError"):
+        qualify_local._build_inventory(m, image_tag="bridge:test")
+
+
 @pytest.mark.parametrize("probe_attribute", _PROBE_ATTRIBUTES)
 def test_a_failed_probe_never_publishes_an_inventory(
     tmp_path: Path,

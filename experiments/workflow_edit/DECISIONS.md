@@ -26,5 +26,7 @@ the provenance of provisional bounds.
   locked dependencies are unchanged.
 - **Toolchain timing:** Node and TypeScript belong in the image before a trial
   starts. The trial has no network and performs no dependency installation.
-  The workflow edit fixture currently has no committed Node lockfiles, so its
-  own dependency tree cannot yet be installed from those manifests.
+  The fixture's Node `package.json` and `package-lock.json` live under
+  `integrations/pier/workflow_edit/`, the bridge Docker build context. `npm ci`
+  installs the locked tree in the Node build stage; the final image copies that
+  tree and Node, while omitting npm so trials cannot install dependencies.

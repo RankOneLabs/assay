@@ -29,14 +29,27 @@ while trials are being served:
   different digest. Rebuilds may have different image IDs, even with the same
   dependency locks, and therefore form different fixtures.
 
-The image adds Node v22.21.1 from a digest-pinned upstream image and
-TypeScript 5.9.2 at build time. No trial calls a package manager. The workflow
-edit fixture has not yet committed its own Node dependency lockfiles; its
-dependency tree must be added to this build when those manifests exist.
+The image adds Node v22.21.1 from a digest-pinned upstream image and installs
+the workflow edit fixture's TypeScript 5.9.2 dependency from
+[`workflow_edit/package.json`](workflow_edit/package.json) and
+[`workflow_edit/package-lock.json`](workflow_edit/package-lock.json) during the
+build. The complete locked `node_modules` tree is copied into the final image
+at `/opt/workflow_edit`; `NODE_PATH` exposes it to fixture scripts. npm is
+omitted from the final image because dependency installation is a build step.
+Build the image once with
+`docker build -t assay-pier-bridge:qualify-local integrations/pier`, then read
+its digest with `docker image inspect --format '{{.Id}}'
+assay-pier-bridge:qualify-local` and record it as
+`pier_experiment.PIER_BRIDGE_IMAGE_DIGEST`. The qualification script uses the
+already-built image: it binds the observed digest against that pin and
+reinspects the image immediately before publishing the inventory. A stale
+pin fails with `ImageDigestMismatchError`.
 
 `docker run --rm --network none assay-pier-bridge:test` starts and exits 0,
 confirming the image never installs or resolves anything at trial time.
-`tests/test_trial_lifecycle.py` asserts the same thing for a running trial.
+`tests/test_container_lifecycle.py` also runs `node --version` and
+`tsc --version` in a network-disabled container and checks that the locked
+TypeScript tree is present and npm is absent.
 
 ## Pier revision
 

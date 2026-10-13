@@ -9,10 +9,20 @@ then call `assay_pier_bridge.identity.bind_bridge_identity(manifest, image_ref)`
 It reads `docker image inspect --format '{{.Id}}'` and binds that observed
 digest into `BridgeIdentity`; a different declared digest raises
 `ImageDigestMismatchError`. Record a new fixture identity after every rebuild.
+Build the `assay-pier-bridge:qualify-local` image once and set the paid runner's
+`PIER_BRIDGE_IMAGE_DIGEST` pin to its inspected digest. `qualify_local.py`
+inspects that existing image and reinspects it immediately before publishing
+its inventory; it does not rebuild the image. The
+workflow edit Node manifest and npm lockfile live in
+`integrations/pier/workflow_edit/` so the bridge's Docker build context can
+copy them directly. npm installs the complete locked tree during the build;
+the final image carries Node and that tree, without npm.
 
 Qualification commands:
 
 ```sh
+docker build -t assay-pier-bridge:qualify-local integrations/pier
+docker image inspect --format '{{.Id}}' assay-pier-bridge:qualify-local
 uv sync --locked --extra review --extra legacy
 uv run ruff check integrations/pier
 MYPYPATH=integrations/pier/src:experiments uv run mypy integrations/pier/scripts/qualify_local.py

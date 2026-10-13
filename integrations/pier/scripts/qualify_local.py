@@ -2,8 +2,8 @@
 """Run every Pier qualification probe locally; emit an inventory only if all pass.
 
 Credential-free and paid-execution-free: this script never sets ``OPENROUTER_API_KEY``,
-never dials out to OpenRouter, and never calls ``run_pier_*``. It only builds and runs
-the locked bridge image against the local Docker daemon and exercises the core-side
+never dials out to OpenRouter, and never calls ``run_pier_*``. It inspects and runs
+an already-built locked bridge image against the local Docker daemon and exercises the core-side
 Pier adapter/protocol machinery against fakes -- exactly the surfaces the acceptance
 matrix in ``experiments/pier_qualification/tests/test_pier_acceptance.py`` also
 exercises without a real provider.
@@ -51,6 +51,11 @@ from assay_pier_bridge.container import (  # noqa: E402
     DockerTrialClient,
     docker_available,
     package_digest,
+)
+from assay_pier_bridge.identity import (  # noqa: E402
+    ImageDigestMismatchError,
+    ImageInspectionError,
+    bind_bridge_identity,
 )
 from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest  # noqa: E402
 from assay_pier_bridge.provider import (  # noqa: E402
@@ -229,26 +234,20 @@ def probe_docker_available(m: Measurements) -> None:
 
 
 def probe_image_identity(m: Measurements, *, image_tag: str) -> None:
-    build = _run(["docker", "build", "-t", image_tag, str(BRIDGE_ROOT)], timeout=600)
-    if build.returncode != 0:
-        raise QualificationFailed(
-            "image_identity", f"bridge image build failed:\n{build.stderr[-4000:]}"
+    assert m.pier_revision and m.mini_swe_agent_revision and m.lock_digest
+    try:
+        identity = bind_bridge_identity(
+            {
+                "pier_revision": m.pier_revision,
+                "mini_swe_agent_revision": m.mini_swe_agent_revision,
+                "lock_digest": m.lock_digest,
+                "bridge_image_digest": PIER_BRIDGE_IMAGE_DIGEST,
+            },
+            image_tag,
         )
-    inspect = _run(["docker", "inspect", "--format", "{{.Id}}", image_tag], timeout=10)
-    if inspect.returncode != 0:
-        raise QualificationFailed(
-            "image_identity", f"docker inspect failed: {inspect.stderr[-500:]}"
-        )
-    image_id = inspect.stdout.strip()
-    if re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None:
-        raise QualificationFailed("image_identity", f"unexpected image id shape: {image_id!r}")
-    m.bridge_image_digest = image_id
-    if m.bridge_image_digest != PIER_BRIDGE_IMAGE_DIGEST:
-        raise QualificationFailed(
-            "image_identity",
-            f"bridge image digest {m.bridge_image_digest!r} does not match the digest "
-            f"pier_experiment.py requires for paid execution ({PIER_BRIDGE_IMAGE_DIGEST!r})",
-        )
+    except (ImageInspectionError, ImageDigestMismatchError) as error:
+        raise QualificationFailed("image_identity", f"{type(error).__name__}: {error}") from error
+    m.bridge_image_digest = identity.bridge_image_digest
 
 
 def probe_no_reinstall(image_tag: str) -> None:
@@ -682,17 +681,24 @@ async def _probe_adapter_boundary(m: Measurements) -> None:
         )
 
 
-def _build_inventory(m: Measurements) -> QualificationInventory:
+def _build_inventory(m: Measurements, *, image_tag: str) -> QualificationInventory:
     assert m.lock_digest and m.bridge_image_digest and m.docker_version
     assert m.pier_revision and m.mini_swe_agent_revision
     assert m.uid is not None and m.gid is not None
+    try:
+        identity = bind_bridge_identity(
+            {
+                "pier_revision": m.pier_revision,
+                "mini_swe_agent_revision": m.mini_swe_agent_revision,
+                "lock_digest": m.lock_digest,
+                "bridge_image_digest": m.bridge_image_digest,
+            },
+            image_tag,
+        )
+    except (ImageInspectionError, ImageDigestMismatchError) as error:
+        raise QualificationFailed("image_identity", f"{type(error).__name__}: {error}") from error
     return QualificationInventory(
-        bridge=BridgeLock(
-            pier_revision=m.pier_revision,
-            mini_swe_agent_revision=m.mini_swe_agent_revision,
-            lock_digest=m.lock_digest,
-            bridge_image_digest=m.bridge_image_digest,
-        ),
+        bridge=BridgeLock.model_validate(identity.model_dump()),
         measured=MeasuredEnforcement(
             docker_version=m.docker_version,
             # A literal True, not a stored flag: this is only ever reached
@@ -746,7 +752,11 @@ def run_qualification(*, output_dir: Path, image_tag: str) -> int:
             return 1
         print("    ok", flush=True)
 
-    inventory = _build_inventory(m)
+    try:
+        inventory = _build_inventory(m, image_tag=image_tag)
+    except QualificationFailed as error:
+        print(f"FAIL [{error.probe}]: {error.reason}", file=sys.stderr)
+        return 1
     store = ObjectStore(output_dir)
     payload = inventory.model_dump(mode="json")
     ref = store.publish_json(payload)

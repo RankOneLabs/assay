@@ -294,7 +294,15 @@ def test_instruction_does_not_send_the_model_to_a_nonexistent_directory() -> Non
 def test_dockerfile_context_is_confined_to_the_named_allowlist() -> None:
     dockerfile = Path(__file__).parents[1] / "integrations" / "pier" / "Dockerfile"
     text = dockerfile.read_text(encoding="utf-8")
-    allowed_copy_sources = {"pyproject.toml", "uv.lock", "README.md", "src", "config"}
+    allowed_copy_sources = {
+        "pyproject.toml",
+        "uv.lock",
+        "README.md",
+        "src",
+        "config",
+        "workflow_edit/package.json",
+        "workflow_edit/package-lock.json",
+    }
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped.startswith("COPY "):
