@@ -251,9 +251,9 @@
       "title": "CycleReportV4",
       "type": "object"
     },
-    "ExistingMetricsV2": {
+    "ExistingMetricsV3": {
       "additionalProperties": false,
-      "description": "The Python analyzers' metrics over the snapshot's Python files.\n\nEvery analyzer here reads Python only, so each value is null, and the\nmaintainability index map empty, when the snapshot has no Python file.",
+      "description": "Python-only metrics plus jscpd counts over Python and TypeScript files.\n\nPython-only values are null without Python files. jscpd values are null\nonly when the snapshot has neither Python nor TypeScript files.",
       "properties": {
         "radon_sloc": {
           "anyOf": [
@@ -413,7 +413,7 @@
         "maintainability_index",
         "maintainability_index_mean"
       ],
-      "title": "ExistingMetricsV2",
+      "title": "ExistingMetricsV3",
       "type": "object"
     },
     "ExternalDependencyV2": {
@@ -927,7 +927,7 @@
       "type": "string"
     },
     "existing_metrics": {
-      "$ref": "#/$defs/ExistingMetricsV2"
+      "$ref": "#/$defs/ExistingMetricsV3"
     },
     "architecture": {
       "$ref": "#/$defs/ArchitectureReportV4"

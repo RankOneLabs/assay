@@ -33,7 +33,7 @@ from .models import (
     CodeMetricsReportV6,
     CountDelta,
     DetailedMetricDelta,
-    ExistingMetricsV2,
+    ExistingMetricsV3,
     LanguageCoverage,
     ModuleGraphV2,
     NewCodeMetricsV2,
@@ -201,7 +201,7 @@ def _analyze(
         for key in DELTAS
     }
     report = CodeMetricsReportV6(
-        existing_metrics=ExistingMetricsV2(
+        existing_metrics=ExistingMetricsV3(
             radon_sloc=measured["radon.sloc"],
             radon_lloc=measured["radon.lloc"],
             radon_cc=measured["radon.cc"],

@@ -690,6 +690,14 @@ class ExistingMetricsV2(WireModel):
     maintainability_index_mean: float | None
 
 
+class ExistingMetricsV3(ExistingMetricsV2):
+    """Python-only metrics plus jscpd counts over Python and TypeScript files.
+
+    Python-only values are null without Python files. jscpd values are null
+    only when the snapshot has neither Python nor TypeScript files.
+    """
+
+
 class CodeMetricsReportV4(WireModel):
     """Absolute snapshot report whose graph and coverage name each module's language."""
 
@@ -813,7 +821,7 @@ class PatchSummary(WireModel):
 
 class CodeMetricsReportV6(WireModel):
     schema_version: Literal["assay-code-metrics-report/0.6.0"] = "assay-code-metrics-report/0.6.0"
-    existing_metrics: ExistingMetricsV2
+    existing_metrics: ExistingMetricsV3
     architecture: ArchitectureReportV4
     coverage: SnapshotCoverageV2
     configuration: ResolvedConfigurationV2
