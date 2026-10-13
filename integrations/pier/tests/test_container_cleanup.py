@@ -9,6 +9,7 @@ from assay_pier_bridge.container import (
     ContainerObservation,
     DockerTrialClient,
     DockerTrialHandle,
+    StorageExhaustedError,
     package_digest,
 )
 from assay_pier_bridge.identity import digest_bytes
@@ -201,6 +202,58 @@ def test_driver_hashes_the_exact_bounded_output_bytes(
 
     assert result.artifacts["output"] == output
     assert result.submission_ref == digest_bytes(output)
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "log", "raises_storage"),
+    [
+        (0, "", False),
+        (1, "dd: error writing '/scratch/big': No space left on device", True),
+        (1, "dd: error writing '/tmp/big': No space left on device", False),
+        (1, "permission denied", False),
+    ],
+)
+def test_storage_cause_requires_trial_enospc_not_a_full_host_filesystem(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exit_code: int,
+    log: str,
+    raises_storage: bool,
+) -> None:
+    handle = _handle(tmp_path)
+    (tmp_path / "assay-pier-test" / "submission" / "output").write_text("answer")
+    observed = ContainerObservation(
+        read_only_root=True,
+        workspace_mount_read_only=True,
+        uid=1000,
+        network_mode="none",
+        cpu_limit=1,
+        memory_limit_mb=256,
+        pids_limit=32,
+        storage_limit_mb=64,
+    )
+
+    def trial_run(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        if args[:4] == ["docker", "inspect", "--format", "{{.State.ExitCode}}"]:
+            return _completed(args, stdout=f"{exit_code}\n")
+        if args[:2] == ["docker", "logs"]:
+            return _completed(args, stdout=log)
+        return _fake_successful_run(args, timeout=timeout)
+
+    monkeypatch.setattr(container, "_run", trial_run)
+    monkeypatch.setattr(DockerTrialHandle, "_prepare_quota", lambda self, limits: None)
+    monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
+    monkeypatch.setattr(container, "_inspect", lambda name: observed)
+    monkeypatch.setattr(container, "_container_count", lambda name: 1)
+    if raises_storage:
+        with pytest.raises(StorageExhaustedError):
+            handle.run()
+    elif exit_code:
+        with pytest.raises(RuntimeError, match="exited nonzero"):
+            handle.run()
+    else:
+        # A trial may fill its quota exactly and exit cleanly.
+        assert handle.run().status == "succeeded"
 
 
 def test_driver_rejects_output_that_exceeds_the_collection_limit(

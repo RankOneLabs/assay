@@ -9,7 +9,11 @@ in ``protocol.py``.
 
 from __future__ import annotations
 
+import ipaddress
+import json
 import os
+import socket
+import socketserver
 import subprocess
 import threading
 import time
@@ -17,7 +21,7 @@ from pathlib import Path
 
 import pytest
 from assay_pier_bridge.container import DockerTrialClient, docker_available, package_digest
-from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest
+from assay_pier_bridge.protocol import ModelRoute, NetworkPolicy, TrialLimits, TrialRequest
 from assay_pier_bridge.runtime import BridgeRuntime
 
 IMAGE_TAG = "assay-pier-bridge:test-lifecycle"
@@ -31,7 +35,14 @@ ROUTE = ModelRoute(
 PACKAGE = {"instruction.md": "# Task\n\nsay hi\n"}
 
 
-def _request(*, timeout_s: float = 20, storage_mb: int = 64) -> TrialRequest:
+def _request(
+    *,
+    timeout_s: float = 20,
+    storage_mb: int = 64,
+    network_policy: NetworkPolicy = "egress-openrouter-only",
+    egress_host: str | None = None,
+    egress_port: int | None = None,
+) -> TrialRequest:
     return TrialRequest(
         cell_id="s1:a1:w0",
         package_digest=package_digest(PACKAGE),
@@ -39,6 +50,9 @@ def _request(*, timeout_s: float = 20, storage_mb: int = 64) -> TrialRequest:
         limits=TrialLimits(
             cpu=1, memory_mb=256, pids=32, timeout_s=timeout_s, storage_mb=storage_mb
         ),
+        network_policy=network_policy,
+        egress_host=egress_host,
+        egress_port=egress_port,
     )
 
 
@@ -75,6 +89,75 @@ def _no_stray_containers(prefix: str = "assay-pier-") -> bool:
         check=False,
     )
     return not result.stdout.strip()
+
+
+class _AnswerHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        self.request.sendall(b"allowed")
+
+
+def _host_lan_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("192.0.2.1", 1))
+            address = str(probe.getsockname()[0])
+    except OSError as error:
+        pytest.skip(f"host has no routable LAN address: {error}")
+    private_lans = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+    if not any(ipaddress.IPv4Address(address) in ipaddress.ip_network(net) for net in private_lans):
+        pytest.skip(f"host has no RFC1918 LAN address: {address}")
+    return address
+
+
+def test_lan_posture_reaches_only_the_allowlisted_host_and_port(image: str) -> None:
+    host = _host_lan_ip()
+    with (
+        socketserver.ThreadingTCPServer(("0.0.0.0", 0), _AnswerHandler) as allowed_server,
+        socketserver.ThreadingTCPServer(("0.0.0.0", 0), _AnswerHandler) as other_server,
+    ):
+            threading.Thread(target=allowed_server.serve_forever, daemon=True).start()
+            threading.Thread(target=other_server.serve_forever, daemon=True).start()
+            allowed_port = allowed_server.server_address[1]
+            other_port = other_server.server_address[1]
+            script = """
+import json, socket, struct
+host, allowed_port, other_port = __import__('sys').argv[1:]
+with open('/proc/net/route', encoding='ascii') as routes:
+    gateway = next(
+        socket.inet_ntoa(struct.pack('<L', int(parts[2], 16)))
+        for line in routes if (parts := line.split()) and parts[1] == '00000000'
+    )
+def reach(address, port):
+    try:
+        with socket.create_connection((address, int(port)), timeout=2) as peer:
+            return peer.recv(32).decode('ascii')
+    except OSError:
+        return 'refused'
+result = {
+    'allowlisted': reach(host, allowed_port),
+    'other_host': reach(gateway, allowed_port),
+    'other_port': reach(host, other_port),
+}
+with open('/submission/output', 'w', encoding='utf-8') as output:
+    json.dump(result, output)
+"""
+            client = DockerTrialClient(
+                image=image,
+                package=PACKAGE,
+                command=["python", "-c", script, host, str(allowed_port), str(other_port)],
+            )
+            request = _request(
+                network_policy="egress-lan-host-port", egress_host=host, egress_port=allowed_port
+            )
+            result = BridgeRuntime(client).run_cell(request)
+    assert result.status == "succeeded", result.error_message
+    assert json.loads(result.artifacts["output"]) == {
+        "allowlisted": "allowed",
+        "other_host": "refused",
+        "other_port": "refused",
+    }
+    assert result.effective.network_policy == f"egress-lan-host-port:{host}:{allowed_port}"
+    assert _no_stray_containers()
 
 
 def test_workflow_toolchain_runs_offline_from_installed_tree(image: str) -> None:
@@ -136,8 +219,8 @@ def test_scratch_storage_limit_is_really_enforced_not_merely_declared(image: str
         command=[
             "/bin/sh",
             "-c",
-            "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null 2>&1; "
-            "printf '%s' \"$?\" > /submission/output",
+            "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null; "
+            "status=$?; printf '%s' \"$status\" > /submission/output; exit \"$status\"",
         ],
     )
     runtime = BridgeRuntime(client)

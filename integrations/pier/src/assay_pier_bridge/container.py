@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import threading
@@ -132,7 +133,6 @@ def _usable_observation(observation: ContainerObservation | None) -> ContainerOb
     positive_ints = (
         observation.memory_limit_mb,
         observation.pids_limit,
-        observation.storage_limit_mb,
     )
     if (
         isinstance(observation.cpu_limit, bool)
@@ -221,11 +221,31 @@ def _network_policy_label(network_mode: str | None) -> str:
         port = labels["assay.egress.port"]
         if network["Driver"] != "bridge" or network.get("EnableIPv6") or network.get("Internal"):
             return "unknown"
-        if any(
-            _host_run(["iptables", "-C", chain, "-i", interface, *rule]).returncode != 0
-            for chain, rule in _firewall_rules(host, int(port))
-        ):
-            return "unknown"
+        for chain in ("INPUT", "FORWARD"):
+            rules = _host_run(["iptables", "-S", chain])
+            if rules.returncode != 0:
+                return "unknown"
+            observed = [
+                [host if token == f"{host}/32" else token for token in shlex.split(line)]
+                for line in rules.stdout.splitlines()
+            ]
+            observed = [
+                [
+                    token
+                    for index, token in enumerate(rule)
+                    if token != "-m" and not (index > 0 and rule[index - 1] == "-m")
+                ]
+                for rule in observed
+            ]
+            allow = [
+                "-A", chain, "-i", interface,
+                "-p", "tcp", "-d", host, "--dport", str(int(port)), "-j", "ACCEPT",
+            ]
+            deny = ["-A", chain, "-i", interface, "-j", "DROP"]
+            if allow not in observed or deny not in observed:
+                return "unknown"
+            if observed.index(allow) >= observed.index(deny):
+                return "unknown"
     except (KeyError, ValueError, TypeError, IndexError, OSError):
         return "unknown"
     return f"egress-lan-host-port:{host}:{port}"
@@ -505,8 +525,16 @@ class DockerTrialHandle:
         assert observation is not None
         if observation.oom_killed:
             raise MemoryLimitExceededError("trial exceeded the memory cgroup ceiling")
-        if os.statvfs(self._scratch).f_bavail == 0:
-            raise StorageExhaustedError("trial exhausted the /scratch filesystem quota")
+        if exit_code.stdout.strip() != "0":
+            logs = _run(["docker", "logs", self._name], timeout=_POLL_TIMEOUT_S)
+            # A full filesystem is only evidence of capacity, not evidence
+            # that the trial attempted a write which failed with ENOSPC.
+            if logs.returncode == 0 and any(
+                "/scratch" in line
+                and ("No space left on device" in line or "[Errno 28]" in line)
+                for line in (logs.stdout + logs.stderr).splitlines()
+            ):
+                raise StorageExhaustedError("trial reported ENOSPC on /scratch")
         submission_file = self._submission / "output"
         if (
             exit_code.stdout.strip() != "0"

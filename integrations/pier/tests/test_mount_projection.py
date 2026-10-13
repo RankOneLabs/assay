@@ -27,6 +27,7 @@ from assay_pier_bridge.container import (
     _inspect,
     _mount_paths,
     _network_policy_label,
+    _usable_observation,
     package_digest,
 )
 from assay_pier_bridge.paths import safe_relative_path
@@ -86,12 +87,13 @@ def test_declared_and_inspected_controls_must_match(tmp_path: Path) -> None:
         ({"scratch_mount_kind": "tmpfs"}, MountKindMismatchError),
         ({"scratch_tmpfs": True}, MountKindMismatchError),
         ({"storage_limit_mb": 128}, StorageQuotaMismatchError),
+        ({"storage_limit_mb": 0}, StorageQuotaMismatchError),
         ({"network_policy_label": "unknown"}, NetworkPolicyMismatchError),
         ({"workspace_mount_read_only": False}, ReadOnlyMismatchError),
         ({"read_only_root": False}, ReadOnlyMismatchError),
     ):
         with pytest.raises(error):
-            handle._assert_enforcement(replace(observed, **changed))
+            handle._assert_enforcement(_usable_observation(replace(observed, **changed)))
 
 
 def test_lan_posture_uses_a_dedicated_network_and_checks_firewall(
@@ -115,11 +117,30 @@ def test_lan_posture_uses_a_dedicated_network_and_checks_firewall(
         return subprocess.CompletedProcess(args, 0, stdout=json.dumps(inspected), stderr="")
 
     def observed_host(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        chain = args[-1]
+        rules = (
+            f"-P {chain} ACCEPT\n"
+            f"-A {chain} -i {handle._network_interface} -p tcp -m tcp "
+            "-d 192.168.1.10/32 --dport 8080 -j ACCEPT\n"
+            f"-A {chain} -i {handle._network_interface} -j DROP\n"
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=rules, stderr="")
 
     monkeypatch.setattr("assay_pier_bridge.container._run", observed_run)
     monkeypatch.setattr("assay_pier_bridge.container._host_run", observed_host)
     assert _network_policy_label(handle._network_name) == "egress-lan-host-port:192.168.1.10:8080"
+    ordered_host = observed_host
+
+    def drop_first(args: list[str]) -> subprocess.CompletedProcess[str]:
+        result = ordered_host(args)
+        lines = result.stdout.splitlines(keepends=True)
+        return subprocess.CompletedProcess(
+            args, 0, stdout="".join([lines[0], lines[2], lines[1]]), stderr=""
+        )
+
+    monkeypatch.setattr("assay_pier_bridge.container._host_run", drop_first)
+    assert _network_policy_label(handle._network_name) == "unknown"
+    monkeypatch.setattr("assay_pier_bridge.container._host_run", ordered_host)
     inspected[0]["EnableIPv6"] = True
     assert _network_policy_label(handle._network_name) == "unknown"
     inspected[0]["EnableIPv6"] = False
