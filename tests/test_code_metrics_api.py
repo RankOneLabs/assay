@@ -65,7 +65,8 @@ def test_compared_component_may_exist_on_one_side() -> None:
     assert added.components_added == ("plugins",)
     assert removed.components_removed == ("plugins",)
     assert comparison.before.configuration.unmatched_patterns[0].model_dump() == {
-        "component": "plugins", "pattern": "src/pkg/plugins/*"
+        "component": "plugins",
+        "pattern": "src/pkg/plugins/*",
     }
     assert comparison.after.configuration.unmatched_patterns == ()
     with pytest.raises(EmptyComponentPattern, match="missing"):
@@ -90,18 +91,20 @@ def test_allow_unmatched_patterns_on_analyze_and_compare() -> None:
     ):
         analyze(PACKAGE, config=CodeMetricsConfig(components=config.components))
     report = analyze(PACKAGE, config=config)
-    assert report.schema_version == "assay-code-metrics-report/0.5.0"
+    assert report.schema_version == "assay-code-metrics-report/0.6.0"
     assert report.configuration.allow_unmatched_patterns is True
     expected = ({"component": "missing", "pattern": "missing/*"},)
     assert tuple(item.model_dump() for item in report.configuration.unmatched_patterns) == expected
     comparison = compare(PACKAGE, PACKAGE, config=config)
-    assert comparison.schema_version == "assay-code-metrics-comparison/0.6.0"
-    assert tuple(
-        item.model_dump() for item in comparison.before.configuration.unmatched_patterns
-    ) == expected
-    assert tuple(
-        item.model_dump() for item in comparison.after.configuration.unmatched_patterns
-    ) == expected
+    assert comparison.schema_version == "assay-code-metrics-comparison/0.7.0"
+    assert (
+        tuple(item.model_dump() for item in comparison.before.configuration.unmatched_patterns)
+        == expected
+    )
+    assert (
+        tuple(item.model_dump() for item in comparison.after.configuration.unmatched_patterns)
+        == expected
+    )
 
 
 @pytest.mark.parametrize("allow", [False, True])
@@ -113,7 +116,8 @@ def test_one_sided_pattern_resolution_is_reported_on_its_own_side(allow: bool) -
     )
     comparison = compare(PACKAGE, after, config=config)
     assert comparison.before.configuration.unmatched_patterns[0].model_dump() == {
-        "component": "plugins", "pattern": "src/pkg/plugins/*"
+        "component": "plugins",
+        "pattern": "src/pkg/plugins/*",
     }
     assert comparison.after.configuration.unmatched_patterns == ()
 
@@ -137,6 +141,7 @@ def test_mi_shared_intersection_and_explicit_structure() -> None:
     assert mi.shared_file_count == 2
     assert result.structural_changes.modules_added == ("pkg.new", "pkg.second")
     assert result.structural_changes.modules_removed == ("pkg.old",)
+    assert result.patch.changed_modules == ("pkg.a",)
     assert result.model_dump()["structural_changes"]["modules_added"] == ("pkg.new", "pkg.second")
     assert result.new_code.new_lines == 3
     version = result.schema_version.rsplit("/", 1)[1].rsplit(".", 1)[0]
@@ -265,14 +270,19 @@ def test_snapshot_without_python_has_null_python_metrics() -> None:
     report = analyze(typescript)
     metrics = report.existing_metrics.model_dump()
     assert metrics.pop("maintainability_index") == {}
-    assert set(metrics.values()) == {None}
+    assert {value for key, value in metrics.items() if not key.startswith("jscpd_")} == {None}
+    assert metrics["jscpd_clones"] == 0
+    assert metrics["jscpd_duplicated_lines"] == 0
     comparison = compare(typescript, PACKAGE)
-    assert {entry.before for entry in comparison.deltas} == {None}
-    assert {entry.delta for entry in comparison.deltas} == {None}
+    python_deltas = (entry for entry in comparison.deltas if not entry.metric.startswith("jscpd."))
+    assert {entry.before for entry in python_deltas} == {None}
+    assert {
+        entry.delta for entry in comparison.deltas if not entry.metric.startswith("jscpd.")
+    } == {None}
     assert comparison.new_code.new_lines == 1
     reverse = compare(PACKAGE, typescript)
-    assert reverse.new_code.model_dump() == dict.fromkeys(
-        ("new_lines", "new_duplicated_lines", "new_max_nesting_depth")
-    )
+    assert reverse.new_code.new_lines == 1
+    assert reverse.new_code.new_duplicated_lines == 0
+    assert reverse.new_code.new_max_nesting_depth is None
     # The legacy mapping still counts a side without Python as zero.
     assert measure(typescript, PACKAGE)["radon.sloc"] == 1

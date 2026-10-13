@@ -256,6 +256,8 @@ def test_pinned_v4_and_v5_report_schemas_reject_each_others_payloads(
     new_payload = analyze({"pkg/__init__.py": "", "pkg/a.py": "x = 1\n"}).model_dump(
         mode="json"
     )
+    new_payload.pop("typescript_metrics")
+    new_payload["schema_version"] = "assay-code-metrics-report/0.5.0"
     old_payload = {
         **new_payload,
         "schema_version": "assay-code-metrics-report/0.4.0",
