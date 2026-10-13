@@ -29,25 +29,30 @@ from .errors import (
 from .models import (
     DELTAS,
     LANGUAGES,
-    CodeMetricsComparisonV6,
-    CodeMetricsReportV5,
+    CodeMetricsComparisonV7,
+    CodeMetricsReportV6,
+    CountDelta,
     DetailedMetricDelta,
-    ExistingMetricsV2,
+    ExistingMetricsV3,
     LanguageCoverage,
     ModuleGraphV2,
     NewCodeMetricsV2,
+    OptionalCountDelta,
+    PatchSummary,
     ResolvedConfigurationV2,
     Snapshot,
     SnapshotCoverageV2,
     ToolVersions,
+    TypeScriptMetricDeltas,
+    TypeScriptMetrics,
     UnmatchedPattern,
     _Config,
     language_of,
     validate_snapshot,
 )
 from .pins import (
-    JSCPD,
     assert_pinned_tools,
+    node_binary,
     rust_tool_versions,
     tool_versions,
     typescript_tool_versions,
@@ -66,9 +71,10 @@ class CodeMetricsConfig:
 
 
 def _preflight() -> None:
-    if shutil.which("npx") is None or shutil.which("node") is None:
-        raise ToolUnavailable(JSCPD, "Node.js or npx is unavailable")
+    if shutil.which("node") is None:
+        raise ToolUnavailable("node", "Node.js is unavailable")
     assert_pinned_tools()
+    node_binary("jscpd")
 
 
 def _validate_paths(snapshot: Snapshot) -> dict[str, str]:
@@ -118,7 +124,7 @@ def _validate_config(config: CodeMetricsConfig) -> None:
 
 def _analyze(
     snapshot: Snapshot, config: CodeMetricsConfig, *, require_matches: bool = True
-) -> tuple[CodeMetricsReportV5, dict[str, Any]]:
+) -> tuple[CodeMetricsReportV6, dict[str, Any]]:
     _validate_config(config)
     _preflight()
     snapshot = _validate_paths(snapshot)
@@ -169,7 +175,7 @@ def _analyze(
     try:
         payload = dict(
             tools._snapshot(
-                files, legacy_config, graph=graph, direct_import_count=direct_import_count
+                snapshot, legacy_config, graph=graph, direct_import_count=direct_import_count
             )
         )
     except AnalyzerFailed as error:
@@ -189,10 +195,13 @@ def _analyze(
         versions |= typescript_tool_versions()
     if rust_files:
         versions |= rust_tool_versions()
-    # The analyzers read Python only, so without a Python file nothing was measured.
-    measured = {key: payload[key] if files else None for key in DELTAS}
-    report = CodeMetricsReportV5(
-        existing_metrics=ExistingMetricsV2(
+    # jscpd also reads TypeScript; all other existing metrics require Python.
+    measured = {
+        key: payload[key] if (files or key.startswith("jscpd.") and typescript_files) else None
+        for key in DELTAS
+    }
+    report = CodeMetricsReportV6(
+        existing_metrics=ExistingMetricsV3(
             radon_sloc=measured["radon.sloc"],
             radon_lloc=measured["radon.lloc"],
             radon_cc=measured["radon.cc"],
@@ -229,6 +238,12 @@ def _analyze(
             python=".".join(map(str, sys.version_info[:3])),
             tools=dict(sorted(versions.items())),
         ),
+        typescript_metrics=TypeScriptMetrics(
+            lines=payload["typescript.lines"] if typescript_files else None,
+            clones=payload["typescript.clones"] if typescript_files else None,
+            duplicated_lines=payload["typescript.duplicated_lines"] if typescript_files else None,
+            type_errors=payload["typescript.type_errors"] if typescript_files else None,
+        ),
     )
     return report, payload
 
@@ -249,14 +264,14 @@ def _merge(first: ModuleGraphV2, second: ModuleGraphV2) -> ModuleGraphV2:
     )
 
 
-def analyze(snapshot: Snapshot, *, config: CodeMetricsConfig | None = None) -> CodeMetricsReportV5:
+def analyze(snapshot: Snapshot, *, config: CodeMetricsConfig | None = None) -> CodeMetricsReportV6:
     """Measure one snapshot and assemble its absolute metric and architecture report."""
     return _analyze(snapshot, config or CodeMetricsConfig())[0]
 
 
 def _compare(
     before: Snapshot, after: Snapshot, config: CodeMetricsConfig
-) -> tuple[CodeMetricsComparisonV6, dict[str, float | None]]:
+) -> tuple[CodeMetricsComparisonV7, dict[str, float | None]]:
     """The comparison and the legacy delta mapping, which counts a side without Python as 0."""
     old_report, old = _analyze(before, config, require_matches=False)
     new_report, new = _analyze(after, config, require_matches=False)
@@ -281,52 +296,110 @@ def _compare(
         else:
             difference = round(new[key] - old[key], 3)
         legacy[key] = difference
-        old_value = old[key] if old_python else None
-        new_value = new[key] if new_python else None
+        old_value = (
+            old[key]
+            if (old_python or key.startswith("jscpd.") and _has_typescript(before))
+            else None
+        )
+        new_value = (
+            new[key]
+            if (new_python or key.startswith("jscpd.") and _has_typescript(after))
+            else None
+        )
         deltas.append(
             DetailedMetricDelta(
                 metric=key,
                 before=old_value,
                 after=new_value,
-                delta=difference if old_python and new_python else None,
+                delta=difference if old_value is not None and new_value is not None else None,
                 provenance="shared_file_mean" if key == "radon.mi" else "absolute_difference",
                 shared_files=shared if key == "radon.mi" else (),
                 shared_file_count=len(shared) if key == "radon.mi" else None,
             )
         )
     added = _added_lines(before, after)
-    new_lines = sum(map(len, added.values()))
+    metric_added = {
+        path: lines
+        for path, lines in added.items()
+        if language_of(path) in ("python", "typescript")
+    }
+    python_added = {path: lines for path, lines in added.items() if language_of(path) == "python"}
+    new_lines = sum(map(len, metric_added.values()))
     new_duplicated_lines = sum(
-        len(lines & new["cloned_lines"].get(path, set())) for path, lines in added.items()
+        len(lines & new["cloned_lines"].get(path, set())) for path, lines in metric_added.items()
     )
     new_max_nesting_depth = max(
         (
             depth
             for path, start, end, depth in new["functions"]
-            if any(start <= line <= end for line in added.get(path, ()))
+            if any(start <= line <= end for line in python_added.get(path, ()))
         ),
         default=0,
     )
-    legacy["new_lines"] = new_lines
-    legacy["new_duplicated_lines"] = new_duplicated_lines
+    legacy["new_lines"] = sum(map(len, python_added.values()))
+    legacy["new_duplicated_lines"] = sum(
+        len(lines & new["cloned_lines"].get(path, set())) for path, lines in python_added.items()
+    )
     legacy["new_max_nesting_depth"] = new_max_nesting_depth
     new_code = (
         NewCodeMetricsV2(
             new_lines=new_lines,
             new_duplicated_lines=new_duplicated_lines,
-            new_max_nesting_depth=new_max_nesting_depth,
+            new_max_nesting_depth=new_max_nesting_depth if new_python else None,
         )
-        if new_python
+        if new_python or _has_typescript(after)
         else NewCodeMetricsV2(new_lines=None, new_duplicated_lines=None, new_max_nesting_depth=None)
     )
     old_architecture, new_architecture = old_report.architecture, new_report.architecture
-    comparison = CodeMetricsComparisonV6(
+    changes = structural_changes(old_architecture, new_architecture)
+    architecture_deltas = compare_architecture(old_architecture, new_architecture)
+    old_module_paths = {entry.path: entry.module for entry in old_architecture.graph.modules}
+    new_module_paths = {entry.path: entry.module for entry in new_architecture.graph.modules}
+    old_ts, new_ts = old_report.typescript_metrics, new_report.typescript_metrics
+
+    def optional_delta(before_value: int | None, after_value: int | None) -> OptionalCountDelta:
+        return OptionalCountDelta(
+            before=before_value,
+            after=after_value,
+            delta=None
+            if before_value is None or after_value is None
+            else after_value - before_value,
+        )
+
+    comparison = CodeMetricsComparisonV7(
         before=old_report,
         after=new_report,
         deltas=tuple(deltas),
-        architecture_deltas=compare_architecture(old_architecture, new_architecture),
+        architecture_deltas=architecture_deltas,
         new_code=new_code,
-        structural_changes=structural_changes(old_architecture, new_architecture),
+        structural_changes=changes,
+        typescript_deltas=TypeScriptMetricDeltas(
+            lines=optional_delta(old_ts.lines, new_ts.lines),
+            clones=optional_delta(old_ts.clones, new_ts.clones),
+            duplicated_lines=optional_delta(old_ts.duplicated_lines, new_ts.duplicated_lines),
+            type_errors=optional_delta(old_ts.type_errors, new_ts.type_errors),
+        ),
+        patch=PatchSummary(
+            code_lines=_count(_source_lines(before), _source_lines(after)),
+            module_count=_count(old_architecture.module_count, new_architecture.module_count),
+            cyclic_scc_count=_count(
+                old_architecture.cycles.cyclic_scc_count,
+                new_architecture.cycles.cyclic_scc_count,
+            ),
+            propagation_cost=architecture_deltas.system.propagation_cost,
+            added_lines=sum(map(len, _added_lines(before, after).values())),
+            removed_lines=sum(map(len, _added_lines(after, before).values())),
+            changed_modules=tuple(
+                sorted(
+                    old_module_paths[path]
+                    for path in before.keys() & after.keys()
+                    if before[path] != after[path]
+                    and path in old_module_paths
+                    and old_module_paths[path] == new_module_paths.get(path)
+                )
+            ),
+            new_cycles=changes.cycles_created,
+        ),
     )
     return comparison, legacy
 
@@ -335,9 +408,23 @@ def _has_python(snapshot: Snapshot) -> bool:
     return any(path.endswith(".py") for path in snapshot)
 
 
+def _has_typescript(snapshot: Snapshot) -> bool:
+    return any(language_of(path) == "typescript" for path in snapshot)
+
+
+def _source_lines(snapshot: Snapshot) -> int:
+    return sum(
+        len(text.splitlines()) for path, text in snapshot.items() if language_of(path) is not None
+    )
+
+
+def _count(before: int, after: int) -> CountDelta:
+    return CountDelta(before=before, after=after, delta=after - before)
+
+
 def compare(
     before: Snapshot, after: Snapshot, *, config: CodeMetricsConfig | None = None
-) -> CodeMetricsComparisonV6:
+) -> CodeMetricsComparisonV7:
     """Compare absolute reports with explicit architecture deltas and structural evidence."""
     return _compare(before, after, config or CodeMetricsConfig())[0]
 
@@ -366,7 +453,7 @@ def _added_lines(before: Snapshot, after: Snapshot) -> dict[str, set[int]]:
     """1-based line numbers of nonblank lines in ``after`` that ``before`` lacks."""
     added: dict[str, set[int]] = {}
     for path in sorted(after):
-        if not path.endswith(".py"):
+        if language_of(path) is None:
             continue
         new = after[path].splitlines()
         old = before.get(path, "").splitlines()

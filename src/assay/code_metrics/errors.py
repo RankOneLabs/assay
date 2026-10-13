@@ -10,8 +10,7 @@
 | Component pattern matching zero modules | EmptyComponentPattern(ConfigurationError) |
 | Zero-match pattern with flag enabled | Report: pattern in `configuration.unmatched_patterns` |
 | Resolved tool version differs from its pin | ToolVersionMismatch(RuntimeError) |
-| Node/npx unavailable or jscpd fetch fails | ToolUnavailable(RuntimeError) |
-| dependency-cruiser fetch fails, with a TypeScript file | ToolUnavailable(RuntimeError) |
+| Node or a locked Node analyzer unavailable | ToolUnavailable(RuntimeError) |
 | mypy crashes, ruff or jscpd errors, unreadable jscpd report | AnalyzerFailed(RuntimeError) |
 | dependency-cruiser errors or its report is unreadable | AnalyzerFailed(RuntimeError) |
 | Cargo.toml that is not valid TOML | AnalyzerFailed(RuntimeError) |
@@ -97,12 +96,13 @@ class ToolVersionMismatch(RuntimeError):
 
 
 class ToolUnavailable(RuntimeError):
-    """A required analyzer cannot be launched or fetched."""
+    """A required local analyzer cannot be launched."""
 
     operation = "run tool"
 
     def __init__(self, tool: str, reason: str) -> None:
         self.tool = tool
         super().__init__(
-            f"run tool {tool}: {reason}; install Node.js and npm (npx), then run npx --yes {tool}"
+            f"run tool {tool}: {reason}; install Node.js and run "
+            "assay code-metrics install-node-tools"
         )

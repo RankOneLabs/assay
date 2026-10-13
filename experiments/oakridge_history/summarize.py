@@ -8,10 +8,23 @@ import json
 from pathlib import Path
 from typing import Any
 
-from assay.code_metrics.models import CodeMetricsComparisonV6, CodeMetricsReportV5
+from pydantic import TypeAdapter
+
+from assay.code_metrics.models import (
+    CodeMetricsComparisonV6,
+    CodeMetricsComparisonV7,
+    CodeMetricsReportV5,
+    CodeMetricsReportV6,
+)
 
 from .config import Err, load_components, load_scope, load_snapshots
 from .guards import check_union_coverage
+
+Report = CodeMetricsReportV5 | CodeMetricsReportV6
+REPORT_ADAPTER: TypeAdapter[Report] = TypeAdapter(Report)
+COMPARISON_ADAPTER: TypeAdapter[CodeMetricsComparisonV6 | CodeMetricsComparisonV7] = TypeAdapter(
+    CodeMetricsComparisonV6 | CodeMetricsComparisonV7
+)
 
 METRICS = (
     "radon_sloc", "radon_lloc", "radon_cc", "radon_halstead_volume",
@@ -56,7 +69,7 @@ def _cell(value: Any) -> Any:
     return value
 
 
-def _presence(metadata: dict[str, Any], report: CodeMetricsReportV5, scope: Any) -> str:
+def _presence(metadata: dict[str, Any], report: Report, scope: Any) -> str:
     paths = set(metadata["archived_include_paths"])
     implementations = sorted({root.implementation for root in scope.implementation_roots
                               if root.include_path in paths})
@@ -78,14 +91,14 @@ def summarize(output: Path) -> None:
     assert not isinstance(components, Err)
     # Assay stores each component's patterns sorted.
     expected_components = {item.name: tuple(sorted(item.patterns)) for item in components.value}
-    reports: dict[str, CodeMetricsReportV5] = {}
+    reports: dict[str, Report] = {}
     metadata: dict[str, dict[str, Any]] = {}
     system_rows: list[dict[str, Any]] = []
     component_rows: list[dict[str, Any]] = []
     coverage_rows: list[dict[str, Any]] = []
     for spec in snapshots.value:
         directory = output / "snapshots" / spec.id
-        report = CodeMetricsReportV5.model_validate_json(
+        report = REPORT_ADAPTER.validate_json(
             (directory / "code-metrics.json").read_bytes()
         )
         meta: dict[str, Any] = json.loads((directory / "metadata.json").read_bytes())
@@ -144,7 +157,7 @@ def summarize(output: Path) -> None:
         "",
     ]
     for before, after in zip(snapshots.value, snapshots.value[1:], strict=False):
-        comparison = CodeMetricsComparisonV6.model_validate_json(
+        comparison = COMPARISON_ADAPTER.validate_json(
             (output / "comparisons" / f"{before.id}--{after.id}.json").read_bytes()
         )
         if (comparison.before, comparison.after) != (reports[before.id], reports[after.id]):

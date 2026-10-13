@@ -33,3 +33,16 @@ the provenance of provisional bounds.
   cell gets a durable outcome. Evaluation records are created only for cells
   with execution outcomes; the remaining coordinates appear as missing in the
   incomplete manifest.
+## Runtime image
+
+- **Image identity:** Bind `BridgeIdentity.bridge_image_digest` from
+  `docker image inspect --format '{{.Id}}'` on the built bridge image. A
+  manifest that declares another digest fails with
+  `ImageDigestMismatchError`. Each rebuild is a new fixture, even when its
+  locked dependencies are unchanged.
+- **Toolchain timing:** Node and TypeScript belong in the image before a trial
+  starts. The trial has no network and performs no dependency installation.
+  The fixture's Node `package.json` and `package-lock.json` live under
+  `integrations/pier/workflow_edit/`, the bridge Docker build context. `npm ci`
+  installs the locked tree in the Node build stage; the final image copies that
+  tree and Node, while omitting npm so trials cannot install dependencies.

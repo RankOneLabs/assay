@@ -17,6 +17,13 @@ jobs:
         with:
           version: "0.10.2"
           python-version: '3.13'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: vendor/node-tools/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: vendor/node-tools
       # Both extras: mypy/pytest exercise the legacy Jig/OpenRouter adapters and
       # investigations too, not just the core+review surface. core-wheel below
       # separately proves the published wheel needs neither by default.
@@ -129,6 +136,13 @@ jobs:
         with:
           version: "0.10.2"
           python-version: '3.13'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: vendor/node-tools/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: vendor/node-tools
       - name: Lint experiments with the root Ruff configuration
         run: uv run ruff check experiments
       - name: Sync the standalone experiments project

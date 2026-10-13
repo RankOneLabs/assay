@@ -87,12 +87,13 @@ from assay.verify import export_bundle, reference_closure, verify_bundle, verify
 
 PIER_COST_PER_CELL_USD = Decimal("0.72")
 
-# The measured local build digest recorded in integrations/pier/README.md
-# ("Runtime identity"): the durable identity input is the lock digest, not
-# this image ID, but a fixed, documented value is still pinned here so every
-# profile's runtime binding is reproducible rather than invented per call.
+# The measured local build digest of assay-pier-bridge:qualify-local, built
+# from integrations/pier/Dockerfile with the committed workflow_edit Node
+# lockfile. The tag matters because BuildKit's attestation changes the image
+# ID. Reinspect each rebuild and update this pin before paid qualification;
+# qualify_local.py inspects the prebuilt image and never rebuilds it.
 PIER_BRIDGE_IMAGE_DIGEST = (
-    "sha256:b3e07726d3e92731c1ac1f934d27457a6545a52660af484fd67fb092cf09dc3f"
+    "sha256:cb7c69377b63319a256ac0e090274e560148708dc75efca74ea78c4785d6caab"
 )
 
 # The exact runtime identity every Pier profile in this cohort is qualified

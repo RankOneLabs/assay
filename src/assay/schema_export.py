@@ -16,11 +16,13 @@ from assay.code_metrics.models import (
     CodeMetricsComparisonV4,
     CodeMetricsComparisonV5,
     CodeMetricsComparisonV6,
+    CodeMetricsComparisonV7,
     CodeMetricsReport,
     CodeMetricsReportV2,
     CodeMetricsReportV3,
     CodeMetricsReportV4,
     CodeMetricsReportV5,
+    CodeMetricsReportV6,
     DetailedCodeMetricsComparison,
 )
 from assay.models import (
@@ -61,6 +63,7 @@ CODE_METRICS_SCHEMA_MODELS: dict[str, dict[str, type[WireModel]]] = {
         "assay-code-metrics-report-v0.3": CodeMetricsReportV3,
         "assay-code-metrics-report-v0.4": CodeMetricsReportV4,
         "assay-code-metrics-report-v0.5": CodeMetricsReportV5,
+        "assay-code-metrics-report-v0.6": CodeMetricsReportV6,
     },
     "assay-code-metrics-comparison": {
         "assay-code-metrics-comparison-v0.1": CodeMetricsComparison,
@@ -69,6 +72,7 @@ CODE_METRICS_SCHEMA_MODELS: dict[str, dict[str, type[WireModel]]] = {
         "assay-code-metrics-comparison-v0.4": CodeMetricsComparisonV4,
         "assay-code-metrics-comparison-v0.5": CodeMetricsComparisonV5,
         "assay-code-metrics-comparison-v0.6": CodeMetricsComparisonV6,
+        "assay-code-metrics-comparison-v0.7": CodeMetricsComparisonV7,
     },
 }
 

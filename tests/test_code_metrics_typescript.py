@@ -1,12 +1,14 @@
 """TypeScript import graphs from pinned dependency-cruiser."""
 
+import json
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
 from code_metrics_fixtures import stub_jscpd
 
-from assay.code_metrics import analyze, compare, typescript
+from assay.code_metrics import analyze, compare, tools, typescript
 from assay.code_metrics.api import CodeMetricsConfig
 from assay.code_metrics.components import ComponentConfig
 from assay.code_metrics.errors import AnalyzerFailed, ToolUnavailable
@@ -33,6 +35,7 @@ APP = {
     "app/lib/lazy.tsx": "export const l = 1;\n",
     "app/util/index.ts": 'import { a } from "../lib/a";\nexport const u = 1;\n',
 }
+REAL_JSCPD = tools._jscpd
 
 
 @pytest.fixture(autouse=True)
@@ -87,7 +90,9 @@ def test_components_and_comparison_over_typescript_paths() -> None:
         ("app/lib/types.ts", "app/main.ts")
     ]
     assert result.architecture_deltas.system.cross_component_edge_count.delta == 1
-    assert result.new_code.new_lines is None
+    assert result.new_code.new_lines == 1
+    assert result.patch.changed_modules == ("app/lib/types.ts",)
+    assert result.patch.new_cycles == (("app/lib/types.ts", "app/main.ts"),)
 
 
 def test_python_only_snapshot_does_not_run_dependency_cruiser(
@@ -128,14 +133,14 @@ def test_report_conversion_keeps_snapshot_files_only() -> None:
         typescript._extraction(files, {"modules": [{"source": "a.ts"}]})
 
 
-def _fake_npx(
+def _fake_cruise(
     monkeypatch: pytest.MonkeyPatch, version: int, cruise: subprocess.CompletedProcess[str]
 ) -> None:
     original_run = subprocess.run
 
     def run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         command = args[0]
-        if isinstance(command, list) and "depcruise" in command:
+        if isinstance(command, list) and str(command[0]).endswith("depcruise"):
             if "--version" in command:
                 if version:
                     raise subprocess.CalledProcessError(version, command, stderr="fetch failed")
@@ -148,12 +153,92 @@ def _fake_npx(
 
 def test_dependency_cruiser_failures_are_typed(monkeypatch: pytest.MonkeyPatch) -> None:
     snapshot = {"a.ts": "export {};\n"}
-    _fake_npx(monkeypatch, 1, subprocess.CompletedProcess([], 0, "", ""))
+    _fake_cruise(monkeypatch, 1, subprocess.CompletedProcess([], 0, "", ""))
     with pytest.raises(ToolUnavailable, match=r"dependency-cruiser@18\.4\.0: fetch failed"):
         analyze(snapshot)
-    _fake_npx(monkeypatch, 0, subprocess.CompletedProcess([], 1, "", "parse crashed"))
+    _fake_cruise(monkeypatch, 0, subprocess.CompletedProcess([], 1, "", "parse crashed"))
     with pytest.raises(AnalyzerFailed, match="dependency-cruiser failed: parse crashed"):
         analyze(snapshot)
-    _fake_npx(monkeypatch, 0, subprocess.CompletedProcess([], 0, "not json", ""))
+    _fake_cruise(monkeypatch, 0, subprocess.CompletedProcess([], 0, "not json", ""))
     with pytest.raises(AnalyzerFailed, match="report unreadable"):
         analyze(snapshot)
+
+
+def test_typescript_size_duplication_and_type_findings() -> None:
+    report = analyze({"a.ts": 'export const x: number = "wrong";\n'})
+    assert report.typescript_metrics.lines == 1
+    assert report.typescript_metrics.clones == 0
+    assert report.typescript_metrics.duplicated_lines == 0
+    assert report.typescript_metrics.type_errors == 1
+    assert report.existing_metrics.radon_sloc is None
+    assert report.existing_metrics.mypy_errors is None
+
+
+def test_tsx_jsx_is_checked_without_a_jsx_mode_error() -> None:
+    report = analyze(
+        {
+            "view.tsx": (
+                "declare global { namespace JSX { interface IntrinsicElements { div: {} } } }\n"
+                "export const view = <div />;\n"
+            )
+        }
+    )
+    assert report.typescript_metrics.type_errors == 0
+
+
+def test_typescript_compiler_uses_project_for_large_file_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {f"module_{index}.ts": "" for index in range(5000)}
+    seen: dict[str, Any] = {}
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen["command"] = command
+        seen["project"] = json.loads(Path(command[2]).read_text(encoding="utf-8"))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(tools.subprocess, "run", run)
+    assert tools._typescript_errors(tmp_path, files) == 0
+    assert len(seen["command"]) == 3
+    assert seen["command"][1] == "--project"
+    assert len(seen["project"]["files"]) == len(files)
+    assert seen["project"]["compilerOptions"]["jsx"] == "preserve"
+
+
+def test_typescript_patch_baselines_and_missing_values() -> None:
+    before = {"a.ts": "export const x = 1;\n"}
+    after = {"a.ts": "export const x = 1;\nexport const y = 2;\n"}
+    result = compare(before, after)
+    assert result.patch.code_lines.model_dump() == {"before": 1, "after": 2, "delta": 1}
+    assert result.patch.added_lines == 1
+    assert result.patch.removed_lines == 0
+    assert result.patch.changed_modules == ("a.ts",)
+    assert result.typescript_deltas.lines.model_dump() == {"before": 1, "after": 2, "delta": 1}
+    missing = compare({}, after)
+    assert missing.typescript_deltas.lines.before is None
+    assert missing.typescript_deltas.lines.delta is None
+    assert missing.patch.propagation_cost.before is None
+    assert missing.patch.propagation_cost.delta is None
+
+
+def test_tsx_duplication_uses_real_jscpd_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tools, "_jscpd", REAL_JSCPD)
+    source = (
+        "export function duplicated() {\n"
+        "  const first = 1;\n"
+        "  const second = 2;\n"
+        "  const third = first + second;\n"
+        "  return third;\n"
+        "}\n"
+    )
+    before = {"a.tsx": source}
+    after = {**before, "b.tsx": source}
+    result = compare(before, after, config=CodeMetricsConfig(clone_min_tokens=10))
+    assert result.before.typescript_metrics.duplicated_lines == 0
+    assert result.after.typescript_metrics.clones is not None
+    assert result.after.typescript_metrics.clones > 0
+    assert result.after.typescript_metrics.duplicated_lines is not None
+    assert result.after.typescript_metrics.duplicated_lines > 0
+    assert result.typescript_deltas.duplicated_lines.delta == result.new_code.new_duplicated_lines
