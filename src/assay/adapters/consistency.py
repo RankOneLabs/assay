@@ -637,6 +637,7 @@ class ChainWorker:
                     halt.code,
                     halt.message,
                     accounting=_combined_accounting([*parts, halt.accounting]),
+                    trace={"steps": [*traces, halt.trace]},
                 ) from halt
             traces.append(result.trace)
             parts.append(result.accounting)

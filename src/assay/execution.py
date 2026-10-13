@@ -462,9 +462,11 @@ async def execute_plan(
                             workers[arm.id], arm_id=arm.id, cell=cell, input_value=input_value
                         )
                 except TimeoutError as error:
-                    raise AdmissionHalt(
-                        "ceiling_exhausted", "authorized wall time exhausted"
-                    ) from error
+                    if wall_expired():
+                        raise AdmissionHalt(
+                            "ceiling_exhausted", "authorized wall time exhausted"
+                        ) from error
+                    raise
             else:
                 result = await _dispatch_worker(
                     workers[arm.id], arm_id=arm.id, cell=cell, input_value=input_value
@@ -564,11 +566,14 @@ async def execute_plan(
                     declaration.configuration
                 ):
                     raise ValueError("evaluator configuration changed after authorization")
+                input_value = json.loads(store.read_bytes(cell.realization_ref))
+                output_value = json.loads(store.read_bytes(output))
+                remaining = admission.remaining_seconds()
+                if remaining is not None and remaining <= 0:
+                    raise TimeoutError("authorized wall time exhausted")
                 called = True
                 evaluation = evaluators[declaration.id].evaluate(
-                    input_value=json.loads(store.read_bytes(cell.realization_ref)),
-                    output=json.loads(store.read_bytes(output)),
-                    coordinate=coordinate,
+                    input_value=input_value, output=output_value, coordinate=coordinate
                 )
                 if remaining is None:
                     result = await evaluation
@@ -790,7 +795,7 @@ async def execute_plan(
         return RunManifest(
             run_id=run_id,
             plan_ref=authorization,
-            status="complete" if not missing and fatal is None and halt is None else "incomplete",
+            status="complete" if not missing else "incomplete",
             execution_records=execution_records,
             evaluation_records=evaluation_records,
             operating_records=operating_records,

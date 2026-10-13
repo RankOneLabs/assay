@@ -13,6 +13,7 @@ from jig.core.types import CompletionParams, LLMResponse, Usage
 from test_execution import FakeEvaluator, FakeWorker, default_runtime, execution_fixture
 
 from assay.adapters.consistency import (
+    ChainWorker,
     CompletionNotSent,
     PilotSettings,
     _Admission,
@@ -113,6 +114,111 @@ async def test_v3_wall_time_and_fleet_occupancy_bound_dispatch(tmp_path: Path) -
     assert outcome["status"] == "failed" and outcome["error_type"] == "ceiling_exhausted"
 
 
+async def test_worker_timeout_before_wall_deadline_remains_a_cell_failure(tmp_path: Path) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+
+    class TimedOutWorker(FakeWorker):
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            raise TimeoutError("provider timed out")
+
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "plan_bytes": plan_bytes,
+            "authorization": digest_bytes(plan_bytes),
+            "workers": {arm.id: TimedOutWorker() for arm in fixture.snapshot.arms},
+        }
+    )
+    assert isinstance(result, RunSucceeded), result
+    for ref in result.manifest.execution_records.values():
+        outcome = json.loads(fixture.store.read_bytes(ref))
+        assert outcome["error_type"] == "TimeoutError"
+        assert outcome["error_message"] == "provider timed out"
+
+
+async def test_evaluator_rechecks_wall_deadline_after_preparation(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+    expired = False
+    evaluations = 0
+    original_remaining = AdmissionLedger.remaining_seconds
+
+    class ExpiringEvaluator(FakeEvaluator):
+        configurations = 0
+
+        def configuration(self) -> dict[str, Any]:
+            nonlocal expired
+            self.configurations += 1
+            if self.configurations > 1:
+                expired = True
+            return super().configuration()
+
+        async def evaluate(self, **kwargs: Any) -> EvaluationSuccess:
+            nonlocal evaluations
+            evaluations += 1
+            return EvaluationSuccess(1.0)
+
+    def remaining(ledger: AdmissionLedger) -> float | None:
+        return -1 if expired else original_remaining(ledger)
+
+    monkeypatch.setattr(AdmissionLedger, "remaining_seconds", remaining)
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "plan_bytes": plan_bytes,
+            "authorization": digest_bytes(plan_bytes),
+            "evaluators": {"quality": ExpiringEvaluator()},
+        }
+    )
+    assert isinstance(result, RunFailed) and result.manifest is not None
+    assert evaluations == 0
+    record = json.loads(
+        fixture.store.read_bytes(next(iter(result.manifest.evaluation_records.values())))
+    )
+    assert record["error_type"] == "ceiling_exhausted"
+
+
+async def test_wall_expiry_after_complete_grid_keeps_verifiable_manifest(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    fixture = execution_fixture(
+        ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1, evaluator_repeats=1
+    )
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+    original_publish = fixture.store.publish_json
+    original_remaining = AdmissionLedger.remaining_seconds
+    completed = 0
+
+    def publish(value: Any) -> Any:
+        nonlocal completed
+        ref = original_publish(value)
+        if isinstance(value, dict) and ":evaluator:" in value.get("record_id", ""):
+            completed += 1
+        return ref
+
+    def remaining(ledger: AdmissionLedger) -> float | None:
+        return -1 if completed == 2 else original_remaining(ledger)
+
+    fixture.store.publish_json = publish  # type: ignore[method-assign]
+    monkeypatch.setattr(AdmissionLedger, "remaining_seconds", remaining)
+    result = await execute_plan(
+        **{**fixture.arguments, "plan_bytes": plan_bytes, "authorization": digest_bytes(plan_bytes)}
+    )
+    assert isinstance(result, RunFailed) and result.manifest is not None
+    assert completed == 2 and result.manifest.status == "complete"
+    assert result.manifest_ref is not None
+    assert verify_manifest(fixture.store, str(result.manifest_ref)) == ()
+
+
 async def test_v3_wall_time_also_bounds_evaluation(tmp_path: Path) -> None:
     fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
     plan_bytes = _ceiling_plan(
@@ -193,6 +299,49 @@ async def test_admission_halt_keeps_finished_worker_evidence(tmp_path: Path) -> 
     outcome = json.loads(fixture.store.read_bytes(outcome_ref))
     assert outcome["error_type"] == "billing_uncertain"
     assert json.loads(fixture.store.read_bytes(outcome["trace_ref"])) == trace
+
+
+async def test_chain_halt_keeps_prior_and_refusing_step_traces() -> None:
+    first_trace = {"provider_usage": [{"input_tokens": 2}]}
+    halt_trace = {"provider_diagnostics": {"status": 503}}
+
+    class Inner:
+        calls = 0
+
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            self.calls += 1
+            if self.calls == 1:
+                return WorkerSuccess(
+                    {"source": "def implement(value):\n    return value\n"},
+                    trace=first_trace,
+                    accounting=Accounting(usage={"llm_calls": 1}),
+                )
+            raise AdmissionHalt(
+                "billing_uncertain",
+                "refused",
+                accounting=Accounting(usage={"llm_calls": 1}, coverage="uncertain"),
+                trace=halt_trace,
+            )
+
+    worker = ChainWorker(Inner())  # type: ignore[arg-type]
+    with pytest.raises(AdmissionHalt) as stopped:
+        await worker.run(
+            input_value={
+                "task": {
+                    "target_path": "module.py",
+                    "chain": [
+                        {"name": "first", "instruction": "first"},
+                        {"name": "second", "instruction": "second"},
+                    ],
+                },
+                "repository": {"module.py": ""},
+                "base_subject_ref": "unused",
+            },
+            arm_id="clean",
+        )
+    assert stopped.value.trace == {"steps": [first_trace, halt_trace]}
+    assert stopped.value.accounting.usage == {"llm_calls": 2}
+    assert stopped.value.accounting.coverage == "uncertain"
 
 
 async def test_v3_releases_fleet_occupancy_when_outcome_publication_fails(
