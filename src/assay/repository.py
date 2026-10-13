@@ -41,10 +41,12 @@ def validate_repository(
             or not path.parts
             or any(part in {"", ".", ".."} for part in raw_parts)
             or any(category(character).startswith("C") for character in raw_path)
-            or len(raw_path.encode("utf-8")) > 4_096
-            or any(len(part.encode("utf-8")) > 255 for part in raw_parts)
         ):
             raise RepositoryPathError(f"unsafe repository path: {raw_path}")
+        if len(raw_path.encode("utf-8")) > 4_096:
+            raise RepositoryPathError(f"repository path exceeds 4 KiB: {raw_path}")
+        if any(len(part.encode("utf-8")) > 255 for part in raw_parts):
+            raise RepositoryPathError(f"repository path segment exceeds 255 bytes: {raw_path}")
         try:
             source_size = len(source.encode("utf-8"))
         except UnicodeEncodeError as error:
@@ -63,7 +65,7 @@ def validate_repository(
         normalized = unicodedata.normalize("NFC", raw_path).casefold()
         if normalized in normalized_seen and normalized_seen[normalized] != raw_path:
             raise RepositoryPathError(
-                f"duplicate repository path under case/unicode folding: {raw_path!r} "
+                f"NFC-casefold collision: duplicate repository path {raw_path!r} "
                 f"collides with {normalized_seen[normalized]!r}"
             )
         normalized_seen[normalized] = raw_path
