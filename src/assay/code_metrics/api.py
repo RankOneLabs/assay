@@ -240,14 +240,8 @@ def _analyze(
         ),
         typescript_metrics=TypeScriptMetrics(
             lines=payload["typescript.lines"] if typescript_files else None,
-            clones=payload.get("typescript.clones", payload["jscpd.clones"])
-            if typescript_files
-            else None,
-            duplicated_lines=payload.get(
-                "typescript.duplicated_lines", payload["jscpd.duplicated_lines"]
-            )
-            if typescript_files
-            else None,
+            clones=payload["typescript.clones"] if typescript_files else None,
+            duplicated_lines=payload["typescript.duplicated_lines"] if typescript_files else None,
             type_errors=payload["typescript.type_errors"] if typescript_files else None,
         ),
     )

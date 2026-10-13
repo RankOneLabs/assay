@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from code_metrics_fixtures import stub_jscpd
 
-from assay.code_metrics import analyze, compare, typescript
+from assay.code_metrics import analyze, compare, tools, typescript
 from assay.code_metrics.api import CodeMetricsConfig
 from assay.code_metrics.components import ComponentConfig
 from assay.code_metrics.errors import AnalyzerFailed, ToolUnavailable
@@ -33,6 +33,7 @@ APP = {
     "app/lib/lazy.tsx": "export const l = 1;\n",
     "app/util/index.ts": 'import { a } from "../lib/a";\nexport const u = 1;\n',
 }
+REAL_JSCPD = tools._jscpd
 
 
 @pytest.fixture(autouse=True)
@@ -185,3 +186,26 @@ def test_typescript_patch_baselines_and_missing_values() -> None:
     assert missing.typescript_deltas.lines.delta is None
     assert missing.patch.propagation_cost.before is None
     assert missing.patch.propagation_cost.delta is None
+
+
+def test_tsx_duplication_uses_real_jscpd_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tools, "_jscpd", REAL_JSCPD)
+    source = (
+        "export function duplicated() {\n"
+        "  const first = 1;\n"
+        "  const second = 2;\n"
+        "  const third = first + second;\n"
+        "  return third;\n"
+        "}\n"
+    )
+    before = {"a.tsx": source}
+    after = {**before, "b.tsx": source}
+    result = compare(before, after, config=CodeMetricsConfig(clone_min_tokens=10))
+    assert result.before.typescript_metrics.duplicated_lines == 0
+    assert result.after.typescript_metrics.clones is not None
+    assert result.after.typescript_metrics.clones > 0
+    assert result.after.typescript_metrics.duplicated_lines is not None
+    assert result.after.typescript_metrics.duplicated_lines > 0
+    assert result.typescript_deltas.duplicated_lines.delta == result.new_code.new_duplicated_lines

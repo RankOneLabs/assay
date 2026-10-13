@@ -223,20 +223,27 @@ def _jscpd(root: Path, config: _Config) -> dict[str, Any]:
         try:
             report = json.loads((Path(output) / "jscpd-report.json").read_text())
             cloned: dict[str, set[int]] = {}
+            typescript_clones = 0
+            typescript_duplicated_lines = 0
             for clone in report["duplicates"]:
+                if any(
+                    language_of(side["name"]) == "typescript"
+                    for side in (clone["firstFile"], clone["secondFile"])
+                ):
+                    typescript_clones += 1
+                    typescript_duplicated_lines += clone["lines"]
                 for side in (clone["firstFile"], clone["secondFile"]):
                     path = Path(side["name"]).as_posix()
                     cloned.setdefault(path, set()).update(range(side["start"], side["end"] + 1))
             total = report["statistics"]["total"]
             clones, duplicated_lines = total["clones"], total["duplicatedLines"]
-            typescript = report["statistics"]["formats"].get("typescript", {})
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise AnalyzerFailed(f"jscpd report unreadable: {error!r}") from error
     return {
         "jscpd.clones": clones,
         "jscpd.duplicated_lines": duplicated_lines,
-        "typescript.clones": typescript.get("clones", 0),
-        "typescript.duplicated_lines": typescript.get("duplicatedLines", 0),
+        "typescript.clones": typescript_clones,
+        "typescript.duplicated_lines": typescript_duplicated_lines,
         "cloned_lines": cloned,
     }
 
