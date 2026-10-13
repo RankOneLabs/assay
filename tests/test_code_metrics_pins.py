@@ -2,12 +2,15 @@
 
 import json
 import socket
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
 import pytest
 from code_metrics_fixtures import stub_jscpd
 
+from assay.cli import main
 from assay.code_metrics import analyze, compare, pins, tools
 from assay.code_metrics.errors import ToolVersionMismatch
 from assay.code_metrics.models import _Config
@@ -57,6 +60,51 @@ def test_installed_node_metadata_drift_names_the_tool(
         assert_pinned_tools()
     assert error.value.tool == "typescript"
     assert error.value.resolved == "0.0.0"
+
+
+def test_node_binary_prefers_cmd_shim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    binary_dir = tmp_path / "node_modules" / ".bin"
+    binary_dir.mkdir(parents=True)
+    (binary_dir / "tsc").touch()
+    (binary_dir / "tsc.cmd").touch()
+    monkeypatch.setattr(pins, "NODE_TOOLS", tmp_path)
+    assert pins.node_binary("tsc") == str(binary_dir / "tsc.cmd")
+
+
+def test_install_node_tools_uses_writable_selected_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected = tmp_path / "user-tools"
+    monkeypatch.setattr(pins, "NODE_TOOLS", selected)
+    monkeypatch.setattr(pins.shutil, "which", lambda name: "/usr/bin/npm")
+    called: dict[str, object] = {}
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        called["command"] = command
+        called["cwd"] = kwargs["cwd"]
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(pins.subprocess, "run", run)
+    assert pins.install_node_tools(offline=True) == selected
+    assert (selected / "package.json").read_bytes() == (
+        pins._BUNDLED_NODE_TOOLS / "package.json"
+    ).read_bytes()
+    assert (selected / "package-lock.json").read_bytes() == (
+        pins._BUNDLED_NODE_TOOLS / "package-lock.json"
+    ).read_bytes()
+    assert called["cwd"] == selected
+    assert called["command"] == [
+        "/usr/bin/npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--offline"
+    ]
+
+
+def test_install_node_tools_cli_prints_selected_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(pins, "install_node_tools", lambda *, offline: tmp_path)
+    monkeypatch.setattr(sys, "argv", ["assay", "code-metrics", "install-node-tools", "--offline"])
+    assert main() == 0
+    assert capsys.readouterr().out == f"{tmp_path}\n"
 
 
 def test_retained_typescript_pair_recomputes_offline(

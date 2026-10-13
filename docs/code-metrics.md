@@ -38,12 +38,17 @@ components:
 allow_unmatched_patterns: false
 ```
 
-Install the locked Node analyzers once with `cd vendor/node-tools && npm ci`, or
-with `npm ci --offline` when the npm cache is populated. Analysis launches
+Install the locked Node analyzers once with `assay code-metrics install-node-tools`.
+Use `assay code-metrics install-node-tools --offline` when the npm cache is
+populated. In a source checkout the command installs into `vendor/node-tools`;
+from an installed wheel it copies the bundled package files into a writable
+user cache directory and installs there. Set `ASSAY_NODE_TOOLS` to choose another
+writable directory. The command prints the selected directory. Analysis launches
 `jscpd`, `dependency-cruiser`, and the TypeScript compiler directly from that
-local tree; it never invokes npm or npx. Resolved versions are recorded from
-`package-lock.json` and checked against the pins before analysis. Node.js 22,
-24, or 26 is needed by dependency-cruiser 18.4.0.
+tree; it never invokes npm or npx. Resolved versions are recorded from the
+installed `package-lock.json` and checked against the pins before analysis.
+Node.js 22.13 or newer on the 22.x line, or Node.js 24 or 26, is needed by the
+locked dependencies.
 
 ## Metric definitions
 

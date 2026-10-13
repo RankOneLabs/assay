@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 from importlib.metadata import version
 from pathlib import Path
 
@@ -27,11 +30,53 @@ RUST_PINS = {
 }
 NODE_PINS = {"jscpd": JSCPD, "dependency-cruiser": DEPENDENCY_CRUISER, "typescript": TYPESCRIPT}
 _SOURCE_NODE_TOOLS = Path(__file__).resolve().parents[3] / "vendor" / "node-tools"
-NODE_TOOLS = (
+_BUNDLED_NODE_TOOLS = (
     _SOURCE_NODE_TOOLS
     if _SOURCE_NODE_TOOLS.is_dir()
     else Path(__file__).resolve().parents[1] / "vendor" / "node-tools"
 )
+
+
+def _user_node_tools() -> Path:
+    if os.name == "nt":
+        cache = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return cache / "assay" / "node-tools"
+
+
+if "ASSAY_NODE_TOOLS" in os.environ:
+    NODE_TOOLS = Path(os.environ["ASSAY_NODE_TOOLS"]).expanduser()
+else:
+    NODE_TOOLS = _SOURCE_NODE_TOOLS if _SOURCE_NODE_TOOLS.is_dir() else _user_node_tools()
+
+
+def install_node_tools(*, offline: bool = False) -> Path:
+    """Install the bundled lockfile's packages into the selected writable directory."""
+    try:
+        NODE_TOOLS.mkdir(parents=True, exist_ok=True)
+        if NODE_TOOLS != _BUNDLED_NODE_TOOLS:
+            for name in ("package.json", "package-lock.json"):
+                shutil.copyfile(_BUNDLED_NODE_TOOLS / name, NODE_TOOLS / name)
+    except OSError as error:
+        raise ToolUnavailable("node-tools", f"cannot prepare {NODE_TOOLS}: {error}") from error
+    npm = shutil.which("npm")
+    if npm is None:
+        raise ToolUnavailable("npm", "npm executable was not found")
+    command = [npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"]
+    if offline:
+        command.append("--offline")
+    try:
+        subprocess.run(command, cwd=NODE_TOOLS, capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = (
+            (error.stderr or str(error)).strip()
+            if isinstance(error, subprocess.CalledProcessError)
+            else str(error)
+        )
+        raise ToolUnavailable("npm", f"npm ci failed in {NODE_TOOLS}: {detail}") from error
+    assert_pinned_tools()
+    return NODE_TOOLS
 
 
 def node_tool_versions() -> dict[str, str]:
@@ -46,9 +91,12 @@ def node_tool_versions() -> dict[str, str]:
 
 def node_binary(name: str) -> str:
     """Use the installed tree selected by the committed lockfile, without npm execution."""
-    binary = NODE_TOOLS / "node_modules" / ".bin" / name
+    bin_dir = NODE_TOOLS / "node_modules" / ".bin"
+    binary = bin_dir / f"{name}.cmd"
     if not binary.is_file():
-        raise ToolUnavailable(name, f"run npm ci --offline in {NODE_TOOLS}")
+        binary = bin_dir / name
+    if not binary.is_file():
+        raise ToolUnavailable(name, "run assay code-metrics install-node-tools")
     return str(binary)
 
 

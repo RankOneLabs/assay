@@ -103,5 +103,6 @@ class ToolUnavailable(RuntimeError):
     def __init__(self, tool: str, reason: str) -> None:
         self.tool = tool
         super().__init__(
-            f"run tool {tool}: {reason}; install Node.js and run npm ci in vendor/node-tools"
+            f"run tool {tool}: {reason}; install Node.js and run "
+            "assay code-metrics install-node-tools"
         )
