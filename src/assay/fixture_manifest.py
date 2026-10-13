@@ -35,7 +35,9 @@ class FixtureManifest(WireModel):
     observed_runtime_image_digest: Sha256Ref
     normalization_diff: str
     treatment_site_inventory: tuple[TreatmentSite, ...]
-    per_arm_tree_digests: dict[Identifier, Sha256Ref]
+    per_arm_tree_digests: dict[Identifier, Sha256Ref] = Field(
+        json_schema_extra={"additionalProperties": False}
+    )
     transformation_version: NonEmpty
     equivalence_test_version: NonEmpty
     task_prompt: NonEmpty

@@ -54,6 +54,16 @@ def test_manifest_round_trips_through_exported_schema() -> None:
     assert FixtureManifest.model_validate_json(json.dumps(wire)) == manifest
 
 
+def test_exported_schema_rejects_invalid_arm_id_like_model() -> None:
+    wire = _manifest().model_dump(mode="json")
+    wire["per_arm_tree_digests"]["invalid/arm"] = _digest("another arm")
+    schema = json.loads(schema_documents()["assay-fixture-manifest.schema.json"])
+    with pytest.raises(JsonSchemaValidationError, match="invalid/arm"):
+        Draft202012Validator(schema).validate(wire)
+    with pytest.raises(ValidationError, match="invalid/arm"):
+        FixtureManifest.model_validate(wire)
+
+
 @pytest.mark.parametrize("section", list(_manifest().model_dump(mode="json")))
 def test_manifest_requires_every_section(section: str) -> None:
     wire = _manifest().model_dump(mode="json")
