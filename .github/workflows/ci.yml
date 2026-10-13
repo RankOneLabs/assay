@@ -22,12 +22,12 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: vendor/node-tools/package-lock.json
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-        working-directory: vendor/node-tools
       # Both extras: mypy/pytest exercise the legacy Jig/OpenRouter adapters and
       # investigations too, not just the core+review surface. core-wheel below
       # separately proves the published wheel needs neither by default.
       - run: uv sync --locked --extra review --extra legacy --extra code-metrics
+      - name: Install locked Node analyzers for the root pytest suite
+        run: uv run assay code-metrics install-node-tools
       - name: Prepare dependency cache for offline wheel acceptance
         run: |
           uv build --wheel
