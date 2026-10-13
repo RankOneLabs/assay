@@ -152,11 +152,11 @@ class CoordinateAwareWorker(Protocol):
 class AdmissionHalt(Exception):
     """Typed control signal: stop admitting new cells, deterministically.
 
-    Adapters raise this — rather than returning a ``WorkerFailure`` — to
-    signal budget or cell ceiling exhaustion, identity uncertainty, or billing uncertainty:
-    conditions that must stop new dispatch without being mistaken for an
-    ordinary per-attempt failure. The cell that raised it still gets a
-    definite, recorded outcome; only cells not yet started are affected.
+    Adapters raise this when a new reservation is refused because of budget
+    or cell ceiling exhaustion, identity uncertainty, or billing uncertainty.
+    The request that first makes billing uncertain can still return its own
+    ``WorkerFailure``. A cell that raises this signal gets a definite outcome
+    with its completed trace; only cells not yet started are blocked.
     """
 
     def __init__(
@@ -167,11 +167,13 @@ class AdmissionHalt(Exception):
         message: str,
         *,
         accounting: Accounting | None = None,
+        trace: Any | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.accounting = accounting if accounting is not None else Accounting(coverage="uncertain")
+        self.trace = trace
 
 
 class AdmissionLedger:
@@ -438,12 +440,8 @@ async def execute_plan(
         remaining = admission.remaining_seconds()
         return remaining is not None and remaining <= 0
 
-    async def run_cell(cell: CellCoordinate) -> None:
+    async def run_reserved_cell(cell: CellCoordinate) -> None:
         nonlocal halt
-        refused = admission.reserve("cell")
-        if refused is not None:
-            halt = refused
-            return
         started_at = _now()
         arm = arms[cell.arm_id]
         attempted = False
@@ -480,7 +478,9 @@ async def execute_plan(
         except AdmissionHalt as error:
             if halt is None:
                 halt = error
-            result = WorkerFailure(error.code, error.message, accounting=error.accounting)
+            result = WorkerFailure(
+                error.code, error.message, trace=error.trace, accounting=error.accounting
+            )
         except Exception as error:
             if returned and isinstance(result, WorkerSuccess | WorkerFailure):
                 accounting = result.accounting
@@ -527,8 +527,18 @@ async def execute_plan(
             started_at=started_at,
             completed_at=completed_at,
         )
-        if isinstance(plan, ExecutionPlanV3):
-            admission.release_cell()
+
+    async def run_cell(cell: CellCoordinate) -> None:
+        nonlocal halt
+        refused = admission.reserve("cell")
+        if refused is not None:
+            halt = refused
+            return
+        try:
+            await run_reserved_cell(cell)
+        finally:
+            if isinstance(plan, ExecutionPlanV3):
+                admission.release_cell()
 
     async def run_evaluation(coordinate: EvaluationCoordinate) -> None:
         nonlocal halt

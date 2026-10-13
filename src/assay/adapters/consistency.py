@@ -294,10 +294,12 @@ class _BoundedClient(LLMClient):
         self.usages: list[dict[str, Any]] = []
         self.response_models: list[str] = []
         self.uncertain = False
+        self.refusal: AdmissionHalt | None = None
 
     async def complete_result(self, params: CompletionParams) -> LLMResponse | WorkerFailure:
         refused = self.admission.reserve()
         if refused is not None:
+            self.refusal = self.admission.halt
             return refused
         self.requests += 1
         params = dataclasses.replace(
@@ -535,11 +537,12 @@ class ConsistencyWorker:
             trace=detail,
             accounting=Accounting() if bounded is None else bounded.accounting(),
         )
-        if self._admission.halt is not None:
+        if bounded is not None and bounded.refusal is not None:
             raise AdmissionHalt(
-                self._admission.halt.code,
-                self._admission.halt.message,
+                bounded.refusal.code,
+                bounded.refusal.message,
                 accounting=finished.accounting,
+                trace=finished.trace,
             )
         return finished
 

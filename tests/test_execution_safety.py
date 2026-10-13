@@ -165,6 +165,70 @@ async def test_dollar_ceiling_keeps_budget_halt_and_cell_outcome(tmp_path: Path)
         assert json.loads(fixture.store.read_bytes(ref))["error_type"] == "budget_exhausted"
 
 
+async def test_admission_halt_keeps_finished_worker_evidence(tmp_path: Path) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    trace = {
+        "provider_usage": [{"input_tokens": 7, "output_tokens": 3, "cost": None}],
+        "provider_diagnostics": {"status": 503},
+        "original_error": "ProviderUnavailable",
+    }
+
+    class HaltedWorker(FakeWorker):
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            raise AdmissionHalt(
+                "billing_uncertain",
+                "a previous request has uncertain billing",
+                accounting=Accounting(usage={"llm_calls": 1}, coverage="uncertain"),
+                trace=trace,
+            )
+
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "workers": {arm.id: HaltedWorker() for arm in fixture.snapshot.arms},
+        }
+    )
+    assert isinstance(result, RunFailed) and result.manifest is not None
+    outcome_ref = next(iter(result.manifest.execution_records.values()))
+    outcome = json.loads(fixture.store.read_bytes(outcome_ref))
+    assert outcome["error_type"] == "billing_uncertain"
+    assert json.loads(fixture.store.read_bytes(outcome["trace_ref"])) == trace
+
+
+async def test_v3_releases_fleet_occupancy_when_outcome_publication_fails(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+    original_publish = fixture.store.publish_json
+    original_release = AdmissionLedger.release_cell
+    released = 0
+
+    def fail_outcome(value: Any) -> Any:
+        if (
+            isinstance(value, dict)
+            and value.get("schema_version") == "assay-execution-outcome/0.1.0"
+        ):
+            raise OSError("outcome publication failed")
+        return original_publish(value)
+
+    def track_release(ledger: AdmissionLedger) -> None:
+        nonlocal released
+        original_release(ledger)
+        released += 1
+        assert ledger.active_cells == 0
+
+    fixture.store.publish_json = fail_outcome  # type: ignore[method-assign]
+    monkeypatch.setattr(AdmissionLedger, "release_cell", track_release)
+    result = await execute_plan(
+        **{**fixture.arguments, "plan_bytes": plan_bytes, "authorization": digest_bytes(plan_bytes)}
+    )
+    assert isinstance(result, RunFailed) and result.error_type == "OSError"
+    assert released == 1
+
+
 @pytest.mark.parametrize("case", ["forced_retry", "lost_response", "missing_billing"])
 async def test_request_reservation_counts_retry_loss_and_unknown_billing(case: str) -> None:
     settings = PilotSettings(
