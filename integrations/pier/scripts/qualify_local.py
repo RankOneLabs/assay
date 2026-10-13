@@ -370,8 +370,8 @@ def probe_storage_enforcement(image_tag: str) -> None:
         command=[
             "/bin/sh",
             "-c",
-            "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null 2>&1; "
-            "printf '%s' \"$?\" > /submission/output",
+            "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null; "
+            "status=$?; printf '%s' \"$status\" > /submission/output; exit \"$status\"",
         ],
         # Same explicit-empty-credential guarantee as probe_trial_lifecycle.
         openrouter_api_key="",
@@ -386,10 +386,11 @@ def probe_storage_enforcement(image_tag: str) -> None:
         ),
     )
     result = runtime.run_cell(request)
-    if result.status != "succeeded":
+    if result.status != "failed" or result.error_type != "StorageExhaustedError":
         raise QualificationFailed(
             "storage_enforcement",
-            f"storage probe trial did not succeed: {result.status}/{result.error_message}",
+            "storage probe did not report trial ENOSPC: "
+            f"{result.status}/{result.error_type}/{result.error_message}",
         )
     if not result.effective.teardown_completed or result.effective.containers_remaining != 0:
         raise QualificationFailed(
@@ -400,12 +401,6 @@ def probe_storage_enforcement(image_tag: str) -> None:
             "storage_enforcement",
             f"docker reported enforcing a {result.effective.storage_limit_mb}m scratch "
             f"limit, not the declared {_STORAGE_PROBE_LIMIT_MB}m",
-        )
-    if result.submission_ref == digest_bytes(b"0"):
-        raise QualificationFailed(
-            "storage_enforcement",
-            "a write past the declared scratch limit did not fail -- the storage cap "
-            "is not actually enforced",
         )
     if not _no_stray_containers():
         raise QualificationFailed(

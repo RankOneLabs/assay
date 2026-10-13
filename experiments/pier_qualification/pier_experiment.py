@@ -236,11 +236,9 @@ PIER_TRIAL_LIMITS: Mapping[str, float | int] = {
     "memory_mb": 1024,
     "pids": 64,
     "timeout_s": 600,
-    # A size-capped tmpfs, not an unbounded scratch directory --
-    # integrations/pier's container.py enforces this exactly (a real
-    # ENOSPC past this ceiling, not merely a declared one); the local
-    # qualification script proves that enforcement before this constant is
-    # ever trusted for a paid run.
+    # A quota-backed host bind mount, independent of the higher memory
+    # ceiling. The local qualification script verifies trial ENOSPC before
+    # this constant is trusted for a paid run.
     "storage_mb": 512,
 }
 

@@ -120,8 +120,8 @@ def test_lan_posture_uses_a_dedicated_network_and_checks_firewall(
         chain = args[-1]
         rules = (
             f"-P {chain} ACCEPT\n"
-            f"-A {chain} -i {handle._network_interface} -p tcp -m tcp "
-            "-d 192.168.1.10/32 --dport 8080 -j ACCEPT\n"
+            f"-A {chain} -d 192.168.1.10/32 -i {handle._network_interface} "
+            "-p tcp -m tcp --dport 8080 -j ACCEPT\n"
             f"-A {chain} -i {handle._network_interface} -j DROP\n"
         )
         return subprocess.CompletedProcess(args, 0, stdout=rules, stderr="")

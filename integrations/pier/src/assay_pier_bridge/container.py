@@ -225,23 +225,12 @@ def _network_policy_label(network_mode: str | None) -> str:
             rules = _host_run(["iptables", "-S", chain])
             if rules.returncode != 0:
                 return "unknown"
-            observed = [
-                [host if token == f"{host}/32" else token for token in shlex.split(line)]
-                for line in rules.stdout.splitlines()
-            ]
-            observed = [
-                [
-                    token
-                    for index, token in enumerate(rule)
-                    if token != "-m" and not (index > 0 and rule[index - 1] == "-m")
-                ]
-                for rule in observed
-            ]
-            allow = [
-                "-A", chain, "-i", interface,
-                "-p", "tcp", "-d", host, "--dport", str(int(port)), "-j", "ACCEPT",
-            ]
-            deny = ["-A", chain, "-i", interface, "-j", "DROP"]
+            observed = [_firewall_rule_fields(line, chain) for line in rules.stdout.splitlines()]
+            allow = sorted(
+                (("-i", interface), ("-p", "tcp"), ("-d", host),
+                 ("--dport", str(int(port))), ("-j", "ACCEPT"))
+            )
+            deny = sorted((("-i", interface), ("-j", "DROP")))
             if allow not in observed or deny not in observed:
                 return "unknown"
             if observed.index(allow) >= observed.index(deny):
@@ -249,6 +238,21 @@ def _network_policy_label(network_mode: str | None) -> str:
     except (KeyError, ValueError, TypeError, IndexError, OSError):
         return "unknown"
     return f"egress-lan-host-port:{host}:{port}"
+
+
+def _firewall_rule_fields(line: str, chain: str) -> list[tuple[str, str]] | None:
+    """Normalize iptables -S flag order without losing rule order in the chain."""
+    tokens = shlex.split(line)
+    if tokens[:2] != ["-A", chain] or len(tokens[2:]) % 2:
+        return None
+    fields = []
+    for flag, value in zip(tokens[2::2], tokens[3::2], strict=True):
+        if (flag, value) == ("-m", "tcp"):
+            continue
+        if flag == "-d" and value.endswith("/32"):
+            value = value[:-3]
+        fields.append((flag, value))
+    return sorted(fields)
 
 
 def _container_count(name: str) -> int | None:
@@ -523,10 +527,12 @@ class DockerTrialHandle:
         observation = _usable_observation(_inspect(self._name))
         self._assert_enforcement(observation)
         assert observation is not None
-        if observation.oom_killed:
+        if observation.oom_killed or exit_code.stdout.strip() == "137":
             raise MemoryLimitExceededError("trial exceeded the memory cgroup ceiling")
         if exit_code.stdout.strip() != "0":
             logs = _run(["docker", "logs", self._name], timeout=_POLL_TIMEOUT_S)
+            if logs.returncode == 0 and "MemoryError" in logs.stdout + logs.stderr:
+                raise MemoryLimitExceededError("trial reported memory allocation failure")
             # A full filesystem is only evidence of capacity, not evidence
             # that the trial attempted a write which failed with ENOSPC.
             if logs.returncode == 0 and any(

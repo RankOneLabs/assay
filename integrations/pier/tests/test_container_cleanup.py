@@ -9,6 +9,7 @@ from assay_pier_bridge.container import (
     ContainerObservation,
     DockerTrialClient,
     DockerTrialHandle,
+    MemoryLimitExceededError,
     StorageExhaustedError,
     package_digest,
 )
@@ -254,6 +255,37 @@ def test_storage_cause_requires_trial_enospc_not_a_full_host_filesystem(
     else:
         # A trial may fill its quota exactly and exit cleanly.
         assert handle.run().status == "succeeded"
+
+
+@pytest.mark.parametrize(("exit_code", "log"), [(137, ""), (1, "MemoryError")])
+def test_memory_failure_is_distinct_from_storage_exhaustion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int, log: str
+) -> None:
+    handle = _handle(tmp_path)
+    observed = ContainerObservation(
+        read_only_root=True,
+        workspace_mount_read_only=True,
+        uid=1000,
+        network_mode="none",
+        cpu_limit=1,
+        memory_limit_mb=256,
+        pids_limit=32,
+        storage_limit_mb=64,
+    )
+
+    def trial_run(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        if args[:4] == ["docker", "inspect", "--format", "{{.State.ExitCode}}"]:
+            return _completed(args, stdout=f"{exit_code}\n")
+        if args[:2] == ["docker", "logs"]:
+            return _completed(args, stdout=log)
+        return _fake_successful_run(args, timeout=timeout)
+
+    monkeypatch.setattr(container, "_run", trial_run)
+    monkeypatch.setattr(DockerTrialHandle, "_prepare_quota", lambda self, limits: None)
+    monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
+    monkeypatch.setattr(container, "_inspect", lambda name: observed)
+    with pytest.raises(MemoryLimitExceededError):
+        handle.run()
 
 
 def test_driver_rejects_output_that_exceeds_the_collection_limit(
