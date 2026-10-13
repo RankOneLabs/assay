@@ -238,11 +238,16 @@ def test_memory_exhaustion_has_a_distinct_cause(image: str) -> None:
     client = DockerTrialClient(
         image=image,
         package=PACKAGE,
-        command=["/bin/sh", "-c", "exec python -c 'x = bytearray(512 * 1024 * 1024)'"],
+        command=[
+            "/bin/sh",
+            "-c",
+            "exec python -c 'x = bytearray(512 * 1024 * 1024); "
+            "x[::4096] = b\"x\" * (len(x) // 4096)'",
+        ],
     )
     result = BridgeRuntime(client).run_cell(_request())
     assert result.status == "failed"
-    assert result.error_type == "MemoryLimitExceededError"
+    assert result.error_type == "MemoryLimitExceededError", result.error_message
     assert result.effective.memory_limit_mb == 256
     assert result.effective.storage_limit_mb == 64
     assert _no_stray_containers()
