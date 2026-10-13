@@ -17,7 +17,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Literal, Protocol
+from typing import Any, ClassVar, Literal, Protocol
 
 from jig import AgentConfig, run_agent
 from jig.core.types import (
@@ -241,9 +241,9 @@ class _Trace(TracingLogger):
 
 
 class _Admission:
-    def __init__(self, settings: PilotSettings) -> None:
+    def __init__(self, settings: PilotSettings, ledger: AdmissionLedger | None = None) -> None:
         self.settings = settings
-        self.ledger = AdmissionLedger(
+        self.ledger = ledger if ledger is not None else AdmissionLedger(
             max_requests=settings.max_total_requests,
             max_spend_usd=settings.max_spend_usd,
             request_cost_bound_usd=settings.request_cost_bound_usd,
@@ -420,9 +420,20 @@ class ConsistencyWorker:
     settings: PilotSettings
     allow_paid: bool = dataclasses.field(default=False, kw_only=True)
     _admission: _Admission = dataclasses.field(init=False, repr=False)
+    supports_run_admission: ClassVar[Literal[True]] = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_admission", _Admission(self.settings))
+
+    def bind_admission(self, ledger: AdmissionLedger) -> ConsistencyWorker:
+        ledger.configure_requests(
+            max_requests=self.settings.max_total_requests,
+            max_spend_usd=self.settings.max_spend_usd,
+            request_cost_bound_usd=self.settings.request_cost_bound_usd,
+        )
+        bound = dataclasses.replace(self)
+        object.__setattr__(bound, "_admission", _Admission(self.settings, ledger))
+        return bound
 
     def configuration(self, arm_id: str) -> dict[str, Any]:
         if arm_id not in {"clean", "inconsistent"} and not re.fullmatch(
@@ -605,6 +616,10 @@ class ChainWorker:
     """
 
     inner: ConsistencyWorker
+    supports_run_admission: ClassVar[Literal[True]] = True
+
+    def bind_admission(self, ledger: AdmissionLedger) -> ChainWorker:
+        return ChainWorker(self.inner.bind_admission(ledger))
 
     def configuration(self, arm_id: str) -> dict[str, Any]:
         return {**self.inner.configuration(arm_id), "chain": "append-renamed-v1"}

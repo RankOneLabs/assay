@@ -15,6 +15,7 @@ from test_execution import FakeEvaluator, FakeWorker, default_runtime, execution
 from assay.adapters.consistency import (
     ChainWorker,
     CompletionNotSent,
+    ConsistencyWorker,
     PilotSettings,
     _Admission,
     _BoundedClient,
@@ -78,6 +79,66 @@ async def test_v3_cell_ceiling_halts_and_records_each_started_cell(tmp_path: Pat
         failure.code for failure in verify_manifest(fixture.store, str(result.manifest_ref))
     ]
     assert verification_codes == ["incomplete_run"]
+
+
+async def test_run_binds_one_ledger_for_cell_and_request_reservations(tmp_path: Path) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+    bound_ledgers: list[AdmissionLedger] = []
+
+    class ReservingWorker(FakeWorker):
+        supports_run_admission = True
+
+        def __init__(self, ledger: AdmissionLedger | None = None) -> None:
+            self.ledger = ledger
+
+        def bind_admission(self, ledger: AdmissionLedger) -> ReservingWorker:
+            ledger.configure_requests(
+                max_requests=1, max_spend_usd=Decimal(0), request_cost_bound_usd=Decimal(0)
+            )
+            bound_ledgers.append(ledger)
+            return ReservingWorker(ledger)
+
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            assert self.ledger is not None
+            refused = self.ledger.reserve("request")
+            if refused is not None:
+                raise refused
+            return WorkerSuccess({"score": 1})
+
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "plan_bytes": plan_bytes,
+            "authorization": digest_bytes(plan_bytes),
+            "workers": {arm.id: ReservingWorker() for arm in fixture.snapshot.arms},
+        }
+    )
+    assert isinstance(result, RunFailed) and result.manifest is not None
+    assert len(bound_ledgers) == 2 and bound_ledgers[0] is bound_ledgers[1]
+    assert bound_ledgers[0].cells == 2 and bound_ledgers[0].requests == 1
+    assert bound_ledgers[0].active_cells == 0
+    outcomes = [
+        json.loads(fixture.store.read_bytes(ref))
+        for ref in result.manifest.execution_records.values()
+    ]
+    assert {item["status"] for item in outcomes} == {"succeeded", "failed"}
+    assert next(item for item in outcomes if item["status"] == "failed")["error_type"] == (
+        "ceiling_exhausted"
+    )
+
+
+def test_consistency_binding_uses_run_ledger_without_mutating_standalone_worker() -> None:
+    worker = ConsistencyWorker(SimpleNamespace(), PilotSettings(max_total_requests=2))  # type: ignore[arg-type]
+    ledger = AdmissionLedger()
+    bound = worker.bind_admission(ledger)
+    assert bound._admission.ledger is ledger
+    assert worker._admission.ledger is not ledger
+    assert ledger.max_requests == 2
+    assert bound._admission.reserve() is None and ledger.requests == 1
+    assert ChainWorker(worker).bind_admission(ledger).inner._admission.ledger is ledger
 
 
 async def test_v3_wall_time_and_fleet_occupancy_bound_dispatch(tmp_path: Path) -> None:

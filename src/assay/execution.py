@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.models import (
@@ -191,11 +191,30 @@ class AdmissionLedger:
         self.max_requests = max_requests
         self.max_spend_usd = max_spend_usd
         self.request_cost_bound_usd = request_cost_bound_usd
+        self._request_limits = (
+            (max_requests, max_spend_usd, request_cost_bound_usd)
+            if max_requests is not None or max_spend_usd != 0 or request_cost_bound_usd != 0
+            else None
+        )
         self.started_at = time.monotonic()
         self.cells = 0
         self.active_cells = 0
         self.requests = 0
         self.halt: AdmissionHalt | None = None
+
+    def configure_requests(
+        self,
+        *,
+        max_requests: int,
+        max_spend_usd: Decimal,
+        request_cost_bound_usd: Decimal,
+    ) -> None:
+        """Bind one request policy before dispatch; all bound arms must agree."""
+        limits = (max_requests, max_spend_usd, request_cost_bound_usd)
+        if self._request_limits is not None and self._request_limits != limits:
+            raise ValueError("worker request admission limits differ across arms")
+        self._request_limits = limits
+        self.max_requests, self.max_spend_usd, self.request_cost_bound_usd = limits
 
     def remaining_seconds(self) -> float | None:
         if self.ceiling is None:
@@ -231,6 +250,12 @@ class AdmissionLedger:
 
     def release_cell(self) -> None:
         self.active_cells -= 1
+
+
+class AdmissionBoundWorker(Protocol):
+    supports_run_admission: Literal[True]
+
+    def bind_admission(self, ledger: AdmissionLedger) -> Worker | CoordinateAwareWorker: ...
 
 
 def _worker_supports_coordinates(worker: Worker | CoordinateAwareWorker) -> bool:
@@ -353,6 +378,16 @@ async def execute_plan(
             store.publish_json(declaration.configuration)
             store.publish_json(declaration.model_dump(mode="json"))
         store.publish_json([arm.conditions for arm in snapshot.arms])
+        admission = AdmissionLedger(
+            ceiling=plan.ceiling if isinstance(plan, ExecutionPlanV3) else None
+        )
+        for arm in snapshot.arms:
+            worker = workers[arm.id]
+            if getattr(worker, "supports_run_admission", False) is True:
+                bound = cast(AdmissionBoundWorker, worker).bind_admission(admission)
+                if canonical_json(bound.configuration(arm.id)) != canonical_json(arm.worker):
+                    raise ValueError(f"bound worker configuration mismatch: {arm.id}")
+                workers[arm.id] = bound
     except Exception as error:
         return RunFailed(type(error).__name__, str(error))
 
@@ -364,7 +399,6 @@ async def execute_plan(
     outputs: dict[str, str] = {}
     fatal: Exception | None = None
     halt: AdmissionHalt | None = None
-    admission = AdmissionLedger(ceiling=plan.ceiling if isinstance(plan, ExecutionPlanV3) else None)
     unavailable_evaluations: set[str] = set()
     interruption: dict[str, Any] | None = None
 
