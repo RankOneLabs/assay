@@ -32,7 +32,7 @@ from assay.adapters.openrouter import (
 )
 from assay.adapters.openrouter_diagnostics import ResponseDiagnostics
 from assay.canonical import canonical_json, digest_bytes
-from assay.execution import WorkerFailure, WorkerSuccess
+from assay.execution import AdmissionHalt, WorkerFailure, WorkerSuccess
 from assay.investigations.consistency import TASKS
 from assay.models import StudySnapshot
 from assay.store import ObjectStore
@@ -275,14 +275,13 @@ async def test_transport_errors_are_not_retried(wire: Wire, error: Exception) ->
 async def test_raw_usage_rejected_before_sdk_coercion(wire: Wire, field: str, value: Any) -> None:
     wire.payload["usage"][field] = value
     worker = ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True)
-    for index in range(2):
-        result = await worker.run(input_value=realization(), arm_id="clean")
-        assert isinstance(result, WorkerFailure)
-        assert result.error_type == ("InvalidUsage" if index == 0 else "BudgetHalted")
-        # index 0 dispatched a request and failed before usage could be
-        # confirmed (uncertain); index 1 never sent a request at all, having
-        # already been halted (unavailable).
-        assert result.accounting.coverage == ("uncertain" if index == 0 else "unavailable")
+    result = await worker.run(input_value=realization(), arm_id="clean")
+    assert isinstance(result, WorkerFailure) and result.error_type == "InvalidUsage"
+    assert result.accounting.coverage == "uncertain"
+    with pytest.raises(AdmissionHalt) as stopped:
+        await worker.run(input_value=realization(), arm_id="clean")
+    assert stopped.value.code == "billing_uncertain"
+    assert stopped.value.trace["provider_diagnostics"]
     assert len(wire.requests) == 1  # Uncertain billing halts subsequent attempts.
 
 
@@ -352,8 +351,9 @@ async def test_external_cancellation_closes_transport(wire: Wire) -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert wire.closed == wire.transports
-    second = await worker.run(input_value=realization(), arm_id="inconsistent")
-    assert isinstance(second, WorkerFailure) and len(wire.requests) == 1
+    with pytest.raises(AdmissionHalt) as stopped:
+        await worker.run(input_value=realization(), arm_id="inconsistent")
+    assert stopped.value.code == "billing_uncertain" and len(wire.requests) == 1
 
 
 def test_credentials_are_required_only_when_creating_clients(wire: Wire) -> None:
@@ -488,11 +488,12 @@ async def test_cost_bound_violation_halts_later_requests(wire: Wire) -> None:
     wire.payload["usage"]["cost"] = 0.03
     worker = ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True)
     first = await worker.run(input_value=realization(), arm_id="clean")
-    second = await worker.run(input_value=realization(), arm_id="clean")
-    assert isinstance(first, WorkerFailure) and isinstance(second, WorkerFailure)
+    with pytest.raises(AdmissionHalt) as stopped:
+        await worker.run(input_value=realization(), arm_id="clean")
+    assert isinstance(first, WorkerFailure)
     assert first.trace["provider_usage"][0]["cost"] == 0.03
     assert first.accounting.coverage == "uncertain"
-    assert second.error_type == "BudgetHalted" and len(wire.requests) == 1
+    assert stopped.value.code == "billing_uncertain" and len(wire.requests) == 1
 
 
 @pytest.mark.asyncio
@@ -580,9 +581,10 @@ async def test_no_privacy_eligible_route_fails_without_fallback(wire: Wire) -> N
     wire.payload = {"error": {"message": "No endpoints satisfy privacy requirements"}}
     worker = ConsistencyWorker(factory(), qwen_smoke_settings(), allow_paid=True)
     first = await worker.run(input_value=realization(), arm_id="clean")
-    second = await worker.run(input_value=realization(), arm_id="clean")
-    assert isinstance(first, WorkerFailure) and isinstance(second, WorkerFailure)
-    assert second.error_type == "BudgetHalted"
+    with pytest.raises(AdmissionHalt) as stopped:
+        await worker.run(input_value=realization(), arm_id="clean")
+    assert isinstance(first, WorkerFailure)
+    assert stopped.value.code == "billing_uncertain"
     assert len(wire.requests) == 1
     routing = json.loads(wire.requests[0].content)["provider"]
     assert routing["only"] == ["novita/fp8"] and routing["allow_fallbacks"] is False
@@ -778,7 +780,10 @@ async def test_failure_diagnostics_survive_without_weakening_billing(wire: Wire,
     elif case == "invalid_usage":
         assert event["tool_names"] == ["submit_output"]
     assert b"do-not-copy" not in canonical_json(diagnostics)
-    assert isinstance(await worker.run(input_value=realization(), arm_id="clean"), WorkerFailure)
+    with pytest.raises(AdmissionHalt) as stopped:
+        await worker.run(input_value=realization(), arm_id="clean")
+    assert stopped.value.code == "billing_uncertain"
+    assert b"do-not-copy" not in canonical_json(stopped.value.trace["provider_diagnostics"])
     assert len(wire.requests) == 1
 
 
