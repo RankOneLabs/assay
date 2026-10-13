@@ -23,7 +23,14 @@ from assay.pier_packaging import (
     repository_only_entries,
 )
 from assay.pier_protocol import RuntimeBinding
-from assay.repository import validate_repository, validate_source_tree
+from assay.repository import (
+    RepositoryPathError,
+    RepositoryPathNFCCollisionError,
+    RepositoryPathSegmentTooLongError,
+    RepositoryPathTooLongError,
+    validate_repository,
+    validate_source_tree,
+)
 from assay.store import ObjectStore
 
 
@@ -133,28 +140,32 @@ def test_build_package_rejects_traversal_from_repository_dict(tmp_path: Path) ->
 
 
 def test_validate_repository_rejects_case_folded_duplicate_paths() -> None:
-    with pytest.raises(ValueError, match="duplicate repository path"):
+    with pytest.raises(RepositoryPathNFCCollisionError):
         validate_repository({"Solution.py": "a = 1\n", "solution.py": "b = 2\n"})
 
 
 @pytest.mark.parametrize(
-    ("extra_paths", "error"),
+    ("extra_paths", "error_type"),
     [
-        ({"/".join(["nested"] * 590) + "/leaf.py": "x\n"}, "4 KiB"),
-        ({"src/" + "x" * 256 + ".py": "x\n"}, "255 bytes"),
-        ({"src/Caf\u00e9.py": "x\n", "src/Cafe\u0301.py": "y\n"}, "NFC-casefold collision"),
+        ({"/".join(["nested"] * 590) + "/leaf.py": "x\n"}, RepositoryPathTooLongError),
+        ({"src/" + "x" * 256 + ".py": "x\n"}, RepositoryPathSegmentTooLongError),
+        (
+            {"src/Caf\u00e9.py": "x\n", "src/Cafe\u0301.py": "y\n"},
+            RepositoryPathNFCCollisionError,
+        ),
     ],
 )
 def test_realistic_repository_slice_rejects_each_portability_rule(
-    extra_paths: dict[str, str], error: str
+    extra_paths: dict[str, str], error_type: type[RepositoryPathError]
 ) -> None:
     slice_files = {
         "package.json": "{}\n",
         "src/main.ts": "export const main = () => 1;\n",
         "tests/main.test.ts": "// smoke\n",
     }
-    with pytest.raises(ValueError, match=error):
+    with pytest.raises(RepositoryPathError) as raised:
         validate_repository({**slice_files, **extra_paths})
+    assert type(raised.value) is error_type
 
 
 async def test_dispatch_uses_authorized_limits_even_if_library_defaults_change(

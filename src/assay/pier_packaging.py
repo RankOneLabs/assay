@@ -16,7 +16,12 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from assay.canonical import canonical_json, digest_bytes
-from assay.repository import validate_repository, validate_source_tree
+from assay.repository import (
+    DEFAULT_MAX_REPOSITORY_BYTES,
+    DEFAULT_MAX_REPOSITORY_FILES,
+    validate_repository,
+    validate_source_tree,
+)
 
 WORKSPACE_PREFIX = "workspace"
 INSTRUCTION_PATH = "instruction.md"
@@ -104,8 +109,8 @@ def build_package(
     cell_id: str,
     task: str,
     repository_root: Path,
-    max_repository_files: int = 200,
-    max_repository_bytes: int = 1_000_000,
+    max_repository_files: int = DEFAULT_MAX_REPOSITORY_FILES,
+    max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES,
 ) -> SealedPackage:
     """Build the sealed package for one cell from an on-disk realization.
 

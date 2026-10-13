@@ -58,6 +58,7 @@ from assay.pier_protocol import (
     mini_exit_status_from_result_bytes,
     verify_artifact_bytes,
 )
+from assay.repository import DEFAULT_MAX_REPOSITORY_BYTES, DEFAULT_MAX_REPOSITORY_FILES
 from assay.store import ObjectStore
 
 CLEANUP_TIMEOUT = 5.0
@@ -264,8 +265,8 @@ def worker_configuration(
     binding: RuntimeBinding,
     model_route: Mapping[str, str],
     trial_limits: Mapping[str, float | int],
-    max_repository_files: int = 200,
-    max_repository_bytes: int = 1_000_000,
+    max_repository_files: int = DEFAULT_MAX_REPOSITORY_FILES,
+    max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES,
     forbidden_substrings: tuple[tuple[str, str], ...] = FORBIDDEN_SENTINELS,
     worker_id: str = "pier",
 ) -> dict[str, Any]:
@@ -294,8 +295,8 @@ class PierAdapter:
     binding: RuntimeBinding
     model_route: Mapping[str, str]
     trial_limits: Mapping[str, float | int]
-    max_repository_files: int = 200
-    max_repository_bytes: int = 1_000_000
+    max_repository_files: int = DEFAULT_MAX_REPOSITORY_FILES
+    max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES
     forbidden_substrings: tuple[tuple[str, str], ...] = FORBIDDEN_SENTINELS
     worker_id: str = "pier"
     supports_cell_coordinates: bool = True
