@@ -60,6 +60,7 @@ from assay_pier_bridge.identity import (  # noqa: E402
 from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest  # noqa: E402
 from assay_pier_bridge.provider import (  # noqa: E402
     MODEL,
+    PROVIDER,
     PROVIDER_NAME,
     GuardedOpenRouterClient,
     GuardedRouteError,
@@ -446,7 +447,7 @@ def probe_fake_boundary() -> None:
     # The bridge's own guarded route identity must still be the exact route
     # paid execution is configured to call -- a drift here would mean this
     # probe validates a boundary no real paid trial actually uses.
-    if PIER_MODEL_ROUTE["model"] != MODEL or PIER_MODEL_ROUTE["provider"] != PROVIDER_NAME:
+    if PIER_MODEL_ROUTE["model"] != MODEL or PIER_MODEL_ROUTE["provider"] != PROVIDER:
         raise QualificationFailed(
             "fake_boundary",
             "the bridge's guarded route model/provider no longer matches the route "
