@@ -25,6 +25,7 @@ from assay.code_metrics.models import (
     CodeMetricsReportV6,
     DetailedCodeMetricsComparison,
 )
+from assay.fixture_manifest import FixtureManifest
 from assay.models import (
     Arm,
     EvaluationFailure,
@@ -45,6 +46,7 @@ SCHEMA_MODELS: dict[str, type[WireModel]] = {
     "assay-report-config": ReportConfig,
     "assay-run-manifest": RunManifest,
     "assay-study-snapshot": StudySnapshot,
+    "assay-fixture-manifest": FixtureManifest,
 }
 
 # Each execution-plan wire shape gets its own pinned
@@ -96,7 +98,7 @@ def _schema_document(
 def schema_documents() -> dict[str, bytes]:
     documents = {}
     for name, model in SCHEMA_MODELS.items():
-        schema = _schema_document(name, model)
+        schema = _schema_document(name, model, require_version=name == "assay-fixture-manifest")
         documents[f"{name}.schema.json"] = (json.dumps(schema, indent=2) + "\n").encode()
     for name, model in PLAN_SCHEMA_MODELS.items():
         schema = _schema_document(name, model, require_version=True)
