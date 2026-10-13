@@ -4,6 +4,21 @@ Pier is the third-party (`datacurve-pier`) agent-execution provider Assay drives
 through the isolated [`integrations/pier`](../integrations/pier/README.md)
 bridge project. The bridge has its own lock and qualification script.
 
+The trial envelope is `assay-pier-trial/0.2.0`. `/scratch` is a bind mount of
+an ext4 filesystem image kept under the host trial run directory. The image's
+filesystem capacity is the storage quota; Docker's memory cgroup is a separate,
+higher ceiling. The host running `DockerTrialClient` needs noninteractive root
+access for loop mounting and unmounting the image. A trial refuses to proceed
+when inspection does not confirm the bind mount, quota, read-only root and
+baseline, or declared network posture. The initial storage, memory, and PID
+bounds are provisional pending `experiments/workflow_edit/SMOKE.md`.
+
+The `egress-openrouter-only` and `toolchain-only` postures both run the
+container with Docker networking disabled. `egress-lan-host-port` creates a
+dedicated bridge network for the trial and installs per-interface host firewall
+rules that allow TCP to the declared LAN IPv4 address and port and drop other
+traffic. The host needs noninteractive root access to manage those rules.
+
 For a workflow fixture, build the bridge image before finalizing its manifest,
 then call `assay_pier_bridge.identity.bind_bridge_identity(manifest, image_ref)`.
 It reads `docker image inspect --format '{{.Id}}'` and binds that observed

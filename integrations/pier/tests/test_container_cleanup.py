@@ -102,8 +102,8 @@ def test_semantically_invalid_observation_cannot_break_the_cleanup_result(
     effective = handle.teardown()
 
     assert effective.teardown_completed is True
-    assert effective.cpu_limit == _request().limits.cpu
-    assert effective.memory_limit_mb == _request().limits.memory_mb
+    assert effective.cpu_limit == 0
+    assert effective.memory_limit_mb == 0
 
 
 def test_removal_timeout_still_checks_count_and_reports_uncertainty(
@@ -177,7 +177,24 @@ def test_driver_hashes_the_exact_bounded_output_bytes(
     output = "ünicode\r\n".encode()
     (tmp_path / "assay-pier-test" / "submission" / "output").write_bytes(output)
     monkeypatch.setattr(container, "_run", _fake_successful_run)
-    monkeypatch.setattr(container, "_inspect", lambda name: None)
+    monkeypatch.setattr(
+        DockerTrialHandle, "_prepare_quota", lambda self, limits: self._scratch.mkdir()
+    )
+    monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
+    monkeypatch.setattr(
+        container,
+        "_inspect",
+        lambda name: ContainerObservation(
+            read_only_root=True,
+            workspace_mount_read_only=True,
+            uid=1000,
+            network_mode="none",
+            cpu_limit=1,
+            memory_limit_mb=256,
+            pids_limit=32,
+            storage_limit_mb=64,
+        ),
+    )
     monkeypatch.setattr(container, "_container_count", lambda name: 1)
 
     result = handle.run()
@@ -193,6 +210,24 @@ def test_driver_rejects_output_that_exceeds_the_collection_limit(
     (tmp_path / "assay-pier-test" / "submission" / "output").write_bytes(b"12345")
     monkeypatch.setattr(container, "MAX_ARTIFACT_BYTES", 4)
     monkeypatch.setattr(container, "_run", _fake_successful_run)
+    monkeypatch.setattr(
+        DockerTrialHandle, "_prepare_quota", lambda self, limits: self._scratch.mkdir()
+    )
+    monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
+    monkeypatch.setattr(
+        container,
+        "_inspect",
+        lambda name: ContainerObservation(
+            read_only_root=True,
+            workspace_mount_read_only=True,
+            uid=1000,
+            network_mode="none",
+            cpu_limit=1,
+            memory_limit_mb=256,
+            pids_limit=32,
+            storage_limit_mb=64,
+        ),
+    )
 
     with pytest.raises(ValueError, match="byte limit"):
         handle.run()

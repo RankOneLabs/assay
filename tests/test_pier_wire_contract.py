@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -27,6 +27,10 @@ from assay.pier_protocol import (
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
+    EffectiveEnforcement,
+    NetworkPolicy,
+    TrialLimits,
+    TrialRequest,
     trial_name_for,
 )
 from assay.store import ObjectStore
@@ -36,6 +40,17 @@ FIXTURE = Path(__file__).parent / "fixtures" / "pier_wire_contract.json"
 
 def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_trial_envelope_revision_matches_the_shared_fixture() -> None:
+    envelope = _fixture()["trial_envelope"]
+    assert set(TrialRequest.model_fields) == set(envelope["request_fields"])
+    assert set(TrialLimits.model_fields) == set(envelope["limit_fields"])
+    assert set(EffectiveEnforcement.model_fields) == set(envelope["effective_fields"])
+    assert set(get_args(NetworkPolicy)) == set(envelope["network_policies"])
+    request = TrialRequest.model_validate(envelope["sample_request"])
+    assert request.model_dump() == envelope["sample_request"]
+    assert request.schema_version == envelope["schema_version"]
 
 
 def _coordinate(case: dict[str, Any]) -> CellCoordinate:

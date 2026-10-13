@@ -9,6 +9,7 @@ for why that dependency cannot be pinned from this environment today).
 
 from __future__ import annotations
 
+from ipaddress import IPv4Address
 from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -24,6 +25,8 @@ CellId = Annotated[
 ]
 
 TrialStatus = Literal["succeeded", "failed", "timeout", "cancelled"]
+NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
+TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.2.0"
 
 # Mirrors assay.pier_protocol's ceilings. Artifact bytes are bounded here,
 # at the point they are collected, as well as by the consumer: a trial whose
@@ -69,13 +72,19 @@ class ModelRoute(ClosedModel):
 
 class TrialLimits(ClosedModel):
     cpu: float = Field(gt=0, le=8, allow_inf_nan=False)
+    # Provisional storage/memory/PID bounds: replace after the footprint runs
+    # in experiments/workflow_edit/SMOKE.md (wf-12).
     memory_mb: int = Field(ge=64, le=8192)
     pids: int = Field(ge=1, le=256)
     timeout_s: float = Field(gt=0, le=1800, allow_inf_nan=False)
-    # /scratch is a size-capped tmpfs (container.py), never an unbounded
-    # host bind mount -- a trial that fills it hits a real ENOSPC, not a
-    # declared-but-unenforced ceiling.
+    # /scratch is a quota-backed host bind mount, independent of the memory cgroup.
     storage_mb: int = Field(ge=16, le=8192)
+
+    @model_validator(mode="after")
+    def separate_budgets(self) -> TrialLimits:
+        if self.memory_mb <= self.storage_mb:
+            raise ValueError("memory_mb must exceed storage_mb")
+        return self
 
 
 class BridgeIdentity(ClosedModel):
@@ -90,12 +99,30 @@ class BridgeIdentity(ClosedModel):
 class TrialRequest(ClosedModel):
     """One authorized cell. ``verify`` is always disabled: Assay is the authority."""
 
+    schema_version: Literal["assay-pier-trial/0.2.0"] = "assay-pier-trial/0.2.0"
     cell_id: CellId
     package_digest: Sha256Ref
     model_route: ModelRoute
     limits: TrialLimits
     verify: Literal[False] = False
-    network_policy: Literal["egress-openrouter-only"] = "egress-openrouter-only"
+    network_policy: NetworkPolicy = "egress-openrouter-only"
+    egress_host: str | None = None
+    egress_port: int | None = Field(default=None, ge=1, le=65535)
+
+    @model_validator(mode="after")
+    def closed_egress(self) -> TrialRequest:
+        if self.network_policy == "egress-lan-host-port":
+            if self.egress_host is None or self.egress_port is None:
+                raise ValueError("LAN posture requires egress_host and egress_port")
+            try:
+                address = IPv4Address(self.egress_host)
+            except ValueError as error:
+                raise ValueError("egress_host must be a LAN IPv4 address") from error
+            if not address.is_private:
+                raise ValueError("egress_host must be a LAN IPv4 address")
+        elif self.egress_host is not None or self.egress_port is not None:
+            raise ValueError("egress_host and egress_port require the LAN posture")
+        return self
 
 
 class TrialUsage(ClosedModel):
@@ -108,16 +135,19 @@ class TrialUsage(ClosedModel):
 class EffectiveEnforcement(ClosedModel):
     """Observed, not declared: what the trial's execution boundary actually did."""
 
-    uid: int = Field(ge=1)
-    gid: int = Field(ge=1)
+    uid: int = Field(ge=0)
+    gid: int = Field(ge=0)
     workspace_read_only: bool
+    root_read_only: bool = False
     submission_mount: str = Field(pattern=r"^/submission$")
     scratch_mount: str = Field(pattern=r"^/scratch$")
+    scratch_mount_kind: str = "unknown"
+    scratch_quota_mb: int = Field(default=0, ge=0)
     network_policy: str = Field(min_length=1)
-    cpu_limit: float = Field(gt=0, allow_inf_nan=False)
-    memory_limit_mb: int = Field(ge=1)
-    pids_limit: int = Field(ge=1)
-    storage_limit_mb: int = Field(ge=1)
+    cpu_limit: float = Field(ge=0, allow_inf_nan=False)
+    memory_limit_mb: int = Field(ge=0)
+    pids_limit: int = Field(ge=0)
+    storage_limit_mb: int = Field(ge=0)
     containers_remaining: int = Field(ge=0)
     child_processes_remaining: int = Field(ge=0)
     teardown_completed: bool

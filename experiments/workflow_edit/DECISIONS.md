@@ -46,3 +46,23 @@ the provenance of provisional bounds.
   `integrations/pier/workflow_edit/`, the bridge Docker build context. `npm ci`
   installs the locked tree in the Node build stage; the final image copies that
   tree and Node, while omitting npm so trials cannot install dependencies.
+
+## Trial envelope revision 1
+
+The three wire-contract copies (bridge protocol, Assay protocol, shared fixture)
+advance together to `assay-pier-trial/0.2.0`. The exact revised field set is:
+
+- `TrialRequest.schema_version` is the new closed version literal.
+- `TrialRequest.network_policy` is the closed literal
+  `egress-openrouter-only | egress-lan-host-port | toolchain-only`.
+- `TrialRequest.egress_host` (an IPv4 LAN address) and `egress_port` (1–65535)
+  are present together only for the LAN posture.
+- `TrialLimits.storage_mb`, `memory_mb`, and `pids` retain their integer wire
+  fields. Storage now bounds a host-visible, quota-backed `/scratch` bind mount;
+  memory is an independent cgroup ceiling and must exceed storage.
+- `EffectiveEnforcement` adds `root_read_only`, `scratch_mount_kind`, and
+  `scratch_quota_mb`. Its existing `storage_limit_mb` is the observed quota,
+  and `network_policy` reports the inspected Docker network posture.
+
+Initial storage, memory, and PID numbers are provisional; replace them after
+the footprint runs recorded in `experiments/workflow_edit/SMOKE.md` (wf-12).

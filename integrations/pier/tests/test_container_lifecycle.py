@@ -9,7 +9,7 @@ in ``protocol.py``.
 
 from __future__ import annotations
 
-import hashlib
+import os
 import subprocess
 import threading
 import time
@@ -51,6 +51,12 @@ def image() -> str:
     )
     if daemon_check.returncode != 0:
         pytest.skip(f"docker daemon is not reachable: {daemon_check.stderr[-500:]}")
+    if os.geteuid() != 0:
+        mount_check = subprocess.run(
+            ["sudo", "-n", "true"], capture_output=True, text=True, timeout=10, check=False
+        )
+        if mount_check.returncode != 0:
+            pytest.skip("host lacks noninteractive loop-mount privileges for quota-backed trials")
     result = subprocess.run(
         ["docker", "build", "-t", IMAGE_TAG, str(BRIDGE_ROOT)],
         capture_output=True,
@@ -109,6 +115,9 @@ def test_success_leaves_a_read_only_mount_and_zero_containers(image: str) -> Non
     assert result.status == "succeeded"
     assert result.submission_ref is not None
     assert result.effective.workspace_read_only is True
+    assert result.effective.root_read_only is True
+    assert result.effective.scratch_mount_kind == "bind"
+    assert result.effective.scratch_quota_mb == 64
     assert result.effective.uid == 1000
     assert result.effective.storage_limit_mb == 64
     assert result.effective.containers_remaining == 0
@@ -135,21 +144,29 @@ def test_scratch_storage_limit_is_really_enforced_not_merely_declared(image: str
 
     result = runtime.run_cell(_request(storage_mb=16))
 
-    assert result.status == "succeeded"
+    assert result.status == "failed"
+    assert result.error_type == "StorageExhaustedError"
     assert result.effective.storage_limit_mb == 16
-    submission = result.submission_ref
-    assert submission is not None
-    # dd's own exit code (nonzero) is the trial's submission content -- a
-    # write past the declared 16 MiB tmpfs must fail with ENOSPC, not
-    # silently succeed past the ceiling this result claims was enforced.
-    assert submission != f"sha256:{hashlib.sha256(b'0').hexdigest()}"
+    assert result.effective.memory_limit_mb == 256
+    assert _no_stray_containers()
+
+
+def test_memory_exhaustion_has_a_distinct_cause(image: str) -> None:
+    client = DockerTrialClient(
+        image=image,
+        package=PACKAGE,
+        command=["/bin/sh", "-c", "exec python -c 'x = bytearray(512 * 1024 * 1024)'"],
+    )
+    result = BridgeRuntime(client).run_cell(_request())
+    assert result.status == "failed"
+    assert result.error_type == "MemoryLimitExceededError"
+    assert result.effective.memory_limit_mb == 256
+    assert result.effective.storage_limit_mb == 64
     assert _no_stray_containers()
 
 
 def test_nonzero_exit_is_reported_as_failed_and_tears_down(image: str) -> None:
-    client = DockerTrialClient(
-        image=image, package=PACKAGE, command=["/bin/sh", "-c", "exit 7"]
-    )
+    client = DockerTrialClient(image=image, package=PACKAGE, command=["/bin/sh", "-c", "exit 7"])
     runtime = BridgeRuntime(client)
 
     result = runtime.run_cell(_request())
@@ -162,9 +179,7 @@ def test_nonzero_exit_is_reported_as_failed_and_tears_down(image: str) -> None:
 
 
 def test_a_deadline_breach_is_reported_as_timeout_and_tears_down(image: str) -> None:
-    client = DockerTrialClient(
-        image=image, package=PACKAGE, command=["/bin/sh", "-c", "sleep 30"]
-    )
+    client = DockerTrialClient(image=image, package=PACKAGE, command=["/bin/sh", "-c", "sleep 30"])
     runtime = BridgeRuntime(client)
 
     result = runtime.run_cell(_request(timeout_s=2))
@@ -176,9 +191,7 @@ def test_a_deadline_breach_is_reported_as_timeout_and_tears_down(image: str) -> 
 
 
 def test_operator_cancellation_stops_the_container_and_tears_down(image: str) -> None:
-    client = DockerTrialClient(
-        image=image, package=PACKAGE, command=["/bin/sh", "-c", "sleep 30"]
-    )
+    client = DockerTrialClient(image=image, package=PACKAGE, command=["/bin/sh", "-c", "sleep 30"])
     handle = client.create(_request())
 
     def _cancel_soon() -> None:
