@@ -212,6 +212,18 @@ def _handle_code_metrics_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_code_metrics_install_node_tools(args: argparse.Namespace) -> int:
+    try:
+        from assay.code_metrics.pins import install_node_tools
+
+        directory = install_node_tools(offline=args.offline)
+    except (ImportError, OSError, RuntimeError) as error:
+        print(f"code_metrics_install_node_tools_failed: {error}")
+        return 1
+    print(directory)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="assay")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -244,6 +256,9 @@ def main() -> int:
     comparison = metrics_commands.add_parser("compare")
     comparison.add_argument("before_path", metavar="BEFORE_PATH")
     comparison.add_argument("after_path", metavar="AFTER_PATH")
+    install_node_tools = metrics_commands.add_parser("install-node-tools")
+    install_node_tools.add_argument("--offline", action="store_true")
+    install_node_tools.set_defaults(handler=_handle_code_metrics_install_node_tools)
     for command in (snapshot, comparison):
         command.add_argument("--config", metavar="FILE")
         command.add_argument("--exclude", metavar="GLOB", action="append", default=[])

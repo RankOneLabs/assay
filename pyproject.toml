@@ -47,6 +47,8 @@ packages = ["src/assay"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "schemas" = "assay/schemas"
+"vendor/node-tools/package.json" = "assay/vendor/node-tools/package.json"
+"vendor/node-tools/package-lock.json" = "assay/vendor/node-tools/package-lock.json"
 
 [dependency-groups]
 dev = [

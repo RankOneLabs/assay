@@ -37,7 +37,7 @@ def test_preflight_unavailable_before_analyzers(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         graph, "extract_module_graph", lambda *args, **kwargs: pytest.fail("graph ran")
     )
-    with pytest.raises(ToolUnavailable, match=r"jscpd@5\.4\.0.*npx"):
+    with pytest.raises(ToolUnavailable, match=r"node: Node.js is unavailable"):
         analyze(PACKAGE)
 
 
@@ -129,7 +129,7 @@ def _fail_command(
 
     def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
         command = args[0]
-        if isinstance(command, list) and marker in command:
+        if isinstance(command, list) and any(str(part).endswith(marker) for part in command):
             if failure is None:
                 raise subprocess.CalledProcessError(1, command, stderr="npm fetch failed")
             return failure
@@ -138,9 +138,9 @@ def _fail_command(
     monkeypatch.setattr(tools.subprocess, "run", run)
 
 
-def test_jscpd_fetch_failure_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_jscpd_launch_failure_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tools, "_jscpd", REAL_JSCPD)
-    _fail_command(monkeypatch, "npx", None)
+    _fail_command(monkeypatch, "jscpd", None)
     with pytest.raises(ToolUnavailable, match=r"jscpd@5\.4\.0: npm fetch failed"):
         analyze(PACKAGE)
 
@@ -153,7 +153,7 @@ def test_jscpd_analysis_failure_is_not_reported_as_unavailable(
 
     def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
         command = args[0]
-        if isinstance(command, list) and "npx" in command:
+        if isinstance(command, list) and str(command[0]).endswith("jscpd"):
             returncode = 0 if "--version" in command else 1
             return subprocess.CompletedProcess(command, returncode, "", "jscpd crashed")
         return original_run(*args, **kwargs)  # type: ignore[call-overload,no-any-return]

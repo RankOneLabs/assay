@@ -19,9 +19,8 @@ from .models import (
     ModuleEntryV2,
     ModuleGraphV2,
 )
-from .pins import DEPENDENCY_CRUISER, TYPESCRIPT
+from .pins import DEPENDENCY_CRUISER, node_binary
 
-_COMMAND = ("npx", "--yes", "-p", DEPENDENCY_CRUISER, "-p", TYPESCRIPT, "depcruise")
 # Type-only imports are kept: they couple modules at compile time even though
 # the emitted JavaScript drops them.
 _CONFIG = {"options": {"tsPreCompilationDeps": True, "doNotFollow": {"path": "node_modules"}}}
@@ -49,16 +48,15 @@ def extract_typescript_graph(files: Mapping[str, str]) -> TypeScriptExtraction:
 
 
 def _cruise(root: Path, config: Path) -> dict[str, Any]:
-    # Fetching and launching is checked apart from the analysis, so a failure
-    # on this snapshot is not reported as a missing tool.
+    command = node_binary("depcruise")
     try:
-        subprocess.run([*_COMMAND, "--version"], capture_output=True, text=True, check=True)
+        subprocess.run([command, "--version"], capture_output=True, text=True, check=True)
     except subprocess.CalledProcessError as error:
         raise ToolUnavailable(DEPENDENCY_CRUISER, (error.stderr or str(error)).strip()) from error
     except OSError as error:
         raise ToolUnavailable(DEPENDENCY_CRUISER, str(error)) from error
     completed = subprocess.run(
-        [*_COMMAND, "--no-cache", "--config", str(config), "--output-type", "json", "."],
+        [command, "--no-cache", "--config", str(config), "--output-type", "json", "."],
         cwd=root, capture_output=True, text=True, check=False,
     )  # fmt: skip
     if completed.returncode != 0:

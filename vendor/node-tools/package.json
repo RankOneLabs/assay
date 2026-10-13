@@ -1,0 +1,11 @@
+{
+  "name": "assay-node-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Locked local analyzers for Assay code metrics",
+  "dependencies": {
+    "dependency-cruiser": "18.4.0",
+    "jscpd": "5.4.0",
+    "typescript": "6.0.3"
+  }
+}

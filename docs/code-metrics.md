@@ -38,15 +38,22 @@ components:
 allow_unmatched_patterns: false
 ```
 
-Clone detection uses pinned jscpd through `npx`, and a snapshot with
-TypeScript files is graphed by pinned dependency-cruiser and TypeScript through
-`npx`. Both need Node.js, npm, and network access for the first download;
-dependency-cruiser 18.4.0 needs Node.js 22, 24, or 26 and later.
+Install the locked Node analyzers once with `assay code-metrics install-node-tools`.
+Use `assay code-metrics install-node-tools --offline` when the npm cache is
+populated. In a source checkout the command installs into `vendor/node-tools`;
+from an installed wheel it copies the bundled package files into a writable
+user cache directory and installs there. Set `ASSAY_NODE_TOOLS` to choose another
+writable directory. The command prints the selected directory. Analysis launches
+`jscpd`, `dependency-cruiser`, and the TypeScript compiler directly from that
+tree; it never invokes npm or npx. Resolved versions are recorded from the
+installed `package-lock.json` and checked against the pins before analysis.
+Node.js 22.13 or newer on the 22.x line, or Node.js 24 or 26, is needed by the
+locked dependencies.
 
 ## Metric definitions
 
-`analyze` returns an `assay-code-metrics-report/0.5.0` report and `compare`
-an `assay-code-metrics-comparison/0.6.0` comparison. Earlier schema versions
+`analyze` returns an `assay-code-metrics-report/0.6.0` report and `compare`
+an `assay-code-metrics-comparison/0.7.0` comparison. Earlier schema versions
 stay in `schemas/`. Every graph count below is over first-party modules: the
 modules of top-level packages in the snapshot. Imports of anything else are
 listed in `graph.external_dependencies` and do not enter these counts.
@@ -90,14 +97,14 @@ counts the snapshot's files with that language's extensions, `files_analyzed`
 those an analyzer read, and `files_without_module` lists the files that
 produced no module. A language without an extractor lists every file it sees.
 
-The `existing_metrics` analyzers (radon, complexipy, grimp, ruff, mypy, and
-jscpd) read Python files only. Each value is `null`, and the maintainability
-index map empty, when the snapshot has no Python file, so a TypeScript or Rust
-codebase is not reported as zero lines. In a comparison, a legacy delta's side
-is `null` when that side has no Python file, and its `delta` is `null` when
-either side is. `new_code` counts added Python lines and is `null` when the
-after side has no Python file. The legacy `measure()` mapping is unchanged and
-still counts a side without Python as zero.
+Radon, complexipy, grimp, ruff, and mypy read Python files only; their values
+are `null` without Python files. jscpd scans Python and TypeScript files.
+`typescript_metrics` records physical source lines, clones, duplicated lines,
+and strict TypeScript compiler errors; all four values are `null` without
+TypeScript files. A missing metric remains `null` in `typescript_deltas`, and
+its delta is `null` when either side is missing. `new_code` counts added Python
+and TypeScript lines; nesting depth remains `null` without Python. The legacy
+`measure()` mapping remains available.
 
 ### Coupling
 
@@ -156,6 +163,12 @@ propagation cost of `1 / N`.
 
 A comparison carries both absolute reports, the legacy metric `deltas`, and
 `architecture_deltas`, each entry a `before`, `after`, and `delta`:
+
+`patch` gives baseline, after, and difference for source lines, module count,
+cyclic SCC count, and propagation cost. It also lists added and removed
+nonblank source lines, changed modules, and new cycle membership. A missing
+propagation cost stays `null`, including its delta. Patch size is descriptive;
+no cleanliness or quality score is derived from it.
 
 - `system`: propagation cost, first-party and cross-component edge counts, and
   the cyclic SCC, cyclic module, and largest cyclic SCC counts.

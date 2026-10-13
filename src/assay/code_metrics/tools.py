@@ -23,8 +23,8 @@ from radon.visitors import ComplexityVisitor, Function  # type: ignore[import-un
 
 from .errors import AnalyzerFailed, SnapshotPathError, ToolUnavailable
 from .graph import build_import_graph, write_sources
-from .models import DELTAS, ModuleGraph, Snapshot, _Config
-from .pins import JSCPD
+from .models import DELTAS, ModuleGraph, Snapshot, _Config, language_of
+from .pins import JSCPD, node_binary
 
 
 def _python(snapshot: Snapshot) -> dict[str, str]:
@@ -53,7 +53,17 @@ def _snapshot(
     direct_import_count: int | None = None,
 ) -> dict[str, Any]:
     """Assemble one cached analyzer payload for the public and legacy APIs."""
-    files = dict(sorted(_python(snapshot).items()))
+    files = dict(
+        sorted(
+            (path, text)
+            for path, text in snapshot.items()
+            if language_of(path) in ("python", "typescript")
+        )
+    )
+    python_files = _python(files)
+    typescript_files = {
+        path: text for path, text in files.items() if language_of(path) == "typescript"
+    }
     for path in files:
         parts = PurePosixPath(path).parts
         if PurePosixPath(path).is_absolute() or ".." in parts or "\\" in path:
@@ -73,15 +83,27 @@ def _snapshot(
         root = Path(directory)
         write_sources(root, files)
         result = {
-            **_radon(files),
-            "complexipy.cognitive": sum(code_complexity(t).complexity for t in files.values()),
-            "grimp.imports": (
-                _imports(root) if graph is None else _imports(root, graph, direct_import_count)
+            **(_radon(python_files) if python_files else _radon({})),
+            "complexipy.cognitive": sum(
+                code_complexity(t).complexity for t in python_files.values()
             ),
-            **_ruff(root, config.ruff_ignore),
-            "mypy.errors": _mypy(root),
+            "grimp.imports": (
+                (_imports(root) if graph is None else _imports(root, graph, direct_import_count))
+                if python_files
+                else None
+            ),
+            **(
+                _ruff(root, config.ruff_ignore)
+                if python_files
+                else {"ruff.violations": 0, "ruff.magic_values": 0}
+            ),
+            "mypy.errors": _mypy(root) if python_files else None,
             **_jscpd(root, config),
-            "functions": sorted(_functions(root)),
+            "functions": sorted(_functions(root)) if python_files else [],
+            "typescript.lines": sum(len(text.splitlines()) for text in typescript_files.values()),
+            "typescript.type_errors": _typescript_errors(root, typescript_files)
+            if typescript_files
+            else None,
         }
     with _CACHE_LOCK:
         result = _CACHE.setdefault(key, result)
@@ -178,11 +200,10 @@ def _mypy(root: Path) -> int | None:
 
 
 def _jscpd(root: Path, config: _Config) -> dict[str, Any]:
-    # Fetching and launching jscpd is checked apart from the analysis, so a
-    # jscpd failure on this snapshot is not reported as a missing tool.
+    command = node_binary("jscpd")
     try:
         subprocess.run(
-            ["npx", "--yes", JSCPD, "--version"],
+            [command, "--version"],
             capture_output=True, text=True, check=True,
         )  # fmt: skip
     except subprocess.CalledProcessError as error:
@@ -191,7 +212,7 @@ def _jscpd(root: Path, config: _Config) -> dict[str, Any]:
         raise ToolUnavailable(JSCPD, str(error)) from error
     with tempfile.TemporaryDirectory() as output:
         completed = subprocess.run(
-            ["npx", "--yes", JSCPD, "--silent", "--format", "python", "--reporters", "json",
+            [command, "--silent", "--reporters", "json",
              "--min-lines", str(config.clone_min_lines),
              "--min-tokens", str(config.clone_min_tokens),
              "--output", output, "."],
@@ -202,7 +223,15 @@ def _jscpd(root: Path, config: _Config) -> dict[str, Any]:
         try:
             report = json.loads((Path(output) / "jscpd-report.json").read_text())
             cloned: dict[str, set[int]] = {}
+            typescript_clones = 0
+            typescript_duplicated_lines = 0
             for clone in report["duplicates"]:
+                if any(
+                    language_of(side["name"]) == "typescript"
+                    for side in (clone["firstFile"], clone["secondFile"])
+                ):
+                    typescript_clones += 1
+                    typescript_duplicated_lines += clone["lines"]
                 for side in (clone["firstFile"], clone["secondFile"]):
                     path = Path(side["name"]).as_posix()
                     cloned.setdefault(path, set()).update(range(side["start"], side["end"] + 1))
@@ -213,8 +242,43 @@ def _jscpd(root: Path, config: _Config) -> dict[str, Any]:
     return {
         "jscpd.clones": clones,
         "jscpd.duplicated_lines": duplicated_lines,
+        "typescript.clones": typescript_clones,
+        "typescript.duplicated_lines": typescript_duplicated_lines,
         "cloned_lines": cloned,
     }
+
+
+def _typescript_errors(root: Path, files: dict[str, str]) -> int:
+    """Count diagnostics from the locked compiler over the complete TS snapshot."""
+    command = node_binary("tsc")
+    with tempfile.TemporaryDirectory() as directory:
+        project = Path(directory) / "tsconfig.json"
+        project.write_text(
+            json.dumps(
+                {
+                    "compilerOptions": {
+                        "noEmit": True,
+                        "skipLibCheck": True,
+                        "strict": True,
+                        "target": "es2022",
+                        "module": "nodenext",
+                        "moduleResolution": "nodenext",
+                        "jsx": "preserve",
+                    },
+                    "files": [str(root / path) for path in sorted(files)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            [command, "--project", str(project)],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+    if completed.returncode not in (0, 2):
+        raise AnalyzerFailed(
+            f"typescript failed: {completed.stderr.strip() or completed.stdout.strip()}"
+        )
+    return sum(bool(re.search(r"error TS\d+:", line)) for line in completed.stdout.splitlines())
 
 
 def _functions(root: Path) -> list[tuple[str, int, int, int]]:

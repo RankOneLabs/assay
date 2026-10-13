@@ -19,7 +19,13 @@ def stub_jscpd(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         tools,
         "_jscpd",
-        lambda *args: {"jscpd.clones": 0, "jscpd.duplicated_lines": 0, "cloned_lines": {}},
+        lambda *args: {
+            "jscpd.clones": 0,
+            "jscpd.duplicated_lines": 0,
+            "typescript.clones": 0,
+            "typescript.duplicated_lines": 0,
+            "cloned_lines": {},
+        },
     )
 
 
