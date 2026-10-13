@@ -71,6 +71,31 @@ def _no_stray_containers(prefix: str = "assay-pier-") -> bool:
     return not result.stdout.strip()
 
 
+def test_workflow_toolchain_runs_offline_from_installed_tree(image: str) -> None:
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--entrypoint",
+            "/bin/sh",
+            image,
+            "-c",
+            "node --version && tsc --version && "
+            "test -f /opt/workflow_edit/node_modules/typescript/lib/typescript.js && "
+            "! command -v npm",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["v22.21.1", "Version 5.9.2"]
+
+
 def test_success_leaves_a_read_only_mount_and_zero_containers(image: str) -> None:
     client = DockerTrialClient(
         image=image,

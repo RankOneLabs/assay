@@ -1,0 +1,8 @@
+{
+  "name": "assay-workflow-edit-fixture",
+  "version": "0.1.0",
+  "private": true,
+  "devDependencies": {
+    "typescript": "5.9.2"
+  }
+}
