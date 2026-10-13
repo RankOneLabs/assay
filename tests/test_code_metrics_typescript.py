@@ -1,6 +1,8 @@
 """TypeScript import graphs from pinned dependency-cruiser."""
 
+import json
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -170,6 +172,37 @@ def test_typescript_size_duplication_and_type_findings() -> None:
     assert report.typescript_metrics.type_errors == 1
     assert report.existing_metrics.radon_sloc is None
     assert report.existing_metrics.mypy_errors is None
+
+
+def test_tsx_jsx_is_checked_without_a_jsx_mode_error() -> None:
+    report = analyze(
+        {
+            "view.tsx": (
+                "declare global { namespace JSX { interface IntrinsicElements { div: {} } } }\n"
+                "export const view = <div />;\n"
+            )
+        }
+    )
+    assert report.typescript_metrics.type_errors == 0
+
+
+def test_typescript_compiler_uses_project_for_large_file_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {f"module_{index}.ts": "" for index in range(5000)}
+    seen: dict[str, Any] = {}
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen["command"] = command
+        seen["project"] = json.loads(Path(command[2]).read_text(encoding="utf-8"))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(tools.subprocess, "run", run)
+    assert tools._typescript_errors(tmp_path, files) == 0
+    assert len(seen["command"]) == 3
+    assert seen["command"][1] == "--project"
+    assert len(seen["project"]["files"]) == len(files)
+    assert seen["project"]["compilerOptions"]["jsx"] == "preserve"
 
 
 def test_typescript_patch_baselines_and_missing_values() -> None:

@@ -251,11 +251,29 @@ def _jscpd(root: Path, config: _Config) -> dict[str, Any]:
 def _typescript_errors(root: Path, files: dict[str, str]) -> int:
     """Count diagnostics from the locked compiler over the complete TS snapshot."""
     command = node_binary("tsc")
-    completed = subprocess.run(
-        [command, "--noEmit", "--skipLibCheck", "--strict", "--target", "es2022",
-         "--module", "nodenext", "--moduleResolution", "nodenext", *sorted(files)],
-        cwd=root, capture_output=True, text=True, check=False,
-    )  # fmt: skip
+    with tempfile.TemporaryDirectory() as directory:
+        project = Path(directory) / "tsconfig.json"
+        project.write_text(
+            json.dumps(
+                {
+                    "compilerOptions": {
+                        "noEmit": True,
+                        "skipLibCheck": True,
+                        "strict": True,
+                        "target": "es2022",
+                        "module": "nodenext",
+                        "moduleResolution": "nodenext",
+                        "jsx": "preserve",
+                    },
+                    "files": [str(root / path) for path in sorted(files)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            [command, "--project", str(project)],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
     if completed.returncode not in (0, 2):
         raise AnalyzerFailed(
             f"typescript failed: {completed.stderr.strip() or completed.stdout.strip()}"
