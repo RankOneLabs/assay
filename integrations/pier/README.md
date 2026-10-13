@@ -22,11 +22,17 @@ while trials are being served:
 - **mini-swe-agent** — commit `a83fcae82d2a08f0ee0c688f9d137b3566c097f8`
   (tag `v2.4.6`), pinned in `pyproject.toml` and resolved into `uv.lock`.
 - **Pier** — see [Pier revision](#pier-revision).
-- **Bridge image digest** — built from `Dockerfile`. A reference build
-  (`docker build -t assay-pier-bridge:test .`) produced
-  `sha256:b3e07726d3e92731c1ac1f934d27457a6545a52660af484fd67fb092cf09dc3f`.
-  Rebuilding from the same lock reproduces the dependency set but not
-  necessarily the same image ID, so the lock digest is the durable identity.
+- **Bridge image digest** — built from `Dockerfile` and read from that build
+  with `docker image inspect --format '{{.Id}}' assay-pier-bridge:test`.
+  `identity.bind_bridge_identity(manifest, image_ref)` fills this field from
+  inspection and raises `ImageDigestMismatchError` if a manifest declares a
+  different digest. Rebuilds may have different image IDs, even with the same
+  dependency locks, and therefore form different fixtures.
+
+The image adds Node v22.21.1 from a digest-pinned upstream image and
+TypeScript 5.9.2 at build time. No trial calls a package manager. The workflow
+edit fixture has not yet committed its own Node dependency lockfiles; its
+dependency tree must be added to this build when those manifests exist.
 
 `docker run --rm --network none assay-pier-bridge:test` starts and exits 0,
 confirming the image never installs or resolves anything at trial time.

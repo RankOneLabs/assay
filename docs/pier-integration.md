@@ -2,7 +2,15 @@
 
 Pier is the third-party (`datacurve-pier`) agent-execution provider Assay drives
 through the isolated [`integrations/pier`](../integrations/pier/README.md)
-bridge project. The bridge has its own lock and qualification script:
+bridge project. The bridge has its own lock and qualification script.
+
+For a workflow fixture, build the bridge image before finalizing its manifest,
+then call `assay_pier_bridge.identity.bind_bridge_identity(manifest, image_ref)`.
+It reads `docker image inspect --format '{{.Id}}'` and binds that observed
+digest into `BridgeIdentity`; a different declared digest raises
+`ImageDigestMismatchError`. Record a new fixture identity after every rebuild.
+
+Qualification commands:
 
 ```sh
 uv sync --locked --extra review --extra legacy
