@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ def _manifest() -> FixtureManifest:
         schema_version="assay-fixture-manifest/0.1.0",
         checkpoint_sha="a" * 40,
         included_paths=("src/", "package.json"),
-        excluded_paths=("private/", "tests/hidden/"),
+        excluded_paths=("src/private/", "tests/hidden/"),
         dependency_lock_digests={"package-lock.json": _digest("locked npm tree")},
         observed_runtime_image_digest=_digest("inspected image"),
         normalization_diff="removed generated cache\n",
@@ -79,16 +80,61 @@ def test_hidden_assets_are_digest_only_and_absent_from_same_fixture_package(tmp_
     assert wire["rubric"] == _digest(hidden["rubric"])
     assert all(content not in json.dumps(wire) for content in hidden.values())
 
-    root = tmp_path / "arm"
-    root.mkdir()
-    (root / "workflow.ts").write_text("export const workflow = 1;\n", encoding="utf-8")
-    package = build_package(
-        cell_id="s1:mess-00:w0", task=manifest.task_prompt, repository_root=root
-    )
-    gate_package(package, expected_digest=package.manifest_digest)
-    package_text = "\n".join(package.as_mapping().values())
+    fixture_root = tmp_path / "fixture"
+    visible = {
+        "src/workflow.ts": "export const workflow = 1;\n",
+        "package.json": '{"name":"workflow-fixture"}\n',
+    }
+    private = {
+        "tests/hidden/hidden_tests.txt": hidden["hidden_tests"],
+        "src/private/reference_patch.txt": hidden["reference_patch"],
+        "src/private/negative_patches.txt": hidden["negative_patches"],
+        "src/private/rubric.txt": hidden["rubric"],
+    }
+    for path, content in {**visible, **private}.items():
+        target = fixture_root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    def under(path: str, selected: tuple[str, ...]) -> bool:
+        return any(
+            path == entry.rstrip("/") or path.startswith(entry.rstrip("/") + "/")
+            for entry in selected
+        )
+
+    def package_from_paths(paths: tuple[str, ...], excluded: tuple[str, ...]) -> dict[str, str]:
+        root = tmp_path / "arm"
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir()
+        for source in fixture_root.rglob("*"):
+            if not source.is_file():
+                continue
+            relative = source.relative_to(fixture_root).as_posix()
+            if under(relative, paths) and not under(relative, excluded):
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+        package = build_package(
+            cell_id="s1:mess-00:w0", task=manifest.task_prompt, repository_root=root
+        )
+        gate_package(package, expected_digest=package.manifest_digest)
+        return package.as_mapping()
+
+    assert under("src/private/reference_patch.txt", manifest.included_paths)
+    assert under("src/private/reference_patch.txt", manifest.excluded_paths)
+    packaged_files = package_from_paths(manifest.included_paths, manifest.excluded_paths)
+    assert {path for path in packaged_files if path.startswith("workspace/")} == {
+        f"workspace/{path}" for path in visible
+    }
+    package_text = "\n".join(packaged_files.values())
     assert all(content not in package_text for content in hidden.values())
     assert all(_digest(content) not in package_text for content in hidden.values())
+
+    # This control shows the same fixture would leak when the overlapping
+    # exclusion is lost; the absence check above must remain sensitive to it.
+    leaky_files = package_from_paths(manifest.included_paths, ())
+    assert hidden["reference_patch"] in "\n".join(leaky_files.values())
 
 
 @pytest.mark.parametrize("section", ["observed_runtime_image_digest", "routing_config_digest"])

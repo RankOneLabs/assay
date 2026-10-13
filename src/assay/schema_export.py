@@ -98,7 +98,7 @@ def _schema_document(
 def schema_documents() -> dict[str, bytes]:
     documents = {}
     for name, model in SCHEMA_MODELS.items():
-        schema = _schema_document(name, model, require_version=name == "assay-fixture-manifest")
+        schema = _schema_document(name, model)
         documents[f"{name}.schema.json"] = (json.dumps(schema, indent=2) + "\n").encode()
     for name, model in PLAN_SCHEMA_MODELS.items():
         schema = _schema_document(name, model, require_version=True)
