@@ -34,7 +34,14 @@ from jig.tools.registry import ToolRegistry
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from assay.canonical import canonical_json
-from assay.execution import Accounting, WorkerFailure, WorkerResult, WorkerSuccess
+from assay.execution import (
+    Accounting,
+    AdmissionHalt,
+    AdmissionLedger,
+    WorkerFailure,
+    WorkerResult,
+    WorkerSuccess,
+)
 from assay.models import WireModel
 from assay.repository import validate_repository
 
@@ -236,20 +243,39 @@ class _Trace(TracingLogger):
 class _Admission:
     def __init__(self, settings: PilotSettings) -> None:
         self.settings = settings
+        self.ledger = AdmissionLedger(
+            max_requests=settings.max_total_requests,
+            max_spend_usd=settings.max_spend_usd,
+            request_cost_bound_usd=settings.request_cost_bound_usd,
+        )
         self.requests = 0
-        self.halted = False
+        self.halt: AdmissionHalt | None = None
+
+    @property
+    def halted(self) -> bool:
+        return self.halt is not None
 
     def reserve(self) -> WorkerFailure | None:
-        # No await between checking and reserving: atomic on the run's event loop.
-        if self.halted:
-            return WorkerFailure("BudgetHalted", "a previous request has uncertain billing")
-        if self.requests >= self.settings.max_total_requests:
-            return WorkerFailure("RequestLimit", "authorized request count exhausted")
-        if (self.requests + 1) * self.settings.request_cost_bound_usd > self.settings.max_spend_usd:
-            return WorkerFailure("SpendLimit", "insufficient unreserved budget")
-        self.requests += 1
-        # Reservations are never refunded, even on cancellation/provider failure.
+        # The shared ledger has no await between checking and reserving.
+        refused = self.ledger.reserve("request")
+        self.requests = self.ledger.requests
+        if refused is not None:
+            self.halt = refused
+            error_type = (
+                "BudgetHalted"
+                if refused.code == "billing_uncertain"
+                else "SpendLimit"
+                if refused.code == "budget_exhausted"
+                else "RequestLimit"
+            )
+            return WorkerFailure(error_type, refused.message, accounting=refused.accounting)
+        # Reservations are never refunded, including failed and retried requests.
         return None
+
+    def uncertain(self) -> None:
+        self.halt = self.ledger.halt = AdmissionHalt(
+            "billing_uncertain", "a dispatched request has uncertain billing"
+        )
 
 
 class _RequestFailed(Exception):
@@ -286,7 +312,8 @@ class _BoundedClient(LLMClient):
                 if isinstance(response, CompletionNotSent):
                     self.not_sent += 1
                 else:
-                    self.uncertain = self.admission.halted = True
+                    self.uncertain = True
+                    self.admission.uncertain()
                 return response
             usage = response.usage
             for value in (usage.input_tokens, usage.output_tokens):
@@ -307,10 +334,12 @@ class _BoundedClient(LLMClient):
                 raise ValueError("provider cost exceeded the declared request bound")
             return response
         except asyncio.CancelledError:
-            self.uncertain = self.admission.halted = True
+            self.uncertain = True
+            self.admission.uncertain()
             raise
         except Exception as error:
-            self.uncertain = self.admission.halted = True
+            self.uncertain = True
+            self.admission.uncertain()
             return WorkerFailure(
                 type(error).__name__, str(error), accounting=Accounting(coverage="uncertain")
             )
@@ -501,11 +530,18 @@ class ConsistencyWorker:
                 diagnostics = {"capture_failed": True}
             if diagnostics is not None:
                 detail["provider_diagnostics"] = diagnostics
-        return dataclasses.replace(
+        finished = dataclasses.replace(
             result,
             trace=detail,
             accounting=Accounting() if bounded is None else bounded.accounting(),
         )
+        if self._admission.halt is not None:
+            raise AdmissionHalt(
+                self._admission.halt.code,
+                self._admission.halt.message,
+                accounting=finished.accounting,
+            )
+        return finished
 
 
 def _combined_accounting(parts: list[Accounting]) -> Accounting:
@@ -584,14 +620,21 @@ class ChainWorker:
         traces: list[Any] = []
         parts: list[Accounting] = []
         for step in steps:
-            result = await self.inner.run(
-                input_value={
-                    "task": {**task, "instruction": step["instruction"]},
-                    "repository": dict(repository),
-                    "base_subject_ref": input_value["base_subject_ref"],
-                },
-                arm_id=arm_id,
-            )
+            try:
+                result = await self.inner.run(
+                    input_value={
+                        "task": {**task, "instruction": step["instruction"]},
+                        "repository": dict(repository),
+                        "base_subject_ref": input_value["base_subject_ref"],
+                    },
+                    arm_id=arm_id,
+                )
+            except AdmissionHalt as halt:
+                raise AdmissionHalt(
+                    halt.code,
+                    halt.message,
+                    accounting=_combined_accounting([*parts, halt.accounting]),
+                ) from halt
             traces.append(result.trace)
             parts.append(result.accounting)
             if isinstance(result, WorkerFailure):

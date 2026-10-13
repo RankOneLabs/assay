@@ -29,6 +29,7 @@ from assay.models import (
     ExecutionOutcome,
     ExecutionPlan,
     ExecutionPlanV2,
+    ExecutionPlanV3,
     ReportConfig,
     RunManifest,
     StudySnapshot,
@@ -44,12 +45,13 @@ SCHEMA_MODELS: dict[str, type[WireModel]] = {
     "assay-study-snapshot": StudySnapshot,
 }
 
-# The execution plan is dual-versioned: each wire shape gets its own pinned
+# Each execution-plan wire shape gets its own pinned
 # schema document, and the unversioned name is a discriminator-selected oneOf
-# over both, so existing consumers of "assay-execution-plan" keep resolving.
+# over all versions, so existing consumers keep resolving.
 PLAN_SCHEMA_MODELS: dict[str, type[WireModel]] = {
     "assay-execution-plan-v0.1": ExecutionPlan,
     "assay-execution-plan-v0.2": ExecutionPlanV2,
+    "assay-execution-plan-v0.3": ExecutionPlanV3,
 }
 
 CODE_METRICS_SCHEMA_MODELS: dict[str, dict[str, type[WireModel]]] = {
@@ -123,7 +125,7 @@ def schema_documents() -> dict[str, bytes]:
 def plan_schema_registry() -> Registry[Any]:
     """A registry the root ``assay-execution-plan.schema.json`` oneOf resolves against.
 
-    The root document's ``$ref``s point at the pinned v0.1/v0.2 documents by their
+    The root document's ``$ref``s point at the pinned versioned documents by their
     declared ``$id``; a validator loading only the root document cannot resolve those
     references without the sibling schemas registered offline first.
     """
