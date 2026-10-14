@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from ipaddress import IPv4Address, IPv4Network
 from pathlib import PurePosixPath
-from typing import Final, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import Field, model_validator
 
@@ -32,7 +32,7 @@ MAX_ARTIFACT_COUNT = 1_024
 
 ArtifactKind = Literal["raw_trajectory", "candidate", "result", "configuration", "transcript"]
 NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
-TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.2.0"
+TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.3.0"
 _LAN_NETWORKS = (
     IPv4Network("10.0.0.0/8"),
     IPv4Network("172.16.0.0/12"),
@@ -62,9 +62,10 @@ class TrialLimits(WireModel):
 
 
 class TrialRequest(WireModel):
-    schema_version: Literal["assay-pier-trial/0.2.0"] = "assay-pier-trial/0.2.0"
+    schema_version: Literal["assay-pier-trial/0.3.0"] = "assay-pier-trial/0.3.0"
     cell_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*:w[0-9]+$")
     package_digest: Sha256Ref
+    exchange: PierExchange
     model_route: ModelRoute
     limits: TrialLimits
     verify: Literal[False] = False
@@ -74,6 +75,10 @@ class TrialRequest(WireModel):
 
     @model_validator(mode="after")
     def closed_egress(self) -> TrialRequest:
+        if self.exchange.coordinate.id != self.cell_id:
+            raise ValueError("exchange coordinate does not match cell_id")
+        if self.exchange.binding.package_digest != self.package_digest:
+            raise ValueError("exchange package digest does not match package_digest")
         if self.network_policy == "egress-lan-host-port":
             if self.egress_host is None or self.egress_port is None:
                 raise ValueError("LAN posture requires egress_host and egress_port")
@@ -113,6 +118,59 @@ class EffectiveEnforcement(WireModel):
         ):
             raise ValueError("teardown cannot be complete with resources still remaining")
         return self
+
+
+class CandidateSubmission(WireModel):
+    kind: Literal["candidate"] = "candidate"
+    patch_ref: Sha256Ref
+    tree_digest: Sha256Ref
+    baseline_tree_digest: Sha256Ref
+
+
+CandidateCause = Literal[
+    "no_submission",
+    "symlink_submission",
+    "traversal",
+    "escaping_symlink",
+    "binary_payload",
+    "oversized_artifact",
+    "aggregate_artifact_limit",
+    "entry_limit",
+    "out_of_scope_edit",
+    "tampering",
+    "candidate_test_timeout",
+    "nonzero_exit",
+    "storage_exhausted",
+    "memory_limit",
+]
+InfrastructureCause = Literal[
+    "harness_deadline",
+    "cancelled",
+    "container_start",
+    "enforcement",
+    "unexpected_exception",
+    "mismatched_cell",
+]
+
+
+class CandidateFailure(WireModel):
+    kind: Literal["candidate_failure"] = "candidate_failure"
+    cause: CandidateCause
+    detail: str = ""
+    exception_type: str | None = None
+
+
+class InfrastructureFailure(WireModel):
+    kind: Literal["infrastructure_failure"] = "infrastructure_failure"
+    cause: InfrastructureCause
+    detail: str = ""
+    exception_type: str | None = None
+
+
+TrialOutcome = Annotated[
+    CandidateSubmission | CandidateFailure | InfrastructureFailure,
+    Field(discriminator="kind"),
+]
 
 
 # The manifest is what binds artifacts; it is never one of them. A "manifest"
@@ -177,6 +235,9 @@ def bind_exchange(*, coordinate: CellCoordinate, binding: RuntimeBinding) -> Pie
     return PierExchange(
         coordinate=coordinate, binding=binding, trial_name=trial_name_for(coordinate)
     )
+
+
+TrialRequest.model_rebuild()
 
 
 def exchanges_match(expected: PierExchange, actual: PierExchange) -> bool:
@@ -328,10 +389,7 @@ def reject_on_binding_mismatch(expected: RuntimeBinding, actual: RuntimeBinding)
 
 
 # mini-swe-agent's own terminal signal for the agent loop: only this exact
-# value means the agent actually produced and submitted a candidate. Every
-# other value (e.g. "LimitsExceeded", "Error") is a partial/failed run, and
-# Pier's own reported failure (a non-"succeeded" ``status``, a set
-# ``error_type``, or a missing ``submission_ref``) is independently terminal.
+# value means the agent produced and submitted a candidate.
 SUCCEEDED_EXIT_STATUS = "Submitted"
 
 
@@ -351,8 +409,8 @@ def mini_exit_status_from_result_bytes(result_bytes: bytes | None) -> str | None
 
     Returns ``None`` on anything but a clean top-level string value -- missing
     bytes, non-UTF-8, non-JSON, a non-object payload, or a non-string value.
-    ``bridge_reports_failure`` treats ``None`` as "not the succeeded sentinel",
-    so a malformed or absent result artifact is conservatively a failure.
+    ``None`` is not the succeeded sentinel, so a malformed or absent result
+    artifact is conservatively a failure.
     """
     if result_bytes is None:
         return None
@@ -364,25 +422,6 @@ def mini_exit_status_from_result_bytes(result_bytes: bytes | None) -> str | None
         return None
     status = value.get("exit_status")
     return status if isinstance(status, str) else None
-
-
-def bridge_reports_failure(
-    *,
-    status: str,
-    submission_ref: str | None,
-    error_type: str | None,
-    mini_exit_status: str | None,
-) -> bool:
-    """Both Pier's own trial status and mini's embedded exit_status must pass.
-
-    Mirrors ``assay_pier_bridge.protocol.TrialResult``'s own consistency rule
-    (a "succeeded" trial has a submission and no error; anything else is a
-    failure) as an independent, defense-in-depth check on this side of the
-    isolation boundary -- a bridge response is never trusted structurally
-    just because it claims ``status="succeeded"``.
-    """
-    pier_signal_ok = status == "succeeded" and submission_ref is not None and error_type is None
-    return not pier_signal_ok or mini_exit_status != SUCCEEDED_EXIT_STATUS
 
 
 __all__ = [
@@ -400,7 +439,6 @@ __all__ = [
     "PierExchange",
     "RuntimeBinding",
     "bind_exchange",
-    "bridge_reports_failure",
     "exchanges_match",
     "mini_exit_status_from_result_bytes",
     "reject_on_binding_mismatch",

@@ -46,7 +46,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(REPO_ROOT / "experiments"))
 sys.path.insert(0, str(BRIDGE_ROOT / "src"))
 
-import httpx  # noqa: E402
+import httpx  # noqa: E402, I001
 from assay_pier_bridge.container import (  # noqa: E402
     DockerTrialClient,
     docker_available,
@@ -57,7 +57,16 @@ from assay_pier_bridge.identity import (  # noqa: E402
     ImageInspectionError,
     bind_bridge_identity,
 )
-from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest  # noqa: E402
+from assay_pier_bridge.protocol import (  # noqa: E402
+    CandidateFailure as BridgeCandidateFailure,
+    CandidateSubmission as BridgeCandidateSubmission,
+    CellCoordinate as BridgeCellCoordinate,
+    ModelRoute,
+    PierExchange as BridgePierExchange,
+    RuntimeBinding as BridgeRuntimeBinding,
+    TrialLimits,
+    TrialRequest,
+)
 from assay_pier_bridge.provider import (  # noqa: E402
     MODEL,
     PROVIDER,
@@ -90,6 +99,7 @@ from assay.pier_protocol import (  # noqa: E402
     ArtifactEntry,
     ArtifactKind,
     ArtifactManifest,
+    CandidateSubmission,
     PierExchange,
     RuntimeBinding,
 )
@@ -101,6 +111,28 @@ from assay.runtime_inventory import (  # noqa: E402
 from assay.store import ObjectStore  # noqa: E402
 
 _ZERO_REF = "sha256:" + "0" * 64
+
+
+def _probe_exchange(cell_id: str, digest: str) -> BridgePierExchange:
+    subject, arm, repeat = cell_id.split(":")
+    coordinate = BridgeCellCoordinate(
+        subject_id=subject,
+        arm_id=arm,
+        worker_repeat=int(repeat[1:]),
+        realization_ref=_ZERO_REF,
+    )
+    return BridgePierExchange(
+        coordinate=coordinate,
+        binding=BridgeRuntimeBinding(
+            runtime_version=EXPECTED_BRIDGE_LOCK_DIGEST,
+            image_digest=_ZERO_REF,
+            configuration_ref=_ZERO_REF,
+            package_digest=digest,
+        ),
+        trial_name=f"{subject}-{arm}-{repeat}",
+    )
+
+
 _ORPHAN_PREFIX = "assay-pier-"
 # ModelRoute's fields are exact Literal types (mypy cannot check a
 # **Mapping[str, str] unpacking against them), so the route is still a
@@ -177,12 +209,13 @@ def _no_stray_containers(prefix: str = _ORPHAN_PREFIX) -> bool:
 
 def probe_pinned_revisions(m: Measurements) -> None:
     text = (BRIDGE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    pier_match = re.search(r'datacurve-pier==([0-9.]+)', text)
+    pier_match = re.search(r"datacurve-pier==([0-9.]+)", text)
     mini_match = re.search(r"mini-swe-agent\.git@([0-9a-f]{40})", text)
     if not pier_match or not mini_match:
         raise QualificationFailed(
-            "pinned_revisions", "integrations/pier/pyproject.toml no longer pins an exact "
-            "Pier version or mini-swe-agent commit"
+            "pinned_revisions",
+            "integrations/pier/pyproject.toml no longer pins an exact "
+            "Pier version or mini-swe-agent commit",
         )
     m.pier_revision = pier_match.group(1)
     m.mini_swe_agent_revision = mini_match.group(1)
@@ -285,14 +318,15 @@ def probe_trial_lifecycle(m: Measurements, *, image_tag: str) -> None:
     request = TrialRequest(
         cell_id="qualify:local:w0",
         package_digest=package_digest(_TRIAL_PACKAGE),
+        exchange=_probe_exchange("qualify:local:w0", package_digest(_TRIAL_PACKAGE)),
         model_route=_ROUTE,
         limits=_production_trial_limits(),
     )
     result = runtime.run_cell(request)
-    if result.status != "succeeded":
+    if not isinstance(result.outcome, BridgeCandidateSubmission):
         raise QualificationFailed(
             "trial_lifecycle",
-            f"qualification trial did not succeed: {result.status}/{result.error_message}",
+            f"qualification trial did not succeed: {result.outcome}",
         )
     effective = result.effective
     if effective.uid != EXPECTED_UID or effective.gid != EXPECTED_GID:
@@ -371,7 +405,7 @@ def probe_storage_enforcement(image_tag: str) -> None:
             "/bin/sh",
             "-c",
             "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null; "
-            "status=$?; printf '%s' \"$status\" > /submission/output; exit \"$status\"",
+            'status=$?; printf \'%s\' "$status" > /submission/output; exit "$status"',
         ],
         # Same explicit-empty-credential guarantee as probe_trial_lifecycle.
         openrouter_api_key="",
@@ -380,17 +414,20 @@ def probe_storage_enforcement(image_tag: str) -> None:
     request = TrialRequest(
         cell_id="qualify:local:w1",
         package_digest=package_digest(_TRIAL_PACKAGE),
+        exchange=_probe_exchange("qualify:local:w1", package_digest(_TRIAL_PACKAGE)),
         model_route=_ROUTE,
         limits=TrialLimits(
             cpu=1, memory_mb=256, pids=32, timeout_s=30, storage_mb=_STORAGE_PROBE_LIMIT_MB
         ),
     )
     result = runtime.run_cell(request)
-    if result.status != "failed" or result.error_type != "StorageExhaustedError":
+    if (
+        not isinstance(result.outcome, BridgeCandidateFailure)
+        or result.outcome.cause != "storage_exhausted"
+    ):
         raise QualificationFailed(
             "storage_enforcement",
-            "storage probe did not report trial ENOSPC: "
-            f"{result.status}/{result.error_type}/{result.error_message}",
+            f"storage probe did not report trial ENOSPC: {result.outcome}",
         )
     if not result.effective.teardown_completed or result.effective.containers_remaining != 0:
         raise QualificationFailed(
@@ -546,11 +583,12 @@ class _FakeBridgeHandle:
         artifact_bytes["manifest.json"] = manifest.model_dump_json().encode()
         return BridgeTrialResult(
             exchange=self.exchange,
-            status="succeeded",
-            submission_ref=submission_ref,
+            outcome=CandidateSubmission(
+                patch_ref=submission_ref,
+                tree_digest="sha256:" + "0" * 64,
+                baseline_tree_digest="sha256:" + "0" * 64,
+            ),
             usage={"prompt_tokens": 10.0, "completion_tokens": 5.0, "cost_usd": 0.0021},
-            error_type=None,
-            error_message=None,
             artifacts=artifact_bytes,
         )
 
@@ -653,18 +691,14 @@ async def _probe_adapter_boundary(m: Measurements) -> None:
     except asyncio.CancelledError:
         pass
     else:
-        raise QualificationFailed(
-            "cancellation", "adapter did not propagate operator cancellation"
-        )
+        raise QualificationFailed("cancellation", "adapter did not propagate operator cancellation")
     if cancel_bridge.teardown_calls != 1:
         raise QualificationFailed(
             "cancellation", "adapter did not tear down the handle on cancellation"
         )
 
     traces = [
-        json.loads(path.read_bytes())
-        for path in sorted(store.objects.iterdir())
-        if path.is_file()
+        json.loads(path.read_bytes()) for path in sorted(store.objects.iterdir()) if path.is_file()
     ]
     if not any(
         isinstance(trace, dict)

@@ -230,6 +230,53 @@ async def test_cancellation_with_no_partial_evidence_records_no_refs(tmp_path: P
     assert trace["partial_artifact_refs"] == {}
 
 
+async def test_bridge_exception_publishes_artifacts_carried_by_typed_error(tmp_path: Path) -> None:
+    class Rejected(RuntimeError):
+        def __init__(self) -> None:
+            super().__init__("candidate rejected")
+            self.artifacts = {"output": b"retained bytes"}
+
+    class Handle:
+        def run(self) -> BridgeTrialResult:
+            raise Rejected()
+
+        def teardown(self) -> BridgeEffectiveEnforcement:
+            return BridgeEffectiveEnforcement(
+                containers_remaining=0, child_processes_remaining=0, teardown_completed=True
+            )
+
+    class Bridge:
+        def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> Handle:
+            return Handle()
+
+    adapter = _adapter(tmp_path, Bridge())
+    result = await adapter.run_cell(
+        input_value={"task": "do it", "repository": {"a.py": "x = 1\n"}},
+        coordinate=_coordinate(),
+    )
+    assert isinstance(result, WorkerFailure)
+    assert result.trace is not None
+    ref = result.trace["artifact_refs"]["output"]
+    envelope = json.loads(adapter.store.read_bytes(ref))
+    assert envelope["content_base64"] == "cmV0YWluZWQgYnl0ZXM="
+
+
+def test_raw_worktree_rejection_is_namespaced_before_publication() -> None:
+    class Rejected(RuntimeError):
+        origin = "working_copy"
+        artifacts = {"output": b"working-copy bytes"}
+
+    class Handle:
+        def partial_artifacts(self) -> dict[str, bytes]:
+            return {"output": b"submission bytes", "rejected_worktree/output": b"spoof"}
+
+    recovered = PierAdapter._recover_partial_artifacts(Handle(), Rejected())  # type: ignore[arg-type]
+    assert recovered == {
+        "output": b"submission bytes",
+        "rejected_worktree/output": b"working-copy bytes",
+    }
+
+
 async def test_blank_task_rejected_before_dispatch_reports_unavailable_accounting(
     tmp_path: Path,
 ) -> None:

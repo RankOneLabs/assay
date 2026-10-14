@@ -28,19 +28,28 @@ from pathlib import Path
 from types import MappingProxyType
 
 from assay_pier_bridge.__main__ import FALLBACK_SYSTEM_PROMPT, run_one_cell
-from assay_pier_bridge.identity import digest_bytes, package_digest
-from assay_pier_bridge.paths import collect_artifacts
+from assay_pier_bridge.evidence import seal_artifacts
+from assay_pier_bridge.identity import canonical_json, digest_bytes, package_digest
+from assay_pier_bridge.paths import (
+    ArtifactCollectionRejected,
+    collect_artifacts,
+    materialize_under,
+    regular_tree,
+    submission_patch,
+)
 from assay_pier_bridge.protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
     MAX_SUBMISSION_ENTRIES,
+    CandidateSubmission,
     EffectiveEnforcement,
     TrialLimits,
     TrialRequest,
     TrialResult,
     TrialUsage,
 )
+from assay_pier_bridge.runtime import CandidateTrialError
 
 INSTRUCTION_PATH = "instruction.md"
 _DEFAULT_RUNS_ROOT = Path(__file__).resolve().parents[2] / ".trial-runs"
@@ -98,6 +107,17 @@ class GuardedCompletionTrialHandle:
         object.__setattr__(self, "package", _validated_snapshot(self.request, self.package))
 
     def run(self) -> TrialResult:
+        repository = {
+            path[len("workspace/") :]: content
+            for path, content in self.package.items()
+            if path.startswith("workspace/")
+        }
+        baseline = self.submission_dir.parent / f"{self.submission_dir.name}-baseline"
+        worktree = self.submission_dir / "worktree"
+        baseline.mkdir()
+        worktree.mkdir()
+        materialize_under(baseline, repository)
+        materialize_under(worktree, repository)
         instruction = self.package[INSTRUCTION_PATH]
         response = run_one_cell(
             instruction=instruction,
@@ -105,24 +125,74 @@ class GuardedCompletionTrialHandle:
             api_key=self.api_key,
             submission_output=self.submission_dir / "output",
         )
-        # Collected from the submission directory rather than from ``source``
-        # directly, so this client's artifact paths are keyed exactly like
-        # ``DockerTrialHandle``'s: both read back the same /submission
-        # contract, and a consumer must not have to know which one ran.
+        marker = self.submission_dir / "output"
+        if marker.is_symlink():
+            raise CandidateTrialError(
+                "symlink_submission", "submission marker is a symlink",
+                artifacts=self._retained_submission(),
+            )
+        if not marker.is_file():
+            raise CandidateTrialError(
+                "no_submission", "guarded route wrote no submission marker",
+                artifacts=self._retained_submission(),
+            )
+        expected_baseline = {path: content.encode("utf-8") for path, content in repository.items()}
+        if regular_tree(baseline) != expected_baseline:
+            raise CandidateTrialError(
+                "tampering", "immutable arm baseline changed during guarded trial",
+                artifacts=self._retained_submission(),
+            )
+        if response.submission.source:
+            (worktree / "output").write_text(response.submission.source, encoding="utf-8")
+        patch = submission_patch(baseline, worktree)
+        (self.submission_dir / "trajectory.json").write_bytes(
+            canonical_json(
+                {"messages": [response.message], "submitted_call_id": response.submission.call_id}
+            )
+        )
+        (self.submission_dir / "result.json").write_bytes(
+            canonical_json(
+                {
+                    "exit_status": "Submitted",
+                    "usage": {
+                        "prompt_tokens": response.usage.prompt_tokens,
+                        "completion_tokens": response.usage.completion_tokens,
+                        "cost_usd": response.usage.cost_usd,
+                        "requests": 1,
+                    },
+                }
+            )
+        )
+        (self.submission_dir / "configuration.json").write_bytes(
+            canonical_json(
+                {
+                    "model_route": self.request.model_route.model_dump(mode="json"),
+                    "limits": self.request.limits.model_dump(mode="json"),
+                }
+            )
+        )
         artifacts = collect_artifacts(
             self.submission_dir,
             max_bytes=MAX_ARTIFACT_BYTES,
             max_aggregate_bytes=MAX_AGGREGATE_ARTIFACT_BYTES,
             max_entries=MAX_SUBMISSION_ENTRIES,
             aggregate_exempt_path=MANIFEST_PATH,
+            excluded_roots=frozenset({"worktree"}),
         )
-        output = artifacts.get("output")
-        if output is None:
-            raise RuntimeError("guarded route wrote no collectable submission")
+        if "candidate.patch" in artifacts:
+            raise CandidateTrialError(
+                "tampering", "candidate attempted to replace host patch", artifacts=artifacts
+            )
+        artifacts["candidate.patch"] = patch.patch
+        artifacts = seal_artifacts(self.request.exchange, artifacts)
+        (self.submission_dir / MANIFEST_PATH).write_bytes(artifacts[MANIFEST_PATH])
         return TrialResult(
             cell_id=self.request.cell_id,
-            status="succeeded",
-            submission_ref=digest_bytes(output),
+            outcome=CandidateSubmission(
+                patch_ref=digest_bytes(patch.patch),
+                tree_digest=patch.final_tree_digest,
+                baseline_tree_digest=patch.baseline_tree_digest,
+            ),
             usage=TrialUsage(
                 prompt_tokens=response.usage.prompt_tokens,
                 completion_tokens=response.usage.completion_tokens,
@@ -133,11 +203,32 @@ class GuardedCompletionTrialHandle:
             artifacts=artifacts,
         )
 
+    def partial_artifacts(self) -> dict[str, bytes]:
+        return collect_artifacts(
+            self.submission_dir,
+            max_bytes=MAX_ARTIFACT_BYTES,
+            max_aggregate_bytes=MAX_AGGREGATE_ARTIFACT_BYTES,
+            max_entries=MAX_SUBMISSION_ENTRIES,
+            aggregate_exempt_path=MANIFEST_PATH,
+            excluded_roots=frozenset({"worktree"}),
+        )
+
+    def _retained_submission(self) -> dict[str, bytes]:
+        try:
+            return self.partial_artifacts()
+        except ArtifactCollectionRejected as rejection:
+            return rejection.artifacts
+        except Exception:
+            return {}
+
     def effective_enforcement(self) -> EffectiveEnforcement:
         return _host_enforcement(self.request.limits)
 
     def teardown(self) -> EffectiveEnforcement:
         shutil.rmtree(self.submission_dir, ignore_errors=True)
+        shutil.rmtree(
+            self.submission_dir.parent / f"{self.submission_dir.name}-baseline", ignore_errors=True
+        )
         return _host_enforcement(self.request.limits)
 
 

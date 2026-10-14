@@ -30,7 +30,13 @@ from assay.models import (
     StudySnapshot,
     Subject,
 )
-from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange, RuntimeBinding
+from assay.pier_protocol import (
+    ArtifactEntry,
+    ArtifactManifest,
+    CandidateSubmission,
+    PierExchange,
+    RuntimeBinding,
+)
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 
@@ -115,10 +121,11 @@ class _FixedBridge:
         return _Handle(
             BridgeTrialResult(
                 exchange=exchange,
-                status="succeeded",
-                submission_ref=digest_bytes(artifacts["candidate.txt"]),
-                error_type=None,
-                error_message=None,
+                outcome=CandidateSubmission(
+                    patch_ref=digest_bytes(artifacts["candidate.txt"]),
+                    tree_digest="sha256:" + "0" * 64,
+                    baseline_tree_digest="sha256:" + "0" * 64,
+                ),
                 usage=self.usage,
                 artifacts=artifacts,
             )
@@ -175,6 +182,16 @@ async def test_uncertain_accounting_when_dispatched_without_usage(tmp_path: Path
     assert result.accounting.amount is None
 
 
+def test_local_token_usage_has_unavailable_cost() -> None:
+    from assay.adapters.pier import _accounting_from_usage
+
+    local = _accounting_from_usage({"prompt_tokens": 12, "completion_tokens": 7, "cost_usd": None})
+    assert local.usage == {"prompt_tokens": 12, "completion_tokens": 7}
+    assert local.amount is None
+    assert local.coverage == "unavailable"
+    assert _accounting_from_usage({"prompt_tokens": 12}).coverage == "uncertain"
+
+
 async def test_nonnumeric_cost_usd_is_uncertain_not_a_raised_error(tmp_path: Path) -> None:
     """``BridgeTrialResult`` is a local dataclass with no runtime validation of
     ``usage``; a malformed ``cost_usd`` must not raise out of ``_settle``."""
@@ -216,10 +233,11 @@ async def test_submission_ref_mismatched_with_candidate_bytes_is_rejected(tmp_pa
             return _Handle(
                 BridgeTrialResult(
                     exchange=exchange,
-                    status="succeeded",
-                    submission_ref="sha256:" + "9" * 64,
-                    error_type=None,
-                    error_message=None,
+                    outcome=CandidateSubmission(
+                        patch_ref="sha256:" + "9" * 64,
+                        tree_digest="sha256:" + "0" * 64,
+                        baseline_tree_digest="sha256:" + "0" * 64,
+                    ),
                     usage=None,
                     artifacts=artifacts,
                 )

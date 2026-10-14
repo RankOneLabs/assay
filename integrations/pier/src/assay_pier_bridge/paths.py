@@ -9,8 +9,35 @@ bridge project has no dependency edge back onto ``assay`` (see README.md).
 
 from __future__ import annotations
 
+import hashlib
+import subprocess
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
+
+MAX_ARTIFACT_BYTES = 8_000_000
+MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
+MAX_SUBMISSION_ENTRIES = 4_096
+
+
+class ArtifactCollectionRejected(ValueError):
+    """Bounded rejected evidence, available even when collection aborts."""
+
+    def __init__(
+        self,
+        cause: str,
+        message: str,
+        *,
+        artifacts: dict[str, bytes] | None = None,
+        rejected_path: str | None = None,
+        origin: str = "submission",
+    ) -> None:
+        super().__init__(message)
+        self.cause = cause
+        self.artifacts = artifacts or {}
+        self.rejected_path = rejected_path
+        self.origin = origin
 
 
 def safe_relative_path(raw_path: str) -> PurePosixPath:
@@ -49,6 +76,184 @@ def materialize_under(root: Path, files: Mapping[str, str]) -> None:
         full.write_text(content, encoding="utf-8")
 
 
+@dataclass(frozen=True, slots=True)
+class SubmissionPatch:
+    patch: bytes
+    baseline_tree_digest: str
+    final_tree_digest: str
+
+
+def regular_tree(root: Path) -> dict[str, bytes]:
+    """Read a bounded host-visible tree without following candidate-controlled links."""
+    files: dict[str, bytes] = {}
+    if root.is_symlink():
+        raise ArtifactCollectionRejected(
+            "escaping_symlink", f"symlinked working-copy root: {root}",
+            origin="working_copy",
+        )
+    if not root.is_dir():
+        raise ArtifactCollectionRejected(
+            "out_of_scope_edit", f"working-copy root is not a directory: {root}",
+            origin="working_copy",
+        )
+    paths: list[Path] = []
+    for path in root.rglob("*"):
+        paths.append(path)
+        if len(paths) > MAX_SUBMISSION_ENTRIES:
+            raise ArtifactCollectionRejected(
+                "entry_limit", "working copy exceeds the filesystem entry limit",
+                rejected_path=path.relative_to(root).as_posix(), origin="working_copy",
+            )
+    aggregate_bytes = 0
+    for path in sorted(paths):
+        raw_relative = path.relative_to(root).as_posix()
+        try:
+            relative = safe_relative_path(raw_relative).as_posix()
+        except ValueError as error:
+            raise ArtifactCollectionRejected(
+                "traversal", str(error), artifacts=files,
+                rejected_path=raw_relative, origin="working_copy"
+            ) from error
+        if relative.split("/", 1)[0] == ".git":
+            raise ArtifactCollectionRejected(
+                "out_of_scope_edit", f"reserved Git metadata path in submission: {relative}",
+                artifacts=files, rejected_path=relative, origin="working_copy",
+            )
+        if path.is_symlink():
+            raise ArtifactCollectionRejected(
+                "escaping_symlink",
+                f"escaping symlink in submission: {relative}",
+                artifacts=files,
+                rejected_path=relative,
+                origin="working_copy",
+            )
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise ArtifactCollectionRejected(
+                "out_of_scope_edit",
+                f"non-regular entry in submission: {relative}",
+                artifacts=files,
+                rejected_path=relative,
+                origin="working_copy",
+            )
+        remaining = MAX_AGGREGATE_ARTIFACT_BYTES - aggregate_bytes
+        size = path.lstat().st_size
+        if size > MAX_ARTIFACT_BYTES or size > remaining:
+            with path.open("rb") as source:
+                retained = source.read(min(MAX_ARTIFACT_BYTES, remaining))
+            cause = (
+                "oversized_artifact" if size > MAX_ARTIFACT_BYTES
+                else "aggregate_artifact_limit"
+            )
+            raise ArtifactCollectionRejected(
+                cause, f"working-copy file exceeds the byte limit: {relative}",
+                artifacts={**files, relative: retained},
+                rejected_path=relative, origin="working_copy",
+            )
+        with path.open("rb") as source:
+            data = source.read(min(MAX_ARTIFACT_BYTES, remaining) + 1)
+        if len(data) > MAX_ARTIFACT_BYTES or len(data) > remaining:
+            retained = data[:min(MAX_ARTIFACT_BYTES, remaining)]
+            cause = (
+                "oversized_artifact" if len(data) > MAX_ARTIFACT_BYTES
+                else "aggregate_artifact_limit"
+            )
+            raise ArtifactCollectionRejected(
+                cause, f"working-copy file exceeds the byte limit: {relative}",
+                artifacts={**files, relative: retained},
+                rejected_path=relative, origin="working_copy",
+            )
+        if b"\x00" in data:
+            raise ArtifactCollectionRejected(
+                "binary_payload",
+                f"binary payload in submission: {relative}",
+                artifacts=files,
+                rejected_path=relative,
+                origin="working_copy",
+            )
+        try:
+            data.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise ArtifactCollectionRejected(
+                "binary_payload",
+                f"binary payload in submission: {relative}",
+                artifacts=files,
+                rejected_path=relative,
+                origin="working_copy",
+            ) from error
+        files[relative] = data
+        aggregate_bytes += len(data)
+    return files
+
+
+def tree_digest(files: Mapping[str, bytes]) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(files, key=lambda value: value.encode("utf-8")):
+        safe_relative_path(path)
+        digest.update(path.encode("utf-8") + b"\x00100644\x00" + files[path] + b"\x00")
+    return f"sha256:{digest.hexdigest()}"
+
+
+def submission_patch(baseline: Path, final: Path) -> SubmissionPatch:
+    """Build a deterministic Git patch from observed trees, never an edit claim."""
+    before = regular_tree(baseline)
+    after = regular_tree(final)
+    with TemporaryDirectory(prefix="assay-patch-") as temporary:
+        checkout = Path(temporary)
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        # The candidate can edit .gitattributes. Its text/filter rules must
+        # never rewrite the bytes being observed or the patch cannot replay.
+        (checkout / ".git" / "info" / "attributes").write_text(
+            "* -text -filter -ident diff\n", encoding="ascii"
+        )
+        for path, data in before.items():
+            target = checkout / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            target.chmod(0o644)
+        subprocess.run(
+            ["git", "-c", "core.autocrlf=false", "add", "--all"], cwd=checkout, check=True
+        )
+        for path in before:
+            (checkout / path).unlink()
+        for path, data in after.items():
+            target = checkout / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            target.chmod(0o644)
+        new_paths = sorted(set(after) - set(before))
+        if new_paths:
+            subprocess.run(
+                ["git", "-c", "core.autocrlf=false", "add", "-N", "--", *new_paths],
+                cwd=checkout,
+                check=True,
+            )
+        diff = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "core.quotePath=false",
+                "-c",
+                "diff.algorithm=myers",
+                "diff",
+                "--binary",
+                "--full-index",
+                "--unified=3",
+                "--no-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+            ],
+            cwd=checkout,
+            capture_output=True,
+            check=True,
+        ).stdout
+        # Git's patch carries no clock or checkout path; all source modes are fixed.
+    return SubmissionPatch(diff, tree_digest(before), tree_digest(after))
+
+
 def collect_artifacts(
     root: Path,
     *,
@@ -56,6 +261,7 @@ def collect_artifacts(
     max_aggregate_bytes: int,
     max_entries: int,
     aggregate_exempt_path: str,
+    excluded_roots: frozenset[str] = frozenset(),
 ) -> dict[str, bytes]:
     """Read every regular file under ``root`` into a path -> bytes mapping.
 
@@ -74,17 +280,40 @@ def collect_artifacts(
     for path in root.rglob("*"):
         paths.append(path)
         if len(paths) > max_entries:
-            raise ValueError("trial submission exceeds the filesystem entry limit")
+            raise ArtifactCollectionRejected(
+                "entry_limit",
+                "trial submission exceeds the filesystem entry limit",
+                rejected_path=path.relative_to(root).as_posix(),
+            )
 
     artifacts: dict[str, bytes] = {}
     aggregate_bytes = 0
     for path in sorted(paths):
-        if path.is_symlink() or not path.is_file():
+        if path.relative_to(root).parts[0] in excluded_roots:
+            continue
+        if path.is_symlink():
+            raise ArtifactCollectionRejected(
+                "escaping_symlink",
+                f"symlink in submission: {path.relative_to(root)}",
+                artifacts=artifacts,
+                rejected_path=path.relative_to(root).as_posix(),
+            )
+        if not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
         if path.lstat().st_size > max_bytes:
-            raise ValueError(f"trial artifact exceeds the byte limit: {relative}")
-        safe_relative_path(relative)
+            raise ArtifactCollectionRejected(
+                "oversized_artifact",
+                f"trial artifact exceeds the byte limit: {relative}",
+                artifacts=artifacts,
+                rejected_path=relative,
+            )
+        try:
+            safe_relative_path(relative)
+        except ValueError as error:
+            raise ArtifactCollectionRejected(
+                "traversal", str(error), artifacts=artifacts, rejected_path=relative
+            ) from error
         remaining = (
             max_bytes
             if relative == aggregate_exempt_path
@@ -94,8 +323,18 @@ def collect_artifacts(
             data = artifact_file.read(remaining + 1)
         if len(data) > remaining:
             if relative == aggregate_exempt_path or remaining == max_bytes:
-                raise ValueError(f"trial artifact exceeds the byte limit: {relative}")
-            raise ValueError("trial artifacts exceed the aggregate byte limit")
+                raise ArtifactCollectionRejected(
+                    "oversized_artifact",
+                    f"trial artifact exceeds the byte limit: {relative}",
+                    artifacts={**artifacts, relative: data[:max_bytes]},
+                    rejected_path=relative,
+                )
+            raise ArtifactCollectionRejected(
+                "aggregate_artifact_limit",
+                "trial artifacts exceed the aggregate byte limit",
+                artifacts={**artifacts, relative: data[:remaining]},
+                rejected_path=relative,
+            )
         artifacts[relative] = data
         if relative != aggregate_exempt_path:
             aggregate_bytes += len(data)

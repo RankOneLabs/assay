@@ -15,7 +15,6 @@ from assay.pier_protocol import (
     PierExchange,
     RuntimeBinding,
     bind_exchange,
-    bridge_reports_failure,
     reject_on_binding_mismatch,
     trial_name_for,
     verify_artifact_bytes,
@@ -71,35 +70,6 @@ def test_binding_mismatch_is_rejected() -> None:
 
 def test_binding_match_is_accepted() -> None:
     reject_on_binding_mismatch(_binding(), _binding())
-
-
-@pytest.mark.parametrize(
-    ("status", "submission_ref", "error_type", "mini_exit_status", "expected"),
-    [
-        ("succeeded", "sha256:" + "0" * 64, None, "Submitted", False),
-        ("succeeded", "sha256:" + "0" * 64, None, "LimitsExceeded", True),
-        ("succeeded", "sha256:" + "0" * 64, None, None, True),
-        ("succeeded", None, None, "Submitted", True),
-        ("succeeded", "sha256:" + "0" * 64, "SomeError", "Submitted", True),
-        ("failed", None, "SomeError", "Submitted", True),
-        ("timeout", None, "TrialTimeoutError", "Submitted", True),
-        ("cancelled", None, "TrialCancelledError", "Submitted", True),
-    ],
-)
-def test_bridge_reports_failure(
-    status: str,
-    submission_ref: str | None,
-    error_type: str | None,
-    mini_exit_status: str | None,
-    expected: bool,
-) -> None:
-    actual = bridge_reports_failure(
-        status=status,
-        submission_ref=submission_ref,
-        error_type=error_type,
-        mini_exit_status=mini_exit_status,
-    )
-    assert actual is expected
 
 
 def test_mini_exit_status_from_result_bytes_extracts_top_level_field() -> None:

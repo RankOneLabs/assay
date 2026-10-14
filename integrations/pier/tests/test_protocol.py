@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from assay_pier_bridge.protocol import (
+    CandidateSubmission,
     EffectiveEnforcement,
     ModelRoute,
     TrialLimits,
@@ -10,6 +11,7 @@ from assay_pier_bridge.protocol import (
     TrialUsage,
 )
 from pydantic import ValidationError
+from test_support import exchange_for
 
 ROUTE = ModelRoute(
     endpoint="https://openrouter.ai/api/v1",
@@ -17,6 +19,11 @@ ROUTE = ModelRoute(
     provider="amazon-bedrock",
 )
 LIMITS = TrialLimits(cpu=1, memory_mb=512, pids=32, timeout_s=120, storage_mb=64)
+
+
+def test_local_usage_can_report_tokens_without_a_price() -> None:
+    usage = TrialUsage(prompt_tokens=12, completion_tokens=7, requests=1)
+    assert usage.cost_usd is None
 
 
 def effective(**overrides: object) -> EffectiveEnforcement:
@@ -43,16 +50,31 @@ def test_trial_request_disables_verification_by_default() -> None:
     request = TrialRequest(
         cell_id="s1:a1:w0",
         package_digest="sha256:" + "0" * 64,
+        exchange=exchange_for("s1:a1:w0", "sha256:" + "0" * 64),
         model_route=ROUTE,
         limits=LIMITS,
     )
     assert request.verify is False
 
 
+def test_request_rejects_an_exchange_for_another_cell_or_package() -> None:
+    base = {
+        "cell_id": "s1:a1:w0",
+        "package_digest": "sha256:" + "0" * 64,
+        "model_route": ROUTE,
+        "limits": LIMITS,
+    }
+    with pytest.raises(ValidationError, match="coordinate does not match"):
+        TrialRequest(**base, exchange=exchange_for("s2:a1:w0", base["package_digest"]))
+    with pytest.raises(ValidationError, match="package digest does not match"):
+        TrialRequest(**base, exchange=exchange_for("s1:a1:w0", "sha256:" + "1" * 64))
+
+
 def test_network_postures_are_closed_and_lan_requires_one_host_port() -> None:
     base = {
         "cell_id": "s1:a1:w0",
         "package_digest": "sha256:" + "0" * 64,
+        "exchange": exchange_for("s1:a1:w0", "sha256:" + "0" * 64).model_dump(),
         "model_route": ROUTE.model_dump(),
         "limits": LIMITS.model_dump(),
     }
@@ -122,7 +144,7 @@ def test_trial_request_rejects_verify_true() -> None:
         )
 
 
-def test_succeeded_result_requires_submission_and_no_error() -> None:
+def test_result_rejects_legacy_success_fields() -> None:
     with pytest.raises(ValidationError):
         TrialResult(
             cell_id="s1:a1:w0",
@@ -132,7 +154,7 @@ def test_succeeded_result_requires_submission_and_no_error() -> None:
         )
 
 
-def test_failed_result_requires_error_and_no_submission() -> None:
+def test_result_rejects_legacy_failure_fields() -> None:
     with pytest.raises(ValidationError):
         TrialResult(
             cell_id="s1:a1:w0",
@@ -147,12 +169,32 @@ def test_failed_result_requires_error_and_no_submission() -> None:
 def test_succeeded_result_is_valid() -> None:
     result = TrialResult(
         cell_id="s1:a1:w0",
-        status="succeeded",
-        submission_ref="sha256:" + "1" * 64,
+        outcome=CandidateSubmission(
+            patch_ref="sha256:" + "1" * 64,
+            tree_digest="sha256:" + "2" * 64,
+            baseline_tree_digest="sha256:" + "3" * 64,
+        ),
         usage=TrialUsage(prompt_tokens=10, completion_tokens=5, cost_usd=0.001, requests=1),
         effective=effective(),
     )
-    assert result.status == "succeeded"
+    assert result.outcome.kind == "candidate"
+
+
+def test_empty_patch_has_only_one_candidate_ref() -> None:
+    from assay_pier_bridge.identity import digest_bytes
+
+    result = TrialResult(
+        cell_id="s1:a1:w0",
+        outcome=CandidateSubmission(
+            patch_ref=digest_bytes(b""),
+            tree_digest="sha256:" + "2" * 64,
+            baseline_tree_digest="sha256:" + "2" * 64,
+        ),
+        effective=effective(),
+        artifacts={"output": b"different blob", "candidate.patch": b""},
+    )
+    assert result.outcome.patch_ref == digest_bytes(result.artifacts["candidate.patch"])
+    assert not hasattr(result, "submission_ref")
 
 
 def test_effective_enforcement_rejects_dirty_teardown() -> None:

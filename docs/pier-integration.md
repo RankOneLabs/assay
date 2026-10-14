@@ -4,7 +4,7 @@ Pier is the third-party (`datacurve-pier`) agent-execution provider Assay drives
 through the isolated [`integrations/pier`](../integrations/pier/README.md)
 bridge project. The bridge has its own lock and qualification script.
 
-The trial envelope is `assay-pier-trial/0.2.0`. `/scratch` is a bind mount of
+The trial envelope is `assay-pier-trial/0.3.0`. `/scratch` is a bind mount of
 an ext4 filesystem image kept under the host trial run directory. The image's
 filesystem capacity is the storage quota; Docker's memory cgroup is a separate,
 higher ceiling. The host running `DockerTrialClient` needs noninteractive root
@@ -37,6 +37,61 @@ and rubric appear only as SHA-256 references. The exported schema is
 `schemas/assay-fixture-manifest.schema.json`; `fixture_identity` hashes the
 complete canonical document, so a changed image or routing digest changes
 the fixture identity.
+
+## Submission patch normalization
+
+The writable trial working copy starts as a byte-for-byte copy of the selected
+arm's immutable baseline. The host enumerates both trees after the agent stops;
+the agent's list of edited files is trajectory data only. Paths are canonical
+relative POSIX paths, sorted by their UTF-8 bytes. Each regular file has mode
+`100644`; symlinks, special files, non-UTF-8 source and NUL bytes are rejected.
+The top-level `.git` namespace is reserved for patch generation and is
+rejected in either tree. The host bounds each file to 8 MB, the full tree to
+32 MB, and enumeration to 4,096 entries before constructing the patch. The
+baseline is checked against the sealed package again before diffing.
+
+The captured patch is a Git unified diff with `diff --git`, `index`, `---`,
+`+++`, and `@@` lines. Index values are full lowercase Git SHA-1 blob IDs,
+with the all-zero ID on the absent side. Added and deleted files use
+`new file mode 100644` or `deleted file mode 100644`. Context is three lines;
+all patch metadata and separators use LF, with no timestamps. File content
+line endings are preserved by the diff and a missing final newline is marked
+with Git's `\\ No newline at end of file` marker. An unchanged tree has a
+zero-byte patch and is a valid no-op submission. The final tree digest is
+SHA-256 of the sorted sequence of `path UTF-8`, NUL, mode `100644`, NUL,
+file bytes, NUL. Applying the patch to the arm baseline must reproduce that
+digest. Evidence is read from the host-visible working copy before teardown.
+
+Every trial request carries the authorized exchange (cell coordinate, runtime
+binding, and trial name). On success, the bridge writes `manifest.json` after
+collecting the host-observed `candidate.patch`, trajectory, result, and
+resolved configuration. Its entries bind each artifact's path, kind, byte
+length, SHA-256 digest, and UTF-8 status to that exchange; the manifest never
+declares itself. Assay verifies those bytes and requires the candidate entry's
+digest to equal `outcome.patch_ref` before settling a success. The guarded
+single-call host route records any nonempty submitted source as an `output`
+file in its writable working copy, then derives the patch from that tree; a
+blank source leaves the working copy unchanged. Rejected working-copy bytes
+are retained under the bridge-owned `rejected_worktree/` prefix so a file
+named `output` or `manifest.json` cannot overwrite submission evidence.
+
+Trial usage keeps token counts even when the worker has no pricing model.
+Such a trial reports `cost_usd: null`; Assay records amount `null` with
+`unavailable` cost coverage. Missing usage, or usage that omitted its cost
+observation, has `uncertain` coverage. A measured OpenRouter amount remains a
+nonnegative USD value with `measured` coverage.
+
+Token counts and the patch have different provenance, and the distinction is
+deliberate. The patch and both tree digests are host observations: derived by
+diffing the working copy against the baseline, never from the agent's account
+of what it edited, so a candidate that under-reports or over-reports its edits
+still yields a patch matching the filesystem. Token counts are the opposite --
+the containerized worker attests them in its own `result.json`, and the host
+cannot independently verify them. They are read defensively by
+`assay_pier_bridge.evidence.worker_usage_from_result_bytes`: only clean
+nonnegative integers are accepted, and anything else yields no usage at all,
+which Assay reports as `uncertain`. That is why no local trial reports a cost
+figure: an unobservable cost stays `null` rather than becoming a measured zero.
 
 For a workflow fixture, build the bridge image before finalizing its manifest,
 then call `assay_pier_bridge.identity.bind_bridge_identity(manifest, image_ref)`.

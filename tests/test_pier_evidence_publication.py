@@ -33,6 +33,9 @@ from assay.pier_protocol import (
     REQUIRED_SUCCESS_KINDS,
     ArtifactEntry,
     ArtifactManifest,
+    CandidateFailure,
+    CandidateSubmission,
+    InfrastructureFailure,
     PierExchange,
     RuntimeBinding,
 )
@@ -131,10 +134,11 @@ class _Bridge:
         return _Handle(
             BridgeTrialResult(
                 exchange=exchange,
-                status="succeeded",
-                submission_ref=digest_bytes(artifacts["candidate.txt"]),
-                error_type=None,
-                error_message=None,
+                outcome=CandidateSubmission(
+                    patch_ref=digest_bytes(artifacts["candidate.txt"]),
+                    tree_digest="sha256:" + "0" * 64,
+                    baseline_tree_digest="sha256:" + "0" * 64,
+                ),
                 usage={"cost_usd": 0.01},
                 artifacts=artifacts,
             )
@@ -163,6 +167,36 @@ async def test_ordinary_success_publishes_every_required_ref(tmp_path: Path) -> 
     for field in REQUIRED_REF_FIELDS.values():
         assert result.output[field] is not None, field
     assert result.output["manifest_ref"] is not None
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        CandidateFailure(cause="candidate_test_timeout", detail="candidate test hung"),
+        InfrastructureFailure(
+            cause="harness_deadline", detail="harness timed out",
+            exception_type="TrialTimeoutError",
+        ),
+    ],
+)
+async def test_typed_failures_keep_their_cause_without_a_success_manifest(
+    tmp_path: Path, outcome: CandidateFailure | InfrastructureFailure
+) -> None:
+    class FailureBridge:
+        def create(self, *, exchange: PierExchange, package: dict[str, str]) -> PierBridgeHandle:
+            return _Handle(
+                BridgeTrialResult(
+                    exchange=exchange, outcome=outcome, usage=None,
+                    artifacts={"partial.txt": b"observed"},
+                )
+            )
+
+    result = await _run(_adapter(tmp_path, FailureBridge()))
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == type(outcome).__name__
+    assert result.message == outcome.detail
+    assert result.trace["bridge_outcome"] == outcome.model_dump(mode="json")
+    assert result.trace["artifact_refs"]["partial.txt"]
 
 
 async def test_an_undeclared_extra_cannot_crowd_out_declared_evidence(tmp_path: Path) -> None:
@@ -281,7 +315,7 @@ def test_every_required_kind_has_an_output_ref_field(kind: str) -> None:
 
 # "result" is excluded deliberately: an undeclared result artifact means no
 # result bytes, so mini's "Submitted" sentinel cannot be read and
-# ``bridge_reports_failure`` rejects the cell before the evidence check is
+# the outcome/result-status check rejects the cell before the evidence check is
 # reached. The test below pins that ordering so this exclusion stays a fact
 # about ``_settle`` rather than an assumption about it.
 @pytest.mark.parametrize("omitted", sorted(REQUIRED_SUCCESS_KINDS - {"result"}))

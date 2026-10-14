@@ -10,12 +10,19 @@ from assay_pier_bridge.container import (
     DockerTrialClient,
     DockerTrialHandle,
     MemoryLimitExceededError,
+    MountKindMismatchError,
     StorageExhaustedError,
     package_digest,
 )
 from assay_pier_bridge.identity import digest_bytes
 from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest
-from assay_pier_bridge.runtime import BridgeRuntime, TrialTimeoutError
+from assay_pier_bridge.runtime import (
+    BridgeRuntime,
+    CandidateTrialError,
+    InfrastructureTrialError,
+    TrialTimeoutError,
+)
+from test_support import exchange_for
 
 PACKAGE = {"instruction.md": "do the thing"}
 ROUTE = ModelRoute(
@@ -29,6 +36,7 @@ def _request() -> TrialRequest:
     return TrialRequest(
         cell_id="s1:a1:w0",
         package_digest=package_digest(PACKAGE),
+        exchange=exchange_for("s1:a1:w0", package_digest(PACKAGE)),
         model_route=ROUTE,
         limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=20, storage_mb=64),
     )
@@ -58,6 +66,8 @@ def _fake_successful_run(args: list[str], *, timeout: float) -> subprocess.Compl
         return _completed(args, stdout="false\n")
     if args[:4] == ["docker", "inspect", "--format", "{{.State.ExitCode}}"]:
         return _completed(args, stdout="0\n")
+    if args[:2] == ["docker", "logs"]:
+        return _completed(args)
     raise AssertionError(f"unexpected docker invocation: {args}")
 
 
@@ -166,9 +176,9 @@ def test_runtime_preserves_timeout_when_teardown_inspection_fails(
 
     result = runtime.run_cell(_request())
 
-    assert result.status == "timeout"
-    assert result.error_type == "TrialTimeoutError"
-    assert result.error_message == "original timeout"
+    assert result.outcome.cause == "harness_deadline"
+    assert result.outcome.exception_type == "TrialTimeoutError"
+    assert result.outcome.detail == "original timeout"
     assert len(removed) == 1
 
 
@@ -202,7 +212,7 @@ def test_driver_hashes_the_exact_bounded_output_bytes(
     result = handle.run()
 
     assert result.artifacts["output"] == output
-    assert result.submission_ref == digest_bytes(output)
+    assert result.outcome.patch_ref == digest_bytes(result.artifacts["candidate.patch"])
 
 
 @pytest.mark.parametrize(
@@ -247,14 +257,15 @@ def test_storage_cause_requires_trial_enospc_not_a_full_host_filesystem(
     monkeypatch.setattr(container, "_inspect", lambda name: observed)
     monkeypatch.setattr(container, "_container_count", lambda name: 1)
     if raises_storage:
-        with pytest.raises(StorageExhaustedError):
+        with pytest.raises(StorageExhaustedError) as rejected:
             handle.run()
+        assert rejected.value.cause == "storage_exhausted"
     elif exit_code:
         with pytest.raises(RuntimeError, match="exited nonzero"):
             handle.run()
     else:
         # A trial may fill its quota exactly and exit cleanly.
-        assert handle.run().status == "succeeded"
+        assert handle.run().outcome.kind == "candidate"
 
 
 @pytest.mark.parametrize(
@@ -293,11 +304,114 @@ def test_memory_failure_is_distinct_from_storage_exhaustion(
     monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
     monkeypatch.setattr(container, "_inspect", lambda name: observed)
     if oom_killed or "MemoryError" in log:
-        with pytest.raises(MemoryLimitExceededError):
+        with pytest.raises(MemoryLimitExceededError) as rejected:
             handle.run()
+        assert rejected.value.cause == "memory_limit"
     else:
         with pytest.raises(RuntimeError, match="exited nonzero"):
             handle.run()
+
+
+def test_container_start_and_enforcement_have_distinct_infrastructure_causes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handle = _handle(tmp_path)
+    monkeypatch.setattr(DockerTrialHandle, "_prepare_quota", lambda self, limits: None)
+    monkeypatch.setattr(container, "_run", lambda args, timeout: _completed(args, returncode=1))
+    with pytest.raises(InfrastructureTrialError) as start:
+        handle.run()
+    assert start.value.cause == "container_start"
+
+    monkeypatch.setattr(container, "_run", _fake_successful_run)
+    monkeypatch.setattr(container, "_inspect", lambda name: None)
+
+    def reject_enforcement(
+        self: DockerTrialHandle, observation: ContainerObservation | None
+    ) -> None:
+        raise MountKindMismatchError("mount mismatch")
+
+    monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", reject_enforcement)
+    with pytest.raises(InfrastructureTrialError) as enforcement:
+        handle.run()
+    assert enforcement.value.cause == "enforcement"
+
+
+def test_exit_124_reports_candidate_timeout_with_retained_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handle = _handle(tmp_path)
+    handle._command = ["timeout", "1s", "candidate-tests"]
+    (tmp_path / "assay-pier-test" / "submission" / "output").write_bytes(b"partial")
+    monkeypatch.setattr(DockerTrialHandle, "_prepare_quota", lambda self, limits: None)
+    monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
+    monkeypatch.setattr(
+        container,
+        "_inspect",
+        lambda name: ContainerObservation(
+            read_only_root=True,
+            workspace_mount_read_only=True,
+            uid=1000,
+            network_mode="none",
+            cpu_limit=1,
+            memory_limit_mb=256,
+            pids_limit=32,
+            storage_limit_mb=64,
+        ),
+    )
+
+    def trial_run(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        if args[:4] == ["docker", "inspect", "--format", "{{.State.ExitCode}}"]:
+            return _completed(args, stdout="124\n")
+        return _fake_successful_run(args, timeout=timeout)
+
+    monkeypatch.setattr(container, "_run", trial_run)
+    with pytest.raises(CandidateTrialError) as rejected:
+        handle.run()
+    assert rejected.value.cause == "candidate_test_timeout"
+    assert rejected.value.artifacts["output"] == b"partial"
+
+
+@pytest.mark.parametrize(
+    ("extra_path", "output", "cause"),
+    [
+        (None, b"\xff", "binary_payload"),
+        ("unexpected.txt", b"answer", "out_of_scope_edit"),
+        ("candidate.patch", b"answer", "tampering"),
+    ],
+)
+def test_observed_submission_rejections_retain_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra_path: str | None,
+    output: bytes,
+    cause: str,
+) -> None:
+    handle = _handle(tmp_path)
+    submission = tmp_path / "assay-pier-test" / "submission"
+    (submission / "output").write_bytes(output)
+    if extra_path is not None:
+        (submission / extra_path).write_bytes(b"forged")
+    monkeypatch.setattr(container, "_run", _fake_successful_run)
+    monkeypatch.setattr(DockerTrialHandle, "_prepare_quota", lambda self, limits: None)
+    monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
+    monkeypatch.setattr(
+        container,
+        "_inspect",
+        lambda name: ContainerObservation(
+            read_only_root=True,
+            workspace_mount_read_only=True,
+            uid=1000,
+            network_mode="none",
+            cpu_limit=1,
+            memory_limit_mb=256,
+            pids_limit=32,
+            storage_limit_mb=64,
+        ),
+    )
+    with pytest.raises(CandidateTrialError) as rejected:
+        handle.run()
+    assert rejected.value.cause == cause
+    assert rejected.value.artifacts["output"] == output
 
 
 @pytest.mark.parametrize(
