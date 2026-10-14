@@ -80,6 +80,7 @@ async def run_fake_docker(
     *,
     groups_to_run: tuple[WorkflowTestGroup, ...],
     expected_tree_digest: str | None = None,
+    patch: str = PATCH,
 ) -> correctness.WorkflowCorrectnessResult:
     async def check_runtime() -> None:
         return None
@@ -110,7 +111,7 @@ async def run_fake_docker(
         baseline=BASELINE,
         baseline_tree_digest=workflow_tree_digest(BASELINE),
         expected_tree_digest=expected_tree_digest or workflow_tree_digest(FINAL_TREE),
-        patch=PATCH,
+        patch=patch,
         groups=groups_to_run,
     )
 
@@ -212,4 +213,23 @@ async def test_patched_tree_must_match_declared_candidate_digest(
     )
     assert result.verdict == "unavailable"
     assert result.cause == "candidate_tree_digest_mismatch"
+    assert log.read_text().splitlines() == ["call"]
+
+
+@pytest.mark.asyncio
+async def test_empty_patch_is_graded_against_unchanged_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    result = await run_fake_docker(
+        monkeypatch,
+        runner,
+        tmp_path / "work",
+        groups_to_run=groups(),
+        expected_tree_digest=workflow_tree_digest(BASELINE),
+        patch="",
+    )
+    assert result.verdict == "incorrect"
+    assert all(group.status == "failed" for group in result.groups)
     assert log.read_text().splitlines() == ["call"]

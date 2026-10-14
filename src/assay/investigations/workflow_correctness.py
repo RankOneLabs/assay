@@ -109,7 +109,7 @@ def tree_digest(root):
         digest.update(name + b'\x00100644\x00' + path.read_bytes() + b'\x00')
     return 'sha256:' + digest.hexdigest()
 
-patch = subprocess.run(['git', 'apply', '-'], cwd=root,
+patch = subprocess.run(['git', 'apply', '--allow-empty', '-'], cwd=root,
                        input=payload['patch'].encode('utf-8'),
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 if patch.returncode:
@@ -206,7 +206,7 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
             frozen_paths = [path for group in groups for path in group.files]
             if len(set(frozen_paths)) != len(frozen_paths):
                 return unavailable("test_path_collision")
-            if not isinstance(patch, str) or not patch:
+            if not isinstance(patch, str):
                 return unavailable("invalid_patch")
         except ValueError:
             return unavailable("invalid_input")
