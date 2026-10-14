@@ -455,6 +455,18 @@ class PierAdapter:
                 accounting=dispatched_accounting,
             )
 
+        if isinstance(bridge_result.outcome, (CandidateFailure, InfrastructureFailure)):
+            outcome = bridge_result.outcome
+            trace = _trace(exchange, refs=refs, reason="bridge_reported_failure")
+            trace["bridge_outcome"] = outcome.model_dump(mode="json")
+            trace["cleanup_incomplete"] = cleanup_incomplete
+            return WorkerFailure(
+                type(outcome).__name__,
+                outcome.detail or outcome.cause,
+                trace=trace,
+                accounting=dispatched_accounting,
+            )
+
         manifest_bytes = bridge_result.artifacts.get(MANIFEST_PATH)
         if manifest_bytes is None:
             return WorkerFailure(
@@ -478,23 +490,11 @@ class PierAdapter:
 
         result_bytes = _bytes_for(manifest, bridge_result.artifacts, "result")
         mini_exit_status = mini_exit_status_from_result_bytes(result_bytes)
-        failed = (
-            not isinstance(bridge_result.outcome, CandidateSubmission)
-            or mini_exit_status != SUCCEEDED_EXIT_STATUS
-        )
-        if failed:
-            failure_detail = (
-                bridge_result.outcome.detail
-                if isinstance(bridge_result.outcome, (CandidateFailure, InfrastructureFailure))
-                else None
-            )
+        if mini_exit_status != SUCCEEDED_EXIT_STATUS:
             return WorkerFailure(
                 "BridgeReportedFailure",
-                failure_detail
-                or (
-                    f"Pier outcome={bridge_result.outcome.kind!r} "
-                    f"mini exit_status={mini_exit_status!r}"
-                ),
+                f"Pier outcome={bridge_result.outcome.kind!r} "
+                f"mini exit_status={mini_exit_status!r}",
                 trace=_trace(exchange, refs=refs, reason="bridge_reported_failure"),
                 accounting=dispatched_accounting,
             )

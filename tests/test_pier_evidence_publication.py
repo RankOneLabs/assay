@@ -33,7 +33,9 @@ from assay.pier_protocol import (
     REQUIRED_SUCCESS_KINDS,
     ArtifactEntry,
     ArtifactManifest,
+    CandidateFailure,
     CandidateSubmission,
+    InfrastructureFailure,
     PierExchange,
     RuntimeBinding,
 )
@@ -165,6 +167,36 @@ async def test_ordinary_success_publishes_every_required_ref(tmp_path: Path) -> 
     for field in REQUIRED_REF_FIELDS.values():
         assert result.output[field] is not None, field
     assert result.output["manifest_ref"] is not None
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        CandidateFailure(cause="candidate_test_timeout", detail="candidate test hung"),
+        InfrastructureFailure(
+            cause="harness_deadline", detail="harness timed out",
+            exception_type="TrialTimeoutError",
+        ),
+    ],
+)
+async def test_typed_failures_keep_their_cause_without_a_success_manifest(
+    tmp_path: Path, outcome: CandidateFailure | InfrastructureFailure
+) -> None:
+    class FailureBridge:
+        def create(self, *, exchange: PierExchange, package: dict[str, str]) -> PierBridgeHandle:
+            return _Handle(
+                BridgeTrialResult(
+                    exchange=exchange, outcome=outcome, usage=None,
+                    artifacts={"partial.txt": b"observed"},
+                )
+            )
+
+    result = await _run(_adapter(tmp_path, FailureBridge()))
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == type(outcome).__name__
+    assert result.message == outcome.detail
+    assert result.trace["bridge_outcome"] == outcome.model_dump(mode="json")
+    assert result.trace["artifact_refs"]["partial.txt"]
 
 
 async def test_an_undeclared_extra_cannot_crowd_out_declared_evidence(tmp_path: Path) -> None:
