@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import cast
 
 from assay_pier_bridge.identity import canonical_json, digest_bytes
@@ -214,10 +215,23 @@ class BridgeRuntime:
         self._client = client
         self._created = False
 
-    def run_cell(self, request: TrialRequest) -> TrialResult:
+    def run_cell(
+        self, request: TrialRequest, *, accepted_at: datetime | None = None
+    ) -> TrialResult:
         if self._created:
             raise TrialAlreadyRequestedError("this runtime has already created a trial")
         self._created = True
+        # Bridge entry is the local acceptance point. A caller with the
+        # Smithers acceptance timestamp supplies it to include transit time.
+        accepted_at = accepted_at or datetime.now(UTC)
+        if accepted_at.tzinfo is None:
+            accepted_at = accepted_at.replace(tzinfo=UTC)
+        remaining = request.limits.timeout_s - (datetime.now(UTC) - accepted_at).total_seconds()
+        if remaining <= 0:
+            raise TrialTimeoutError("trial exceeded its worker-acceptance deadline")
+        request = request.model_copy(
+            update={"limits": request.limits.model_copy(update={"timeout_s": remaining})}
+        )
         handle = self._client.create(request)
         try:
             result = handle.run()

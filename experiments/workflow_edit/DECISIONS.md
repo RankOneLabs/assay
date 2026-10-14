@@ -80,3 +80,26 @@ the footprint runs recorded in `experiments/workflow_edit/SMOKE.md` (wf-12).
   is exported as a schema. Hidden tests, reference and negative patches, and
   the rubric are SHA-256 references only. The fixture identity includes the
   observed image digest and the Smithers `routing_config.yaml` digest.
+
+## Smithers dispatch
+
+- **Pinned model identity:** At authorization, read the exact routing file
+  bytes and bind their digest, submitted alias, machine, and the backend tag
+  selected by that machine's backend into each arm's worker configuration.
+  The client checks the routing file again before accepting a completion.
+  Smithers 9e305b6 reports the alias and machine in `JobResponse`, but does
+  not report the resolved worker tag; a worker-side tag attestation therefore
+  cannot be verified from that response alone.
+- **Idempotency topology:** Run one dispatch process against one persistent
+  SQLite database path for the entire qualification run. Smithers defaults to
+  `db_path="smithers.db"`, relative to the dispatch process working directory;
+  record its resolved absolute path with the run manifest before dispatch, and retain the
+  database between retries. A stable key derived from run ID and cell ID is
+  sent with every `JobSubmission`; repeat the same body when retrying a
+  dropped response. Exercise this in the live qualification run. A database
+  reset or a second process using another database path invalidates the gate.
+- **Clock:** Set Smithers `timeout_seconds` to 900. Its `started_at` is written
+  when the worker accepts a task. Report `started_at - created_at` as queue
+  latency and `completed_at - started_at` as time from acceptance; only the
+  latter is charged to the 15-minute cell budget. The bridge may receive
+  `accepted_at` and reduces its local container allowance by elapsed time.
