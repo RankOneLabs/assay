@@ -144,6 +144,43 @@ def test_blank_submission_is_a_manifest_bound_no_op(
     assert candidate.checksum == result.outcome.patch_ref
 
 
+@pytest.mark.parametrize("violation", ["symlink_submission", "tampering"])
+def test_guarded_host_route_rejects_symlink_marker_and_baseline_tampering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, violation: str
+) -> None:
+    from assay_pier_bridge.provider import RouteResponse, RouteUsage, SubmittedOutput
+
+    def fake_run_one_cell(**kwargs: Any) -> RouteResponse:
+        marker: Path = kwargs["submission_output"]
+        if violation == "symlink_submission":
+            secret = tmp_path / "secret"
+            secret.write_bytes(b"host secret")
+            marker.symlink_to(secret)
+        else:
+            marker.write_bytes(b"candidate")
+            baseline = marker.parent.parent / f"{marker.parent.name}-baseline"
+            (baseline / "added.py").write_bytes(b"tampered")
+        return RouteResponse(
+            message={"role": "assistant"},
+            usage=RouteUsage(prompt_tokens=1, completion_tokens=1, cost_usd=0.0),
+            submission=SubmittedOutput(call_id="call", source="candidate"),
+            request_bytes=1,
+        )
+
+    monkeypatch.setattr("assay_pier_bridge.host_driver.run_one_cell", fake_run_one_cell)
+    result = BridgeRuntime(
+        GuardedCompletionTrialClient(
+            package=PACKAGE, api_key="test-key", runs_root=tmp_path, system_prompt="sys"
+        )
+    ).run_cell(_request())
+    assert result.outcome.kind == "candidate_failure"
+    assert result.outcome.cause == violation
+    if violation == "symlink_submission":
+        assert b"host secret" not in b"".join(result.artifacts.values())
+    else:
+        assert result.artifacts["output"] == b"candidate"
+
+
 def test_a_missing_instruction_fails_the_trial_without_a_network_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

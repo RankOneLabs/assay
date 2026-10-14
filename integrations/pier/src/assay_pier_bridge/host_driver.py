@@ -30,7 +30,13 @@ from types import MappingProxyType
 from assay_pier_bridge.__main__ import FALLBACK_SYSTEM_PROMPT, run_one_cell
 from assay_pier_bridge.evidence import seal_artifacts
 from assay_pier_bridge.identity import canonical_json, digest_bytes, package_digest
-from assay_pier_bridge.paths import collect_artifacts, materialize_under, submission_patch
+from assay_pier_bridge.paths import (
+    ArtifactCollectionRejected,
+    collect_artifacts,
+    materialize_under,
+    regular_tree,
+    submission_patch,
+)
 from assay_pier_bridge.protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
@@ -119,8 +125,23 @@ class GuardedCompletionTrialHandle:
             api_key=self.api_key,
             submission_output=self.submission_dir / "output",
         )
-        if not (self.submission_dir / "output").is_file():
-            raise CandidateTrialError("no_submission", "guarded route wrote no submission marker")
+        marker = self.submission_dir / "output"
+        if marker.is_symlink():
+            raise CandidateTrialError(
+                "symlink_submission", "submission marker is a symlink",
+                artifacts=self._retained_submission(),
+            )
+        if not marker.is_file():
+            raise CandidateTrialError(
+                "no_submission", "guarded route wrote no submission marker",
+                artifacts=self._retained_submission(),
+            )
+        expected_baseline = {path: content.encode("utf-8") for path, content in repository.items()}
+        if regular_tree(baseline) != expected_baseline:
+            raise CandidateTrialError(
+                "tampering", "immutable arm baseline changed during guarded trial",
+                artifacts=self._retained_submission(),
+            )
         if response.submission.source:
             (worktree / "output").write_text(response.submission.source, encoding="utf-8")
         patch = submission_patch(baseline, worktree)
@@ -191,6 +212,14 @@ class GuardedCompletionTrialHandle:
             aggregate_exempt_path=MANIFEST_PATH,
             excluded_roots=frozenset({"worktree"}),
         )
+
+    def _retained_submission(self) -> dict[str, bytes]:
+        try:
+            return self.partial_artifacts()
+        except ArtifactCollectionRejected as rejection:
+            return rejection.artifacts
+        except Exception:
+            return {}
 
     def effective_enforcement(self) -> EffectiveEnforcement:
         return _host_enforcement(self.request.limits)
