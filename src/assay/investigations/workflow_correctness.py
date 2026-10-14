@@ -68,9 +68,13 @@ class WorkflowCorrectnessResult:
 
 _HARNESS = r"""import hashlib
 import json
+import os
 from pathlib import Path
+import selectors
+import signal
 import subprocess
 import sys
+import time
 
 payload = json.loads(sys.stdin.buffer.read())
 root = Path('/tmp/workflow')
@@ -85,16 +89,46 @@ def result(status, cause=None):
 
 def run(args, timeout):
     try:
-        completed = subprocess.run(args, cwd=root, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   timeout=timeout, check=False)
-    except subprocess.TimeoutExpired:
-        return result('failed', 'candidate_timeout')
+        child = subprocess.Popen(args, cwd=root, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 start_new_session=True)
     except OSError:
         return result('unavailable', 'toolchain_unavailable')
-    if len(completed.stdout) > payload['max_output_bytes']:
-        return result('failed', 'output_limit')
-    return result('passed') if completed.returncode == 0 else result('failed', 'nonzero_exit')
+    selector = selectors.DefaultSelector()
+    selector.register(child.stdout, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout
+    total = 0
+    finished = False
+    try:
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return result('failed', 'candidate_timeout')
+            for key, _events in selector.select(remaining):
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                total += len(chunk)
+                if total > payload['max_output_bytes']:
+                    return result('failed', 'output_limit')
+        try:
+            child.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            return result('failed', 'candidate_timeout')
+        finished = True
+        return result('passed') if child.returncode == 0 else result('failed', 'nonzero_exit')
+    finally:
+        selector.close()
+        if not finished:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                child.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
 
 def tree_digest(root):
     digest = hashlib.sha256()
@@ -117,42 +151,52 @@ if patch.returncode:
 elif tree_digest(root) != payload['expected_tree_digest']:
     outcome = {'preflight': result('unavailable', 'candidate_tree_digest_mismatch'), 'groups': {}}
 else:
-    for group in payload['groups']:
-        for name, source in group['files'].items():
-            target = root / name
-            if not target.resolve().is_relative_to(root.resolve()):
-                raise ValueError('test path escapes sandbox')
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(source, encoding='utf-8')
-    try:
-        tsc_version = subprocess.run(['tsc', '--version'], cwd=root, capture_output=True,
-                                     timeout=payload['candidate_timeout_s'], check=False)
-        node_version = subprocess.run(['node', '--version'], cwd=root, capture_output=True,
-                                      timeout=payload['candidate_timeout_s'], check=False)
-        locked = (tsc_version.returncode == 0 and
-                  tsc_version.stdout.strip() == b'Version 5.9.2' and
-                  node_version.returncode == 0 and
-                  node_version.stdout.strip() == b'v22.21.1')
-    except (OSError, subprocess.TimeoutExpired):
-        locked = False
-    if not locked:
-        outcome = {'preflight': result('unavailable', 'toolchain_unavailable'), 'groups': {}}
+    test_paths = [root / name for group in payload['groups']
+                  for name in group['files']]
+    if any(target.exists() or any(parent.is_file() for parent in target.parents)
+           for target in test_paths):
+        outcome = {'preflight': result('failed', 'test_path_collision'), 'groups': {}}
     else:
-        typecheck = run(['tsc', '--noEmit'], payload['candidate_timeout_s'])
-        build = (run(['tsc', '--outDir', '/tmp/workflow-build'],
-                     payload['candidate_timeout_s'])
-                 if typecheck['status'] == 'passed' else typecheck)
-        if typecheck['status'] != 'passed':
-            outcome = {'preflight': result(typecheck['status'],
-                       'typecheck_' + str(typecheck['cause'])), 'groups': {}}
-        elif build['status'] != 'passed':
-            outcome = {'preflight': result(build['status'],
-                       'build_' + str(build['cause'])), 'groups': {}}
+        for group in payload['groups']:
+            for name, source in group['files'].items():
+                target = root / name
+                if not target.resolve().is_relative_to(root.resolve()):
+                    raise ValueError('test path escapes sandbox')
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(source, encoding='utf-8')
+        try:
+            tsc_version = subprocess.run(['tsc', '--version'], cwd=root, capture_output=True,
+                                         timeout=payload['candidate_timeout_s'], check=False)
+            node_version = subprocess.run(['node', '--version'], cwd=root, capture_output=True,
+                                          timeout=payload['candidate_timeout_s'], check=False)
+            locked = (tsc_version.returncode == 0 and
+                      tsc_version.stdout.strip() == b'Version 5.9.2' and
+                      node_version.returncode == 0 and
+                      node_version.stdout.strip() == b'v22.21.1')
+        except (OSError, subprocess.TimeoutExpired):
+            locked = False
+        if not locked:
+            outcome = {'preflight': result('unavailable', 'toolchain_unavailable'), 'groups': {}}
         else:
-            groups = {}
-            for group in payload['groups']:
-                groups[group['name']] = run(group['command'], payload['candidate_timeout_s'])
-            outcome = {'preflight': result('passed'), 'groups': groups}
+            typecheck = run(['tsc', '--noEmit'], payload['candidate_timeout_s'])
+            build_root = Path('/tmp/workflow-build')
+            build = (run(['tsc', '--noEmit', 'false', '--emitDeclarationOnly', 'false',
+                          '--outDir', str(build_root)], payload['candidate_timeout_s'])
+                     if typecheck['status'] == 'passed' else typecheck)
+            if typecheck['status'] != 'passed':
+                outcome = {'preflight': result(typecheck['status'],
+                           'typecheck_' + str(typecheck['cause'])), 'groups': {}}
+            elif build['status'] != 'passed':
+                outcome = {'preflight': result(build['status'],
+                           'build_' + str(build['cause'])), 'groups': {}}
+            elif not any(path.is_file() and path.suffix in ('.js', '.jsx', '.mjs', '.cjs')
+                         for path in build_root.rglob('*')):
+                outcome = {'preflight': result('failed', 'build_output_missing'), 'groups': {}}
+            else:
+                groups = {}
+                for group in payload['groups']:
+                    groups[group['name']] = run(group['command'], payload['candidate_timeout_s'])
+                outcome = {'preflight': result('passed'), 'groups': groups}
 sys.stdout.write(json.dumps(outcome, separators=(',', ':')))
 """
 

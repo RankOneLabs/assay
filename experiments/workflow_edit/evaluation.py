@@ -12,7 +12,7 @@ from assay.investigations.workflow_correctness import (
     WorkflowTestGroup,
 )
 from assay.pier_protocol import CandidateSubmission
-from assay.store import ObjectStore
+from assay.store import ObjectIntegrityError, ObjectStore
 from workflow_edit.arms import ARM_IDS
 
 
@@ -53,7 +53,7 @@ async def evaluate_candidate(
         )
         new_behavior = WorkflowTestGroup.model_validate_json(store.read_bytes(new_behavior_ref))
         patch = store.read_bytes(submission.patch_ref).decode("utf-8")
-    except (OSError, UnicodeError, ValueError):
+    except (OSError, UnicodeError, ValueError, ObjectIntegrityError):
         return unavailable_result("fixture_asset_unavailable")
     if hidden_regression.name != "hidden_regression" or new_behavior.name != "new_behavior":
         return unavailable_result("invalid_hidden_tests")

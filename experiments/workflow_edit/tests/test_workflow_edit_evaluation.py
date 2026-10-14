@@ -88,3 +88,61 @@ async def test_evaluation_never_reads_reference_patch(tmp_path: Path) -> None:
         "hidden_regression",
         "new_behavior",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("corrupt_asset", ["hidden", "patch"])
+async def test_corrupt_fixture_asset_returns_unavailable(
+    tmp_path: Path, corrupt_asset: str
+) -> None:
+    store = RecordingStore(tmp_path)
+    baseline = {"src.ts": "export const value = 0;\n"}
+    baseline_digest = workflow_tree_digest(baseline)
+    image = "sha256:" + "a" * 64
+    patch_ref = str(store.publish_bytes(b"candidate patch"))
+    hidden = [
+        str(
+            store.publish_bytes(
+                canonical_json(
+                    WorkflowTestGroup(
+                        name=name,
+                        files={f"tests/{name}.js": "// test"},
+                        command=("node", "--test"),
+                    ).model_dump(mode="json")
+                )
+            )
+        )
+        for name in ("hidden_regression", "new_behavior")
+    ]
+    corrupt_ref = hidden[0] if corrupt_asset == "hidden" else patch_ref
+    (store.objects / corrupt_ref.removeprefix("sha256:")).write_bytes(b"corrupt")
+    fixture = FixtureManifest.model_construct(
+        per_arm_tree_digests={"mess-00": baseline_digest},
+        observed_runtime_image_digest=image,
+        hidden_tests=tuple(hidden),
+        reference_patch=str(store.publish_bytes(b"operator-only reference")),
+    )
+    runner = RecordingRunner(image)
+    result = await evaluate_candidate(
+        store=store,
+        fixture=fixture,
+        arm_id="mess-00",
+        baseline=baseline,
+        submission=CandidateSubmission(
+            patch_ref=patch_ref,
+            tree_digest="sha256:" + "b" * 64,
+            baseline_tree_digest=baseline_digest,
+        ),
+        visible_regression=WorkflowTestGroup(
+            name="visible_regression",
+            files={"tests/visible.js": "// test"},
+            command=("node", "--test"),
+        ),
+        hidden_regression_ref=hidden[0],
+        new_behavior_ref=hidden[1],
+        runner=runner,  # type: ignore[arg-type]
+    )
+    assert result.verdict == "unavailable"
+    assert result.cause == "fixture_asset_unavailable"
+    assert all(group.status == "unavailable" for group in result.groups)
+    assert runner.received == {}

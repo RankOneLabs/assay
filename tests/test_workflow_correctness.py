@@ -52,15 +52,26 @@ def groups(*, hang: bool = False) -> tuple[WorkflowTestGroup, ...]:
     )  # type: ignore[return-value]
 
 
-def prepare_fake_toolchain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def prepare_fake_toolchain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, emit_build: bool = True
+) -> Path:
     tools = tmp_path / "tools"
     tools.mkdir()
     tsc = tools / "tsc"
     tsc.write_text(
-        "#!/bin/sh\n"
-        'echo "$*" >> "$ASSAY_TSC_LOG"\n'
-        "if [ \"$1\" = --version ]; then echo 'Version 5.9.2'; fi\n"
-        "exit 0\n"
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "import sys\n"
+        "args = sys.argv[1:]\n"
+        "with open(os.environ['ASSAY_TSC_LOG'], 'a', encoding='utf-8') as log:\n"
+        "    log.write(' '.join(args) + '\\n')\n"
+        "if args == ['--version']:\n"
+        "    print('Version 5.9.2')\n"
+        "elif '--outDir' in args and os.environ['ASSAY_EMIT_BUILD'] == '1':\n"
+        "    output = Path(args[args.index('--outDir') + 1])\n"
+        "    output.mkdir(parents=True)\n"
+        "    (output / 'src.js').write_text('compiled')\n"
     )
     tsc.chmod(0o755)
     git = tools / "git"
@@ -80,6 +91,9 @@ def prepare_fake_toolchain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
         "elif len(sys.argv) == 3 and sys.argv[1] == '-e':\n"
         "    if 'setInterval' in sys.argv[2]:\n"
         "        time.sleep(30)\n"
+        "    if 'print_big' in sys.argv[2]:\n"
+        "        print('x' * 1000000)\n"
+        "        sys.exit(0)\n"
         "    sys.exit(0 if 'value = 1' in Path('src.ts').read_text() else 1)\n"
         "else:\n"
         "    sys.exit(2)\n"
@@ -89,6 +103,7 @@ def prepare_fake_toolchain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
     monkeypatch.setenv("ASSAY_GIT_LOG", str(log))
     monkeypatch.setenv("ASSAY_TSC_LOG", str(tmp_path / "tsc.log"))
     monkeypatch.setenv("ASSAY_NODE_LOG", str(tmp_path / "node.log"))
+    monkeypatch.setenv("ASSAY_EMIT_BUILD", "1" if emit_build else "0")
     monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
     return log
 
@@ -101,7 +116,9 @@ async def run_fake_docker(
     groups_to_run: tuple[WorkflowTestGroup, ...],
     expected_tree_digest: str | None = None,
     patch: str = PATCH,
+    baseline: dict[str, str] | None = None,
 ) -> correctness.WorkflowCorrectnessResult:
+    source_tree = baseline if baseline is not None else BASELINE
     async def check_runtime() -> None:
         return None
 
@@ -122,15 +139,19 @@ async def run_fake_docker(
         assert IMAGE in command
         assert "--volume" not in command and "--mount" not in command
         harness = command[-1].replace("Path('/tmp/workflow')", f"Path({str(root)!r})")
+        harness = harness.replace(
+            "Path('/tmp/workflow-build')", f"Path({str(root.parent / 'build')!r})"
+        )
         return await REAL_SPAWN(
             sys.executable, "-I", "-S", "-c", harness, start_new_session=True, **kwargs
         )
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     return await runner.run(
-        baseline=BASELINE,
-        baseline_tree_digest=workflow_tree_digest(BASELINE),
-        expected_tree_digest=expected_tree_digest or workflow_tree_digest(FINAL_TREE),
+        baseline=source_tree,
+        baseline_tree_digest=workflow_tree_digest(source_tree),
+        expected_tree_digest=expected_tree_digest
+        or workflow_tree_digest({**source_tree, "src.ts": FINAL_TREE["src.ts"]}),
         patch=patch,
         groups=groups_to_run,
     )
@@ -150,7 +171,7 @@ async def test_offline_runner_applies_patch_once_and_reports_named_groups(
     assert (tmp_path / "tsc.log").read_text().splitlines() == [
         "--version",
         "--noEmit",
-        "--outDir /tmp/workflow-build",
+        f"--noEmit false --emitDeclarationOnly false --outDir {tmp_path / 'build'}",
     ]
     assert (tmp_path / "node.log").read_text().splitlines() == [
         "--version",
@@ -259,3 +280,59 @@ async def test_empty_patch_is_graded_against_unchanged_tree(
     assert result.verdict == "incorrect"
     assert all(group.status == "failed" for group in result.groups)
     assert log.read_text().splitlines() == ["call"]
+
+
+@pytest.mark.asyncio
+async def test_candidate_output_is_bounded_before_buffering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE, max_output_bytes=4096))
+    noisy_groups = tuple(
+        WorkflowTestGroup(name=name, files={f"tests/{name}.js": "// frozen\n"},
+                          command=("node", "-e", "print_big"))
+        for name in correctness.GROUP_NAMES
+    )
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=noisy_groups
+    )
+    assert result.verdict == "incorrect"
+    assert all(group.cause == "output_limit" for group in result.groups)
+
+
+@pytest.mark.asyncio
+async def test_candidate_file_cannot_block_frozen_test_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    patch = PATCH + """diff --git a/tests b/tests
+new file mode 100644
+--- /dev/null
++++ b/tests
+@@ -0,0 +1 @@
++blocked
+"""
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups(), patch=patch,
+        expected_tree_digest=workflow_tree_digest({**FINAL_TREE, "tests": "blocked\n"}),
+    )
+    assert result.verdict == "incorrect"
+    assert result.cause == "test_path_collision"
+
+
+@pytest.mark.asyncio
+async def test_build_requires_emitted_javascript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch, emit_build=False)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    baseline = {**BASELINE, "tsconfig.json": '{"compilerOptions":{"noEmit":true}}'}
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups(), baseline=baseline
+    )
+    assert result.verdict == "incorrect"
+    assert result.cause == "build_output_missing"
+    assert (tmp_path / "tsc.log").read_text().splitlines()[-1] == (
+        f"--noEmit false --emitDeclarationOnly false --outDir {tmp_path / 'build'}"
+    )
