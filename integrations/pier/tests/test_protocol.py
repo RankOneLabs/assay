@@ -58,22 +58,34 @@ def test_network_postures_are_closed_and_lan_requires_one_host_port() -> None:
     }
     for posture in ("egress-openrouter-only", "toolchain-only"):
         assert TrialRequest.model_validate({**base, "network_policy": posture}).egress_host is None
-    assert (
-        TrialRequest.model_validate(
-            {
-                **base,
-                "network_policy": "egress-lan-host-port",
-                "egress_host": "192.168.1.10",
-                "egress_port": 8080,
-            }
-        ).egress_port
-        == 8080
-    )
+    for host in ("10.0.0.1", "172.16.0.1", "192.168.1.10"):
+        assert (
+            TrialRequest.model_validate(
+                {
+                    **base,
+                    "network_policy": "egress-lan-host-port",
+                    "egress_host": host,
+                    "egress_port": 8080,
+                }
+            ).egress_host
+            == host
+        )
     for invalid in (
         {"network_policy": "public"},
         {"network_policy": "egress-lan-host-port"},
         {"network_policy": "toolchain-only", "egress_host": "192.168.1.10", "egress_port": 8080},
         {"network_policy": "egress-lan-host-port", "egress_host": "8.8.8.8", "egress_port": 8080},
+        {
+            "network_policy": "egress-lan-host-port",
+            "egress_host": "169.254.169.254",
+            "egress_port": 8080,
+        },
+        {"network_policy": "egress-lan-host-port", "egress_host": "127.0.0.1", "egress_port": 8080},
+        {
+            "network_policy": "egress-lan-host-port",
+            "egress_host": "100.64.0.1",
+            "egress_port": 8080,
+        },
     ):
         with pytest.raises(ValidationError):
             TrialRequest.model_validate({**base, **invalid})

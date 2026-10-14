@@ -53,6 +53,29 @@ def test_trial_envelope_revision_matches_the_shared_fixture() -> None:
     assert request.schema_version == envelope["schema_version"]
 
 
+@pytest.mark.parametrize(
+    ("host", "allowed"),
+    [
+        ("10.0.0.1", True),
+        ("172.16.0.1", True),
+        ("192.168.1.10", True),
+        ("169.254.169.254", False),
+        ("127.0.0.1", False),
+        ("100.64.0.1", False),
+    ],
+)
+def test_lan_egress_host_requires_rfc1918_address(host: str, allowed: bool) -> None:
+    request = {
+        **_fixture()["trial_envelope"]["sample_request"],
+        "egress_host": host,
+    }
+    if allowed:
+        assert TrialRequest.model_validate(request).egress_host == host
+    else:
+        with pytest.raises(ValueError, match="LAN IPv4 address"):
+            TrialRequest.model_validate(request)
+
+
 def _coordinate(case: dict[str, Any]) -> CellCoordinate:
     return CellCoordinate(
         subject_id=case["subject_id"],

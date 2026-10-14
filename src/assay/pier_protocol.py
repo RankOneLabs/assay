@@ -17,7 +17,7 @@ one (see ``integrations/pier/README.md``).
 from __future__ import annotations
 
 import json
-from ipaddress import IPv4Address
+from ipaddress import IPv4Address, IPv4Network
 from pathlib import PurePosixPath
 from typing import Final, Literal
 
@@ -33,6 +33,11 @@ MAX_ARTIFACT_COUNT = 1_024
 ArtifactKind = Literal["raw_trajectory", "candidate", "result", "configuration", "transcript"]
 NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
 TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.2.0"
+_LAN_NETWORKS = (
+    IPv4Network("10.0.0.0/8"),
+    IPv4Network("172.16.0.0/12"),
+    IPv4Network("192.168.0.0/16"),
+)
 
 
 class ModelRoute(WireModel):
@@ -76,7 +81,7 @@ class TrialRequest(WireModel):
                 address = IPv4Address(self.egress_host)
             except ValueError as error:
                 raise ValueError("egress_host must be a LAN IPv4 address") from error
-            if not address.is_private:
+            if not any(address in network for network in _LAN_NETWORKS):
                 raise ValueError("egress_host must be a LAN IPv4 address")
         elif self.egress_host is not None or self.egress_port is not None:
             raise ValueError("egress_host and egress_port require the LAN posture")

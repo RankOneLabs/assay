@@ -257,9 +257,16 @@ def test_storage_cause_requires_trial_enospc_not_a_full_host_filesystem(
         assert handle.run().status == "succeeded"
 
 
-@pytest.mark.parametrize(("exit_code", "log"), [(137, ""), (1, "MemoryError")])
+@pytest.mark.parametrize(
+    ("exit_code", "log", "oom_killed"),
+    [(137, "", True), (1, "MemoryError", False), (137, "", False)],
+)
 def test_memory_failure_is_distinct_from_storage_exhaustion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int, log: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exit_code: int,
+    log: str,
+    oom_killed: bool,
 ) -> None:
     handle = _handle(tmp_path)
     observed = ContainerObservation(
@@ -271,6 +278,7 @@ def test_memory_failure_is_distinct_from_storage_exhaustion(
         memory_limit_mb=256,
         pids_limit=32,
         storage_limit_mb=64,
+        oom_killed=oom_killed,
     )
 
     def trial_run(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
@@ -284,8 +292,68 @@ def test_memory_failure_is_distinct_from_storage_exhaustion(
     monkeypatch.setattr(DockerTrialHandle, "_prepare_quota", lambda self, limits: None)
     monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
     monkeypatch.setattr(container, "_inspect", lambda name: observed)
-    with pytest.raises(MemoryLimitExceededError):
-        handle.run()
+    if oom_killed or "MemoryError" in log:
+        with pytest.raises(MemoryLimitExceededError):
+            handle.run()
+    else:
+        with pytest.raises(RuntimeError, match="exited nonzero"):
+            handle.run()
+
+
+@pytest.mark.parametrize(
+    ("failed_command", "raises"),
+    [("iptables", False), ("iptables", True), ("network", False), ("umount", False)],
+)
+def test_teardown_retries_failed_host_cleanup_and_reports_residue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_command: str,
+    raises: bool,
+) -> None:
+    handle = _handle(tmp_path)
+    handle._firewall_installed = [("INPUT", ["-j", "DROP"])]
+    handle._network_created = True
+    handle._quota_mounted = True
+    attempts: dict[str, int] = {"iptables": 0, "network": 0, "umount": 0}
+
+    def host_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        command = args[0]
+        attempts[command] += 1
+        if command == failed_command and attempts[command] == 1:
+            if raises:
+                raise subprocess.TimeoutExpired(args, 1)
+            return _completed(args, returncode=1)
+        return _completed(args)
+
+    def docker_run(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        assert args[:3] == ["docker", "network", "rm"]
+        attempts["network"] += 1
+        return _completed(
+            args,
+            returncode=1 if failed_command == "network" and attempts["network"] == 1 else 0,
+        )
+
+    monkeypatch.setattr(container, "_inspect", lambda name: None)
+    monkeypatch.setattr(container, "_force_remove", lambda name: True)
+    monkeypatch.setattr(container, "_container_count", lambda name: 0)
+    monkeypatch.setattr(container, "_host_run", host_run)
+    monkeypatch.setattr(container, "_run", docker_run)
+
+    first = handle.teardown()
+    assert first.containers_remaining == 0
+    assert first.teardown_completed is False
+    assert bool(handle._firewall_installed) is (failed_command == "iptables")
+    assert handle._network_created is (failed_command == "network")
+    assert handle._quota_mounted is (failed_command == "umount")
+    assert handle._workdir.exists() is (failed_command == "umount")
+
+    second = handle.teardown()
+    assert second.teardown_completed is True
+    assert handle._firewall_installed == []
+    assert handle._network_created is False
+    assert handle._quota_mounted is False
+    assert not handle._workdir.exists()
+    assert attempts == {command: 2 if command == failed_command else 1 for command in attempts}
 
 
 def test_driver_rejects_output_that_exceeds_the_collection_limit(

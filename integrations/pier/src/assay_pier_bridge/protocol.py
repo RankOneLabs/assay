@@ -9,7 +9,7 @@ for why that dependency cannot be pinned from this environment today).
 
 from __future__ import annotations
 
-from ipaddress import IPv4Address
+from ipaddress import IPv4Address, IPv4Network
 from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -27,6 +27,11 @@ CellId = Annotated[
 TrialStatus = Literal["succeeded", "failed", "timeout", "cancelled"]
 NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
 TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.2.0"
+_LAN_NETWORKS = (
+    IPv4Network("10.0.0.0/8"),
+    IPv4Network("172.16.0.0/12"),
+    IPv4Network("192.168.0.0/16"),
+)
 
 # Mirrors assay.pier_protocol's ceilings. Artifact bytes are bounded here,
 # at the point they are collected, as well as by the consumer: a trial whose
@@ -118,7 +123,7 @@ class TrialRequest(ClosedModel):
                 address = IPv4Address(self.egress_host)
             except ValueError as error:
                 raise ValueError("egress_host must be a LAN IPv4 address") from error
-            if not address.is_private:
+            if not any(address in network for network in _LAN_NETWORKS):
                 raise ValueError("egress_host must be a LAN IPv4 address")
         elif self.egress_host is not None or self.egress_port is not None:
             raise ValueError("egress_host and egress_port require the LAN posture")

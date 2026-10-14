@@ -227,8 +227,13 @@ def _network_policy_label(network_mode: str | None) -> str:
                 return "unknown"
             observed = [_firewall_rule_fields(line, chain) for line in rules.stdout.splitlines()]
             allow = sorted(
-                (("-i", interface), ("-p", "tcp"), ("-d", host),
-                 ("--dport", str(int(port))), ("-j", "ACCEPT"))
+                (
+                    ("-i", interface),
+                    ("-p", "tcp"),
+                    ("-d", host),
+                    ("--dport", str(int(port))),
+                    ("-j", "ACCEPT"),
+                )
             )
             deny = sorted((("-i", interface), ("-j", "DROP")))
             if allow not in observed or deny not in observed:
@@ -527,7 +532,7 @@ class DockerTrialHandle:
         observation = _usable_observation(_inspect(self._name))
         self._assert_enforcement(observation)
         assert observation is not None
-        if observation.oom_killed or exit_code.stdout.strip() == "137":
+        if observation.oom_killed:
             raise MemoryLimitExceededError("trial exceeded the memory cgroup ceiling")
         if exit_code.stdout.strip() != "0":
             logs = _run(["docker", "logs", self._name], timeout=_POLL_TIMEOUT_S)
@@ -536,8 +541,7 @@ class DockerTrialHandle:
             # A full filesystem is only evidence of capacity, not evidence
             # that the trial attempted a write which failed with ENOSPC.
             if logs.returncode == 0 and any(
-                "/scratch" in line
-                and ("No space left on device" in line or "[Errno 28]" in line)
+                "/scratch" in line and ("No space left on device" in line or "[Errno 28]" in line)
                 for line in (logs.stdout + logs.stderr).splitlines()
             ):
                 raise StorageExhaustedError("trial reported ENOSPC on /scratch")
@@ -604,7 +608,13 @@ class DockerTrialHandle:
             storage_limit_mb=observation.storage_limit_mb if observation else 0,
             containers_remaining=containers_remaining,
             child_processes_remaining=0,
-            teardown_completed=containers_remaining == 0,
+            teardown_completed=(
+                containers_remaining == 0
+                and not self._firewall_installed
+                and not self._network_created
+                and not self._quota_mounted
+                and not self._workdir.exists()
+            ),
         )
 
     def teardown(self) -> EffectiveEnforcement:
@@ -616,19 +626,36 @@ class DockerTrialHandle:
             observation = None
         with contextlib.suppress(Exception):
             _force_remove(self._name)
+        failed_rules: list[tuple[str, list[str]]] = []
         for chain, rule in reversed(self._firewall_installed):
-            with contextlib.suppress(Exception):
-                _host_run(["iptables", "-D", chain, "-i", self._network_interface, *rule])
-        self._firewall_installed.clear()
+            try:
+                removed = _host_run(["iptables", "-D", chain, "-i", self._network_interface, *rule])
+            except Exception:
+                failed_rules.append((chain, rule))
+            else:
+                if removed.returncode != 0:
+                    failed_rules.append((chain, rule))
+        self._firewall_installed = list(reversed(failed_rules))
         if self._network_created:
-            with contextlib.suppress(Exception):
-                _run(["docker", "network", "rm", self._network_name], timeout=_REMOVE_TIMEOUT_S)
-            self._network_created = False
+            try:
+                removed = _run(
+                    ["docker", "network", "rm", self._network_name], timeout=_REMOVE_TIMEOUT_S
+                )
+            except Exception:
+                pass
+            else:
+                if removed.returncode == 0:
+                    self._network_created = False
         if self._quota_mounted:
-            with contextlib.suppress(Exception):
-                _host_run(["umount", str(self._scratch)])
-            self._quota_mounted = False
-        shutil.rmtree(self._workdir, ignore_errors=True)
+            try:
+                unmounted = _host_run(["umount", str(self._scratch)])
+            except Exception:
+                pass
+            else:
+                if unmounted.returncode == 0:
+                    self._quota_mounted = False
+        if not self._quota_mounted:
+            shutil.rmtree(self._workdir, ignore_errors=True)
         try:
             count = _container_count(self._name)
         except Exception:
