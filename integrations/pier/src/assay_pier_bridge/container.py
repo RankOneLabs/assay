@@ -180,8 +180,8 @@ def _quota_mb(source: str | None) -> int:
     return size_bytes // (1024 * 1024) if size_bytes % (1024 * 1024) == 0 else 0
 
 
-def _inspect(name: str) -> ContainerObservation | None:
-    result = _run(["docker", "inspect", name], timeout=_POLL_TIMEOUT_S)
+def _inspect(name: str, *, timeout: float = _POLL_TIMEOUT_S) -> ContainerObservation | None:
+    result = _run(["docker", "inspect", name], timeout=timeout)
     if result.returncode != 0:
         return None
     (data,) = json.loads(result.stdout)
@@ -412,6 +412,45 @@ class DockerTrialHandle:
             directory.chmod(0o777 if directory.is_dir() else 0o666)
         self._working_copy.chmod(0o777)
         self._cancel = threading.Event()
+        self._deadline: float | None = None
+
+    def set_deadline(self, deadline: float) -> None:
+        """Receive the absolute monotonic acceptance deadline before setup."""
+        self._deadline = deadline
+
+    def _run_bounded(self, args: list[str], ceiling: float) -> subprocess.CompletedProcess[str]:
+        """Run a docker step under the lower of its own ceiling and the budget.
+
+        A step killed because the acceptance budget ran out is a deadline
+        breach, not an unexplained subprocess failure: re-check the budget
+        so the caller sees ``TrialTimeoutError`` rather than the generic
+        ``unexpected_exception`` that a bare ``TimeoutExpired`` becomes.
+        """
+        try:
+            return _run(args, timeout=min(ceiling, self._remaining()))
+        except subprocess.TimeoutExpired:
+            self._remaining()
+            raise
+
+    def _inspect_bounded(self) -> ContainerObservation | None:
+        """Inspect the container under the acceptance budget.
+
+        ``effective_enforcement`` deliberately keeps the unbounded
+        ``_inspect``: it also runs from teardown, which must complete
+        after a deadline breach rather than be cut short by it.
+        """
+        try:
+            return _inspect(self._name, timeout=min(_POLL_TIMEOUT_S, self._remaining()))
+        except subprocess.TimeoutExpired:
+            self._remaining()
+            raise
+
+    def _remaining(self) -> float:
+        assert self._deadline is not None
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise TrialTimeoutError("trial exceeded its worker-acceptance deadline")
+        return remaining
 
     def cancel(self) -> None:
         """Operator-initiated cancellation, observable by an in-flight ``run()``."""
@@ -421,8 +460,8 @@ class DockerTrialHandle:
         self._scratch.mkdir()
         self._quota_image.touch()
         os.truncate(self._quota_image, limits.storage_mb * 1024 * 1024)
-        formatted = _run(
-            ["mkfs.ext4", "-F", "-q", str(self._quota_image)], timeout=_START_TIMEOUT_S
+        formatted = self._run_bounded(
+            ["mkfs.ext4", "-F", "-q", str(self._quota_image)], _START_TIMEOUT_S
         )
         if formatted.returncode != 0:
             raise InfrastructureTrialError(
@@ -448,7 +487,7 @@ class DockerTrialHandle:
         host = self._request.egress_host
         port = self._request.egress_port
         assert host is not None and port is not None
-        result = _run(
+        result = self._run_bounded(
             [
                 "docker",
                 "network",
@@ -463,7 +502,7 @@ class DockerTrialHandle:
                 f"assay.egress.port={port}",
                 self._network_name,
             ],
-            timeout=_START_TIMEOUT_S,
+            _START_TIMEOUT_S,
         )
         if result.returncode != 0:
             raise InfrastructureTrialError(
@@ -553,38 +592,45 @@ class DockerTrialHandle:
         return args
 
     def run(self) -> TrialResult:
+        if self._deadline is None:
+            self._deadline = time.monotonic() + self._request.limits.timeout_s
+        self._remaining()
         self._prepare_quota(self._request.limits)
+        self._remaining()
         self._prepare_network()
-        start_result = _run(self._docker_run_args(self._request.limits), timeout=_START_TIMEOUT_S)
+        self._remaining()
+        start_result = self._run_bounded(
+            self._docker_run_args(self._request.limits), _START_TIMEOUT_S
+        )
+        self._remaining()
         if start_result.returncode != 0:
             raise InfrastructureTrialError(
                 "container_start", f"container failed to start: {start_result.stderr.strip()}"
             )
-        self._assert_enforcement(_usable_observation(_inspect(self._name)))
-        deadline = time.monotonic() + self._request.limits.timeout_s
+        self._assert_enforcement(_usable_observation(self._inspect_bounded()))
         while True:
+            self._remaining()
             if self._cancel.is_set():
                 raise TrialCancelledError("operator cancelled the trial")
-            inspect = _run(
+            inspect = self._run_bounded(
                 ["docker", "inspect", "--format", "{{.State.Running}}", self._name],
-                timeout=_POLL_TIMEOUT_S,
+                _POLL_TIMEOUT_S,
             )
+            self._remaining()
             if inspect.returncode == 0 and inspect.stdout.strip() == "false":
                 break
-            if time.monotonic() >= deadline:
-                raise TrialTimeoutError(f"trial exceeded {self._request.limits.timeout_s}s")
             time.sleep(_POLL_INTERVAL_S)
-        exit_code = _run(
+        exit_code = self._run_bounded(
             ["docker", "inspect", "--format", "{{.State.ExitCode}}", self._name],
-            timeout=_POLL_TIMEOUT_S,
+            _POLL_TIMEOUT_S,
         )
-        observation = _usable_observation(_inspect(self._name))
+        observation = _usable_observation(self._inspect_bounded())
         self._assert_enforcement(observation)
         assert observation is not None
         if observation.oom_killed:
             raise MemoryLimitExceededError("trial exceeded the memory cgroup ceiling")
         if exit_code.stdout.strip() != "0":
-            logs = _run(["docker", "logs", self._name], timeout=_POLL_TIMEOUT_S)
+            logs = self._run_bounded(["docker", "logs", self._name], _POLL_TIMEOUT_S)
             if exit_code.stdout.strip() == "124" and Path(self._command[0]).name == "timeout":
                 # Exit 124 is a deadline only when the launched command is
                 # the timeout utility; an arbitrary program may also use 124.
@@ -667,7 +713,7 @@ class DockerTrialHandle:
                 artifacts=artifacts,
             )
         if "trajectory.json" not in artifacts:
-            logs = _run(["docker", "logs", self._name], timeout=_POLL_TIMEOUT_S)
+            logs = self._run_bounded(["docker", "logs", self._name], _POLL_TIMEOUT_S)
             artifacts["trajectory.json"] = canonical_json(
                 {"container_stdout": logs.stdout, "container_stderr": logs.stderr}
             )

@@ -361,6 +361,16 @@ class TrialResult(ClosedModel):
 class TrialHandle(Protocol):
     """One created trial. Every method after ``teardown`` must be a no-op-safe read."""
 
+    def set_deadline(self, deadline: float) -> None:
+        """Receive the absolute ``time.monotonic`` worker-acceptance deadline.
+
+        Required, not optional: ``BridgeRuntime`` no longer shrinks
+        ``limits.timeout_s`` before ``create``, so a handle that does not
+        take the deadline here enforces no acceptance budget at all. How
+        much of ``run()`` a handle can actually interrupt is its own to
+        document.
+        """
+
     def run(self) -> TrialResult: ...
 
     def effective_enforcement(self) -> EffectiveEnforcement: ...

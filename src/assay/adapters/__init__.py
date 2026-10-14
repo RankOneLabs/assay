@@ -12,8 +12,10 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from assay.adapters.jig import JigWorker as JigWorker
+    from assay.adapters.smithers import SmithersClient as SmithersClient
+    from assay.adapters.smithers import SmithersFactory as SmithersFactory
 
-__all__ = ["JigWorker", "missing_legacy_extra"]
+__all__ = ["JigWorker", "SmithersClient", "SmithersFactory", "missing_legacy_extra"]
 
 
 def missing_legacy_extra(name: str, error: ModuleNotFoundError) -> ModuleNotFoundError:
@@ -31,4 +33,10 @@ def __getattr__(name: str) -> Any:
         except ModuleNotFoundError as error:
             raise missing_legacy_extra("assay.adapters.JigWorker", error) from error
         return JigWorker
+    if name in {"SmithersClient", "SmithersFactory"}:
+        try:
+            from assay.adapters.smithers import SmithersClient, SmithersFactory
+        except ModuleNotFoundError as error:
+            raise missing_legacy_extra(f"assay.adapters.{name}", error) from error
+        return {"SmithersClient": SmithersClient, "SmithersFactory": SmithersFactory}[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

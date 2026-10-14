@@ -21,6 +21,7 @@ thing, they cover different halves of the eventual design.
 from __future__ import annotations
 
 import shutil
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -48,7 +49,11 @@ from assay_pier_bridge.protocol import (
     TrialResult,
     TrialUsage,
 )
-from assay_pier_bridge.runtime import CandidateTrialError, seal_observed_artifacts
+from assay_pier_bridge.runtime import (
+    CandidateTrialError,
+    TrialTimeoutError,
+    seal_observed_artifacts,
+)
 
 INSTRUCTION_PATH = "instruction.md"
 _DEFAULT_RUNS_ROOT = Path(__file__).resolve().parents[2] / ".trial-runs"
@@ -101,11 +106,29 @@ class GuardedCompletionTrialHandle:
     api_key: str
     submission_dir: Path
     system_prompt: str = field(default_factory=_default_system_prompt)
+    # Set after construction by set_deadline; not part of the handle's identity.
+    deadline: float | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "package", _validated_snapshot(self.request, self.package))
 
+    def set_deadline(self, deadline: float) -> None:
+        """Record the acceptance deadline; this route can only check it between steps.
+
+        The guarded trial is one blocking OpenRouter call made from this
+        process (see the module docstring), and ``provider.TIMEOUT_S`` is
+        what bounds it. Nothing here can interrupt that call once it is in
+        flight, so a cell whose inference already spent the budget is
+        refused before the call rather than cut off during it.
+        """
+        object.__setattr__(self, "deadline", deadline)
+
+    def _check_deadline(self) -> None:
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            raise TrialTimeoutError("trial exceeded its worker-acceptance deadline")
+
     def run(self) -> TrialResult:
+        self._check_deadline()
         repository = {
             path[len("workspace/") :]: content
             for path, content in self.package.items()
@@ -118,6 +141,10 @@ class GuardedCompletionTrialHandle:
         materialize_under(baseline, repository)
         materialize_under(worktree, repository)
         instruction = self.package[INSTRUCTION_PATH]
+        # Materializing two trees can itself spend what was left, so the
+        # budget is read again here: this is the last point the route can
+        # still refuse the cell, and nothing can interrupt the call after it.
+        self._check_deadline()
         response = run_one_cell(
             instruction=instruction,
             system_prompt=self.system_prompt,

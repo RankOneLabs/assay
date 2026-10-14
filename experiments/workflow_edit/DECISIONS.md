@@ -80,3 +80,56 @@ the footprint runs recorded in `experiments/workflow_edit/SMOKE.md` (wf-12).
   is exported as a schema. Hidden tests, reference and negative patches, and
   the rubric are SHA-256 references only. The fixture identity includes the
   observed image digest and the Smithers `routing_config.yaml` digest.
+
+## Smithers dispatch
+
+- **Pinned model identity:** At authorization, read the exact routing file
+  bytes and bind their digest, submitted alias, machine, and the backend tag
+  selected by that machine's backend into each arm's worker configuration.
+  The client checks the routing file again before accepting a completion.
+  Smithers 9e305b6 reports the alias and machine in `JobResponse`, but does
+  not report the resolved worker tag; a worker-side tag attestation therefore
+  cannot be verified from that response alone. The optional response/result
+  tag checks in the client are forward-compatible with a future attesting
+  Smithers response, and do not strengthen the current guarantee.
+- **Idempotency topology:** Run one dispatch process against one persistent
+  SQLite database path for the entire qualification run. Smithers defaults to
+  `db_path="smithers.db"`, relative to the dispatch process working directory;
+  record its resolved absolute path with the run manifest before dispatch, and retain the
+  database between retries. A stable key derived from run ID and cell ID is
+  sent with every `JobSubmission`; repeat the same body when retrying a
+  dropped response. Exercise this in the live qualification run. A database
+  reset or a second process using another database path invalidates the gate.
+- **Clock:** Set Smithers `timeout_seconds` to 900. Its `started_at` is written
+  when the worker accepts a task. Report `started_at - created_at` as queue
+  latency and `completed_at - started_at` as time from acceptance; only the
+  latter is charged to the 15-minute cell budget. Smithers writes both
+  timestamps as naive wall-clock values on its own host, so their
+  *difference* is trustworthy but neither one is an instant this host can
+  read: treating `started_at` as UTC silently charges the cell a whole
+  timezone offset wherever the dispatch host is not on UTC. The concrete
+  workflow delegate therefore re-anchors acceptance locally, as
+  `now - time_from_acceptance - poll_interval`, and passes that into
+  `BridgeRuntime.run_cell`; no foreign absolute timestamp crosses the
+  boundary. The poll interval is subtracted because this host learns of a
+  completion only at the poll that observes it: the true completion lies
+  somewhere in the preceding interval, so charging the whole of it spends
+  the cell's budget rather than extending it. `BridgeRuntime` clamps the
+  result so an acceptance point in its own future cannot buy more than the
+  authorized limit. The bridge gives the handle an absolute monotonic
+  deadline before quota setup, network setup, and container launch; those
+  stages consume the same acceptance budget, as does every Docker call
+  made after the container exits, so evidence collection cannot overrun
+  the budget the trial was authorized with. `TrialHandle.set_deadline` is
+  part of the protocol, not an optional method — the budget is not
+  re-applied to `limits.timeout_s`, so a handle that ignored it would
+  enforce nothing. The guarded host route can only check the deadline
+  between steps, at entry and again immediately before its one OpenRouter
+  call: that call is bounded by `provider.TIMEOUT_S` and cannot be
+  interrupted in flight.
+- **Dispatch accounting:** Only the bridge leg of a workflow cell is
+  priced. Smithers reports no billing (`billing: unavailable` in the
+  pinned worker configuration), so a successful cell carries the bridge
+  trial's measured amount under `mixed` coverage, never `measured` — which
+  would assert the dispatch leg cost nothing. An attempt that reached the
+  bridge but returned no usage is `uncertain`, not zero.
