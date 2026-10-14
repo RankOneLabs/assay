@@ -10,7 +10,7 @@ for why that dependency cannot be pinned from this environment today).
 from __future__ import annotations
 
 from ipaddress import IPv4Address, IPv4Network
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -26,7 +26,7 @@ CellId = Annotated[
 
 TrialStatus = Literal["succeeded", "failed", "timeout", "cancelled"]
 NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
-TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.2.0"
+TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.3.0"
 _LAN_NETWORKS = (
     IPv4Network("10.0.0.0/8"),
     IPv4Network("172.16.0.0/12"),
@@ -104,7 +104,7 @@ class BridgeIdentity(ClosedModel):
 class TrialRequest(ClosedModel):
     """One authorized cell. ``verify`` is always disabled: Assay is the authority."""
 
-    schema_version: Literal["assay-pier-trial/0.2.0"] = "assay-pier-trial/0.2.0"
+    schema_version: Literal["assay-pier-trial/0.3.0"] = "assay-pier-trial/0.3.0"
     cell_id: CellId
     package_digest: Sha256Ref
     model_route: ModelRoute
@@ -133,7 +133,7 @@ class TrialRequest(ClosedModel):
 class TrialUsage(ClosedModel):
     prompt_tokens: int = Field(ge=0)
     completion_tokens: int = Field(ge=0)
-    cost_usd: float = Field(ge=0, allow_inf_nan=False)
+    cost_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     requests: int = Field(ge=0)
 
 
@@ -166,6 +166,59 @@ class EffectiveEnforcement(ClosedModel):
         return self
 
 
+class CandidateSubmission(ClosedModel):
+    kind: Literal["candidate"] = "candidate"
+    patch_ref: Sha256Ref
+    tree_digest: Sha256Ref
+    baseline_tree_digest: Sha256Ref
+
+
+CandidateCause = Literal[
+    "no_submission",
+    "symlink_submission",
+    "traversal",
+    "escaping_symlink",
+    "binary_payload",
+    "oversized_artifact",
+    "aggregate_artifact_limit",
+    "entry_limit",
+    "out_of_scope_edit",
+    "tampering",
+    "candidate_test_timeout",
+    "nonzero_exit",
+    "storage_exhausted",
+    "memory_limit",
+]
+InfrastructureCause = Literal[
+    "harness_deadline",
+    "cancelled",
+    "container_start",
+    "enforcement",
+    "unexpected_exception",
+    "mismatched_cell",
+]
+
+
+class CandidateFailure(ClosedModel):
+    kind: Literal["candidate_failure"] = "candidate_failure"
+    cause: CandidateCause
+    detail: str = ""
+    exception_type: str | None = None
+
+
+class InfrastructureFailure(ClosedModel):
+    kind: Literal["infrastructure_failure"] = "infrastructure_failure"
+    cause: InfrastructureCause
+    detail: str = ""
+    exception_type: str | None = None
+
+
+TrialOutcome = Annotated[
+    CandidateSubmission | CandidateFailure | InfrastructureFailure,
+    Field(discriminator="kind"),
+]
+
+
 class TrialResult(ClosedModel):
     """One trial's outcome, including whatever evidence bytes it produced.
 
@@ -186,13 +239,69 @@ class TrialResult(ClosedModel):
     """
 
     cell_id: CellId
-    status: TrialStatus
-    submission_ref: Sha256Ref | None = None
+    outcome: TrialOutcome
     usage: TrialUsage | None = None
-    error_type: str | None = None
-    error_message: str | None = None
     effective: EffectiveEnforcement
     artifacts: dict[str, bytes] = Field(default_factory=dict)
+
+    def __init__(self, **data: Any) -> None:
+        # Older in-process handles still call the keyword constructor. The
+        # before-validator translates them; serialized results expose only
+        # ``outcome`` as the source of truth.
+        super().__init__(**data)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_constructor(cls, value: Any) -> Any:
+        """Accept old in-process handles while keeping the wire shape singular."""
+        if not isinstance(value, dict) or "outcome" in value or "status" not in value:
+            return value
+        data = dict(value)
+        status = data.pop("status")
+        ref = data.pop("submission_ref", None)
+        error_type = data.pop("error_type", None)
+        detail = data.pop("error_message", None) or ""
+        if status == "succeeded" and ref is not None and error_type is None:
+            data["outcome"] = CandidateSubmission(
+                patch_ref=ref, tree_digest=ref, baseline_tree_digest=ref
+            )
+        elif status != "succeeded" and ref is None and error_type:
+            cause: InfrastructureCause = (
+                "harness_deadline"
+                if status == "timeout"
+                else "cancelled"
+                if status == "cancelled"
+                else "unexpected_exception"
+            )
+            data["outcome"] = InfrastructureFailure(
+                cause=cause, detail=detail, exception_type=error_type
+            )
+        return data
+
+    @property
+    def status(self) -> TrialStatus:
+        if isinstance(self.outcome, CandidateSubmission):
+            return "succeeded"
+        if isinstance(self.outcome, InfrastructureFailure):
+            if self.outcome.cause == "harness_deadline":
+                return "timeout"
+            if self.outcome.cause == "cancelled":
+                return "cancelled"
+        return "failed"
+
+    @property
+    def submission_ref(self) -> str | None:
+        return self.outcome.patch_ref if isinstance(self.outcome, CandidateSubmission) else None
+
+    @property
+    def error_type(self) -> str | None:
+        if isinstance(self.outcome, CandidateSubmission):
+            return None
+        return self.outcome.exception_type or self.outcome.cause
+
+    @property
+    def error_message(self) -> str | None:
+        return self.outcome.detail if not isinstance(self.outcome, CandidateSubmission) else None
 
     @model_validator(mode="after")
     def bounded_artifacts(self) -> TrialResult:
@@ -221,15 +330,6 @@ class TrialResult(ClosedModel):
                 total += len(data)
         if total > MAX_AGGREGATE_ARTIFACT_BYTES:
             raise ValueError("artifacts exceed the aggregate byte limit")
-        return self
-
-    @model_validator(mode="after")
-    def consistent_status(self) -> TrialResult:
-        if self.status == "succeeded":
-            if self.submission_ref is None or self.error_type is not None:
-                raise ValueError("a succeeded trial needs a submission and no error")
-        elif self.submission_ref is not None or not self.error_type:
-            raise ValueError("a non-succeeded trial needs an error and no submission")
         return self
 
 

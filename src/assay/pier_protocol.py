@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from ipaddress import IPv4Address, IPv4Network
 from pathlib import PurePosixPath
-from typing import Final, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import Field, model_validator
 
@@ -32,7 +32,7 @@ MAX_ARTIFACT_COUNT = 1_024
 
 ArtifactKind = Literal["raw_trajectory", "candidate", "result", "configuration", "transcript"]
 NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
-TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.2.0"
+TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.3.0"
 _LAN_NETWORKS = (
     IPv4Network("10.0.0.0/8"),
     IPv4Network("172.16.0.0/12"),
@@ -62,7 +62,7 @@ class TrialLimits(WireModel):
 
 
 class TrialRequest(WireModel):
-    schema_version: Literal["assay-pier-trial/0.2.0"] = "assay-pier-trial/0.2.0"
+    schema_version: Literal["assay-pier-trial/0.3.0"] = "assay-pier-trial/0.3.0"
     cell_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*:w[0-9]+$")
     package_digest: Sha256Ref
     model_route: ModelRoute
@@ -113,6 +113,59 @@ class EffectiveEnforcement(WireModel):
         ):
             raise ValueError("teardown cannot be complete with resources still remaining")
         return self
+
+
+class CandidateSubmission(WireModel):
+    kind: Literal["candidate"] = "candidate"
+    patch_ref: Sha256Ref
+    tree_digest: Sha256Ref
+    baseline_tree_digest: Sha256Ref
+
+
+CandidateCause = Literal[
+    "no_submission",
+    "symlink_submission",
+    "traversal",
+    "escaping_symlink",
+    "binary_payload",
+    "oversized_artifact",
+    "aggregate_artifact_limit",
+    "entry_limit",
+    "out_of_scope_edit",
+    "tampering",
+    "candidate_test_timeout",
+    "nonzero_exit",
+    "storage_exhausted",
+    "memory_limit",
+]
+InfrastructureCause = Literal[
+    "harness_deadline",
+    "cancelled",
+    "container_start",
+    "enforcement",
+    "unexpected_exception",
+    "mismatched_cell",
+]
+
+
+class CandidateFailure(WireModel):
+    kind: Literal["candidate_failure"] = "candidate_failure"
+    cause: CandidateCause
+    detail: str = ""
+    exception_type: str | None = None
+
+
+class InfrastructureFailure(WireModel):
+    kind: Literal["infrastructure_failure"] = "infrastructure_failure"
+    cause: InfrastructureCause
+    detail: str = ""
+    exception_type: str | None = None
+
+
+TrialOutcome = Annotated[
+    CandidateSubmission | CandidateFailure | InfrastructureFailure,
+    Field(discriminator="kind"),
+]
 
 
 # The manifest is what binds artifacts; it is never one of them. A "manifest"
