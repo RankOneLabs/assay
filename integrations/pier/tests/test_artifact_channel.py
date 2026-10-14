@@ -8,12 +8,15 @@ and refuses to follow what a model may have planted there.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from typing import get_args
 
 import pytest
+from assay_pier_bridge.container import DockerTrialClient
 from assay_pier_bridge.evidence import worker_usage_from_result_bytes
-from assay_pier_bridge.identity import canonical_json
+from assay_pier_bridge.identity import canonical_json, digest_bytes
 from assay_pier_bridge.paths import (
     ArtifactCollectionRejected,
     collect_artifacts,
@@ -27,6 +30,9 @@ from assay_pier_bridge.protocol import (
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
     MAX_SUBMISSION_ENTRIES,
+    REQUIRED_SUCCESS_KINDS,
+    ArtifactKind,
+    ArtifactManifest,
     CandidateSubmission,
     EffectiveEnforcement,
     ModelRoute,
@@ -34,9 +40,83 @@ from assay_pier_bridge.protocol import (
     TrialRequest,
     TrialResult,
 )
-from assay_pier_bridge.runtime import BridgeRuntime, CandidateTrialError
+from assay_pier_bridge.runtime import BridgeRuntime, CandidateTrialError, seal_observed_artifacts
 from pydantic import ValidationError
+from test_container_lifecycle import PACKAGE, _request
 from test_support import exchange_for
+
+pytest_plugins = ["test_container_lifecycle"]
+
+
+def test_revision_three_artifact_contract_matches_shared_fixture() -> None:
+    fixture_path = Path(__file__).parents[3] / "tests/fixtures/pier_wire_contract.json"
+    contract = json.loads(fixture_path.read_text(encoding="utf-8"))["artifact_manifest"]
+    assert set(get_args(ArtifactKind)) == set(contract["kinds"])
+    assert set(contract["required_success_kinds"]) == REQUIRED_SUCCESS_KINDS
+    manifest = ArtifactManifest(
+        exchange=exchange_for("s1:a1:w0", "sha256:" + "0" * 64),
+        entries=(),
+        aggregate_bytes=0,
+    )
+    assert manifest.schema_version == contract["schema_version"]
+
+
+def test_observing_seal_binds_two_candidate_files() -> None:
+    files = {"a.py": b"a = 1\n", "b.py": b"b = 2\n"}
+    artifacts = seal_observed_artifacts(
+        exchange_for("s1:a1:w0", "sha256:" + "0" * 64),
+        {
+            "trajectory.json": b"{}",
+            "candidate.patch": b"patch",
+            "result.json": b'{"exit_status":"Submitted"}',
+            "configuration.json": b"{}",
+        },
+        files,
+        tree_digest(files),
+    )
+    manifest = ArtifactManifest.model_validate_json(artifacts[MANIFEST_PATH])
+    assert {entry.kind for entry in manifest.entries} >= REQUIRED_SUCCESS_KINDS
+    assert {entry.path for entry in manifest.entries if entry.kind == "candidate"} == {
+        "candidate-index.json",
+        "candidate_files/a.py",
+        "candidate_files/b.py",
+    }
+    assert all(
+        digest_bytes(artifacts[entry.path]) == entry.checksum
+        and len(artifacts[entry.path]) == entry.size_bytes
+        for entry in manifest.entries
+    )
+
+
+def test_real_container_dispatch_seals_every_observed_artifact(image: str) -> None:
+    client = DockerTrialClient(
+        image=image,
+        package=PACKAGE,
+        command=[
+            "/bin/sh",
+            "-c",
+            "printf 'a = 1\\n' > /submission/worktree/a.py; "
+            "printf 'b = 2\\n' > /submission/worktree/b.py; "
+            "printf 'submitted' > /submission/output",
+        ],
+        openrouter_api_key="",
+    )
+    result = BridgeRuntime(client).run_cell(_request(network_policy="toolchain-only"))
+    assert result.outcome.kind == "candidate", result.outcome
+    manifest = ArtifactManifest.model_validate_json(result.artifacts[MANIFEST_PATH])
+    assert {entry.kind for entry in manifest.entries} >= REQUIRED_SUCCESS_KINDS
+    assert manifest.exchange == _request(network_policy="toolchain-only").exchange
+    for entry in manifest.entries:
+        data = result.artifacts[entry.path]
+        assert len(data) == entry.size_bytes
+        assert entry.checksum == digest_bytes(data)
+    files = {
+        entry.path.removeprefix("candidate_files/"): result.artifacts[entry.path]
+        for entry in manifest.entries
+        if entry.path.startswith("candidate_files/")
+    }
+    assert set(files) == {"a.py", "b.py"}
+    assert result.outcome.tree_digest == tree_digest(files)
 
 
 def _effective() -> EffectiveEnforcement:
@@ -318,8 +398,13 @@ def test_patch_rejects_the_reserved_git_namespace(tmp_path: Path, which: str) ->
     ],
 )
 def test_regular_tree_bounded_reads_retain_a_prefix(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file_limit: int,
-    total_limit: int, payload: bytes, cause: str, retained: bytes,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    file_limit: int,
+    total_limit: int,
+    payload: bytes,
+    cause: str,
+    retained: bytes,
 ) -> None:
     monkeypatch.setattr("assay_pier_bridge.paths.MAX_ARTIFACT_BYTES", file_limit)
     monkeypatch.setattr("assay_pier_bridge.paths.MAX_AGGREGATE_ARTIFACT_BYTES", total_limit)

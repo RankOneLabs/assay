@@ -16,6 +16,7 @@ one (see ``integrations/pier/README.md``).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from ipaddress import IPv4Address, IPv4Network
 from pathlib import PurePosixPath
@@ -30,7 +31,9 @@ MAX_ARTIFACT_BYTES = 8_000_000
 MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
 MAX_ARTIFACT_COUNT = 1_024
 
-ArtifactKind = Literal["raw_trajectory", "candidate", "result", "configuration", "transcript"]
+ArtifactKind = Literal[
+    "raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration", "transcript"
+]
 NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
 TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.3.0"
 _LAN_NETWORKS = (
@@ -184,10 +187,10 @@ TrialOutcome = Annotated[
 # self-checksum, so the kind is gone and the path is reserved instead.
 MANIFEST_PATH: Final = "manifest.json"
 
-# The four checked artifacts a success is bound to; "transcript" (ATIF) is an
+# The checked artifacts a success is bound to; "transcript" (ATIF) is an
 # optional derived view and is deliberately excluded from this set.
 REQUIRED_SUCCESS_KINDS: frozenset[str] = frozenset(
-    {"raw_trajectory", "candidate", "result", "configuration"}
+    {"raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration"}
 )
 
 
@@ -303,8 +306,8 @@ class ArtifactManifest(WireModel):
     which is the only place actual artifact content is trusted.
     """
 
-    schema_version: Literal["assay-pier-artifact-manifest/0.1.0"] = (
-        "assay-pier-artifact-manifest/0.1.0"
+    schema_version: Literal["assay-pier-artifact-manifest/0.2.0"] = (
+        "assay-pier-artifact-manifest/0.2.0"
     )
     exchange: PierExchange
     entries: tuple[ArtifactEntry, ...]
@@ -317,6 +320,9 @@ class ArtifactManifest(WireModel):
         paths = [entry.path for entry in self.entries]
         if len(set(paths)) != len(paths):
             raise ValueError("duplicate artifact path in manifest")
+        singular_kinds = [entry.kind for entry in self.entries if entry.kind != "candidate"]
+        if len(set(singular_kinds)) != len(singular_kinds):
+            raise ValueError("duplicate singular artifact kind in manifest")
         # Distinct paths may legitimately carry identical bytes (e.g. an
         # empty candidate and an empty transcript) -- the object store
         # already dedupes by content, and neither the bridge model nor this
@@ -336,6 +342,10 @@ class ArtifactManifest(WireModel):
         return self.kinds() >= REQUIRED_SUCCESS_KINDS
 
     def entry(self, kind: ArtifactKind) -> ArtifactEntry | None:
+        if kind == "candidate":
+            for candidate in self.entries:
+                if candidate.kind == kind and candidate.path == "candidate-index.json":
+                    return candidate
         for candidate in self.entries:
             if candidate.kind == kind:
                 return candidate
@@ -381,6 +391,49 @@ def verify_artifact_bytes(manifest: ArtifactManifest, *, artifact_bytes: dict[st
                 raise ManifestRejected(
                     f"artifact kind {entry.kind!r} must be valid JSON: {entry.path}"
                 ) from error
+
+
+def candidate_tree_digest(manifest: ArtifactManifest, *, artifact_bytes: dict[str, bytes]) -> str:
+    """Recompute the observed tree from the manifest's candidate file entries."""
+    indexes = [
+        entry
+        for entry in manifest.entries
+        if entry.kind == "candidate" and entry.path == "candidate-index.json"
+    ]
+    if len(indexes) != 1:
+        raise ManifestRejected("candidate index is missing")
+    index = indexes[0]
+    try:
+        listed = json.loads(artifact_bytes[index.path])
+    except (KeyError, ValueError) as error:
+        raise ManifestRejected("candidate index is invalid") from error
+    if not isinstance(listed, list) or any(not isinstance(path, str) for path in listed):
+        raise ManifestRejected("candidate index must list file paths")
+    files = {
+        entry.path.removeprefix("candidate_files/"): artifact_bytes[entry.path]
+        for entry in manifest.entries
+        if entry.kind == "candidate" and entry.path.startswith("candidate_files/")
+    }
+    if len(listed) != len(set(listed)) or set(listed) != set(files):
+        raise ManifestRejected("candidate index does not match candidate files")
+    if any(
+        entry.kind == "candidate"
+        and entry.path != "candidate-index.json"
+        and not entry.path.startswith("candidate_files/")
+        for entry in manifest.entries
+    ):
+        raise ManifestRejected("candidate has an unexpected path")
+    digest = hashlib.sha256()
+    for path in sorted(files, key=lambda value: value.encode("utf-8")):
+        parts = PurePosixPath(path).parts
+        if (
+            not path
+            or PurePosixPath(path).is_absolute()
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise ManifestRejected(f"candidate file path is unsafe: {path}")
+        digest.update(path.encode("utf-8") + b"\x00100644\x00" + files[path] + b"\x00")
+    return f"sha256:{digest.hexdigest()}"
 
 
 def reject_on_binding_mismatch(expected: RuntimeBinding, actual: RuntimeBinding) -> None:

@@ -26,6 +26,15 @@
       "egress_port": 8080
     }
   },
+  "artifact_manifest": {
+    "schema_version": "assay-pier-artifact-manifest/0.2.0",
+    "kinds": ["raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration", "transcript"],
+    "required_success_kinds": ["raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration"],
+    "candidate_index_path": "candidate-index.json",
+    "candidate_file_prefix": "candidate_files/",
+    "patch_path": "candidate.patch",
+    "tree_digest_path": "tree-digest.txt"
+  },
   "package_digests": [
     {
       "name": "minimal",

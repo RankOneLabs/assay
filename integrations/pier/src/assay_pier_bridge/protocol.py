@@ -62,6 +62,12 @@ MAX_ARTIFACT_COUNT = 1_024
 # shared fixture asserted by tests/test_wire_contract.py pins that rule, since
 # nothing else connects the two copies.
 MANIFEST_PATH = "manifest.json"
+ArtifactKind = Literal[
+    "raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration", "transcript"
+]
+REQUIRED_SUCCESS_KINDS = frozenset(
+    {"raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration"}
+)
 
 
 class ClosedModel(BaseModel):
@@ -138,6 +144,43 @@ class PierExchange(ClosedModel):
         arm = self.coordinate.arm_id.replace("-", "--")
         if self.trial_name != f"{subject}-{arm}-w{self.coordinate.worker_repeat}":
             raise ValueError("trial name does not match the bound cell coordinate")
+        return self
+
+
+class ArtifactEntry(ClosedModel):
+    path: str = Field(min_length=1)
+    kind: ArtifactKind
+    size_bytes: int = Field(ge=0, le=MAX_ARTIFACT_BYTES)
+    checksum: Sha256Ref
+    utf8: bool
+
+    @model_validator(mode="after")
+    def valid_path(self) -> ArtifactEntry:
+        safe_relative_path(self.path)
+        if self.path == MANIFEST_PATH:
+            raise ValueError("manifest cannot declare itself")
+        return self
+
+
+class ArtifactManifest(ClosedModel):
+    schema_version: Literal["assay-pier-artifact-manifest/0.2.0"] = (
+        "assay-pier-artifact-manifest/0.2.0"
+    )
+    exchange: PierExchange
+    entries: tuple[ArtifactEntry, ...]
+    aggregate_bytes: int = Field(ge=0, le=MAX_AGGREGATE_ARTIFACT_BYTES)
+
+    @model_validator(mode="after")
+    def bounded(self) -> ArtifactManifest:
+        if len(self.entries) > MAX_ARTIFACT_COUNT:
+            raise ValueError("artifact manifest exceeds the artifact count limit")
+        if len({entry.path for entry in self.entries}) != len(self.entries):
+            raise ValueError("artifact manifest has duplicate paths")
+        singular_kinds = [entry.kind for entry in self.entries if entry.kind != "candidate"]
+        if len(set(singular_kinds)) != len(singular_kinds):
+            raise ValueError("artifact manifest has duplicate singular kinds")
+        if sum(entry.size_bytes for entry in self.entries) != self.aggregate_bytes:
+            raise ValueError("aggregate_bytes does not match entries")
         return self
 
 
@@ -267,9 +310,9 @@ TrialOutcome = Annotated[
 class TrialResult(ClosedModel):
     """One trial's outcome, including whatever evidence bytes it produced.
 
-    ``artifacts`` maps a relative path to the exact bytes the trial wrote --
-    the candidate source at minimum, plus whatever trajectory/result/
-    configuration files a sandboxed agent loop writes alongside it. It is a
+    ``artifacts`` maps a relative path to the exact bytes retained by the
+    host, including candidate files, patch, tree digest, trajectory, result,
+    and configuration evidence. It is a
     real part of this contract rather than the caller's problem: the bytes
     exist only inside the trial's own submission mount, which ``teardown``
     destroys, so a result that did not carry them out could never be

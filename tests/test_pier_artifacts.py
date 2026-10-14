@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
@@ -13,6 +15,7 @@ from assay.pier_protocol import (
     MAX_ARTIFACT_BYTES,
     REQUIRED_SUCCESS_KINDS,
     ArtifactEntry,
+    ArtifactKind,
     ArtifactManifest,
     ManifestRejected,
     RuntimeBinding,
@@ -51,7 +54,26 @@ def test_the_manifest_is_not_one_of_the_artifacts_it_binds() -> None:
     it with a decoy file, so the "manifest evidence" a success was gated on
     was reliably not the manifest."""
     assert "manifest" not in REQUIRED_SUCCESS_KINDS
-    assert {"raw_trajectory", "candidate", "result", "configuration"} == REQUIRED_SUCCESS_KINDS
+    assert {
+        "raw_trajectory",
+        "candidate",
+        "patch",
+        "tree_digest",
+        "result",
+        "configuration",
+    } == REQUIRED_SUCCESS_KINDS
+
+
+def test_revision_three_artifact_contract_matches_shared_fixture() -> None:
+    fixture = json.loads((Path(__file__).parent / "fixtures/pier_wire_contract.json").read_text())
+    contract = fixture["artifact_manifest"]
+    assert set(get_args(ArtifactKind)) == set(contract["kinds"])
+    assert set(contract["required_success_kinds"]) == REQUIRED_SUCCESS_KINDS
+    exchange = bind_exchange(coordinate=_coordinate(), binding=RuntimeBinding(**_binding()))
+    assert (
+        ArtifactManifest(exchange=exchange, entries=(), aggregate_bytes=0).schema_version
+        == (contract["schema_version"])
+    )
 
 
 def test_an_entry_cannot_claim_the_manifests_own_path() -> None:
@@ -196,7 +218,7 @@ def test_atif_unavailable_is_recorded_not_treated_as_missing_evidence() -> None:
     no transcript still reports complete required-success evidence."""
 
     exchange = bind_exchange(coordinate=_coordinate(), binding=RuntimeBinding(**_binding()))
-    kinds = ["raw_trajectory", "candidate", "result", "configuration"]
+    kinds = ["raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration"]
     entries = tuple(
         _entry(f"{kind}.json", f'{{"kind": "{kind}"}}'.encode(), kind=kind) for kind in kinds
     )

@@ -75,6 +75,7 @@ from assay_pier_bridge.provider import (  # noqa: E402
     GuardedRouteError,
 )
 from assay_pier_bridge.runtime import BridgeRuntime, TrialAlreadyRequestedError  # noqa: E402
+from assay_pier_bridge.paths import tree_digest  # noqa: E402
 from pier_qualification.pier_experiment import (  # noqa: E402
     EXPECTED_BRIDGE_LOCK_DIGEST,
     EXPECTED_DOCKER_VERSION,
@@ -530,9 +531,11 @@ def probe_fake_boundary() -> None:
 
 def _artifact_entries_and_bytes(
     exchange: PierExchange, *, tamper_candidate: bool
-) -> tuple[tuple[ArtifactEntry, ...], dict[str, bytes], str]:
+) -> tuple[tuple[ArtifactEntry, ...], dict[str, bytes], str, str]:
     raw_trajectory = json.dumps({"trajectory": "qualify-local"}).encode()
     candidate = b"x = 1\n"
+    candidate_tree = {"answer.py": candidate}
+    tree_ref = tree_digest(candidate_tree)
     result = json.dumps({"exit_status": "Submitted"}).encode()
     configuration = json.dumps({"config": True}).encode()
     # No entry for the manifest itself: it is the document that binds these
@@ -542,7 +545,10 @@ def _artifact_entries_and_bytes(
     # checksum of the bytes carrying that checksum.)
     specs: tuple[tuple[str, ArtifactKind, bytes], ...] = (
         ("raw_trajectory.json", "raw_trajectory", raw_trajectory),
-        ("candidate.py", "candidate", candidate),
+        ("candidate-index.json", "candidate", json.dumps(["answer.py"]).encode()),
+        ("candidate_files/answer.py", "candidate", candidate),
+        ("candidate.patch", "patch", b"patch evidence"),
+        ("tree-digest.txt", "tree_digest", tree_ref.encode()),
         ("result.json", "result", result),
         ("configuration.json", "configuration", configuration),
     )
@@ -553,12 +559,12 @@ def _artifact_entries_and_bytes(
         for path, kind, data in specs
     )
     artifact_bytes = {path: data for path, _kind, data in specs}
-    submission_ref = digest_bytes(candidate)
+    submission_ref = digest_bytes(b"patch evidence")
     if tamper_candidate:
         # Corrupt the delivered bytes after the manifest was sealed against
         # the original candidate -- the round trip must catch this, not pass it.
-        artifact_bytes["candidate.py"] = b"x = 2\n"
-    return entries, artifact_bytes, submission_ref
+        artifact_bytes["candidate_files/answer.py"] = b"x = 2\n"
+    return entries, artifact_bytes, submission_ref, tree_ref
 
 
 @dataclass
@@ -572,7 +578,7 @@ class _FakeBridgeHandle:
             raise asyncio.CancelledError()
         if self.mode == "error":
             raise RuntimeError("qualification-injected bridge failure")
-        entries, artifact_bytes, submission_ref = _artifact_entries_and_bytes(
+        entries, artifact_bytes, submission_ref, tree_ref = _artifact_entries_and_bytes(
             self.exchange, tamper_candidate=(self.mode == "tampered")
         )
         manifest = ArtifactManifest(
@@ -585,7 +591,7 @@ class _FakeBridgeHandle:
             exchange=self.exchange,
             outcome=CandidateSubmission(
                 patch_ref=submission_ref,
-                tree_digest="sha256:" + "0" * 64,
+                tree_digest=tree_ref,
                 baseline_tree_digest="sha256:" + "0" * 64,
             ),
             usage={"prompt_tokens": 10.0, "completion_tokens": 5.0, "cost_usd": 0.0021},

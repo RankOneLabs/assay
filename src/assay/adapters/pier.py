@@ -54,6 +54,7 @@ from assay.pier_protocol import (
     PierExchange,
     RuntimeBinding,
     bind_exchange,
+    candidate_tree_digest,
     mini_exit_status_from_result_bytes,
     verify_artifact_bytes,
 )
@@ -358,7 +359,8 @@ class PierAdapter:
         )
         if getattr(error, "origin", None) == "working_copy":
             observed_bytes = {
-                path: data for path, data in observed_bytes.items()
+                path: data
+                for path, data in observed_bytes.items()
                 if not path.startswith("rejected_worktree/")
             }
         return {**observed_bytes, **retained_bytes}
@@ -482,7 +484,7 @@ class PierAdapter:
             verify_artifact_bytes(manifest, artifact_bytes=dict(bridge_result.artifacts))
         except Exception as error:
             return WorkerFailure(
-                type(error).__name__,
+                "ManifestRejected",
                 str(error),
                 trace=_trace(exchange, refs=refs, reason="manifest_rejected"),
                 accounting=dispatched_accounting,
@@ -502,23 +504,37 @@ class PierAdapter:
         if not manifest.has_required_success_evidence():
             return WorkerFailure(
                 "IncompleteEvidence",
-                "manifest is missing required raw trajectory/candidate/result/"
-                "configuration evidence",
+                "manifest is missing required raw trajectory/candidate/patch/tree digest/"
+                "result/configuration evidence",
                 trace=_trace(exchange, refs=refs, reason="incomplete_evidence"),
                 accounting=dispatched_accounting,
             )
 
-        # The bridge's patch ref must match the manifest's candidate bytes;
-        # the outcome alone is only a claim until checked against evidence.
-        candidate_bytes = _bytes_for(manifest, bridge_result.artifacts, "candidate")
+        # Bind both the patch and the full candidate tree to the observed result.
+        patch_bytes = _bytes_for(manifest, bridge_result.artifacts, "patch")
+        tree_bytes = _bytes_for(manifest, bridge_result.artifacts, "tree_digest")
         assert isinstance(bridge_result.outcome, CandidateSubmission)
+        try:
+            observed_tree = candidate_tree_digest(
+                manifest, artifact_bytes=dict(bridge_result.artifacts)
+            )
+        except ManifestRejected as error:
+            return WorkerFailure(
+                "ManifestRejected",
+                str(error),
+                trace=_trace(exchange, refs=refs, reason="manifest_rejected"),
+                accounting=dispatched_accounting,
+            )
         if (
-            candidate_bytes is None
-            or digest_bytes(candidate_bytes) != bridge_result.outcome.patch_ref
+            patch_bytes is None
+            or digest_bytes(patch_bytes) != bridge_result.outcome.patch_ref
+            or tree_bytes is None
+            or tree_bytes != observed_tree.encode("ascii")
+            or observed_tree != bridge_result.outcome.tree_digest
         ):
             return WorkerFailure(
                 "SubmissionMismatch",
-                "bridge patch_ref does not match the digest of the declared candidate",
+                "bridge patch or tree digest does not match the declared candidate",
                 trace=_trace(exchange, refs=refs, reason="submission_mismatch"),
                 accounting=dispatched_accounting,
             )
@@ -539,6 +555,7 @@ class PierAdapter:
         # manifest's own entries, so its ref is resolved by reserved path.
         manifest_ref = refs.get(MANIFEST_PATH)
         unpublished = sorted(kind for kind in REQUIRED_SUCCESS_KINDS if _ref_for(kind) is None)
+        unpublished.extend(entry.path for entry in manifest.entries if refs.get(entry.path) is None)
         if manifest_ref is None:
             unpublished = [*unpublished, "manifest"]
         if unpublished:
@@ -553,6 +570,8 @@ class PierAdapter:
         output = {
             "cell_id": exchange.coordinate.id,
             "candidate_ref": _ref_for("candidate"),
+            "patch_ref": _ref_for("patch"),
+            "tree_digest_ref": _ref_for("tree_digest"),
             "result_ref": _ref_for("result"),
             "raw_trajectory_ref": _ref_for("raw_trajectory"),
             "configuration_ref": _ref_for("configuration"),

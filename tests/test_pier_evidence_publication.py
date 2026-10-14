@@ -12,6 +12,7 @@ indistinguishable downstream from a trial that genuinely produced nothing.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -38,25 +39,46 @@ from assay.pier_protocol import (
     InfrastructureFailure,
     PierExchange,
     RuntimeBinding,
+    bind_exchange,
 )
 from assay.store import ObjectStore
 
 REQUIRED_REF_FIELDS = {
     "raw_trajectory": "raw_trajectory_ref",
     "candidate": "candidate_ref",
+    "patch": "patch_ref",
+    "tree_digest": "tree_digest_ref",
     "result": "result_ref",
     "configuration": "configuration_ref",
 }
 
+_CANDIDATE = {"solve.py": b"def solve():\n    return 42\n", "extra.py": b"value = 1\n"}
+_TREE = (
+    "sha256:"
+    + hashlib.sha256(
+        b"".join(
+            path.encode() + b"\x00100644\x00" + data + b"\x00"
+            for path, data in sorted(_CANDIDATE.items())
+        )
+    ).hexdigest()
+)
 _CONTENTS: dict[str, bytes] = {
     "raw_trajectory.json": b'{"steps": ["thought", "submit"]}',
-    "candidate.txt": b"def solve():\n    return 42\n",
+    "candidate-index.json": b'["extra.py","solve.py"]',
+    "candidate_files/extra.py": _CANDIDATE["extra.py"],
+    "candidate_files/solve.py": _CANDIDATE["solve.py"],
+    "candidate.patch": b"patch evidence",
+    "tree-digest.txt": _TREE.encode(),
     "result.json": b'{"passed": true, "exit_status": "Submitted"}',
     "configuration.json": b'{"model": "anthropic/claude-3-haiku"}',
 }
 _KINDS: dict[str, str] = {
     "raw_trajectory.json": "raw_trajectory",
-    "candidate.txt": "candidate",
+    "candidate-index.json": "candidate",
+    "candidate_files/extra.py": "candidate",
+    "candidate_files/solve.py": "candidate",
+    "candidate.patch": "patch",
+    "tree-digest.txt": "tree_digest",
     "result.json": "result",
     "configuration.json": "configuration",
 }
@@ -135,8 +157,8 @@ class _Bridge:
             BridgeTrialResult(
                 exchange=exchange,
                 outcome=CandidateSubmission(
-                    patch_ref=digest_bytes(artifacts["candidate.txt"]),
-                    tree_digest="sha256:" + "0" * 64,
+                    patch_ref=digest_bytes(artifacts["candidate.patch"]),
+                    tree_digest=_TREE,
                     baseline_tree_digest="sha256:" + "0" * 64,
                 ),
                 usage={"cost_usd": 0.01},
@@ -170,11 +192,60 @@ async def test_ordinary_success_publishes_every_required_ref(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize(
+    ("manifest_bytes", "error_type"),
+    [(None, "MissingManifest"), (b"{bad json", "ManifestRejected")],
+)
+def test_absent_and_invalid_manifests_have_distinct_rejections(
+    tmp_path: Path, manifest_bytes: bytes | None, error_type: str
+) -> None:
+    exchange = bind_exchange(coordinate=_coordinate(), binding=_binding())
+    _, artifacts = _manifest_and_artifacts(exchange)
+    if manifest_bytes is None:
+        del artifacts[MANIFEST_PATH]
+    else:
+        artifacts[MANIFEST_PATH] = manifest_bytes
+    outcome = CandidateSubmission(
+        patch_ref=digest_bytes(artifacts["candidate.patch"]),
+        tree_digest=_TREE,
+        baseline_tree_digest=_TREE,
+    )
+    result = _adapter(tmp_path, _Bridge())._settle(
+        exchange,
+        BridgeTrialResult(exchange=exchange, outcome=outcome, usage=None, artifacts=artifacts),
+        cleanup_incomplete=False,
+    )
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == error_type
+
+
+def test_candidate_tree_mismatch_rejects_a_success(tmp_path: Path) -> None:
+    exchange = bind_exchange(coordinate=_coordinate(), binding=_binding())
+    _, artifacts = _manifest_and_artifacts(exchange)
+    result = _adapter(tmp_path, _Bridge())._settle(
+        exchange,
+        BridgeTrialResult(
+            exchange=exchange,
+            outcome=CandidateSubmission(
+                patch_ref=digest_bytes(artifacts["candidate.patch"]),
+                tree_digest="sha256:" + "0" * 64,
+                baseline_tree_digest=_TREE,
+            ),
+            usage=None,
+            artifacts=artifacts,
+        ),
+        cleanup_incomplete=False,
+    )
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == "SubmissionMismatch"
+
+
+@pytest.mark.parametrize(
     "outcome",
     [
         CandidateFailure(cause="candidate_test_timeout", detail="candidate test hung"),
         InfrastructureFailure(
-            cause="harness_deadline", detail="harness timed out",
+            cause="harness_deadline",
+            detail="harness timed out",
             exception_type="TrialTimeoutError",
         ),
     ],
@@ -186,7 +257,9 @@ async def test_typed_failures_keep_their_cause_without_a_success_manifest(
         def create(self, *, exchange: PierExchange, package: dict[str, str]) -> PierBridgeHandle:
             return _Handle(
                 BridgeTrialResult(
-                    exchange=exchange, outcome=outcome, usage=None,
+                    exchange=exchange,
+                    outcome=outcome,
+                    usage=None,
                     artifacts={"partial.txt": b"observed"},
                 )
             )
