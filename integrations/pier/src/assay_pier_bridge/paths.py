@@ -16,6 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 
+MAX_ARTIFACT_BYTES = 8_000_000
+MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
+MAX_SUBMISSION_ENTRIES = 4_096
+
 
 class ArtifactCollectionRejected(ValueError):
     """Bounded rejected evidence, available even when collection aborts."""
@@ -80,9 +84,28 @@ class SubmissionPatch:
 
 
 def regular_tree(root: Path) -> dict[str, bytes]:
-    """Read a host-visible tree without following candidate-controlled links."""
+    """Read a bounded host-visible tree without following candidate-controlled links."""
     files: dict[str, bytes] = {}
-    for path in sorted(root.rglob("*")):
+    if root.is_symlink():
+        raise ArtifactCollectionRejected(
+            "escaping_symlink", f"symlinked working-copy root: {root}",
+            origin="working_copy",
+        )
+    if not root.is_dir():
+        raise ArtifactCollectionRejected(
+            "out_of_scope_edit", f"working-copy root is not a directory: {root}",
+            origin="working_copy",
+        )
+    paths: list[Path] = []
+    for path in root.rglob("*"):
+        paths.append(path)
+        if len(paths) > MAX_SUBMISSION_ENTRIES:
+            raise ArtifactCollectionRejected(
+                "entry_limit", "working copy exceeds the filesystem entry limit",
+                rejected_path=path.relative_to(root).as_posix(), origin="working_copy",
+            )
+    aggregate_bytes = 0
+    for path in sorted(paths):
         raw_relative = path.relative_to(root).as_posix()
         try:
             relative = safe_relative_path(raw_relative).as_posix()
@@ -91,6 +114,11 @@ def regular_tree(root: Path) -> dict[str, bytes]:
                 "traversal", str(error), artifacts=files,
                 rejected_path=raw_relative, origin="working_copy"
             ) from error
+        if relative.split("/", 1)[0] == ".git":
+            raise ArtifactCollectionRejected(
+                "out_of_scope_edit", f"reserved Git metadata path in submission: {relative}",
+                artifacts=files, rejected_path=relative, origin="working_copy",
+            )
         if path.is_symlink():
             raise ArtifactCollectionRejected(
                 "escaping_symlink",
@@ -109,7 +137,33 @@ def regular_tree(root: Path) -> dict[str, bytes]:
                 rejected_path=relative,
                 origin="working_copy",
             )
-        data = path.read_bytes()
+        remaining = MAX_AGGREGATE_ARTIFACT_BYTES - aggregate_bytes
+        size = path.lstat().st_size
+        if size > MAX_ARTIFACT_BYTES or size > remaining:
+            with path.open("rb") as source:
+                retained = source.read(min(MAX_ARTIFACT_BYTES, remaining))
+            cause = (
+                "oversized_artifact" if size > MAX_ARTIFACT_BYTES
+                else "aggregate_artifact_limit"
+            )
+            raise ArtifactCollectionRejected(
+                cause, f"working-copy file exceeds the byte limit: {relative}",
+                artifacts={**files, relative: retained},
+                rejected_path=relative, origin="working_copy",
+            )
+        with path.open("rb") as source:
+            data = source.read(min(MAX_ARTIFACT_BYTES, remaining) + 1)
+        if len(data) > MAX_ARTIFACT_BYTES or len(data) > remaining:
+            retained = data[:min(MAX_ARTIFACT_BYTES, remaining)]
+            cause = (
+                "oversized_artifact" if len(data) > MAX_ARTIFACT_BYTES
+                else "aggregate_artifact_limit"
+            )
+            raise ArtifactCollectionRejected(
+                cause, f"working-copy file exceeds the byte limit: {relative}",
+                artifacts={**files, relative: retained},
+                rejected_path=relative, origin="working_copy",
+            )
         if b"\x00" in data:
             raise ArtifactCollectionRejected(
                 "binary_payload",
@@ -129,6 +183,7 @@ def regular_tree(root: Path) -> dict[str, bytes]:
                 origin="working_copy",
             ) from error
         files[relative] = data
+        aggregate_bytes += len(data)
     return files
 
 

@@ -45,7 +45,10 @@ arm's immutable baseline. The host enumerates both trees after the agent stops;
 the agent's list of edited files is trajectory data only. Paths are canonical
 relative POSIX paths, sorted by their UTF-8 bytes. Each regular file has mode
 `100644`; symlinks, special files, non-UTF-8 source and NUL bytes are rejected.
-The baseline is checked against the sealed package again before diffing.
+The top-level `.git` namespace is reserved for patch generation and is
+rejected in either tree. The host bounds each file to 8 MB, the full tree to
+32 MB, and enumeration to 4,096 entries before constructing the patch. The
+baseline is checked against the sealed package again before diffing.
 
 The captured patch is a Git unified diff with `diff --git`, `index`, `---`,
 `+++`, and `@@` lines. Index values are full lowercase Git SHA-1 blob IDs,

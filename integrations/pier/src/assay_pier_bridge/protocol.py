@@ -14,7 +14,18 @@ from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from assay_pier_bridge.paths import safe_relative_path
+from assay_pier_bridge.paths import (
+    MAX_AGGREGATE_ARTIFACT_BYTES as MAX_AGGREGATE_ARTIFACT_BYTES,
+)
+from assay_pier_bridge.paths import (
+    MAX_ARTIFACT_BYTES as MAX_ARTIFACT_BYTES,
+)
+from assay_pier_bridge.paths import (
+    MAX_SUBMISSION_ENTRIES as MAX_SUBMISSION_ENTRIES,
+)
+from assay_pier_bridge.paths import (
+    safe_relative_path,
+)
 
 Sha256Ref = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 Identifier = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
@@ -36,8 +47,6 @@ _LAN_NETWORKS = (
 # at the point they are collected, as well as by the consumer: a trial whose
 # submission mount filled up must fail as an oversized result, not stream an
 # unbounded read into the caller's memory first.
-MAX_ARTIFACT_BYTES = 8_000_000
-MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
 # The reserved manifest is the document binding the artifacts, not one of
 # the artifacts it declares, so it is excluded from this count just as it is
 # excluded from the aggregate byte limit.
@@ -46,7 +55,6 @@ MAX_ARTIFACT_COUNT = 1_024
 # not artifacts but still consume host memory before collection can sort the
 # paths. Keep this local operational bound distinct from the wire artifact
 # count so directories never consume advertised artifact slots.
-MAX_SUBMISSION_ENTRIES = 4_096
 
 # Mirrors assay.pier_protocol.MANIFEST_PATH: the reserved path of the document
 # that binds the artifacts, which is never one of them. Both projects exempt

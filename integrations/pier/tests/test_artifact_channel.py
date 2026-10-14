@@ -284,6 +284,63 @@ def test_regular_tree_rejects_typed_bad_paths_and_bytes(
     assert result.artifacts == {"rejected_worktree/output": b"working-copy output"}
 
 
+def test_regular_tree_rejects_a_symlinked_root_before_reading_host_files(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_bytes(b"host secret")
+    worktree = tmp_path / "worktree"
+    worktree.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        regular_tree(worktree)
+    assert rejected.value.cause == "escaping_symlink"
+    assert rejected.value.artifacts == {}
+
+
+@pytest.mark.parametrize("which", ["baseline", "final"])
+def test_patch_rejects_the_reserved_git_namespace(tmp_path: Path, which: str) -> None:
+    baseline = tmp_path / "baseline"
+    final = tmp_path / "final"
+    baseline.mkdir()
+    final.mkdir()
+    (tmp_path / which / ".git").mkdir()
+    (tmp_path / which / ".git" / "config").write_bytes(b"[core]\n")
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        submission_patch(baseline, final)
+    assert rejected.value.cause == "out_of_scope_edit"
+    assert rejected.value.rejected_path == ".git"
+
+
+@pytest.mark.parametrize(
+    ("file_limit", "total_limit", "payload", "cause", "retained"),
+    [
+        (4, 10, b"12345", "oversized_artifact", b"1234"),
+        (10, 4, b"12345", "aggregate_artifact_limit", b"1234"),
+    ],
+)
+def test_regular_tree_bounded_reads_retain_a_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file_limit: int,
+    total_limit: int, payload: bytes, cause: str, retained: bytes,
+) -> None:
+    monkeypatch.setattr("assay_pier_bridge.paths.MAX_ARTIFACT_BYTES", file_limit)
+    monkeypatch.setattr("assay_pier_bridge.paths.MAX_AGGREGATE_ARTIFACT_BYTES", total_limit)
+    (tmp_path / "large.txt").write_bytes(payload)
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        regular_tree(tmp_path)
+    assert rejected.value.cause == cause
+    assert rejected.value.artifacts == {"large.txt": retained}
+
+
+def test_regular_tree_bounds_entry_enumeration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("assay_pier_bridge.paths.MAX_SUBMISSION_ENTRIES", 2)
+    for name in ("a", "b", "c"):
+        (tmp_path / name).write_bytes(b"x")
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        regular_tree(tmp_path)
+    assert rejected.value.cause == "entry_limit"
+
+
 @pytest.mark.parametrize("cause", ["out_of_scope_edit", "tampering"])
 def test_candidate_rejection_carries_its_own_artifacts(cause: str) -> None:
     class Handle:
