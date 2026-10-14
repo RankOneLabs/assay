@@ -153,6 +153,18 @@ def test_accepts_exactly_one_valid_submit_output_call() -> None:
     assert response.submission.call_id == "call_1"
 
 
+def test_empty_source_is_a_valid_noop_submission() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps(
+            {"source": ""}
+        )
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client:
+        assert client.complete(system_prompt="sys", user_message="hi").submission.source == ""
+
+
 def test_fails_closed_on_wrong_finish_reason() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = _good_body()

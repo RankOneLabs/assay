@@ -15,6 +15,7 @@ from assay_pier_bridge.protocol import (
 from assay_pier_bridge.runtime import (
     BridgeRuntime,
     CandidateTestTimeoutError,
+    CandidateTrialError,
     TrialAlreadyRequestedError,
     TrialCancelledError,
     TrialTimeoutError,
@@ -80,6 +81,8 @@ class FakeTrialHandle:
             raise TrialTimeoutError("deadline exceeded")
         if self.outcome == "test_timeout":
             raise CandidateTestTimeoutError()
+        if self.outcome == "no_submission":
+            raise CandidateTrialError("no_submission", "trial wrote no submission marker")
         if self.outcome == "cancel":
             raise TrialCancelledError("operator cancelled")
         raise AssertionError(self.outcome)
@@ -187,3 +190,9 @@ def test_candidate_test_timeout_differs_from_harness_deadline() -> None:
     assert test_hang.outcome.cause == "candidate_test_timeout"
     assert harness_hang.outcome.kind == "infrastructure_failure"
     assert harness_hang.outcome.cause == "harness_deadline"
+
+
+def test_no_submission_is_distinct_from_an_empty_candidate() -> None:
+    missing = BridgeRuntime(FakeTrialClient("no_submission")).run_cell(_request())
+    assert missing.outcome.kind == "candidate_failure"
+    assert missing.outcome.cause == "no_submission"

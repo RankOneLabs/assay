@@ -262,3 +262,15 @@ def test_repository_attributes_cannot_rewrite_patch_bytes(tmp_path: Path) -> Non
     assert b"-before\r\n+after\r\n" in captured.patch
     subprocess.run(["git", "apply", "-"], input=captured.patch, cwd=replay, check=True)
     assert tree_digest(regular_tree(replay)) == captured.final_tree_digest
+
+
+def test_unchanged_working_copy_is_zero_byte_patch(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline"
+    final = tmp_path / "final"
+    baseline.mkdir()
+    final.mkdir()
+    (baseline / "a.py").write_bytes(b"answer = 1\n")
+    (final / "a.py").write_bytes(b"answer = 1\n")
+    candidate = submission_patch(baseline, final)
+    assert candidate.patch == b""
+    assert candidate.final_tree_digest == candidate.baseline_tree_digest
