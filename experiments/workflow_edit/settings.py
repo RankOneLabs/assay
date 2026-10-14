@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 PROVISIONAL_SOURCE = "experiments/workflow_edit/SMOKE.md"
+SMOKE_SUBJECT_ID = "oakridge-dbos-smoke-wf12"
 
 
 class Part1AgentSettings(BaseModel):
