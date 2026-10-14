@@ -18,9 +18,9 @@ from assay.store import ObjectStore
 BRIDGE_SRC = Path(__file__).resolve().parents[1] / "integrations" / "pier" / "src"
 sys.path.insert(0, str(BRIDGE_SRC))
 
-from assay_pier_bridge.evidence import seal_artifacts  # noqa: E402
 from assay_pier_bridge.paths import tree_digest  # noqa: E402
 from assay_pier_bridge.protocol import PierExchange as BridgePierExchange  # noqa: E402
+from assay_pier_bridge.runtime import seal_observed_artifacts  # noqa: E402
 
 
 def test_bridge_manifest_and_empty_patch_settle_a_success(tmp_path: Path) -> None:
@@ -37,7 +37,7 @@ def test_bridge_manifest_and_empty_patch_settle_a_success(tmp_path: Path) -> Non
         realization_ref="sha256:" + "0" * 64,
     )
     exchange = bind_exchange(coordinate=coordinate, binding=binding)
-    artifacts = seal_artifacts(
+    artifacts = seal_observed_artifacts(
         BridgePierExchange.model_validate(exchange.model_dump(mode="json")),
         {
             "trajectory.json": b'{"messages":[]}',
@@ -45,6 +45,8 @@ def test_bridge_manifest_and_empty_patch_settle_a_success(tmp_path: Path) -> Non
             "result.json": b'{"exit_status":"Submitted"}',
             "configuration.json": b'{"model_route":{}}',
         },
+        {},
+        tree_digest({}),
     )
     result = BridgeTrialResult(
         exchange=exchange,
@@ -66,5 +68,7 @@ def test_bridge_manifest_and_empty_patch_settle_a_success(tmp_path: Path) -> Non
     settled = adapter._settle(exchange, result, cleanup_incomplete=False)
     assert isinstance(settled, WorkerSuccess)
     envelope = json.loads(adapter.store.read_bytes(settled.output["candidate_ref"]))
-    assert base64.b64decode(envelope["content_base64"]) == b""
+    assert json.loads(base64.b64decode(envelope["content_base64"])) == []
+    tree_envelope = json.loads(adapter.store.read_bytes(settled.output["tree_digest_ref"]))
+    assert base64.b64decode(tree_envelope["content_base64"]) == tree_digest({}).encode("ascii")
     assert settled.accounting.coverage == "unavailable"

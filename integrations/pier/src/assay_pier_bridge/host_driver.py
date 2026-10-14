@@ -28,7 +28,6 @@ from pathlib import Path
 from types import MappingProxyType
 
 from assay_pier_bridge.__main__ import FALLBACK_SYSTEM_PROMPT, run_one_cell
-from assay_pier_bridge.evidence import seal_artifacts
 from assay_pier_bridge.identity import canonical_json, digest_bytes, package_digest
 from assay_pier_bridge.paths import (
     ArtifactCollectionRejected,
@@ -49,7 +48,7 @@ from assay_pier_bridge.protocol import (
     TrialResult,
     TrialUsage,
 )
-from assay_pier_bridge.runtime import CandidateTrialError
+from assay_pier_bridge.runtime import CandidateTrialError, seal_observed_artifacts
 
 INSTRUCTION_PATH = "instruction.md"
 _DEFAULT_RUNS_ROOT = Path(__file__).resolve().parents[2] / ".trial-runs"
@@ -128,18 +127,21 @@ class GuardedCompletionTrialHandle:
         marker = self.submission_dir / "output"
         if marker.is_symlink():
             raise CandidateTrialError(
-                "symlink_submission", "submission marker is a symlink",
+                "symlink_submission",
+                "submission marker is a symlink",
                 artifacts=self._retained_submission(),
             )
         if not marker.is_file():
             raise CandidateTrialError(
-                "no_submission", "guarded route wrote no submission marker",
+                "no_submission",
+                "guarded route wrote no submission marker",
                 artifacts=self._retained_submission(),
             )
         expected_baseline = {path: content.encode("utf-8") for path, content in repository.items()}
         if regular_tree(baseline) != expected_baseline:
             raise CandidateTrialError(
-                "tampering", "immutable arm baseline changed during guarded trial",
+                "tampering",
+                "immutable arm baseline changed during guarded trial",
                 artifacts=self._retained_submission(),
             )
         if response.submission.source:
@@ -184,7 +186,9 @@ class GuardedCompletionTrialHandle:
                 "tampering", "candidate attempted to replace host patch", artifacts=artifacts
             )
         artifacts["candidate.patch"] = patch.patch
-        artifacts = seal_artifacts(self.request.exchange, artifacts)
+        artifacts = seal_observed_artifacts(
+            self.request.exchange, artifacts, regular_tree(worktree), patch.final_tree_digest
+        )
         (self.submission_dir / MANIFEST_PATH).write_bytes(artifacts[MANIFEST_PATH])
         return TrialResult(
             cell_id=self.request.cell_id,
