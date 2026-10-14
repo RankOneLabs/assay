@@ -61,6 +61,9 @@ class FakeTrialHandle:
     outcome: str  # "succeed", "fail", "timeout", "cancel"
     teardown_calls: list[str] = field(default_factory=list)
 
+    def partial_artifacts(self) -> dict[str, bytes]:
+        return {"trajectory.json": b'{"steps":1}'}
+
     def run(self) -> TrialResult:
         if self.outcome == "succeed":
             return TrialResult(
@@ -166,3 +169,9 @@ def test_successful_result_effective_reflects_teardown_not_mid_run_snapshot() ->
     # replace it with the post-teardown observation, never trust the earlier one.
     assert result.effective.containers_remaining == 0
     assert result.submission_ref is not None
+
+
+@pytest.mark.parametrize("outcome", ["fail", "timeout", "cancel"])
+def test_failure_retains_artifacts_observed_before_teardown(outcome: str) -> None:
+    result = BridgeRuntime(FakeTrialClient(outcome)).run_cell(_request())
+    assert result.artifacts == {"trajectory.json": b'{"steps":1}'}

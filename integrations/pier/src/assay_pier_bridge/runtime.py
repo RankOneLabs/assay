@@ -9,9 +9,16 @@ proves it.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
+from typing import cast
 
+from assay_pier_bridge.paths import ArtifactCollectionRejected
 from assay_pier_bridge.protocol import (
+    CandidateCause,
+    CandidateFailure,
     EffectiveEnforcement,
+    InfrastructureCause,
+    InfrastructureFailure,
     PierTrialClient,
     TrialHandle,
     TrialRequest,
@@ -30,6 +37,14 @@ class TrialTimeoutError(Exception):
 
 class TrialCancelledError(Exception):
     """Raised by a ``TrialHandle.run()`` implementation on operator cancellation."""
+
+
+class CandidateTrialError(Exception):
+    """A candidate-caused rejection with a stable, typed reason."""
+
+    def __init__(self, cause: CandidateCause, message: str) -> None:
+        super().__init__(message)
+        self.cause = cause
 
 
 class BridgeRuntime:
@@ -61,13 +76,16 @@ class BridgeRuntime:
         if result.cell_id != request.cell_id:
             return TrialResult(
                 cell_id=request.cell_id,
-                status="failed",
-                error_type="MismatchedCellIdError",
-                error_message=(
-                    f"trial handle returned a result for {result.cell_id!r}, "
-                    f"not the requested {request.cell_id!r}"
+                outcome=InfrastructureFailure(
+                    cause="mismatched_cell",
+                    detail=(
+                        f"trial handle returned a result for {result.cell_id!r}, "
+                        f"not the requested {request.cell_id!r}"
+                    ),
+                    exception_type="MismatchedCellIdError",
                 ),
                 effective=effective,
+                artifacts=result.artifacts,
             )
         return result.model_copy(update={"effective": effective})
 
@@ -79,13 +97,42 @@ class BridgeRuntime:
         status: TrialStatus,
         error: Exception,
     ) -> TrialResult:
+        artifacts: dict[str, bytes] = {}
+        outcome: CandidateFailure | InfrastructureFailure
+        if isinstance(error, ArtifactCollectionRejected):
+            artifacts.update(error.artifacts)
+        partial = getattr(handle, "partial_artifacts", None)
+        if callable(partial):
+            try:
+                observed = partial()
+                if isinstance(observed, Mapping):
+                    artifacts.update(observed)
+            except ArtifactCollectionRejected as rejection:
+                artifacts.update(rejection.artifacts)
+            except Exception:
+                pass
         effective: EffectiveEnforcement = handle.teardown()
+        if isinstance(error, ArtifactCollectionRejected):
+            outcome = CandidateFailure(cause=cast(CandidateCause, error.cause), detail=str(error))
+        elif isinstance(error, CandidateTrialError):
+            outcome = CandidateFailure(cause=error.cause, detail=str(error))
+        else:
+            cause: InfrastructureCause = (
+                "harness_deadline"
+                if status == "timeout"
+                else "cancelled"
+                if status == "cancelled"
+                else "unexpected_exception"
+            )
+            outcome = InfrastructureFailure(
+                cause=cause,
+                detail=str(error)[:2000] or type(error).__name__,
+                exception_type=type(error).__name__,
+            )
         return TrialResult(
             cell_id=request.cell_id,
-            status=status,
-            submission_ref=None,
+            outcome=outcome,
             usage=None,
-            error_type=type(error).__name__,
-            error_message=str(error)[:2000] or type(error).__name__,
             effective=effective,
+            artifacts=artifacts,
         )
