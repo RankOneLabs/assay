@@ -398,6 +398,9 @@ def publish(evidence_path: Path, output_path: Path) -> None:
         "# Workflow edit smoke qualification", "",
         "The completed qualification used the pinned, network-disabled smoke image and the "
         "local Smithers route. The fixture remains excluded from Part 2 populations.",
+        "The measured cells were dispatched directly through the Pier repository-agent "
+        "client and local Smithers; they were not an Assay `execute_plan` study run. "
+        "The ceiling probes below exercised Assay's production `AdmissionLedger` separately.",
         "",
         "## Artifact binding", "",
         "`qualify_local.py` authored the artifact manifest over the observed offline "
