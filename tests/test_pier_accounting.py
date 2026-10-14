@@ -175,6 +175,16 @@ async def test_uncertain_accounting_when_dispatched_without_usage(tmp_path: Path
     assert result.accounting.amount is None
 
 
+def test_local_token_usage_has_unavailable_cost() -> None:
+    from assay.adapters.pier import _accounting_from_usage
+
+    local = _accounting_from_usage({"prompt_tokens": 12, "completion_tokens": 7, "cost_usd": None})
+    assert local.usage == {"prompt_tokens": 12, "completion_tokens": 7}
+    assert local.amount is None
+    assert local.coverage == "unavailable"
+    assert _accounting_from_usage({"prompt_tokens": 12}).coverage == "uncertain"
+
+
 async def test_nonnumeric_cost_usd_is_uncertain_not_a_raised_error(tmp_path: Path) -> None:
     """``BridgeTrialResult`` is a local dataclass with no runtime validation of
     ``usage``; a malformed ``cost_usd`` must not raise out of ``_settle``."""

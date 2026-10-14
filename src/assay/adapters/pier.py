@@ -49,12 +49,15 @@ from assay.pier_protocol import (
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
     REQUIRED_SUCCESS_KINDS,
+    SUCCEEDED_EXIT_STATUS,
     ArtifactManifest,
+    CandidateFailure,
+    CandidateSubmission,
+    InfrastructureFailure,
     ManifestRejected,
     PierExchange,
     RuntimeBinding,
     bind_exchange,
-    bridge_reports_failure,
     mini_exit_status_from_result_bytes,
     verify_artifact_bytes,
 )
@@ -83,9 +86,8 @@ class BridgeEffectiveEnforcement:
 
 @dataclass(frozen=True, slots=True)
 class BridgeTrialResult:
-    """Mirrors ``assay_pier_bridge.protocol.TrialResult``'s real fields
-    (``status``/``submission_ref``/``usage``/``error_type``/``error_message``),
-    plus this adapter's own exchange binding.
+    """Mirrors ``assay_pier_bridge.protocol.TrialResult``'s discriminated
+    outcome, usage, and evidence, plus this adapter's exchange binding.
 
     ``artifacts`` (path -> bytes) mirrors the real contract's own
     ``TrialResult.artifacts``: both of ``integrations/pier``'s handles read
@@ -103,12 +105,72 @@ class BridgeTrialResult:
     """
 
     exchange: PierExchange
-    status: BridgeTrialStatus
-    submission_ref: str | None
-    usage: Mapping[str, float] | None
-    error_type: str | None
-    error_message: str | None
+    outcome: CandidateSubmission | CandidateFailure | InfrastructureFailure
+    usage: Mapping[str, float | None] | None
     artifacts: Mapping[str, bytes]
+
+    def __init__(
+        self,
+        *,
+        exchange: PierExchange,
+        outcome: CandidateSubmission | CandidateFailure | InfrastructureFailure | None = None,
+        usage: Mapping[str, float | None] | None = None,
+        artifacts: Mapping[str, bytes],
+        status: BridgeTrialStatus | None = None,
+        submission_ref: str | None = None,
+        error_type: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        # Legacy in-process test handles still construct the old fields. The
+        # actual stored result has one outcome, with no parallel status/error.
+        if outcome is None:
+            if status == "succeeded" and submission_ref is not None and error_type is None:
+                outcome = CandidateSubmission(
+                    patch_ref=submission_ref,
+                    tree_digest=submission_ref,
+                    baseline_tree_digest=submission_ref,
+                )
+            elif status != "succeeded" and error_type is not None:
+                outcome = InfrastructureFailure(
+                    cause="harness_deadline"
+                    if status == "timeout"
+                    else "cancelled"
+                    if status == "cancelled"
+                    else "unexpected_exception",
+                    detail=error_message or "",
+                    exception_type=error_type,
+                )
+            else:
+                raise ValueError("a bridge result needs a coherent outcome")
+        object.__setattr__(self, "exchange", exchange)
+        object.__setattr__(self, "outcome", outcome)
+        object.__setattr__(self, "usage", usage)
+        object.__setattr__(self, "artifacts", artifacts)
+
+    @property
+    def status(self) -> BridgeTrialStatus:
+        if isinstance(self.outcome, CandidateSubmission):
+            return "succeeded"
+        if isinstance(self.outcome, InfrastructureFailure):
+            if self.outcome.cause == "harness_deadline":
+                return "timeout"
+            if self.outcome.cause == "cancelled":
+                return "cancelled"
+        return "failed"
+
+    @property
+    def submission_ref(self) -> str | None:
+        return self.outcome.patch_ref if isinstance(self.outcome, CandidateSubmission) else None
+
+    @property
+    def error_type(self) -> str | None:
+        if isinstance(self.outcome, CandidateSubmission):
+            return None
+        return self.outcome.exception_type or self.outcome.cause
+
+    @property
+    def error_message(self) -> str | None:
+        return self.outcome.detail if not isinstance(self.outcome, CandidateSubmission) else None
 
 
 class PierBridgeHandle(Protocol):
@@ -461,17 +523,18 @@ class PierAdapter:
 
         result_bytes = _bytes_for(manifest, bridge_result.artifacts, "result")
         mini_exit_status = mini_exit_status_from_result_bytes(result_bytes)
-        failed = bridge_reports_failure(
-            status=bridge_result.status,
-            submission_ref=bridge_result.submission_ref,
-            error_type=bridge_result.error_type,
-            mini_exit_status=mini_exit_status,
+        failed = (
+            not isinstance(bridge_result.outcome, CandidateSubmission)
+            or mini_exit_status != SUCCEEDED_EXIT_STATUS
         )
         if failed:
             return WorkerFailure(
                 "BridgeReportedFailure",
                 bridge_result.error_message
-                or f"Pier status={bridge_result.status!r} mini exit_status={mini_exit_status!r}",
+                or (
+                    f"Pier outcome={bridge_result.outcome.kind!r} "
+                    f"mini exit_status={mini_exit_status!r}"
+                ),
                 trace=_trace(exchange, refs=refs, reason="bridge_reported_failure"),
                 accounting=dispatched_accounting,
             )
@@ -493,7 +556,11 @@ class PierAdapter:
         # bytes B, and the run would evaluate B as if it were the attested
         # submission.
         candidate_bytes = _bytes_for(manifest, bridge_result.artifacts, "candidate")
-        if candidate_bytes is None or digest_bytes(candidate_bytes) != bridge_result.submission_ref:
+        assert isinstance(bridge_result.outcome, CandidateSubmission)
+        if (
+            candidate_bytes is None
+            or digest_bytes(candidate_bytes) != bridge_result.outcome.patch_ref
+        ):
             return WorkerFailure(
                 "SubmissionMismatch",
                 "bridge submission_ref does not match the digest of the declared candidate",
@@ -579,7 +646,7 @@ def _bytes_for(
     return artifacts.get(path) if path is not None else None
 
 
-def _accounting_from_usage(usage: Mapping[str, float] | None) -> Accounting:
+def _accounting_from_usage(usage: Mapping[str, float | None] | None) -> Accounting:
     """Convert a bridge-reported usage mapping into ``Accounting``.
 
     ``BridgeTrialResult`` is a local dataclass with no runtime validation of
@@ -592,7 +659,10 @@ def _accounting_from_usage(usage: Mapping[str, float] | None) -> Accounting:
         return Accounting(coverage="uncertain")
     cost = usage.get("cost_usd")
     if cost is None:
-        return Accounting(usage=dict(usage), coverage="uncertain")
+        return Accounting(
+            usage={key: value for key, value in usage.items() if key != "cost_usd"} or None,
+            coverage="unavailable" if "cost_usd" in usage else "uncertain",
+        )
     try:
         amount = float(cost)
     except (TypeError, ValueError):

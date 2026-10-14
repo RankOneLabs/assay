@@ -59,6 +59,12 @@ SHA-256 of the sorted sequence of `path UTF-8`, NUL, mode `100644`, NUL,
 file bytes, NUL. Applying the patch to the arm baseline must reproduce that
 digest. Evidence is read from the host-visible working copy before teardown.
 
+Trial usage keeps token counts even when the worker has no pricing model.
+Such a trial reports `cost_usd: null`; Assay records amount `null` with
+`unavailable` cost coverage. Missing usage, or usage that omitted its cost
+observation, has `uncertain` coverage. A measured OpenRouter amount remains a
+nonnegative USD value with `measured` coverage.
+
 For a workflow fixture, build the bridge image before finalizing its manifest,
 then call `assay_pier_bridge.identity.bind_bridge_identity(manifest, image_ref)`.
 It reads `docker image inspect --format '{{.Id}}'` and binds that observed

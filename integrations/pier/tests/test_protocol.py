@@ -19,6 +19,11 @@ ROUTE = ModelRoute(
 LIMITS = TrialLimits(cpu=1, memory_mb=512, pids=32, timeout_s=120, storage_mb=64)
 
 
+def test_local_usage_can_report_tokens_without_a_price() -> None:
+    usage = TrialUsage(prompt_tokens=12, completion_tokens=7, requests=1)
+    assert usage.cost_usd is None
+
+
 def effective(**overrides: object) -> EffectiveEnforcement:
     base = dict(
         uid=1000,
