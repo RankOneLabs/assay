@@ -42,7 +42,7 @@ from typing import Any, Literal, Protocol
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import Accounting, WorkerFailure, WorkerResult, WorkerSuccess
 from assay.models import CellCoordinate
-from assay.pier_packaging import build_package, gate_package
+from assay.pier_packaging import FORBIDDEN_SENTINELS, build_package, gate_package
 from assay.pier_protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
@@ -58,6 +58,7 @@ from assay.pier_protocol import (
     mini_exit_status_from_result_bytes,
     verify_artifact_bytes,
 )
+from assay.repository import DEFAULT_MAX_REPOSITORY_BYTES, DEFAULT_MAX_REPOSITORY_FILES
 from assay.store import ObjectStore
 
 CLEANUP_TIMEOUT = 5.0
@@ -264,6 +265,9 @@ def worker_configuration(
     binding: RuntimeBinding,
     model_route: Mapping[str, str],
     trial_limits: Mapping[str, float | int],
+    max_repository_files: int = DEFAULT_MAX_REPOSITORY_FILES,
+    max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES,
+    forbidden_substrings: tuple[tuple[str, str], ...] = FORBIDDEN_SENTINELS,
     worker_id: str = "pier",
 ) -> dict[str, Any]:
     """The arm-level configuration a plan pins -- shared by ``PierAdapter`` and
@@ -276,6 +280,9 @@ def worker_configuration(
         "configuration_ref": binding.configuration_ref,
         "model_route": dict(model_route),
         "trial_limits": dict(trial_limits),
+        "max_repository_files": max_repository_files,
+        "max_repository_bytes": max_repository_bytes,
+        "forbidden_substrings": dict(forbidden_substrings),
     }
 
 
@@ -288,6 +295,9 @@ class PierAdapter:
     binding: RuntimeBinding
     model_route: Mapping[str, str]
     trial_limits: Mapping[str, float | int]
+    max_repository_files: int = DEFAULT_MAX_REPOSITORY_FILES
+    max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES
+    forbidden_substrings: tuple[tuple[str, str], ...] = FORBIDDEN_SENTINELS
     worker_id: str = "pier"
     supports_cell_coordinates: bool = True
 
@@ -296,6 +306,9 @@ class PierAdapter:
             binding=self.binding,
             model_route=self.model_route,
             trial_limits=self.trial_limits,
+            max_repository_files=self.max_repository_files,
+            max_repository_bytes=self.max_repository_bytes,
+            forbidden_substrings=self.forbidden_substrings,
             worker_id=self.worker_id,
         )
 
@@ -337,9 +350,7 @@ class PierAdapter:
         return artifacts if isinstance(artifacts, Mapping) else {}
 
     async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerResult:
-        if not isinstance(input_value, dict) or not isinstance(
-            input_value.get("repository"), dict
-        ):
+        if not isinstance(input_value, dict) or not isinstance(input_value.get("repository"), dict):
             return WorkerFailure("InvalidInput", "Pier realization must be a task/repository pair")
         task = _instruction_from_task_field(input_value.get("task"))
         if not task:
@@ -349,9 +360,17 @@ class PierAdapter:
             with contextlib.ExitStack() as stack:
                 repository_root = _repository_dir(stack, input_value["repository"])
                 package = build_package(
-                    cell_id=coordinate.id, task=task, repository_root=repository_root
+                    cell_id=coordinate.id,
+                    task=task,
+                    repository_root=repository_root,
+                    max_repository_files=self.max_repository_files,
+                    max_repository_bytes=self.max_repository_bytes,
                 )
-            gate_package(package, expected_digest=package.manifest_digest)
+            gate_package(
+                package,
+                expected_digest=package.manifest_digest,
+                forbidden_substrings=dict(self.forbidden_substrings),
+            )
         except Exception as error:
             return WorkerFailure(type(error).__name__, str(error), accounting=Accounting())
 

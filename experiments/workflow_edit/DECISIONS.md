@@ -55,7 +55,7 @@ advance together to `assay-pier-trial/0.2.0`. The exact revised field set is:
 - `TrialRequest.schema_version` is the new closed version literal.
 - `TrialRequest.network_policy` is the closed literal
   `egress-openrouter-only | egress-lan-host-port | toolchain-only`.
-- `TrialRequest.egress_host` (an IPv4 LAN address) and `egress_port` (1–65535)
+- `TrialRequest.egress_host` (an RFC1918 IPv4 address) and `egress_port` (1–65535)
   are present together only for the LAN posture.
 - `TrialLimits.storage_mb`, `memory_mb`, and `pids` retain their integer wire
   fields. Storage now bounds a host-visible, quota-backed `/scratch` bind mount;
@@ -66,3 +66,17 @@ advance together to `assay-pier-trial/0.2.0`. The exact revised field set is:
 
 Initial storage, memory, and PID numbers are provisional; replace them after
 the footprint runs recorded in `experiments/workflow_edit/SMOKE.md` (wf-12).
+
+## Packaging and fixture identity
+
+- **Arm-bound limits:** Each authorized Pier worker configuration records the
+  maximum repository file count and byte count. Dispatch passes these values
+  explicitly to the package builder.
+- **Containment audit:** Six named synthetic markers cover private
+  documentation, transcripts, credentials, other arms, hidden tests, and
+  reference solutions. The final package gate rejects a planted marker with
+  its category named and confines paths to the sealed mount allowlist.
+- **Fixture manifest:** The versioned `assay.fixture_manifest.FixtureManifest`
+  is exported as a schema. Hidden tests, reference and negative patches, and
+  the rubric are SHA-256 references only. The fixture identity includes the
+  observed image digest and the Smithers `routing_config.yaml` digest.
