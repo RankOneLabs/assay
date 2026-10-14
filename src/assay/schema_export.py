@@ -25,6 +25,7 @@ from assay.code_metrics.models import (
     CodeMetricsReportV6,
     DetailedCodeMetricsComparison,
 )
+from assay.fixture_manifest import FixtureManifest
 from assay.models import (
     Arm,
     EvaluationFailure,
@@ -45,6 +46,7 @@ SCHEMA_MODELS: dict[str, type[WireModel]] = {
     "assay-report-config": ReportConfig,
     "assay-run-manifest": RunManifest,
     "assay-study-snapshot": StudySnapshot,
+    "assay-fixture-manifest": FixtureManifest,
 }
 
 # Each execution-plan wire shape gets its own pinned

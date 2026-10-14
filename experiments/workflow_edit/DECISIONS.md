@@ -46,3 +46,17 @@ the provenance of provisional bounds.
   `integrations/pier/workflow_edit/`, the bridge Docker build context. `npm ci`
   installs the locked tree in the Node build stage; the final image copies that
   tree and Node, while omitting npm so trials cannot install dependencies.
+
+## Packaging and fixture identity
+
+- **Arm-bound limits:** Each authorized Pier worker configuration records the
+  maximum repository file count and byte count. Dispatch passes these values
+  explicitly to the package builder.
+- **Containment audit:** Six named synthetic markers cover private
+  documentation, transcripts, credentials, other arms, hidden tests, and
+  reference solutions. The final package gate rejects a planted marker with
+  its category named and confines paths to the sealed mount allowlist.
+- **Fixture manifest:** The versioned `assay.fixture_manifest.FixtureManifest`
+  is exported as a schema. Hidden tests, reference and negative patches, and
+  the rubric are SHA-256 references only. The fixture identity includes the
+  observed image digest and the Smithers `routing_config.yaml` digest.

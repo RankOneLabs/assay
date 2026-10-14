@@ -103,6 +103,7 @@ Open <http://127.0.0.1:7557>. The store path is the directory containing
 
 ```sh
 uv sync --locked --extra review --extra legacy --extra code-metrics
+uv run assay code-metrics install-node-tools
 uv run ruff check src tests experiments
 uv run mypy src
 uv run pytest -q

@@ -14,11 +14,27 @@ class RepositoryPathError(ValueError):
     """A repository path is unsafe, non-portable, or collides with another path."""
 
 
+class RepositoryPathTooLongError(RepositoryPathError):
+    """A repository path exceeds the 4 KiB portable path limit."""
+
+
+class RepositoryPathSegmentTooLongError(RepositoryPathError):
+    """A repository path segment exceeds the 255-byte portable segment limit."""
+
+
+class RepositoryPathNFCCollisionError(RepositoryPathError):
+    """Two repository paths are equal after NFC normalization and casefolding."""
+
+
+DEFAULT_MAX_REPOSITORY_FILES = 200
+DEFAULT_MAX_REPOSITORY_BYTES = 1_000_000
+
+
 def validate_repository(
     value: Any,
     *,
-    max_files: int = 200,
-    max_total_bytes: int = 1_000_000,
+    max_files: int = DEFAULT_MAX_REPOSITORY_FILES,
+    max_total_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES,
 ) -> dict[str, str]:
     """Return a sorted copy after enforcing a portable relative-file boundary."""
     if not isinstance(value, Mapping) or not value:
@@ -41,10 +57,14 @@ def validate_repository(
             or not path.parts
             or any(part in {"", ".", ".."} for part in raw_parts)
             or any(category(character).startswith("C") for character in raw_path)
-            or len(raw_path.encode("utf-8")) > 4_096
-            or any(len(part.encode("utf-8")) > 255 for part in raw_parts)
         ):
             raise RepositoryPathError(f"unsafe repository path: {raw_path}")
+        if len(raw_path.encode("utf-8")) > 4_096:
+            raise RepositoryPathTooLongError(f"repository path exceeds 4 KiB: {raw_path}")
+        if any(len(part.encode("utf-8")) > 255 for part in raw_parts):
+            raise RepositoryPathSegmentTooLongError(
+                f"repository path segment exceeds 255 bytes: {raw_path}"
+            )
         try:
             source_size = len(source.encode("utf-8"))
         except UnicodeEncodeError as error:
@@ -62,8 +82,8 @@ def validate_repository(
     for raw_path in paths:
         normalized = unicodedata.normalize("NFC", raw_path).casefold()
         if normalized in normalized_seen and normalized_seen[normalized] != raw_path:
-            raise RepositoryPathError(
-                f"duplicate repository path under case/unicode folding: {raw_path!r} "
+            raise RepositoryPathNFCCollisionError(
+                f"NFC-casefold collision: duplicate repository path {raw_path!r} "
                 f"collides with {normalized_seen[normalized]!r}"
             )
         normalized_seen[normalized] = raw_path
@@ -73,8 +93,8 @@ def validate_repository(
 def validate_source_tree(
     root: Path,
     *,
-    max_files: int = 200,
-    max_total_bytes: int = 1_000_000,
+    max_files: int = DEFAULT_MAX_REPOSITORY_FILES,
+    max_total_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES,
 ) -> dict[str, str]:
     """Read an on-disk realization directory into a validated repository mapping.
 

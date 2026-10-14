@@ -76,6 +76,7 @@ from assay.planning import (
     validate_plan_snapshot,
 )
 from assay.report_engine import persist_report
+from assay.repository import DEFAULT_MAX_REPOSITORY_BYTES, DEFAULT_MAX_REPOSITORY_FILES
 from assay.runtime_inventory import (
     QualificationInventory,
     QualificationRejected,
@@ -243,6 +244,8 @@ PIER_TRIAL_LIMITS: Mapping[str, float | int] = {
     # ever trusted for a paid run.
     "storage_mb": 512,
 }
+PIER_MAX_REPOSITORY_FILES = DEFAULT_MAX_REPOSITORY_FILES
+PIER_MAX_REPOSITORY_BYTES = DEFAULT_MAX_REPOSITORY_BYTES
 
 ARM_IDS = ("clean", "inconsistent")
 
@@ -377,7 +380,11 @@ def _materialize_pier_snapshot(
 
     binding, _ = _publish_runtime(store, profile=profile, inventory_ref=inventory_ref)
     arm_worker = worker_configuration(
-        binding=binding, model_route=PIER_MODEL_ROUTE, trial_limits=PIER_TRIAL_LIMITS
+        binding=binding,
+        model_route=PIER_MODEL_ROUTE,
+        trial_limits=PIER_TRIAL_LIMITS,
+        max_repository_files=PIER_MAX_REPOSITORY_FILES,
+        max_repository_bytes=PIER_MAX_REPOSITORY_BYTES,
     )
     arms = tuple(
         Arm(id=arm_id, worker=arm_worker, intervention={"repository": arm_id}) for arm_id in ARM_IDS
@@ -772,6 +779,8 @@ async def _run(
             binding=binding,
             model_route=PIER_MODEL_ROUTE,
             trial_limits=PIER_TRIAL_LIMITS,
+            max_repository_files=PIER_MAX_REPOSITORY_FILES,
+            max_repository_bytes=PIER_MAX_REPOSITORY_BYTES,
         )
         runner = runner or DockerPythonRunner()
         runtime_evaluators: dict[str, Evaluator] = {

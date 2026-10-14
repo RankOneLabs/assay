@@ -16,11 +16,27 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from assay.canonical import canonical_json, digest_bytes
-from assay.repository import validate_repository, validate_source_tree
+from assay.repository import (
+    DEFAULT_MAX_REPOSITORY_BYTES,
+    DEFAULT_MAX_REPOSITORY_FILES,
+    validate_repository,
+    validate_source_tree,
+)
 
 WORKSPACE_PREFIX = "workspace"
 INSTRUCTION_PATH = "instruction.md"
 SUBMISSION_CONTRACT_PATH = "submission/CONTRACT.md"
+
+# Synthetic audit markers are bound into each worker configuration. A fixture
+# containing one of these markers cannot cross the final dispatch gate.
+FORBIDDEN_SENTINELS: tuple[tuple[str, str], ...] = (
+    ("private_documentation", "SENTINEL_PRIVATE_DOCUMENTATION_1a2b"),
+    ("transcript", "SENTINEL_TRANSCRIPT_3c4d"),
+    ("credential", "SENTINEL_CREDENTIAL_5e6f"),
+    ("other_arm", "SENTINEL_OTHER_ARM_HIDDEN_3c4d"),
+    ("hidden_test", "SENTINEL_HIDDEN_TEST_5e6f"),
+    ("reference_solution", "SENTINEL_REFERENCE_SOLUTION_7g8h"),
+)
 
 SUBMISSION_CONTRACT = (
     "# Submission contract\n\n"
@@ -93,8 +109,8 @@ def build_package(
     cell_id: str,
     task: str,
     repository_root: Path,
-    max_repository_files: int = 200,
-    max_repository_bytes: int = 1_000_000,
+    max_repository_files: int = DEFAULT_MAX_REPOSITORY_FILES,
+    max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES,
 ) -> SealedPackage:
     """Build the sealed package for one cell from an on-disk realization.
 
@@ -137,7 +153,7 @@ def gate_package(
     package: SealedPackage,
     *,
     expected_digest: str,
-    forbidden_substrings: tuple[str, ...] = (),
+    forbidden_substrings: Mapping[str, str] | tuple[str, ...] = (),
 ) -> None:
     """The last check before a package's digest is handed to ``Trial.create``.
 
@@ -193,9 +209,14 @@ def gate_package(
                 f"mounted path {mounted_path!r}"
             )
         mounted[mounted_path] = path
-        for sentinel in forbidden_substrings:
+        sentinels = (
+            forbidden_substrings.items()
+            if isinstance(forbidden_substrings, Mapping)
+            else ((sentinel, sentinel) for sentinel in forbidden_substrings)
+        )
+        for category, sentinel in sentinels:
             if sentinel in content:
-                raise ValueError(f"package entry carries a forbidden sentinel: {path}")
+                raise ValueError(f"package entry carries forbidden sentinel ({category}): {path}")
 
 
 def non_repository_entries(package: SealedPackage) -> dict[str, str]:

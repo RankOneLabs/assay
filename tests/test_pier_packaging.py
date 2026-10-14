@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
+import assay.adapters.pier as pier_adapter_module
+from assay.adapters.pier import PierAdapter, PierBridgeClient
+from assay.canonical import canonical_json
+from assay.execution import WorkerFailure
+from assay.models import CellCoordinate
 from assay.pier_packaging import (
     INSTRUCTION_PATH,
     SUBMISSION_CONTRACT_PATH,
@@ -16,7 +22,16 @@ from assay.pier_packaging import (
     render_instruction,
     repository_only_entries,
 )
-from assay.repository import validate_repository, validate_source_tree
+from assay.pier_protocol import RuntimeBinding
+from assay.repository import (
+    RepositoryPathError,
+    RepositoryPathNFCCollisionError,
+    RepositoryPathSegmentTooLongError,
+    RepositoryPathTooLongError,
+    validate_repository,
+    validate_source_tree,
+)
+from assay.store import ObjectStore
 
 
 def _write_tree(root: Path, files: dict[str, str]) -> Path:
@@ -125,8 +140,79 @@ def test_build_package_rejects_traversal_from_repository_dict(tmp_path: Path) ->
 
 
 def test_validate_repository_rejects_case_folded_duplicate_paths() -> None:
-    with pytest.raises(ValueError, match="duplicate repository path"):
+    with pytest.raises(RepositoryPathNFCCollisionError):
         validate_repository({"Solution.py": "a = 1\n", "solution.py": "b = 2\n"})
+
+
+@pytest.mark.parametrize(
+    ("extra_paths", "error_type"),
+    [
+        ({"/".join(["nested"] * 590) + "/leaf.py": "x\n"}, RepositoryPathTooLongError),
+        ({"src/" + "x" * 256 + ".py": "x\n"}, RepositoryPathSegmentTooLongError),
+        (
+            {"src/Caf\u00e9.py": "x\n", "src/Cafe\u0301.py": "y\n"},
+            RepositoryPathNFCCollisionError,
+        ),
+    ],
+)
+def test_realistic_repository_slice_rejects_each_portability_rule(
+    extra_paths: dict[str, str], error_type: type[RepositoryPathError]
+) -> None:
+    slice_files = {
+        "package.json": "{}\n",
+        "src/main.ts": "export const main = () => 1;\n",
+        "tests/main.test.ts": "// smoke\n",
+    }
+    with pytest.raises(RepositoryPathError) as raised:
+        validate_repository({**slice_files, **extra_paths})
+    assert type(raised.value) is error_type
+
+
+async def test_dispatch_uses_authorized_limits_even_if_library_defaults_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binding = RuntimeBinding(
+        runtime_version="lock-v1",
+        image_digest="sha256:" + "1" * 64,
+        configuration_ref="sha256:" + "2" * 64,
+        package_digest="sha256:" + "0" * 64,
+    )
+    adapter = PierAdapter(
+        store=ObjectStore(tmp_path / "objects"),
+        bridge=cast(PierBridgeClient, object()),
+        binding=binding,
+        model_route={"model": "test"},
+        trial_limits={"timeout_s": 10},
+        max_repository_files=2,
+        max_repository_bytes=10,
+    )
+    authorized = canonical_json(adapter.configuration("arm-a"))
+    assert b'"max_repository_files":2' in authorized
+    assert b'"max_repository_bytes":10' in authorized
+    monkeypatch.setattr(
+        build_package,
+        "__kwdefaults__",
+        {"max_repository_files": 1, "max_repository_bytes": 1},
+    )
+    observed: dict[str, Any] = {}
+
+    def inspected_build(**kwargs: Any) -> Any:
+        observed.update(kwargs)
+        build_package(**kwargs)
+        raise RuntimeError("package passed configured limits")
+
+    monkeypatch.setattr(pier_adapter_module, "build_package", inspected_build)
+    coordinate = CellCoordinate(
+        subject_id="s1", arm_id="arm-a", worker_repeat=0, realization_ref="sha256:" + "3" * 64
+    )
+    result = await adapter.run_cell(
+        input_value={"task": "Edit the source", "repository": {"a.py": "a\n", "b.py": "b\n"}},
+        coordinate=coordinate,
+    )
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == "RuntimeError"
+    assert observed["max_repository_files"] == 2
+    assert observed["max_repository_bytes"] == 10
 
 
 def test_gate_package_accepts_the_expected_digest(tmp_path: Path) -> None:
