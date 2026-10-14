@@ -68,16 +68,27 @@ async def test_cell_key_and_worker_configuration(tmp_path: Path) -> None:
     assert delegate.seen_key == key
 
 
-@pytest.mark.parametrize("dispatch_host_offset", [timedelta(0), timedelta(hours=-7)])
-async def test_production_delegate_passes_smithers_acceptance_to_bridge(
-    tmp_path: Path, monkeypatch: Any, dispatch_host_offset: timedelta
-) -> None:
-    """The anchor is a local duration, so the dispatch host's timezone cannot shift it.
+class _Dispatch:
+    """One bridge dispatch and what the runtime saw of it."""
 
-    Smithers stamps jobs with ``datetime.now()`` on its own host, so a
-    dispatch host that is not on UTC reports a wall clock hours away from
-    this one. Reading that as an instant would charge the offset to the
-    cell; only ``completed_at - started_at`` is clock-independent.
+    def __init__(self) -> None:
+        self.result: Any = None
+        self.accepted_at: datetime | None = None
+
+
+async def _dispatch_one_cell(
+    tmp_path: Path,
+    monkeypatch: Any,
+    *,
+    dispatch_host_offset: timedelta = timedelta(0),
+    poll_interval: float = 0.5,
+    inference_seconds: float = 1.0,
+    usage: Any = None,
+) -> _Dispatch:
+    """Run one cell through ``SmithersBridgeCellDelegate`` against a faked Smithers.
+
+    ``dispatch_host_offset`` shifts the wall clock Smithers stamps its job
+    with, exactly as a non-UTC dispatch host would.
     """
     routing = tmp_path / "routing_config.yaml"
     routing.write_text(
@@ -85,7 +96,9 @@ async def test_production_delegate_passes_smithers_acceptance_to_bridge(
         "models:\n  qwen:\n    machines: [mcbain]\n"
         "    backend_tags:\n      vllm: qwen:Q8\n"
     )
-    factory = SmithersFactory("qwen", "mcbain", routing, "http://smithers.test")
+    factory = SmithersFactory(
+        "qwen", "mcbain", routing, "http://smithers.test", poll_interval=poll_interval
+    )
     coordinate = CellCoordinate(
         subject_id="subject", arm_id="mess-low", worker_repeat=0,
         realization_ref="sha256:" + "a" * 64,
@@ -93,7 +106,7 @@ async def test_production_delegate_passes_smithers_acceptance_to_bridge(
     # What the dispatch host's own clock reads, naive and unlabelled on the wire.
     started = datetime.now(UTC).replace(tzinfo=None) + dispatch_host_offset - timedelta(seconds=4)
     created = started - timedelta(seconds=2)
-    completed = started + timedelta(seconds=1)
+    completed = started + timedelta(seconds=inference_seconds)
 
     def respond(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
@@ -108,14 +121,15 @@ async def test_production_delegate_passes_smithers_acceptance_to_bridge(
     client._http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
     monkeypatch.setattr(SmithersFactory, "create", lambda self, *, idempotency_key: client)
 
-    class Runtime:
-        accepted_at: datetime | None = None
+    observed = _Dispatch()
 
+    class Runtime:
         def run_cell(self, request: Any, *, accepted_at: datetime) -> Any:
-            self.accepted_at = accepted_at
+            observed.accepted_at = accepted_at
             assert request.content == "candidate text"
             return SimpleNamespace(
                 cell_id=coordinate.id, outcome=SimpleNamespace(kind="candidate"),
+                usage=usage,
                 artifacts={
                     "manifest.json": b"{}", "candidate-index.json": b"[]",
                     "candidate.patch": b"patch", "tree-digest.txt": b"digest",
@@ -134,11 +148,79 @@ async def test_production_delegate_passes_smithers_acceptance_to_bridge(
         bridge_configuration={"runtime": "pier-test"},
     )
     worker = SmithersBoundWorker(delegate, factory, "run-1")
-    result = await worker.run_cell(input_value={"prompt": "edit this"}, coordinate=coordinate)
-    assert isinstance(result, WorkerSuccess)
-    assert result.output["candidate_ref"] is not None
-    assert result.trace["smithers"]["queue_latency_seconds"] == 2.0
+    observed.result = await worker.run_cell(
+        input_value={"prompt": "edit this"}, coordinate=coordinate
+    )
+    return observed
+
+
+@pytest.mark.parametrize("dispatch_host_offset", [timedelta(0), timedelta(hours=-7)])
+async def test_production_delegate_passes_smithers_acceptance_to_bridge(
+    tmp_path: Path, monkeypatch: Any, dispatch_host_offset: timedelta
+) -> None:
+    """The anchor is a local duration, so the dispatch host's timezone cannot shift it.
+
+    Smithers stamps jobs with ``datetime.now()`` on its own host, so a
+    dispatch host that is not on UTC reports a wall clock hours away from
+    this one. Reading that as an instant would charge the offset to the
+    cell; only ``completed_at - started_at`` is clock-independent.
+    """
+    observed = await _dispatch_one_cell(
+        tmp_path, monkeypatch, dispatch_host_offset=dispatch_host_offset
+    )
+    assert isinstance(observed.result, WorkerSuccess)
+    assert observed.result.output["candidate_ref"] is not None
+    assert observed.result.trace["smithers"]["queue_latency_seconds"] == 2.0
     # One second of inference was charged, whatever the dispatch host's clock read.
-    assert runtime.accepted_at is not None
-    charged = (datetime.now(UTC) - runtime.accepted_at).total_seconds()
-    assert 1.0 <= charged < 10.0
+    assert observed.accepted_at is not None
+    charged = (datetime.now(UTC) - observed.accepted_at).total_seconds()
+    assert 1.5 <= charged < 10.0
+
+
+async def test_the_poll_that_observed_completion_is_charged_to_the_cell(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Completion is learned at a poll, so the whole poll interval is spent, not granted.
+
+    Anchoring at the observing poll would place acceptance later than it
+    really was and hand the cell up to one extra interval of budget.
+    """
+    observed = await _dispatch_one_cell(
+        tmp_path, monkeypatch, poll_interval=30.0, inference_seconds=1.0
+    )
+    assert observed.accepted_at is not None
+    charged = (datetime.now(UTC) - observed.accepted_at).total_seconds()
+    assert 31.0 <= charged < 40.0
+
+
+async def test_a_dispatched_cell_records_the_bridge_trial_cost(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Only the guarded route is priced, so a successful cell's coverage is mixed.
+
+    Smithers reports no billing at all, so reporting the bridge amount as
+    ``measured`` would claim the dispatch leg cost nothing.
+    """
+    observed = await _dispatch_one_cell(
+        tmp_path,
+        monkeypatch,
+        usage=SimpleNamespace(
+            prompt_tokens=120, completion_tokens=34, cost_usd=0.0021, requests=1
+        ),
+    )
+    assert isinstance(observed.result, WorkerSuccess)
+    assert observed.result.accounting.amount == 0.0021
+    assert observed.result.accounting.coverage == "mixed"
+    assert observed.result.accounting.usage == {
+        "prompt_tokens": 120.0, "completion_tokens": 34.0, "requests": 1.0
+    }
+
+
+async def test_a_bridge_result_without_usage_is_uncertain_not_free(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A dispatched attempt that reported no usage has an unknown cost, never zero."""
+    observed = await _dispatch_one_cell(tmp_path, monkeypatch, usage=None)
+    assert isinstance(observed.result, WorkerSuccess)
+    assert observed.result.accounting.coverage == "uncertain"
+    assert observed.result.accounting.amount is None

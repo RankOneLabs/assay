@@ -180,8 +180,8 @@ def _quota_mb(source: str | None) -> int:
     return size_bytes // (1024 * 1024) if size_bytes % (1024 * 1024) == 0 else 0
 
 
-def _inspect(name: str) -> ContainerObservation | None:
-    result = _run(["docker", "inspect", name], timeout=_POLL_TIMEOUT_S)
+def _inspect(name: str, *, timeout: float = _POLL_TIMEOUT_S) -> ContainerObservation | None:
+    result = _run(["docker", "inspect", name], timeout=timeout)
     if result.returncode != 0:
         return None
     (data,) = json.loads(result.stdout)
@@ -432,6 +432,19 @@ class DockerTrialHandle:
             self._remaining()
             raise
 
+    def _inspect_bounded(self) -> ContainerObservation | None:
+        """Inspect the container under the acceptance budget.
+
+        ``effective_enforcement`` deliberately keeps the unbounded
+        ``_inspect``: it also runs from teardown, which must complete
+        after a deadline breach rather than be cut short by it.
+        """
+        try:
+            return _inspect(self._name, timeout=min(_POLL_TIMEOUT_S, self._remaining()))
+        except subprocess.TimeoutExpired:
+            self._remaining()
+            raise
+
     def _remaining(self) -> float:
         assert self._deadline is not None
         remaining = self._deadline - time.monotonic()
@@ -594,7 +607,7 @@ class DockerTrialHandle:
             raise InfrastructureTrialError(
                 "container_start", f"container failed to start: {start_result.stderr.strip()}"
             )
-        self._assert_enforcement(_usable_observation(_inspect(self._name)))
+        self._assert_enforcement(_usable_observation(self._inspect_bounded()))
         while True:
             self._remaining()
             if self._cancel.is_set():
@@ -607,17 +620,17 @@ class DockerTrialHandle:
             if inspect.returncode == 0 and inspect.stdout.strip() == "false":
                 break
             time.sleep(_POLL_INTERVAL_S)
-        exit_code = _run(
+        exit_code = self._run_bounded(
             ["docker", "inspect", "--format", "{{.State.ExitCode}}", self._name],
-            timeout=_POLL_TIMEOUT_S,
+            _POLL_TIMEOUT_S,
         )
-        observation = _usable_observation(_inspect(self._name))
+        observation = _usable_observation(self._inspect_bounded())
         self._assert_enforcement(observation)
         assert observation is not None
         if observation.oom_killed:
             raise MemoryLimitExceededError("trial exceeded the memory cgroup ceiling")
         if exit_code.stdout.strip() != "0":
-            logs = _run(["docker", "logs", self._name], timeout=_POLL_TIMEOUT_S)
+            logs = self._run_bounded(["docker", "logs", self._name], _POLL_TIMEOUT_S)
             if exit_code.stdout.strip() == "124" and Path(self._command[0]).name == "timeout":
                 # Exit 124 is a deadline only when the launched command is
                 # the timeout utility; an arbitrary program may also use 124.
@@ -700,7 +713,7 @@ class DockerTrialHandle:
                 artifacts=artifacts,
             )
         if "trajectory.json" not in artifacts:
-            logs = _run(["docker", "logs", self._name], timeout=_POLL_TIMEOUT_S)
+            logs = self._run_bounded(["docker", "logs", self._name], _POLL_TIMEOUT_S)
             artifacts["trajectory.json"] = canonical_json(
                 {"container_stdout": logs.stdout, "container_stderr": logs.stderr}
             )

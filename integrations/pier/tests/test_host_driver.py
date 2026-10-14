@@ -16,7 +16,7 @@ from assay_pier_bridge.host_driver import (
     GuardedCompletionTrialHandle,
 )
 from assay_pier_bridge.identity import digest_bytes, package_digest
-from assay_pier_bridge.paths import tree_digest
+from assay_pier_bridge.paths import materialize_under, tree_digest
 from assay_pier_bridge.protocol import (
     REQUIRED_SUCCESS_KINDS,
     ArtifactManifest,
@@ -283,6 +283,41 @@ def test_the_guarded_route_refuses_a_cell_whose_budget_is_already_spent(tmp_path
     )
     handle = client.create(_request())
     handle.set_deadline(time.monotonic() - 1.0)
+
+    with pytest.raises(TrialTimeoutError, match="worker-acceptance"):
+        handle.run()
+
+
+def test_a_budget_spent_during_setup_stops_the_cell_before_it_dials_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Materializing the two trees can itself consume what was left.
+
+    The entry check alone leaves a window in which setup overruns the
+    deadline and the uninterruptible OpenRouter call starts anyway, so the
+    budget is read again immediately before it.
+    """
+    deadline = time.monotonic() + 0.05
+
+    def materialize_past_the_deadline(root: Path, files: Any) -> Any:
+        result = materialize_under(root, files)
+        while time.monotonic() < deadline:
+            time.sleep(0.01)
+        return result
+
+    def never_called(**kwargs: Any) -> Any:
+        raise AssertionError("the guarded route dialled out after its budget expired")
+
+    monkeypatch.setattr(
+        "assay_pier_bridge.host_driver.materialize_under", materialize_past_the_deadline
+    )
+    monkeypatch.setattr("assay_pier_bridge.host_driver.run_one_cell", never_called)
+
+    client = GuardedCompletionTrialClient(
+        package=PACKAGE, api_key="test-key", runs_root=tmp_path, system_prompt="sys"
+    )
+    handle = client.create(_request())
+    handle.set_deadline(deadline)
 
     with pytest.raises(TrialTimeoutError, match="worker-acceptance"):
         handle.run()

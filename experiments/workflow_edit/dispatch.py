@@ -15,7 +15,7 @@ from jig.core.types import CompletionParams, Message, Role
 
 from assay.adapters.smithers import SmithersClient, SmithersFactory
 from assay.canonical import canonical_json
-from assay.execution import WorkerFailure, WorkerResult, WorkerSuccess
+from assay.execution import Accounting, WorkerFailure, WorkerResult, WorkerSuccess
 from assay.models import CellCoordinate
 from assay.store import ObjectStore
 
@@ -40,23 +40,59 @@ class BridgeRuntimeLike(Protocol):
     def run_cell(self, request: Any, *, accepted_at: datetime) -> Any: ...
 
 
-def _acceptance_anchor(diagnostics: Mapping[str, Any]) -> datetime | WorkerFailure:
+def _acceptance_anchor(
+    diagnostics: Mapping[str, Any], poll_interval: float
+) -> datetime | WorkerFailure:
     """Re-anchor Smithers' acceptance point on this host's clock.
 
     Smithers writes naive wall-clock timestamps from its own host, so its
     ``started_at`` is only an instant if that host runs on UTC — an
     assumption nothing on the wire states, and one that silently costs the
     cell a whole timezone offset when it is false. Only the *duration*
-    ``completed_at - started_at`` is clock-independent, so the bridge's
-    anchor is derived from it against this host's own clock instead. The
-    poll that observed the completion is charged to the cell; it is bounded
-    by ``poll_interval`` and is this host's own elapsed time, not a foreign
-    one.
+    ``completed_at - started_at`` is clock-independent, so the anchor is
+    derived from it against this host's own clock instead.
+
+    That duration ends when the job completed, but this host learns of it
+    only at the next poll, so ``now - elapsed`` sits *later* than the real
+    acceptance point and would hand the cell up to one extra poll interval
+    of budget. The true completion lies between the last poll that saw the
+    job running and this one, so the whole interval is charged: the error
+    is bounded by ``poll_interval`` and always spends the cell's budget
+    rather than extending it.
     """
     elapsed = diagnostics.get("time_from_acceptance_seconds")
     if not isinstance(elapsed, int | float) or isinstance(elapsed, bool) or elapsed < 0:
         return WorkerFailure("InvalidJobTiming", "Smithers job reported no time from acceptance")
-    return datetime.now(UTC) - timedelta(seconds=float(elapsed))
+    return datetime.now(UTC) - timedelta(seconds=float(elapsed) + max(poll_interval, 0.0))
+
+
+def _bridge_accounting(usage: Any) -> Accounting:
+    """Record what the bridge trial measured, never a zero for what it did not.
+
+    Only the bridge leg is priced. Smithers reports no billing at all
+    (``SmithersFactory.configuration`` pins ``billing: unavailable``), so a
+    successful cell's cost is the guarded route's amount over an
+    unmeasured remainder — ``mixed``, not ``measured``. An attempt that was
+    dispatched but returned no usage is ``uncertain``: the cost is unknown,
+    not nothing.
+    """
+    if usage is None:
+        return Accounting(coverage="uncertain")
+    counts: dict[str, float | None] = {}
+    for name in ("prompt_tokens", "completion_tokens", "requests"):
+        value = getattr(usage, name, None)
+        if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
+            counts[name] = float(value)
+    cost = getattr(usage, "cost_usd", None)
+    if not isinstance(cost, int | float) or isinstance(cost, bool) or cost < 0:
+        return Accounting(usage=counts or None, coverage="uncertain")
+    return Accounting(
+        usage=counts or None,
+        amount=float(cost),
+        currency="USD",
+        coverage="mixed",
+        basis="Pier bridge trial usage; Smithers dispatch leg is unpriced",
+    )
 
 
 @dataclass(frozen=True)
@@ -93,7 +129,7 @@ class SmithersBridgeCellDelegate:
         if isinstance(completion, WorkerFailure):
             return completion
         diagnostics = client.diagnostics()
-        accepted_at = _acceptance_anchor(diagnostics)
+        accepted_at = _acceptance_anchor(diagnostics, client.configuration()["poll_interval"])
         if isinstance(accepted_at, WorkerFailure):
             return accepted_at
         try:
@@ -109,9 +145,19 @@ class SmithersBridgeCellDelegate:
             finally:
                 executor.shutdown(wait=False, cancel_futures=True)
         except Exception as error:
-            return WorkerFailure(type(error).__name__, str(error), trace={"smithers": diagnostics})
+            # The bridge was entered, so any cost it incurred is unknown here
+            # rather than known to be nothing.
+            return WorkerFailure(
+                type(error).__name__,
+                str(error),
+                trace={"smithers": diagnostics},
+                accounting=Accounting(coverage="uncertain"),
+            )
+        accounting = _bridge_accounting(getattr(result, "usage", None))
         if result.cell_id != coordinate.id:
-            return WorkerFailure("IdentityMismatch", "bridge result is for another cell")
+            return WorkerFailure(
+                "IdentityMismatch", "bridge result is for another cell", accounting=accounting
+            )
         if result.outcome.kind == "candidate":
             required = {
                 "manifest.json", "candidate-index.json", "candidate.patch",
@@ -121,7 +167,7 @@ class SmithersBridgeCellDelegate:
             if missing:
                 return WorkerFailure(
                     "IncompleteEvidence", "bridge omitted success evidence: " + ", ".join(missing),
-                    trace={"smithers": diagnostics},
+                    trace={"smithers": diagnostics}, accounting=accounting,
                 )
         artifact_refs = {
             path: str(self.store.publish_bytes(data)) for path, data in result.artifacts.items()
@@ -130,7 +176,7 @@ class SmithersBridgeCellDelegate:
         if result.outcome.kind != "candidate":
             return WorkerFailure(
                 type(result.outcome).__name__, result.outcome.detail or result.outcome.cause,
-                trace=trace,
+                trace=trace, accounting=accounting,
             )
         return WorkerSuccess(
             output={
@@ -145,6 +191,7 @@ class SmithersBridgeCellDelegate:
                 "artifact_refs": artifact_refs,
             },
             trace=trace,
+            accounting=accounting,
         )
 
 

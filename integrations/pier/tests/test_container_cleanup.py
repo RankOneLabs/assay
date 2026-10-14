@@ -80,7 +80,7 @@ def test_inspection_failure_still_removes_and_cleans_the_workdir(
     handle = _handle(tmp_path)
     removed: list[str] = []
 
-    def failed_inspection(name: str) -> None:
+    def failed_inspection(name: str, **_: object) -> None:
         raise inspection_error
 
     monkeypatch.setattr(container, "_inspect", failed_inspection)
@@ -109,7 +109,7 @@ def test_semantically_invalid_observation_cannot_break_the_cleanup_result(
         pids_limit=0,
         storage_limit_mb=0,
     )
-    monkeypatch.setattr(container, "_inspect", lambda name: malformed)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: malformed)
     monkeypatch.setattr(container, "_force_remove", lambda name: True)
     monkeypatch.setattr(container, "_container_count", lambda name: 0)
 
@@ -125,7 +125,7 @@ def test_removal_timeout_still_checks_count_and_reports_uncertainty(
 ) -> None:
     handle = _handle(tmp_path)
     counted: list[str] = []
-    monkeypatch.setattr(container, "_inspect", lambda name: None)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: None)
 
     def timed_out_removal(name: str) -> bool:
         raise subprocess.TimeoutExpired("docker rm", 1)
@@ -144,7 +144,7 @@ def test_an_already_absent_container_is_a_completed_repeat_teardown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     handle = _handle(tmp_path)
-    monkeypatch.setattr(container, "_inspect", lambda name: None)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: None)
     monkeypatch.setattr(container, "_force_remove", lambda name: False)
     monkeypatch.setattr(container, "_container_count", lambda name: 0)
 
@@ -160,7 +160,7 @@ def test_runtime_preserves_timeout_when_teardown_inspection_fails(
     def timed_out_run(self: DockerTrialHandle) -> None:
         raise TrialTimeoutError("original timeout")
 
-    def failed_inspection(name: str) -> None:
+    def failed_inspection(name: str, **_: object) -> None:
         raise subprocess.TimeoutExpired("docker inspect", 1)
 
     monkeypatch.setattr(DockerTrialHandle, "run", timed_out_run)
@@ -195,7 +195,7 @@ def test_accepted_at_reaches_docker_handle_as_absolute_deadline(
         raise TrialTimeoutError("test deadline")
 
     monkeypatch.setattr(DockerTrialHandle, "run", timed_out_run)
-    monkeypatch.setattr(container, "_inspect", lambda name: None)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: None)
     monkeypatch.setattr(container, "_force_remove", lambda name: True)
     monkeypatch.setattr(container, "_container_count", lambda name: 0)
     client = DockerTrialClient(
@@ -225,7 +225,7 @@ def test_an_acceptance_point_in_the_future_cannot_exceed_the_authorized_limit(
         raise TrialTimeoutError("test deadline")
 
     monkeypatch.setattr(DockerTrialHandle, "run", timed_out_run)
-    monkeypatch.setattr(container, "_inspect", lambda name: None)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: None)
     monkeypatch.setattr(container, "_force_remove", lambda name: True)
     monkeypatch.setattr(container, "_container_count", lambda name: 0)
     client = DockerTrialClient(
@@ -283,6 +283,40 @@ def test_container_setup_consumes_acceptance_budget(
     assert not network_started
 
 
+def test_a_post_completion_docker_step_cannot_overrun_the_acceptance_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Evidence collection spends the same budget the trial did.
+
+    Every step after the poll loop — the exit-code inspect, the enforcement
+    inspect, the log reads — used to run on a fixed timeout with no budget
+    check, so a container exiting just under the deadline could overrun
+    during collection and a ``TimeoutExpired`` there surfaced as
+    ``unexpected_exception`` rather than a deadline breach.
+    """
+    handle = _handle(tmp_path)
+    (tmp_path / "assay-pier-test" / "submission" / "output").write_text("answer")
+    monkeypatch.setattr(
+        DockerTrialHandle, "_prepare_quota", lambda self, limits: self._scratch.mkdir()
+    )
+    monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: None)
+
+    def expire_on_exit_code(
+        args: list[str], *, timeout: float
+    ) -> subprocess.CompletedProcess[str]:
+        if args[:4] == ["docker", "inspect", "--format", "{{.State.ExitCode}}"]:
+            time.sleep(timeout)
+            raise subprocess.TimeoutExpired(args, timeout)
+        return _fake_successful_run(args, timeout=timeout)
+
+    monkeypatch.setattr(container, "_run", expire_on_exit_code)
+    handle.set_deadline(time.monotonic() + 0.15)
+
+    with pytest.raises(TrialTimeoutError, match="worker-acceptance"):
+        handle.run()
+
+
 def test_driver_hashes_the_exact_bounded_output_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -297,7 +331,7 @@ def test_driver_hashes_the_exact_bounded_output_bytes(
     monkeypatch.setattr(
         container,
         "_inspect",
-        lambda name: ContainerObservation(
+        lambda name, **_: ContainerObservation(
             read_only_root=True,
             workspace_mount_read_only=True,
             uid=1000,
@@ -355,7 +389,7 @@ def test_storage_cause_requires_trial_enospc_not_a_full_host_filesystem(
     monkeypatch.setattr(container, "_run", trial_run)
     monkeypatch.setattr(DockerTrialHandle, "_prepare_quota", lambda self, limits: None)
     monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
-    monkeypatch.setattr(container, "_inspect", lambda name: observed)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: observed)
     monkeypatch.setattr(container, "_container_count", lambda name: 1)
     if raises_storage:
         with pytest.raises(StorageExhaustedError) as rejected:
@@ -403,7 +437,7 @@ def test_memory_failure_is_distinct_from_storage_exhaustion(
     monkeypatch.setattr(container, "_run", trial_run)
     monkeypatch.setattr(DockerTrialHandle, "_prepare_quota", lambda self, limits: None)
     monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
-    monkeypatch.setattr(container, "_inspect", lambda name: observed)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: observed)
     if oom_killed or "MemoryError" in log:
         with pytest.raises(MemoryLimitExceededError) as rejected:
             handle.run()
@@ -424,7 +458,7 @@ def test_container_start_and_enforcement_have_distinct_infrastructure_causes(
     assert start.value.cause == "container_start"
 
     monkeypatch.setattr(container, "_run", _fake_successful_run)
-    monkeypatch.setattr(container, "_inspect", lambda name: None)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: None)
 
     def reject_enforcement(
         self: DockerTrialHandle, observation: ContainerObservation | None
@@ -448,7 +482,7 @@ def test_exit_124_reports_candidate_timeout_with_retained_marker(
     monkeypatch.setattr(
         container,
         "_inspect",
-        lambda name: ContainerObservation(
+        lambda name, **_: ContainerObservation(
             read_only_root=True,
             workspace_mount_read_only=True,
             uid=1000,
@@ -498,7 +532,7 @@ def test_observed_submission_rejections_retain_marker(
     monkeypatch.setattr(
         container,
         "_inspect",
-        lambda name: ContainerObservation(
+        lambda name, **_: ContainerObservation(
             read_only_root=True,
             workspace_mount_read_only=True,
             uid=1000,
@@ -548,7 +582,7 @@ def test_teardown_retries_failed_host_cleanup_and_reports_residue(
             returncode=1 if failed_command == "network" and attempts["network"] == 1 else 0,
         )
 
-    monkeypatch.setattr(container, "_inspect", lambda name: None)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: None)
     monkeypatch.setattr(container, "_force_remove", lambda name: True)
     monkeypatch.setattr(container, "_container_count", lambda name: 0)
     monkeypatch.setattr(container, "_host_run", host_run)
@@ -585,7 +619,7 @@ def test_driver_rejects_output_that_exceeds_the_collection_limit(
     monkeypatch.setattr(
         container,
         "_inspect",
-        lambda name: ContainerObservation(
+        lambda name, **_: ContainerObservation(
             read_only_root=True,
             workspace_mount_read_only=True,
             uid=1000,

@@ -109,14 +109,27 @@ the footprint runs recorded in `experiments/workflow_edit/SMOKE.md` (wf-12).
   read: treating `started_at` as UTC silently charges the cell a whole
   timezone offset wherever the dispatch host is not on UTC. The concrete
   workflow delegate therefore re-anchors acceptance locally, as
-  `now - time_from_acceptance`, and passes that into
+  `now - time_from_acceptance - poll_interval`, and passes that into
   `BridgeRuntime.run_cell`; no foreign absolute timestamp crosses the
-  boundary. `BridgeRuntime` clamps the result so an acceptance point in its
-  own future cannot buy more than the authorized limit. The bridge gives
-  the handle an absolute monotonic deadline before quota setup, network
-  setup, and container launch; those stages consume the same acceptance
-  budget. `TrialHandle.set_deadline` is part of the protocol, not an
-  optional method — the budget is not re-applied to `limits.timeout_s`, so
-  a handle that ignored it would enforce nothing. The guarded host route
-  can only check the deadline at entry: its single OpenRouter call is
-  bounded by `provider.TIMEOUT_S` and cannot be interrupted in flight.
+  boundary. The poll interval is subtracted because this host learns of a
+  completion only at the poll that observes it: the true completion lies
+  somewhere in the preceding interval, so charging the whole of it spends
+  the cell's budget rather than extending it. `BridgeRuntime` clamps the
+  result so an acceptance point in its own future cannot buy more than the
+  authorized limit. The bridge gives the handle an absolute monotonic
+  deadline before quota setup, network setup, and container launch; those
+  stages consume the same acceptance budget, as does every Docker call
+  made after the container exits, so evidence collection cannot overrun
+  the budget the trial was authorized with. `TrialHandle.set_deadline` is
+  part of the protocol, not an optional method — the budget is not
+  re-applied to `limits.timeout_s`, so a handle that ignored it would
+  enforce nothing. The guarded host route can only check the deadline
+  between steps, at entry and again immediately before its one OpenRouter
+  call: that call is bounded by `provider.TIMEOUT_S` and cannot be
+  interrupted in flight.
+- **Dispatch accounting:** Only the bridge leg of a workflow cell is
+  priced. Smithers reports no billing (`billing: unavailable` in the
+  pinned worker configuration), so a successful cell carries the bridge
+  trial's measured amount under `mixed` coverage, never `measured` — which
+  would assert the dispatch leg cost nothing. An attempt that reached the
+  bridge but returned no usage is `uncertain`, not zero.

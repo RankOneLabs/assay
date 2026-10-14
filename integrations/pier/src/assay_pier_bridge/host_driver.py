@@ -113,7 +113,7 @@ class GuardedCompletionTrialHandle:
         object.__setattr__(self, "package", _validated_snapshot(self.request, self.package))
 
     def set_deadline(self, deadline: float) -> None:
-        """Record the acceptance deadline; this route can only check it at entry.
+        """Record the acceptance deadline; this route can only check it between steps.
 
         The guarded trial is one blocking OpenRouter call made from this
         process (see the module docstring), and ``provider.TIMEOUT_S`` is
@@ -123,9 +123,12 @@ class GuardedCompletionTrialHandle:
         """
         object.__setattr__(self, "deadline", deadline)
 
-    def run(self) -> TrialResult:
+    def _check_deadline(self) -> None:
         if self.deadline is not None and time.monotonic() >= self.deadline:
             raise TrialTimeoutError("trial exceeded its worker-acceptance deadline")
+
+    def run(self) -> TrialResult:
+        self._check_deadline()
         repository = {
             path[len("workspace/") :]: content
             for path, content in self.package.items()
@@ -138,6 +141,10 @@ class GuardedCompletionTrialHandle:
         materialize_under(baseline, repository)
         materialize_under(worktree, repository)
         instruction = self.package[INSTRUCTION_PATH]
+        # Materializing two trees can itself spend what was left, so the
+        # budget is read again here: this is the last point the route can
+        # still refuse the cell, and nothing can interrupt the call after it.
+        self._check_deadline()
         response = run_one_cell(
             instruction=instruction,
             system_prompt=self.system_prompt,
