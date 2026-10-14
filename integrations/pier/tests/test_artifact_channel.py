@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 
 import pytest
-from assay_pier_bridge.paths import collect_artifacts
+from assay_pier_bridge.paths import collect_artifacts, regular_tree, submission_patch, tree_digest
 from assay_pier_bridge.protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
@@ -213,3 +213,44 @@ def test_collect_artifacts_skips_a_non_regular_file(tmp_path: Path) -> None:
     os.mkfifo(tmp_path / "fifo")
     (tmp_path / "output").write_bytes(b"answer = 42\n")
     assert _collect(tmp_path) == {"output": b"answer = 42\n"}
+
+
+def test_observed_patch_is_repeatable_and_applies_to_baseline(tmp_path: Path) -> None:
+    import subprocess
+
+    baseline = tmp_path / "baseline"
+    final = tmp_path / "final"
+    replay = tmp_path / "replay"
+    for root in (baseline, final, replay):
+        root.mkdir()
+    (baseline / "a.py").write_bytes(b"value = 1\n")
+    (baseline / "gone.py").write_bytes(b"old = 1\n")
+    (final / "a.py").write_bytes(b"value = 2\n")
+    (final / "new.py").write_bytes(b"new = 1\n")
+    (replay / "a.py").write_bytes(b"value = 1\n")
+    (replay / "gone.py").write_bytes(b"old = 1\n")
+    first = submission_patch(baseline, final)
+    second = submission_patch(baseline, final)
+    assert first == second
+    assert first.patch.startswith(b"diff --git a/a.py b/a.py\n")
+    subprocess.run(["git", "apply", "-"], input=first.patch, cwd=replay, check=True)
+    assert tree_digest(regular_tree(replay)) == first.final_tree_digest
+    assert tree_digest(regular_tree(baseline)) == first.baseline_tree_digest
+
+
+def test_repository_attributes_cannot_rewrite_patch_bytes(tmp_path: Path) -> None:
+    import subprocess
+
+    baseline = tmp_path / "baseline"
+    final = tmp_path / "final"
+    replay = tmp_path / "replay"
+    for root in (baseline, final, replay):
+        root.mkdir()
+        (root / ".gitattributes").write_bytes(b"*.txt text\n")
+    (baseline / "x.txt").write_bytes(b"before\r\n")
+    (final / "x.txt").write_bytes(b"after\r\n")
+    (replay / "x.txt").write_bytes(b"before\r\n")
+    captured = submission_patch(baseline, final)
+    assert b"-before\r\n+after\r\n" in captured.patch
+    subprocess.run(["git", "apply", "-"], input=captured.patch, cwd=replay, check=True)
+    assert tree_digest(regular_tree(replay)) == captured.final_tree_digest

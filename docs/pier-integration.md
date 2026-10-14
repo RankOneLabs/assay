@@ -4,7 +4,7 @@ Pier is the third-party (`datacurve-pier`) agent-execution provider Assay drives
 through the isolated [`integrations/pier`](../integrations/pier/README.md)
 bridge project. The bridge has its own lock and qualification script.
 
-The trial envelope is `assay-pier-trial/0.2.0`. `/scratch` is a bind mount of
+The trial envelope is `assay-pier-trial/0.3.0`. `/scratch` is a bind mount of
 an ext4 filesystem image kept under the host trial run directory. The image's
 filesystem capacity is the storage quota; Docker's memory cgroup is a separate,
 higher ceiling. The host running `DockerTrialClient` needs noninteractive root
@@ -37,6 +37,27 @@ and rubric appear only as SHA-256 references. The exported schema is
 `schemas/assay-fixture-manifest.schema.json`; `fixture_identity` hashes the
 complete canonical document, so a changed image or routing digest changes
 the fixture identity.
+
+## Submission patch normalization
+
+The writable trial working copy starts as a byte-for-byte copy of the selected
+arm's immutable baseline. The host enumerates both trees after the agent stops;
+the agent's list of edited files is trajectory data only. Paths are canonical
+relative POSIX paths, sorted by their UTF-8 bytes. Each regular file has mode
+`100644`; symlinks, special files, non-UTF-8 source and NUL bytes are rejected.
+The baseline is checked against the sealed package again before diffing.
+
+The captured patch is a Git unified diff with `diff --git`, `index`, `---`,
+`+++`, and `@@` lines. Index values are full lowercase Git SHA-1 blob IDs,
+with the all-zero ID on the absent side. Added and deleted files use
+`new file mode 100644` or `deleted file mode 100644`. Context is three lines;
+all patch metadata and separators use LF, with no timestamps. File content
+line endings are preserved by the diff and a missing final newline is marked
+with Git's `\\ No newline at end of file` marker. An unchanged tree has a
+zero-byte patch and is a valid no-op submission. The final tree digest is
+SHA-256 of the sorted sequence of `path UTF-8`, NUL, mode `100644`, NUL,
+file bytes, NUL. Applying the patch to the arm baseline must reproduce that
+digest. Evidence is read from the host-visible working copy before teardown.
 
 For a workflow fixture, build the bridge image before finalizing its manifest,
 then call `assay_pier_bridge.identity.bind_bridge_identity(manifest, image_ref)`.

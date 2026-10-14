@@ -9,8 +9,12 @@ bridge project has no dependency edge back onto ``assay`` (see README.md).
 
 from __future__ import annotations
 
+import hashlib
+import subprocess
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
 
 
 def safe_relative_path(raw_path: str) -> PurePosixPath:
@@ -47,6 +51,99 @@ def materialize_under(root: Path, files: Mapping[str, str]) -> None:
         full = root / rel
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
+
+
+@dataclass(frozen=True, slots=True)
+class SubmissionPatch:
+    patch: bytes
+    baseline_tree_digest: str
+    final_tree_digest: str
+
+
+def regular_tree(root: Path) -> dict[str, bytes]:
+    """Read a host-visible tree without following candidate-controlled links."""
+    files: dict[str, bytes] = {}
+    for path in sorted(root.rglob("*")):
+        relative = safe_relative_path(path.relative_to(root).as_posix()).as_posix()
+        if path.is_symlink():
+            raise ValueError(f"escaping symlink in submission: {relative}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise ValueError(f"non-regular entry in submission: {relative}")
+        data = path.read_bytes()
+        if b"\x00" in data:
+            raise ValueError(f"binary payload in submission: {relative}")
+        data.decode("utf-8", errors="strict")
+        files[relative] = data
+    return files
+
+
+def tree_digest(files: Mapping[str, bytes]) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(files, key=lambda value: value.encode("utf-8")):
+        safe_relative_path(path)
+        digest.update(path.encode("utf-8") + b"\x00100644\x00" + files[path] + b"\x00")
+    return f"sha256:{digest.hexdigest()}"
+
+
+def submission_patch(baseline: Path, final: Path) -> SubmissionPatch:
+    """Build a deterministic Git patch from observed trees, never an edit claim."""
+    before = regular_tree(baseline)
+    after = regular_tree(final)
+    with TemporaryDirectory(prefix="assay-patch-") as temporary:
+        checkout = Path(temporary)
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        # The candidate can edit .gitattributes. Its text/filter rules must
+        # never rewrite the bytes being observed or the patch cannot replay.
+        (checkout / ".git" / "info" / "attributes").write_text(
+            "* -text -filter -ident diff\n", encoding="ascii"
+        )
+        for path, data in before.items():
+            target = checkout / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            target.chmod(0o644)
+        subprocess.run(
+            ["git", "-c", "core.autocrlf=false", "add", "--all"], cwd=checkout, check=True
+        )
+        for path in before:
+            (checkout / path).unlink()
+        for path, data in after.items():
+            target = checkout / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            target.chmod(0o644)
+        new_paths = sorted(set(after) - set(before))
+        if new_paths:
+            subprocess.run(
+                ["git", "-c", "core.autocrlf=false", "add", "-N", "--", *new_paths],
+                cwd=checkout,
+                check=True,
+            )
+        diff = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "core.quotePath=false",
+                "-c",
+                "diff.algorithm=myers",
+                "diff",
+                "--binary",
+                "--full-index",
+                "--unified=3",
+                "--no-renames",
+                "--no-ext-diff",
+                "--no-textconv",
+            ],
+            cwd=checkout,
+            capture_output=True,
+            check=True,
+        ).stdout
+        # Git's patch carries no clock or checkout path; all source modes are fixed.
+    return SubmissionPatch(diff, tree_digest(before), tree_digest(after))
 
 
 def collect_artifacts(
