@@ -12,8 +12,12 @@ import asyncio
 from collections.abc import Mapping
 from typing import cast
 
-from assay_pier_bridge.paths import ArtifactCollectionRejected
+from assay_pier_bridge.paths import ArtifactCollectionRejected, safe_relative_path
 from assay_pier_bridge.protocol import (
+    MANIFEST_PATH,
+    MAX_AGGREGATE_ARTIFACT_BYTES,
+    MAX_ARTIFACT_BYTES,
+    MAX_ARTIFACT_COUNT,
     CandidateCause,
     CandidateFailure,
     EffectiveEnforcement,
@@ -58,6 +62,37 @@ class InfrastructureTrialError(RuntimeError):
 class CandidateTestTimeoutError(CandidateTrialError):
     def __init__(self, message: str = "candidate test exceeded its deadline") -> None:
         super().__init__("candidate_test_timeout", message)
+
+
+def _bounded_failure_artifacts(
+    primary: Mapping[str, bytes], partial: Mapping[str, bytes]
+) -> dict[str, bytes]:
+    """Retain rejected bytes first, then partials, within the result wire budget."""
+    bounded: dict[str, bytes] = {}
+    aggregate_bytes = 0
+    artifact_count = 0
+    for source in (primary, partial):
+        for path in sorted(source):
+            data = source[path]
+            if not isinstance(path, str) or not isinstance(data, bytes) or path in bounded:
+                continue
+            try:
+                safe_relative_path(path)
+            except ValueError:
+                continue
+            if path != MANIFEST_PATH and artifact_count >= MAX_ARTIFACT_COUNT:
+                continue
+            if path == MANIFEST_PATH:
+                retained = data[:MAX_ARTIFACT_BYTES]
+            else:
+                remaining = MAX_AGGREGATE_ARTIFACT_BYTES - aggregate_bytes
+                if remaining == 0 and data:
+                    continue
+                retained = data[:min(MAX_ARTIFACT_BYTES, remaining)]
+                aggregate_bytes += len(retained)
+                artifact_count += 1
+            bounded[path] = retained
+    return bounded
 
 
 class BridgeRuntime:
@@ -110,16 +145,17 @@ class BridgeRuntime:
         cause: InfrastructureCause,
         error: Exception,
     ) -> TrialResult:
-        artifacts: dict[str, bytes] = {}
+        partial_artifacts: dict[str, bytes] = {}
+        rejected_artifacts: dict[str, bytes] = {}
         outcome: CandidateFailure | InfrastructureFailure
         partial = getattr(handle, "partial_artifacts", None)
         if callable(partial):
             try:
                 observed = partial()
                 if isinstance(observed, Mapping):
-                    artifacts.update(observed)
+                    partial_artifacts.update(observed)
             except ArtifactCollectionRejected as rejection:
-                artifacts.update(rejection.artifacts)
+                partial_artifacts.update(rejection.artifacts)
             except Exception:
                 pass
         if isinstance(error, ArtifactCollectionRejected):
@@ -127,17 +163,18 @@ class BridgeRuntime:
                 # This prefix is bridge-owned. A candidate may create a file
                 # with the same name in /submission, but cannot replace the
                 # separately observed working-copy bytes in the result.
-                artifacts = {
-                    path: data for path, data in artifacts.items()
+                partial_artifacts = {
+                    path: data for path, data in partial_artifacts.items()
                     if not path.startswith("rejected_worktree/")
                 }
-                artifacts.update(
+                rejected_artifacts.update(
                     {f"rejected_worktree/{path}": data for path, data in error.artifacts.items()}
                 )
             else:
-                artifacts.update(error.artifacts)
+                rejected_artifacts.update(error.artifacts)
         elif isinstance(error, CandidateTrialError):
-            artifacts.update(error.artifacts)
+            rejected_artifacts.update(error.artifacts)
+        artifacts = _bounded_failure_artifacts(rejected_artifacts, partial_artifacts)
         effective: EffectiveEnforcement = handle.teardown()
         if isinstance(error, ArtifactCollectionRejected):
             outcome = CandidateFailure(cause=cast(CandidateCause, error.cause), detail=str(error))

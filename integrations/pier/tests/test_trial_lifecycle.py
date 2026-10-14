@@ -4,6 +4,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 import pytest
+from assay_pier_bridge.paths import ArtifactCollectionRejected
 from assay_pier_bridge.protocol import (
     CandidateSubmission,
     EffectiveEnforcement,
@@ -211,3 +212,27 @@ def test_no_submission_is_distinct_from_an_empty_candidate() -> None:
     missing = BridgeRuntime(FakeTrialClient("no_submission")).run_cell(_request())
     assert missing.outcome.kind == "candidate_failure"
     assert missing.outcome.cause == "no_submission"
+
+
+def test_failure_merge_stays_within_the_wire_budget() -> None:
+    class Handle:
+        def run(self) -> TrialResult:
+            raise ArtifactCollectionRejected(
+                "entry_limit", "too many files", origin="working_copy",
+                artifacts={"z.txt": b"rejected"},
+            )
+
+        def partial_artifacts(self) -> dict[str, bytes]:
+            return {f"partial-{index:04d}": b"x" for index in range(1_100)}
+
+        def teardown(self) -> EffectiveEnforcement:
+            return _clean_effective()
+
+    class Client:
+        def create(self, request: TrialRequest) -> Handle:
+            return Handle()
+
+    result = BridgeRuntime(Client()).run_cell(_request())
+    assert result.outcome.cause == "entry_limit"
+    assert len(result.artifacts) == 1_024
+    assert result.artifacts["rejected_worktree/z.txt"] == b"rejected"
