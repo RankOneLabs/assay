@@ -103,8 +103,20 @@ the footprint runs recorded in `experiments/workflow_edit/SMOKE.md` (wf-12).
 - **Clock:** Set Smithers `timeout_seconds` to 900. Its `started_at` is written
   when the worker accepts a task. Report `started_at - created_at` as queue
   latency and `completed_at - started_at` as time from acceptance; only the
-  latter is charged to the 15-minute cell budget. The concrete workflow
-  delegate passes the recorded `started_at` into `BridgeRuntime.run_cell`.
-  The bridge gives the Docker handle an absolute monotonic deadline before
-  quota setup, network setup, and container launch; those stages consume the
-  same acceptance budget.
+  latter is charged to the 15-minute cell budget. Smithers writes both
+  timestamps as naive wall-clock values on its own host, so their
+  *difference* is trustworthy but neither one is an instant this host can
+  read: treating `started_at` as UTC silently charges the cell a whole
+  timezone offset wherever the dispatch host is not on UTC. The concrete
+  workflow delegate therefore re-anchors acceptance locally, as
+  `now - time_from_acceptance`, and passes that into
+  `BridgeRuntime.run_cell`; no foreign absolute timestamp crosses the
+  boundary. `BridgeRuntime` clamps the result so an acceptance point in its
+  own future cannot buy more than the authorized limit. The bridge gives
+  the handle an absolute monotonic deadline before quota setup, network
+  setup, and container launch; those stages consume the same acceptance
+  budget. `TrialHandle.set_deadline` is part of the protocol, not an
+  optional method — the budget is not re-applied to `limits.timeout_s`, so
+  a handle that ignored it would enforce nothing. The guarded host route
+  can only check the deadline at entry: its single OpenRouter call is
+  bounded by `provider.TIMEOUT_S` and cannot be interrupted in flight.

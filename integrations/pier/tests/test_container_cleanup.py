@@ -214,6 +214,50 @@ def test_accepted_at_reaches_docker_handle_as_absolute_deadline(
         )
 
 
+def test_an_acceptance_point_in_the_future_cannot_exceed_the_authorized_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: list[float] = []
+
+    def timed_out_run(self: DockerTrialHandle) -> None:
+        assert self._deadline is not None
+        observed.append(self._deadline - time.monotonic())
+        raise TrialTimeoutError("test deadline")
+
+    monkeypatch.setattr(DockerTrialHandle, "run", timed_out_run)
+    monkeypatch.setattr(container, "_inspect", lambda name: None)
+    monkeypatch.setattr(container, "_force_remove", lambda name: True)
+    monkeypatch.setattr(container, "_container_count", lambda name: 0)
+    client = DockerTrialClient(
+        image="unused@test", package=PACKAGE, command=["python", "-m", "assay_pier_bridge"],
+        runs_root=tmp_path,
+    )
+
+    BridgeRuntime(client).run_cell(
+        _request(), accepted_at=datetime.now(UTC) + timedelta(hours=7)
+    )
+
+    assert len(observed) == 1
+    assert observed[0] <= _request().limits.timeout_s
+
+
+def test_a_docker_step_killed_by_the_budget_is_reported_as_a_deadline_breach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handle = _handle(tmp_path)
+
+    def expired(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        assert timeout <= 0.2
+        time.sleep(timeout)
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(container, "_run", expired)
+    handle.set_deadline(time.monotonic() + 0.05)
+
+    with pytest.raises(TrialTimeoutError, match="worker-acceptance"):
+        handle.run()
+
+
 def test_container_setup_consumes_acceptance_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
+import pytest
 
 from assay.adapters.smithers import SmithersClient, SmithersFactory
 from assay.execution import WorkerSuccess
@@ -67,9 +68,17 @@ async def test_cell_key_and_worker_configuration(tmp_path: Path) -> None:
     assert delegate.seen_key == key
 
 
+@pytest.mark.parametrize("dispatch_host_offset", [timedelta(0), timedelta(hours=-7)])
 async def test_production_delegate_passes_smithers_acceptance_to_bridge(
-    tmp_path: Path, monkeypatch: Any
+    tmp_path: Path, monkeypatch: Any, dispatch_host_offset: timedelta
 ) -> None:
+    """The anchor is a local duration, so the dispatch host's timezone cannot shift it.
+
+    Smithers stamps jobs with ``datetime.now()`` on its own host, so a
+    dispatch host that is not on UTC reports a wall clock hours away from
+    this one. Reading that as an instant would charge the offset to the
+    cell; only ``completed_at - started_at`` is clock-independent.
+    """
     routing = tmp_path / "routing_config.yaml"
     routing.write_text(
         "machines:\n  mcbain:\n    backend: vllm\n"
@@ -81,7 +90,8 @@ async def test_production_delegate_passes_smithers_acceptance_to_bridge(
         subject_id="subject", arm_id="mess-low", worker_repeat=0,
         realization_ref="sha256:" + "a" * 64,
     )
-    started = datetime.now(UTC) - timedelta(seconds=4)
+    # What the dispatch host's own clock reads, naive and unlabelled on the wire.
+    started = datetime.now(UTC).replace(tzinfo=None) + dispatch_host_offset - timedelta(seconds=4)
     created = started - timedelta(seconds=2)
     completed = started + timedelta(seconds=1)
 
@@ -128,4 +138,7 @@ async def test_production_delegate_passes_smithers_acceptance_to_bridge(
     assert isinstance(result, WorkerSuccess)
     assert result.output["candidate_ref"] is not None
     assert result.trace["smithers"]["queue_latency_seconds"] == 2.0
-    assert runtime.accepted_at == started
+    # One second of inference was charged, whatever the dispatch host's clock read.
+    assert runtime.accepted_at is not None
+    charged = (datetime.now(UTC) - runtime.accepted_at).total_seconds()
+    assert 1.0 <= charged < 10.0

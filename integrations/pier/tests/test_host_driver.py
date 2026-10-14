@@ -5,6 +5,7 @@ docstring for why that split exists."""
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from assay_pier_bridge.protocol import (
     TrialRequest,
 )
 from assay_pier_bridge.provider import MODEL, PROVIDER_NAME, GuardedOpenRouterClient
-from assay_pier_bridge.runtime import BridgeRuntime
+from assay_pier_bridge.runtime import BridgeRuntime, TrialTimeoutError
 from test_support import exchange_for
 
 ROUTE = ModelRoute(
@@ -266,3 +267,22 @@ def test_handle_uses_the_package_snapshot_taken_at_creation(
         "manifest.json"
     ]
     assert seen == [PACKAGE["instruction.md"]]
+
+
+def test_the_guarded_route_refuses_a_cell_whose_budget_is_already_spent(tmp_path: Path) -> None:
+    """The real trial path honours the acceptance deadline it is handed.
+
+    ``BridgeRuntime`` no longer shrinks ``limits.timeout_s`` before
+    ``create``, so a handle that ignored ``set_deadline`` would enforce no
+    acceptance budget at all. This route cannot interrupt its one blocking
+    OpenRouter call, so it refuses at entry rather than cutting off mid-call
+    — and never dials out, which is what makes this test offline.
+    """
+    client = GuardedCompletionTrialClient(
+        package=PACKAGE, api_key="test-key", runs_root=tmp_path, system_prompt="sys"
+    )
+    handle = client.create(_request())
+    handle.set_deadline(time.monotonic() - 1.0)
+
+    with pytest.raises(TrialTimeoutError, match="worker-acceptance"):
+        handle.run()

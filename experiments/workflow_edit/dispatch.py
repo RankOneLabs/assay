@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any, Protocol
 
@@ -38,6 +38,25 @@ class SmithersCellDelegate(Protocol):
 
 class BridgeRuntimeLike(Protocol):
     def run_cell(self, request: Any, *, accepted_at: datetime) -> Any: ...
+
+
+def _acceptance_anchor(diagnostics: Mapping[str, Any]) -> datetime | WorkerFailure:
+    """Re-anchor Smithers' acceptance point on this host's clock.
+
+    Smithers writes naive wall-clock timestamps from its own host, so its
+    ``started_at`` is only an instant if that host runs on UTC — an
+    assumption nothing on the wire states, and one that silently costs the
+    cell a whole timezone offset when it is false. Only the *duration*
+    ``completed_at - started_at`` is clock-independent, so the bridge's
+    anchor is derived from it against this host's own clock instead. The
+    poll that observed the completion is charged to the cell; it is bounded
+    by ``poll_interval`` and is this host's own elapsed time, not a foreign
+    one.
+    """
+    elapsed = diagnostics.get("time_from_acceptance_seconds")
+    if not isinstance(elapsed, int | float) or isinstance(elapsed, bool) or elapsed < 0:
+        return WorkerFailure("InvalidJobTiming", "Smithers job reported no time from acceptance")
+    return datetime.now(UTC) - timedelta(seconds=float(elapsed))
 
 
 @dataclass(frozen=True)
@@ -74,11 +93,10 @@ class SmithersBridgeCellDelegate:
         if isinstance(completion, WorkerFailure):
             return completion
         diagnostics = client.diagnostics()
-        started_raw = diagnostics.get("started_at")
-        if not isinstance(started_raw, str):
-            return WorkerFailure("InvalidJobTiming", "Smithers job omitted started_at")
+        accepted_at = _acceptance_anchor(diagnostics)
+        if isinstance(accepted_at, WorkerFailure):
+            return accepted_at
         try:
-            accepted_at = datetime.fromisoformat(started_raw)
             request = self.request_builder(input_value, coordinate, completion.content)
             if request.cell_id != coordinate.id:
                 return WorkerFailure("IdentityMismatch", "bridge request is for another cell")

@@ -70,6 +70,9 @@ class FakeTrialHandle:
     def partial_artifacts(self) -> dict[str, bytes]:
         return {"trajectory.json": b'{"steps":1}'}
 
+    def set_deadline(self, deadline: float) -> None:
+        self.deadline = deadline
+
     def run(self) -> TrialResult:
         if self.outcome == "succeed":
             return TrialResult(
@@ -216,6 +219,9 @@ def test_no_submission_is_distinct_from_an_empty_candidate() -> None:
 
 def test_failure_merge_stays_within_the_wire_budget() -> None:
     class Handle:
+        def set_deadline(self, deadline: float) -> None:
+            self.deadline = deadline
+
         def run(self) -> TrialResult:
             raise ArtifactCollectionRejected(
                 "entry_limit", "too many files", origin="working_copy",

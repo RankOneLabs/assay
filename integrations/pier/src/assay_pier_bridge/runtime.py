@@ -226,14 +226,16 @@ class BridgeRuntime:
         accepted_at = accepted_at or datetime.now(UTC)
         if accepted_at.tzinfo is None:
             accepted_at = accepted_at.replace(tzinfo=UTC)
-        remaining = request.limits.timeout_s - (datetime.now(UTC) - accepted_at).total_seconds()
+        # Clamped: an acceptance point in this host's future (a caller's clock
+        # skew, or a foreign naive timestamp) must never buy a cell more than
+        # the limit it was authorized with.
+        spent = (datetime.now(UTC) - accepted_at).total_seconds()
+        remaining = request.limits.timeout_s - max(spent, 0.0)
         if remaining <= 0:
             raise TrialTimeoutError("trial exceeded its worker-acceptance deadline")
         deadline = time.monotonic() + remaining
         handle = self._client.create(request)
-        set_deadline = getattr(handle, "set_deadline", None)
-        if callable(set_deadline):
-            set_deadline(deadline)
+        handle.set_deadline(deadline)
         try:
             result = handle.run()
         except TrialTimeoutError as error:

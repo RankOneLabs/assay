@@ -418,6 +418,20 @@ class DockerTrialHandle:
         """Receive the absolute monotonic acceptance deadline before setup."""
         self._deadline = deadline
 
+    def _run_bounded(self, args: list[str], ceiling: float) -> subprocess.CompletedProcess[str]:
+        """Run a docker step under the lower of its own ceiling and the budget.
+
+        A step killed because the acceptance budget ran out is a deadline
+        breach, not an unexplained subprocess failure: re-check the budget
+        so the caller sees ``TrialTimeoutError`` rather than the generic
+        ``unexpected_exception`` that a bare ``TimeoutExpired`` becomes.
+        """
+        try:
+            return _run(args, timeout=min(ceiling, self._remaining()))
+        except subprocess.TimeoutExpired:
+            self._remaining()
+            raise
+
     def _remaining(self) -> float:
         assert self._deadline is not None
         remaining = self._deadline - time.monotonic()
@@ -433,9 +447,8 @@ class DockerTrialHandle:
         self._scratch.mkdir()
         self._quota_image.touch()
         os.truncate(self._quota_image, limits.storage_mb * 1024 * 1024)
-        formatted = _run(
-            ["mkfs.ext4", "-F", "-q", str(self._quota_image)],
-            timeout=min(_START_TIMEOUT_S, self._remaining()),
+        formatted = self._run_bounded(
+            ["mkfs.ext4", "-F", "-q", str(self._quota_image)], _START_TIMEOUT_S
         )
         if formatted.returncode != 0:
             raise InfrastructureTrialError(
@@ -461,7 +474,7 @@ class DockerTrialHandle:
         host = self._request.egress_host
         port = self._request.egress_port
         assert host is not None and port is not None
-        result = _run(
+        result = self._run_bounded(
             [
                 "docker",
                 "network",
@@ -476,7 +489,7 @@ class DockerTrialHandle:
                 f"assay.egress.port={port}",
                 self._network_name,
             ],
-            timeout=min(_START_TIMEOUT_S, self._remaining()),
+            _START_TIMEOUT_S,
         )
         if result.returncode != 0:
             raise InfrastructureTrialError(
@@ -573,9 +586,8 @@ class DockerTrialHandle:
         self._remaining()
         self._prepare_network()
         self._remaining()
-        start_result = _run(
-            self._docker_run_args(self._request.limits),
-            timeout=min(_START_TIMEOUT_S, self._remaining()),
+        start_result = self._run_bounded(
+            self._docker_run_args(self._request.limits), _START_TIMEOUT_S
         )
         self._remaining()
         if start_result.returncode != 0:
@@ -587,9 +599,9 @@ class DockerTrialHandle:
             self._remaining()
             if self._cancel.is_set():
                 raise TrialCancelledError("operator cancelled the trial")
-            inspect = _run(
+            inspect = self._run_bounded(
                 ["docker", "inspect", "--format", "{{.State.Running}}", self._name],
-                timeout=min(_POLL_TIMEOUT_S, self._remaining()),
+                _POLL_TIMEOUT_S,
             )
             self._remaining()
             if inspect.returncode == 0 and inspect.stdout.strip() == "false":

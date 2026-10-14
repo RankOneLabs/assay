@@ -169,6 +169,9 @@ def _collect(
 
 def _failure_result(error: Exception) -> TrialResult:
     class Handle:
+        def set_deadline(self, deadline: float) -> None:
+            self.deadline = deadline
+
         def run(self) -> TrialResult:
             raise error
 
@@ -429,6 +432,9 @@ def test_regular_tree_bounds_entry_enumeration(
 @pytest.mark.parametrize("cause", ["out_of_scope_edit", "tampering"])
 def test_candidate_rejection_carries_its_own_artifacts(cause: str) -> None:
     class Handle:
+        def set_deadline(self, deadline: float) -> None:
+            self.deadline = deadline
+
         def run(self) -> TrialResult:
             raise CandidateTrialError(cause, "rejected", artifacts={"output": b"evidence"})
 
@@ -455,6 +461,9 @@ def test_candidate_rejection_carries_its_own_artifacts(cause: str) -> None:
 
 def test_rejected_worktree_paths_cannot_replace_submission_artifacts() -> None:
     class Handle:
+        def set_deadline(self, deadline: float) -> None:
+            self.deadline = deadline
+
         def run(self) -> TrialResult:
             raise ArtifactCollectionRejected(
                 "binary_payload",
