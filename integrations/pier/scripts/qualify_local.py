@@ -52,6 +52,7 @@ from assay_pier_bridge.container import (  # noqa: E402
     docker_available,
     package_digest,
 )
+from assay_pier_bridge.runtime import seal_observed_artifacts  # noqa: E402
 from assay_pier_bridge.identity import (  # noqa: E402
     ImageDigestMismatchError,
     ImageInspectionError,
@@ -198,6 +199,63 @@ class Measurements:
 
 def _run(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def probe_smoke_binding(
+    *, container_name: str, fixture_dir: Path, image_tag: str
+) -> dict[str, Any]:
+    """Seal evidence produced by a successful offline container trial.
+
+    This is the second smoke gate. The manifest is authored here after Docker
+    has supplied the result and logs; the candidate cannot supply it.
+    """
+    inspected = _run(["docker", "inspect", "--size", container_name], timeout=10)
+    if inspected.returncode != 0:
+        raise QualificationFailed("smoke_binding", inspected.stderr.strip())
+    raw = json.loads(inspected.stdout)[0]
+    if raw["State"]["ExitCode"] != 0 or raw["HostConfig"]["NetworkMode"] != "none":
+        raise QualificationFailed("smoke_binding", "offline trial did not complete successfully")
+    image = _run(["docker", "image", "inspect", "--format", "{{.Id}}", image_tag], timeout=10)
+    if image.returncode != 0 or raw["Image"] != image.stdout.strip():
+        raise QualificationFailed("smoke_binding", "container image digest does not match")
+    logs = _run(["docker", "logs", container_name], timeout=10)
+    if logs.returncode != 0:
+        raise QualificationFailed("smoke_binding", logs.stderr.strip())
+    files = {
+        path.relative_to(fixture_dir).as_posix(): path.read_bytes()
+        for path in sorted(fixture_dir.rglob("*"))
+        if path.is_file() and path.relative_to(fixture_dir).parts[0]
+        not in {"node_modules", "dist"}
+    }
+    digest = tree_digest(files)
+    coordinate = BridgeCellCoordinate(
+        subject_id="oakridge-dbos-smoke-wf12", arm_id="mess-00", worker_repeat=0,
+        realization_ref=digest,
+    )
+    exchange = BridgePierExchange(
+        coordinate=coordinate,
+        binding=BridgeRuntimeBinding(
+            runtime_version="smoke-slice/1", image_digest=raw["Image"],
+            configuration_ref=digest, package_digest=package_digest(
+                {name: value.decode("utf-8") for name, value in files.items()}
+            ),
+        ),
+        trial_name="oakridge--dbos--smoke--wf12-mess--00-w0",
+    )
+    artifacts = {
+        "trajectory.json": json.dumps({"docker_log": logs.stdout}).encode(),
+        "candidate.patch": b"",
+        "result.json": json.dumps({"exit_code": raw["State"]["ExitCode"]}).encode(),
+        "configuration.json": json.dumps({"network": "none", "image": raw["Image"]}).encode(),
+    }
+    sealed = seal_observed_artifacts(exchange, artifacts, files, digest)
+    return {
+        "client": "qualify_local.py + docker inspect",
+        "image_digest": raw["Image"],
+        "artifact_count": len(sealed) - 1,
+        "manifest_digest": digest_bytes(sealed["manifest.json"]),
+        "tree_digest": digest,
+    }
 
 
 def _no_stray_containers(prefix: str = _ORPHAN_PREFIX) -> bool:
@@ -814,7 +872,25 @@ def main() -> int:
         default="assay-pier-bridge:qualify-local",
         help="Tag the bridge image is built under for this qualification run",
     )
+    parser.add_argument(
+        "--smoke-container",
+        help="Run only the harness artifact-binding gate for this inspected container",
+    )
+    parser.add_argument(
+        "--smoke-fixture-dir",
+        type=Path,
+        help="Snapshot directory used by --smoke-container",
+    )
     args = parser.parse_args()
+    if args.smoke_container:
+        if args.smoke_fixture_dir is None:
+            parser.error("--smoke-container requires --smoke-fixture-dir")
+        print(json.dumps(probe_smoke_binding(
+            container_name=args.smoke_container,
+            fixture_dir=args.smoke_fixture_dir,
+            image_tag=args.image_tag,
+        ), indent=2))
+        return 0
     return run_qualification(output_dir=args.output_dir, image_tag=args.image_tag)
 
 

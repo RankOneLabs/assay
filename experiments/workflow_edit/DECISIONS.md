@@ -67,6 +67,12 @@ advance together to `assay-pier-trial/0.2.0`. The exact revised field set is:
 Initial storage, memory, and PID numbers are provisional; replace them after
 the footprint runs recorded in `experiments/workflow_edit/SMOKE.md` (wf-12).
 
+The wf-12 offline smoke gate passed install, typecheck, and test in a container,
+and the harness sealed its observed artifacts. The inspected memory and PID
+values are configured ceilings, not peak usage. The Smithers/Pier model gate
+and 20-dispatch qualification are outstanding, so the provisional bounds
+remain until real replacement measurements exist.
+
 ## Packaging and fixture identity
 
 - **Arm-bound limits:** Each authorized Pier worker configuration records the
