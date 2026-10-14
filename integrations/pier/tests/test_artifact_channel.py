@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 
 import pytest
+from assay_pier_bridge.evidence import worker_usage_from_result_bytes
+from assay_pier_bridge.identity import canonical_json
 from assay_pier_bridge.paths import (
     ArtifactCollectionRejected,
     collect_artifacts,
@@ -409,3 +411,68 @@ def test_unchanged_working_copy_is_zero_byte_patch(tmp_path: Path) -> None:
     candidate = submission_patch(baseline, final)
     assert candidate.patch == b""
     assert candidate.final_tree_digest == candidate.baseline_tree_digest
+
+
+def test_patch_follows_the_filesystem_not_the_agents_declared_edits(tmp_path: Path) -> None:
+    """The agent's claim about which files it edited is never a patch input.
+
+    This candidate under-reports (it never mentions ``b.py``) and
+    over-reports (it names a ``ghost.py`` it never wrote). The recorded
+    patch must still be exactly the observed tree delta, and the immutable
+    baseline must be byte-identical afterwards.
+    """
+    baseline = tmp_path / "baseline"
+    worktree = tmp_path / "worktree"
+    for root in (baseline, worktree):
+        root.mkdir()
+        (root / "a.py").write_bytes(b"value = 1\n")
+        (root / "b.py").write_bytes(b"other = 1\n")
+    (worktree / "a.py").write_bytes(b"value = 2\n")
+    (worktree / "b.py").write_bytes(b"other = 2\n")
+    baseline_before = tree_digest(regular_tree(baseline))
+
+    captured = submission_patch(baseline, worktree)
+
+    diffed = sorted(
+        line.split(b" b/")[-1]
+        for line in captured.patch.splitlines()
+        if line.startswith(b"diff --git ")
+    )
+    assert diffed == [b"a.py", b"b.py"]
+    assert b"ghost.py" not in captured.patch
+    assert captured.baseline_tree_digest == baseline_before
+    assert tree_digest(regular_tree(baseline)) == baseline_before
+
+
+def test_worker_reported_counts_become_usage_without_a_cost() -> None:
+    usage = worker_usage_from_result_bytes(
+        canonical_json(
+            {
+                "exit_status": "Submitted",
+                "usage": {"prompt_tokens": 12, "completion_tokens": 7, "requests": 2},
+            }
+        )
+    )
+    assert usage is not None
+    assert (usage.prompt_tokens, usage.completion_tokens, usage.requests) == (12, 7, 2)
+    assert usage.cost_usd is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'{"exit_status":"Submitted","usage":null}',
+        b'{"exit_status":"Submitted"}',
+        b'{"exit_status":"Submitted","usage":{"prompt_tokens":true,"completion_tokens":1}}',
+        b'{"exit_status":"Submitted","usage":{"prompt_tokens":-1,"completion_tokens":1}}',
+        b'{"exit_status":"Submitted","usage":{"prompt_tokens":1.5,"completion_tokens":1}}',
+        b'{"exit_status":"Submitted","usage":{"completion_tokens":1}}',
+        b"not json",
+        b"[]",
+        None,
+    ],
+)
+def test_unusable_worker_counts_report_no_usage_at_all(payload: bytes | None) -> None:
+    """``None`` here is what Assay turns into ``uncertain`` coverage; a
+    fabricated zero would become a confident measured zero instead."""
+    assert worker_usage_from_result_bytes(payload) is None

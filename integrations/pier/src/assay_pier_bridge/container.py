@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from assay_pier_bridge.evidence import seal_artifacts
+from assay_pier_bridge.evidence import seal_artifacts, worker_usage_from_result_bytes
 from assay_pier_bridge.identity import canonical_json
 from assay_pier_bridge.identity import digest_bytes as _digest
 from assay_pier_bridge.identity import package_digest as package_digest
@@ -681,6 +681,9 @@ class DockerTrialHandle:
             }
         )
         artifacts["candidate.patch"] = patch.patch
+        # The worker's own counts, if it reported any. This cell has no
+        # pricing model, so the cost stays unobserved rather than zero.
+        usage = worker_usage_from_result_bytes(artifacts["result.json"])
         artifacts = seal_artifacts(self._request.exchange, artifacts)
         (self._submission / MANIFEST_PATH).write_bytes(artifacts[MANIFEST_PATH])
         return TrialResult(
@@ -690,6 +693,7 @@ class DockerTrialHandle:
                 tree_digest=patch.final_tree_digest,
                 baseline_tree_digest=patch.baseline_tree_digest,
             ),
+            usage=usage,
             effective=self.effective_enforcement(),
             artifacts=artifacts,
         )
