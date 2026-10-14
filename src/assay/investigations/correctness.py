@@ -14,7 +14,8 @@ from pydantic import Field, model_serializer
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import EvaluationFailed, EvaluationResult, EvaluationSuccess
 from assay.investigations.consistency import CodingTask, parse_candidate_source
-from assay.investigations.sandbox_lifecycle import SandboxFailure, SandboxLifecycle
+from assay.investigations.sandbox_lifecycle import SandboxFailure as SandboxFailure
+from assay.investigations.sandbox_lifecycle import SandboxLifecycle
 from assay.models import EvaluationCoordinate, WireModel
 from assay.repository import validate_repository
 

@@ -66,9 +66,29 @@ def prepare_fake_toolchain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
     git = tools / "git"
     git.write_text('#!/bin/sh\necho call >> "$ASSAY_GIT_LOG"\nexec /usr/bin/git "$@"\n')
     git.chmod(0o755)
+    node = tools / "node"
+    node.write_text(
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "import sys\n"
+        "import time\n"
+        "with open(os.environ['ASSAY_NODE_LOG'], 'a', encoding='utf-8') as log:\n"
+        "    log.write(sys.argv[1] + '\\n')\n"
+        "if sys.argv[1:] == ['--version']:\n"
+        "    print('v22.21.1')\n"
+        "elif len(sys.argv) == 3 and sys.argv[1] == '-e':\n"
+        "    if 'setInterval' in sys.argv[2]:\n"
+        "        time.sleep(30)\n"
+        "    sys.exit(0 if 'value = 1' in Path('src.ts').read_text() else 1)\n"
+        "else:\n"
+        "    sys.exit(2)\n"
+    )
+    node.chmod(0o755)
     log = tmp_path / "git.log"
     monkeypatch.setenv("ASSAY_GIT_LOG", str(log))
     monkeypatch.setenv("ASSAY_TSC_LOG", str(tmp_path / "tsc.log"))
+    monkeypatch.setenv("ASSAY_NODE_LOG", str(tmp_path / "node.log"))
     monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
     return log
 
@@ -131,6 +151,12 @@ async def test_offline_runner_applies_patch_once_and_reports_named_groups(
         "--version",
         "--noEmit",
         "--outDir /tmp/workflow-build",
+    ]
+    assert (tmp_path / "node.log").read_text().splitlines() == [
+        "--version",
+        "-e",
+        "-e",
+        "-e",
     ]
 
 
