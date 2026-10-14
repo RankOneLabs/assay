@@ -213,6 +213,21 @@ def test_twenty_turn_limit_and_zero_retries(tmp_path: Path) -> None:
     assert calls == 20
 
 
+def test_resolved_config_observes_constructed_transport_retries(tmp_path: Path) -> None:
+    client = RepositoryAgentClient(
+        api_key="test",
+        image="locked-image",
+        runs_root=tmp_path,
+        transport=httpx.HTTPTransport(retries=2, trust_env=False),
+        sandbox_factory=FakeSandbox,
+    )
+    assert client.resolved_config.transport_retries == 2
+    with pytest.raises(AgentLoopError, match="retry_config_violation") as failure:
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.trajectory["config"]["transport_retries"] == 2
+    assert failure.value.trajectory["events"][-1]["requests"] == 1
+
+
 @pytest.mark.parametrize(
     ("bounds", "cause"),
     [

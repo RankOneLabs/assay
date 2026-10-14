@@ -54,11 +54,11 @@ class LoopBounds:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedClientConfig:
+    transport_retries: int
     attempts: int = 1
     concurrency: int = 1
     provider_retries: int = 0
     sdk_retries: int = 0
-    transport_retries: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,7 +297,25 @@ class RepositoryAgentClient:
     @property
     def resolved_config(self) -> ResolvedClientConfig:
         # Direct httpx transport; no provider SDK is instantiated.
-        return ResolvedClientConfig()
+        with self._http_client() as client:
+            return ResolvedClientConfig(transport_retries=self._transport_retries(client))
+
+    def _http_client(self) -> httpx.Client:
+        transport = self.transport or httpx.HTTPTransport(retries=0, trust_env=False)
+        return httpx.Client(
+            transport=transport, timeout=30, trust_env=False, follow_redirects=False
+        )
+
+    @staticmethod
+    def _transport_retries(client: httpx.Client) -> int:
+        transport = client._transport
+        if isinstance(transport, httpx.MockTransport):
+            return 0
+        if isinstance(transport, httpx.HTTPTransport):
+            retries = getattr(getattr(transport, "_pool", None), "_retries", None)
+            if type(retries) is int:
+                return retries
+        raise ValueError("unverifiable_transport_retries")
 
     def _completion(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         body = {
@@ -324,12 +342,10 @@ class RepositoryAgentClient:
         payload = _json_bytes(body)
         if len(payload) > self.bounds.max_request_bytes:
             raise ValueError("request_limit")
-        transport = self.transport or httpx.HTTPTransport(retries=0, trust_env=False)
-        with (
-            httpx.Client(
-                transport=transport, timeout=30, trust_env=False, follow_redirects=False
-            ) as client,
-            client.stream(
+        with self._http_client() as client:
+            if self._transport_retries(client) != 0:
+                raise ValueError("retry_config_violation")
+            with client.stream(
                 "POST",
                 CHAT_COMPLETIONS_URL,
                 content=payload,
@@ -337,15 +353,14 @@ class RepositoryAgentClient:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
-            ) as response,
-        ):
-            if str(response.url) != CHAT_COMPLETIONS_URL or not response.is_success:
-                raise ValueError("provider_response")
-            chunks = bytearray()
-            for chunk in response.iter_bytes():
-                chunks.extend(chunk)
-                if len(chunks) > self.bounds.max_response_bytes:
-                    raise ValueError("response_limit")
+            ) as response:
+                if str(response.url) != CHAT_COMPLETIONS_URL or not response.is_success:
+                    raise ValueError("provider_response")
+                chunks = bytearray()
+                for chunk in response.iter_bytes():
+                    chunks.extend(chunk)
+                    if len(chunks) > self.bounds.max_response_bytes:
+                        raise ValueError("response_limit")
         data = json.loads(chunks)
         if (
             not isinstance(data, dict)
