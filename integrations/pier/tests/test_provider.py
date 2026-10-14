@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,6 +14,16 @@ from assay_pier_bridge.provider import (
     GuardedOpenRouterClient,
     GuardedRouteError,
 )
+
+
+def test_guarded_route_and_mini_config_bytes_are_unchanged() -> None:
+    bridge_root = Path(__file__).resolve().parents[1]
+    assert hashlib.sha256(
+        (bridge_root / "src/assay_pier_bridge/provider.py").read_bytes()
+    ).hexdigest() == ("42f11a2fe51b9ade9568d1e986c54f334b5a30c7f52dfb7d0ccb301fafcd7160")
+    assert hashlib.sha256((bridge_root / "config/mini.yaml").read_bytes()).hexdigest() == (
+        "d2483fae087108d3489dd240fc63eb19f4481a7e75a2f8e189926af3c6e415f9"
+    )
 
 
 def _good_body(**overrides: Any) -> dict[str, Any]:

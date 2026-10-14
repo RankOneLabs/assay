@@ -1,0 +1,14 @@
+# Part 1 repository agent. Provisional bounds: replace from
+# experiments/workflow_edit/SMOKE.md after wf-12 measures the 20-turn envelope.
+max_turns: 20
+attempts: 1
+concurrency: 1
+provider_retries: 0
+sdk_retries: 0
+max_tool_schema_bytes: 16384
+max_tool_output_bytes: 16384
+max_conversation_bytes: 262144
+max_request_bytes: 327680
+max_response_bytes: 65536
+max_output_tokens: 2048
+max_storage_mb: 512
