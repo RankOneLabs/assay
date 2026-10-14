@@ -39,12 +39,17 @@ class TrialCancelledError(Exception):
     """Raised by a ``TrialHandle.run()`` implementation on operator cancellation."""
 
 
-class CandidateTrialError(Exception):
+class CandidateTrialError(RuntimeError):
     """A candidate-caused rejection with a stable, typed reason."""
 
     def __init__(self, cause: CandidateCause, message: str) -> None:
         super().__init__(message)
         self.cause = cause
+
+
+class CandidateTestTimeoutError(CandidateTrialError):
+    def __init__(self, message: str = "candidate test exceeded its deadline") -> None:
+        super().__init__("candidate_test_timeout", message)
 
 
 class BridgeRuntime:

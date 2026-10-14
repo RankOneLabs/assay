@@ -40,9 +40,10 @@ FORBIDDEN_SENTINELS: tuple[tuple[str, str], ...] = (
 
 SUBMISSION_CONTRACT = (
     "# Submission contract\n\n"
-    "Write your final source to `/submission/output` as UTF-8 text. Do not "
-    "write anywhere else in `/submission`; `/scratch` is discarded when the "
-    "trial ends. Call `submit_output` exactly once with the same content.\n"
+    "Edit repository files in `/submission/worktree`, a writable copy of the "
+    "arm baseline. The host derives the final patch and tree digest from that "
+    "directory. Call `submit_output` exactly once when done; an empty source "
+    "is a valid no-op. `/scratch` is discarded when the trial ends.\n"
 )
 
 
@@ -63,8 +64,8 @@ def render_instruction(task: str) -> str:
         "# Task\n\n"
         f"{stripped}\n\n"
         "## Workspace\n\n"
-        "Your repository is mounted read-only at the workspace root: the files "
-        "beside this instruction are the repository itself. "
+        "Your baseline is mounted read-only at the workspace root. Edit the "
+        "writable repository copy at `/submission/worktree`. "
         f"See `{SUBMISSION_CONTRACT_PATH}` for how to submit your answer.\n"
     )
 

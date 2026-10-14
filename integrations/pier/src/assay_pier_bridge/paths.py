@@ -81,17 +81,46 @@ def regular_tree(root: Path) -> dict[str, bytes]:
     """Read a host-visible tree without following candidate-controlled links."""
     files: dict[str, bytes] = {}
     for path in sorted(root.rglob("*")):
-        relative = safe_relative_path(path.relative_to(root).as_posix()).as_posix()
+        raw_relative = path.relative_to(root).as_posix()
+        try:
+            relative = safe_relative_path(raw_relative).as_posix()
+        except ValueError as error:
+            raise ArtifactCollectionRejected(
+                "traversal", str(error), rejected_path=raw_relative
+            ) from error
         if path.is_symlink():
-            raise ValueError(f"escaping symlink in submission: {relative}")
+            raise ArtifactCollectionRejected(
+                "escaping_symlink",
+                f"escaping symlink in submission: {relative}",
+                artifacts=files,
+                rejected_path=relative,
+            )
         if path.is_dir():
             continue
         if not path.is_file():
-            raise ValueError(f"non-regular entry in submission: {relative}")
+            raise ArtifactCollectionRejected(
+                "out_of_scope_edit",
+                f"non-regular entry in submission: {relative}",
+                artifacts=files,
+                rejected_path=relative,
+            )
         data = path.read_bytes()
         if b"\x00" in data:
-            raise ValueError(f"binary payload in submission: {relative}")
-        data.decode("utf-8", errors="strict")
+            raise ArtifactCollectionRejected(
+                "binary_payload",
+                f"binary payload in submission: {relative}",
+                artifacts=files,
+                rejected_path=relative,
+            )
+        try:
+            data.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise ArtifactCollectionRejected(
+                "binary_payload",
+                f"binary payload in submission: {relative}",
+                artifacts=files,
+                rejected_path=relative,
+            ) from error
         files[relative] = data
     return files
 
@@ -170,6 +199,7 @@ def collect_artifacts(
     max_aggregate_bytes: int,
     max_entries: int,
     aggregate_exempt_path: str,
+    excluded_roots: frozenset[str] = frozenset(),
 ) -> dict[str, bytes]:
     """Read every regular file under ``root`` into a path -> bytes mapping.
 
@@ -197,6 +227,8 @@ def collect_artifacts(
     artifacts: dict[str, bytes] = {}
     aggregate_bytes = 0
     for path in sorted(paths):
+        if path.relative_to(root).parts[0] in excluded_roots:
+            continue
         if path.is_symlink():
             raise ArtifactCollectionRejected(
                 "escaping_symlink",

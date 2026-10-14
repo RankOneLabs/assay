@@ -14,6 +14,7 @@ from assay_pier_bridge.protocol import (
 )
 from assay_pier_bridge.runtime import (
     BridgeRuntime,
+    CandidateTestTimeoutError,
     TrialAlreadyRequestedError,
     TrialCancelledError,
     TrialTimeoutError,
@@ -77,6 +78,8 @@ class FakeTrialHandle:
             raise RuntimeError("agent crashed")
         if self.outcome == "timeout":
             raise TrialTimeoutError("deadline exceeded")
+        if self.outcome == "test_timeout":
+            raise CandidateTestTimeoutError()
         if self.outcome == "cancel":
             raise TrialCancelledError("operator cancelled")
         raise AssertionError(self.outcome)
@@ -175,3 +178,12 @@ def test_successful_result_effective_reflects_teardown_not_mid_run_snapshot() ->
 def test_failure_retains_artifacts_observed_before_teardown(outcome: str) -> None:
     result = BridgeRuntime(FakeTrialClient(outcome)).run_cell(_request())
     assert result.artifacts == {"trajectory.json": b'{"steps":1}'}
+
+
+def test_candidate_test_timeout_differs_from_harness_deadline() -> None:
+    test_hang = BridgeRuntime(FakeTrialClient("test_timeout")).run_cell(_request())
+    harness_hang = BridgeRuntime(FakeTrialClient("timeout")).run_cell(_request())
+    assert test_hang.outcome.kind == "candidate_failure"
+    assert test_hang.outcome.cause == "candidate_test_timeout"
+    assert harness_hang.outcome.kind == "infrastructure_failure"
+    assert harness_hang.outcome.cause == "harness_deadline"

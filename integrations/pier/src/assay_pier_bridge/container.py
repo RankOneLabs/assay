@@ -26,18 +26,25 @@ from pathlib import Path
 
 from assay_pier_bridge.identity import digest_bytes as _digest
 from assay_pier_bridge.identity import package_digest as package_digest
-from assay_pier_bridge.paths import collect_artifacts, materialize_under, safe_relative_path
+from assay_pier_bridge.paths import (
+    collect_artifacts,
+    materialize_under,
+    regular_tree,
+    safe_relative_path,
+    submission_patch,
+)
 from assay_pier_bridge.protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
     MAX_SUBMISSION_ENTRIES,
+    CandidateSubmission,
     EffectiveEnforcement,
     TrialLimits,
     TrialRequest,
     TrialResult,
 )
-from assay_pier_bridge.runtime import TrialCancelledError, TrialTimeoutError
+from assay_pier_bridge.runtime import CandidateTrialError, TrialCancelledError, TrialTimeoutError
 
 _UID = 1000
 _GID = 1000
@@ -355,6 +362,8 @@ class DockerTrialHandle:
         self._workdir = runs_root / name
         self._workspace = self._workdir / "workspace"
         self._submission = self._workdir / "submission"
+        self._baseline = self._workdir / "baseline"
+        self._working_copy = self._submission / "worktree"
         self._scratch = self._workdir / "scratch"
         self._quota_image = self._workdir / "scratch.ext4"
         self._quota_mounted = False
@@ -362,12 +371,29 @@ class DockerTrialHandle:
         self._network_interface = f"ap{name[-12:]}"[:15]
         self._network_created = False
         self._firewall_installed: list[tuple[str, list[str]]] = []
-        for directory in (self._workspace, self._submission):
+        for directory in (self._workspace, self._submission, self._baseline, self._working_copy):
             directory.mkdir(parents=True, exist_ok=True)
         # /submission is writable by the container's uid 1000, which will
         # not equal the runner's own uid on most real hosts.
         self._submission.chmod(0o777)
-        materialize_under(self._workspace, _mount_paths(package))
+        mounted = _mount_paths(package)
+        self._expected_workspace = {
+            path: content.encode("utf-8") for path, content in mounted.items()
+        }
+        repository = {
+            path[len(_WORKSPACE_PACKAGE_PREFIX) :]: content
+            for path, content in package.items()
+            if path.startswith(_WORKSPACE_PACKAGE_PREFIX)
+        }
+        self._expected_baseline = {
+            path: content.encode("utf-8") for path, content in repository.items()
+        }
+        materialize_under(self._workspace, mounted)
+        materialize_under(self._baseline, repository)
+        materialize_under(self._working_copy, repository)
+        for directory in self._working_copy.rglob("*"):
+            directory.chmod(0o777 if directory.is_dir() else 0o666)
+        self._working_copy.chmod(0o777)
         self._cancel = threading.Event()
 
     def cancel(self) -> None:
@@ -546,12 +572,17 @@ class DockerTrialHandle:
             ):
                 raise StorageExhaustedError("trial reported ENOSPC on /scratch")
         submission_file = self._submission / "output"
-        if (
-            exit_code.stdout.strip() != "0"
-            or submission_file.is_symlink()
-            or not submission_file.is_file()
+        if exit_code.stdout.strip() != "0":
+            raise CandidateTrialError("nonzero_exit", "trial container exited nonzero")
+        if submission_file.is_symlink():
+            raise CandidateTrialError("symlink_submission", "submission marker is a symlink")
+        if not submission_file.is_file():
+            raise CandidateTrialError("no_submission", "trial wrote no submission marker")
+        if regular_tree(self._workspace) != self._expected_workspace or (
+            regular_tree(self._baseline) != self._expected_baseline
         ):
-            raise RuntimeError("trial container exited nonzero or wrote no submission")
+            raise CandidateTrialError("tampering", "immutable arm baseline changed during trial")
+        patch = submission_patch(self._baseline, self._working_copy)
         # Read the submission mount before teardown removes it: these bytes
         # exist nowhere else, and the caller cannot go back for them.
         artifacts = collect_artifacts(
@@ -560,19 +591,45 @@ class DockerTrialHandle:
             max_aggregate_bytes=MAX_AGGREGATE_ARTIFACT_BYTES,
             max_entries=MAX_SUBMISSION_ENTRIES,
             aggregate_exempt_path=MANIFEST_PATH,
+            excluded_roots=frozenset({"worktree"}),
         )
-        submission = artifacts.get("output")
-        if submission is None:
-            raise RuntimeError("trial container wrote no collectable submission")
-        # Preserve the existing source-text contract, but validate only after
-        # the byte read has been bounded and hash the exact collected bytes.
-        submission.decode("utf-8", errors="strict")
+        if "candidate.patch" in artifacts:
+            raise CandidateTrialError("tampering", "candidate attempted to replace the host patch")
+        for path in artifacts:
+            if path not in {
+                "output",
+                "trajectory.json",
+                "result.json",
+                "configuration.json",
+                MANIFEST_PATH,
+            }:
+                raise CandidateTrialError(
+                    "out_of_scope_edit", f"unexpected submission path: {path}"
+                )
+        try:
+            artifacts["output"].decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise CandidateTrialError("binary_payload", "submission marker is not UTF-8") from error
+        artifacts["candidate.patch"] = patch.patch
         return TrialResult(
             cell_id=self._request.cell_id,
-            status="succeeded",
-            submission_ref=_digest(submission),
+            outcome=CandidateSubmission(
+                patch_ref=_digest(patch.patch),
+                tree_digest=patch.final_tree_digest,
+                baseline_tree_digest=patch.baseline_tree_digest,
+            ),
             effective=self.effective_enforcement(),
             artifacts=artifacts,
+        )
+
+    def partial_artifacts(self) -> dict[str, bytes]:
+        return collect_artifacts(
+            self._submission,
+            max_bytes=MAX_ARTIFACT_BYTES,
+            max_aggregate_bytes=MAX_AGGREGATE_ARTIFACT_BYTES,
+            max_entries=MAX_SUBMISSION_ENTRIES,
+            aggregate_exempt_path=MANIFEST_PATH,
+            excluded_roots=frozenset({"worktree"}),
         )
 
     def effective_enforcement(self) -> EffectiveEnforcement:

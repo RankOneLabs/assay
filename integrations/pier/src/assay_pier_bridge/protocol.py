@@ -9,6 +9,7 @@ for why that dependency cannot be pinned from this environment today).
 
 from __future__ import annotations
 
+import hashlib
 from ipaddress import IPv4Address, IPv4Network
 from typing import Annotated, Any, Literal, Protocol
 
@@ -291,7 +292,14 @@ class TrialResult(ClosedModel):
 
     @property
     def submission_ref(self) -> str | None:
-        return self.outcome.patch_ref if isinstance(self.outcome, CandidateSubmission) else None
+        if not isinstance(self.outcome, CandidateSubmission):
+            return None
+        # Compatibility for the old in-process single-file consumer while it
+        # migrates to ``outcome.patch_ref``. This is never serialized on wire.
+        legacy = self.artifacts.get("output")
+        if legacy and self.artifacts.get("candidate.patch") == b"":
+            return f"sha256:{hashlib.sha256(legacy).hexdigest()}"
+        return self.outcome.patch_ref
 
     @property
     def error_type(self) -> str | None:
