@@ -76,6 +76,21 @@ def _good_body(**overrides: Any) -> dict[str, Any]:
     return body
 
 
+def test_paid_host_driver_refuses_zero_paid_qualification_route(tmp_path: Path) -> None:
+    request = _request().model_copy(update={
+        "model_route": ModelRoute(
+            endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
+        ),
+        "network_policy": "toolchain-only",
+    })
+    client = GuardedCompletionTrialClient(
+        package=PACKAGE, api_key="test-key", runs_root=tmp_path
+    )
+    with pytest.raises(ValueError, match="cannot execute a local model route"):
+        client.create(request)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_a_trial_succeeds_with_the_container_network_permanently_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

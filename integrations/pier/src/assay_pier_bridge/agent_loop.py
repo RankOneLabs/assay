@@ -8,24 +8,28 @@ and submit_output; each result is returned to the same cell's conversation.
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import os
 import selectors
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
 import httpx
 
 from assay_pier_bridge.paths import materialize_under, safe_relative_path, submission_patch
+from assay_pier_bridge.protocol import ModelRoute
 from assay_pier_bridge.provider import (
     CHAT_COMPLETIONS_URL,
     MAX_COMPLETION_PRICE_PER_MILLION,
@@ -42,10 +46,20 @@ SYSTEM_PROMPT = (
     "are never available. Do not seek network access or install packages."
 )
 
+SMOKE_CHECKS: tuple[tuple[str, str], ...] = (
+    ("install", "node /usr/local/lib/node_modules/npm/bin/npm-cli.js ci --offline "
+     "--ignore-scripts --no-audit --no-fund --no-bin-links"),
+    ("typecheck", "node node_modules/typescript/bin/tsc --noEmit --strict "
+     "--target es2022 --module commonjs src/domain/artifact-types.ts"),
+    ("compile", "node node_modules/typescript/bin/tsc --target es2022 "
+     "--module commonjs --outDir dist src/domain/artifact-types.ts"),
+    ("test", "node --test tests/artifact-types.test.cjs"),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class LoopBounds:
-    """Provisional: replace every size after experiments/workflow_edit/SMOKE.md (wf-12)."""
+    """Ceilings exercised by the measured wf-12 repository-agent run."""
 
     max_turns: int = 20
     max_tool_schema_bytes: int = 16_384
@@ -73,7 +87,7 @@ class LoopResult:
     trajectory: dict[str, Any]
     prompt_tokens: int
     completion_tokens: int
-    cost_usd: float
+    cost_usd: float | None
     requests: int
 
 
@@ -92,6 +106,7 @@ class ToolSandbox(Protocol):
     def execute(
         self, argv: list[str], *, max_output_bytes: int, input_text: str | None = None
     ) -> ToolOutput: ...
+    def capture_workspace(self) -> dict[str, int]: ...
     def close(self) -> None: ...
 
 
@@ -163,6 +178,24 @@ class QuotaCellStorage:
             self.mounted = False
 
 
+class DockerTmpfsStagingStorage:
+    """Host staging only; the paired Docker sandbox enforces the real quota."""
+
+    def __init__(self, cell_root: Path, max_storage_mb: int) -> None:
+        if max_storage_mb != 512:
+            raise ValueError("Docker tmpfs qualification requires the pinned 512 MiB bound")
+        self.workspace = cell_root / "staging" / "workspace"
+        self.cache = cell_root / "staging" / "cache"
+        self.mounted = False
+
+    def prepare(self) -> None:
+        self.workspace.mkdir(parents=True)
+        self.cache.mkdir()
+
+    def close(self) -> None:
+        pass
+
+
 class ContainerStartError(RuntimeError):
     def __init__(self, returncode: int, *, cleanup_failed: bool) -> None:
         self.cleanup_failed = cleanup_failed
@@ -172,9 +205,21 @@ class ContainerStartError(RuntimeError):
 class DockerToolSandbox:
     """Disposable container with only the neutral repository and cache mounts."""
 
-    def __init__(self, workspace: Path, cache: Path, image: str) -> None:
+    def __init__(
+        self, workspace: Path, cache: Path, image: str, *, tmpfs_storage: bool = False
+    ) -> None:
         self.name = f"assay-agent-{uuid.uuid4().hex}"
         self._closed = False
+        self._workspace = workspace
+        self._tmpfs_storage = tmpfs_storage
+        mounts = (
+            [
+                "--tmpfs", "/workspace:size=256m,mode=1777",
+                "--tmpfs", "/cache:size=256m,mode=1777",
+            ]
+            if tmpfs_storage
+            else ["-v", f"{workspace}:/workspace:rw", "-v", f"{cache}:/cache:rw"]
+        )
         command = [
             "docker",
             "run",
@@ -201,13 +246,10 @@ class DockerToolSandbox:
             "--pids-limit",
             "64",
             "--memory",
-            "512m",
+            "1024m" if tmpfs_storage else "512m",
             "--cpus",
             "1",
-            "-v",
-            f"{workspace}:/workspace:rw",
-            "-v",
-            f"{cache}:/cache:rw",
+            *mounts,
             "--workdir",
             "/workspace",
             "--entrypoint",
@@ -223,6 +265,47 @@ class DockerToolSandbox:
             self._failed_start(-1, cause=error)
         if started.returncode:
             self._failed_start(started.returncode)
+        if tmpfs_storage:
+            try:
+                archive = io.BytesIO()
+                with tarfile.open(fileobj=archive, mode="w") as stream:
+                    for path in sorted(workspace.rglob("*")):
+                        stream.add(path, arcname=path.relative_to(workspace), recursive=False)
+                copied = subprocess.run(
+                    ["docker", "exec", "-i", self.name, "tar", "-x", "-C", "/workspace"],
+                    input=archive.getvalue(), capture_output=True, timeout=30, check=False,
+                )
+            except Exception as error:
+                self._failed_start(-1, cause=error)
+            if copied.returncode:
+                self._failed_start(copied.returncode)
+
+    def capture_workspace(self) -> dict[str, int]:
+        if not self._tmpfs_storage:
+            return {}
+        peaks = self.execute(
+            ["cat", "/sys/fs/cgroup/memory.peak", "/sys/fs/cgroup/pids.peak"],
+            max_output_bytes=1024,
+        )
+        values = peaks.text.splitlines()
+        if len(values) != 3 or values[0] != "exit=0":
+            raise RuntimeError("cgroup_peak_observation")
+        try:
+            memory_peak, pids_peak = int(values[1]), int(values[2])
+        except ValueError as error:
+            raise RuntimeError("cgroup_peak_observation") from error
+        for path in self._workspace.iterdir():
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        copied = subprocess.run(
+            ["docker", "cp", f"{self.name}:/workspace/.", str(self._workspace)],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if copied.returncode:
+            raise RuntimeError("workspace_capture")
+        return {"memory_peak_bytes": memory_peak, "pids_peak": pids_peak}
 
     def _failed_start(self, returncode: int, *, cause: Exception | None = None) -> NoReturn:
         cleanup_failed = False
@@ -295,6 +378,13 @@ class DockerToolSandbox:
             )
             if removed.returncode:
                 raise RuntimeError("container_cleanup")
+
+
+class DockerTmpfsToolSandbox(DockerToolSandbox):
+    """Qualification sandbox with a real 512 MiB Docker-enforced writable cap."""
+
+    def __init__(self, workspace: Path, cache: Path, image: str) -> None:
+        super().__init__(workspace, cache, image, tmpfs_storage=True)
 
 
 SandboxFactory = Callable[[Path, Path, str], ToolSandbox]
@@ -423,9 +513,11 @@ def _shrink_conversation(
 class RepositoryAgentClient:
     """Fixed one-attempt loop. A client can run cells sequentially, never concurrently."""
 
-    api_key: str
+    api_key: str | None
     image: str
     runs_root: Path
+    model_route: ModelRoute = field(default_factory=ModelRoute)
+    qualify_smoke: bool = False
     bounds: LoopBounds = field(default_factory=LoopBounds)
     transport: httpx.BaseTransport | None = None
     sandbox_factory: SandboxFactory = DockerToolSandbox
@@ -434,8 +526,14 @@ class RepositoryAgentClient:
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
     def __post_init__(self) -> None:
-        if not self.api_key or any(char.isspace() for char in self.api_key):
-            raise ValueError("nonblank API key required")
+        if self.qualify_smoke and self.model_route.paid_route_reachable:
+            raise ValueError("smoke qualification requires the local route")
+        if self.model_route.paid_route_reachable and (
+            not self.api_key or any(char.isspace() for char in self.api_key)
+        ):
+            raise ValueError("nonblank API key required for the paid route")
+        if not self.model_route.paid_route_reachable and self.api_key is not None:
+            raise ValueError("zero-paid Smithers route must not receive an OpenRouter API key")
         if not self.image:
             raise ValueError("locked image identity required")
         if self.bounds.max_turns != 20 or min(asdict(self.bounds).values()) < 1:
@@ -467,6 +565,8 @@ class RepositoryAgentClient:
         raise ValueError("unverifiable_transport_retries")
 
     def _completion(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        if not self.model_route.paid_route_reachable:
+            return self._smithers_completion(messages)
         body = {
             "model": MODEL,
             "messages": messages,
@@ -519,6 +619,122 @@ class RepositoryAgentClient:
             raise ValueError("provider_identity")
         return data
 
+    def _bounded_local_json(
+        self, client: httpx.Client, method: str, url: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        with client.stream(method, url, **kwargs) as response:
+            response.raise_for_status()
+            declared = response.headers.get("content-length")
+            if declared is not None and int(declared) > self.bounds.max_response_bytes:
+                raise ValueError("response_limit")
+            chunks = bytearray()
+            for chunk in response.iter_bytes(chunk_size=8192):
+                if len(chunks) + len(chunk) > self.bounds.max_response_bytes:
+                    raise ValueError("response_limit")
+                chunks.extend(chunk)
+        parsed = json.loads(chunks)
+        if not isinstance(parsed, dict):
+            raise ValueError("smithers_response")
+        return parsed
+
+    def _smithers_completion(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Submit one local job per turn; no paid URL or credential is reachable."""
+        payload = {
+            "messages": messages,
+            # A local qualification must observe at least one real tool result
+            # before it can submit; otherwise a model can declare success in
+            # the same turn as a failed install or test command.
+            "tools": TOOLS if len(messages) > 2 else TOOLS[:-1],
+            "tool_choice": "required",
+            "max_tokens": self.bounds.max_output_tokens,
+        }
+        if len(_json_bytes(payload)) > self.bounds.max_request_bytes:
+            raise ValueError("request_limit")
+        submission = {
+            "task_type": "inference",
+            "payload": payload,
+            "requester": "assay-wf12-qualification",
+            "model": self.model_route.model,
+            "machine": "mcbain",
+            "timeout_seconds": 900,
+            "max_retries": 0,
+            "idempotency_key": f"assay-wf12:{uuid.uuid4().hex}",
+        }
+        with self._http_client() as client:
+            if self._transport_retries(client) != 0:
+                raise ValueError("retry_config_violation")
+            submitted = self._bounded_local_json(
+                client, "POST", f"{self.model_route.endpoint}/jobs", json=submission
+            )
+            job_id = submitted.get("job_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("smithers_job_id")
+            deadline = time.monotonic() + 900
+            while time.monotonic() < deadline:
+                job = self._bounded_local_json(
+                    client, "GET", f"{self.model_route.endpoint}/jobs/{job_id}"
+                )
+                if (
+                    job.get("job_id") != job_id
+                    or job.get("model") != self.model_route.model
+                    or job.get("machine") != "mcbain"
+                ):
+                    raise ValueError("smithers_identity")
+                if job.get("status") == "complete":
+                    break
+                if job.get("status") in ("failed", "cancelled"):
+                    raise ValueError("smithers_job_failed")
+                if job.get("status") not in ("queued", "waking_machine", "dispatched", "running"):
+                    raise ValueError("smithers_status")
+                time.sleep(0.5)
+            else:
+                raise ValueError("smithers_deadline")
+        result = job.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("smithers_result")
+        # Dispatch's JobResponse currently drops TaskStatusResponse.usage.
+        # Read the completed worker task instead of turning missing counts
+        # into zeros (which would make the qualification unpublishable).
+        with self._http_client() as client:
+            worker_task = self._bounded_local_json(
+                client, "GET", f"http://mcbain:8901/tasks/{job_id}"
+            )
+        if worker_task.get("job_id") != job_id or worker_task.get("status") != "complete":
+            raise ValueError("smithers_worker_identity")
+        usage = worker_task.get("usage")
+        if not isinstance(usage, dict):
+            raise ValueError("smithers_usage_missing")
+        input_tokens = usage.get("input_tokens")
+        output_tokens = usage.get("output_tokens")
+        if type(input_tokens) is not int or type(output_tokens) is not int:
+            raise ValueError("smithers_usage_missing")
+        try:
+            created = datetime.fromisoformat(job["created_at"])
+            started = datetime.fromisoformat(job["started_at"])
+            completed = datetime.fromisoformat(job["completed_at"])
+            queue_latency = (started - created).total_seconds()
+            wall_seconds = (completed - started).total_seconds()
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("smithers_timing_missing") from error
+        if queue_latency < 0 or wall_seconds < 0:
+            raise ValueError("smithers_timing_invalid")
+        calls = result.get("tool_calls")
+        message = {"role": "assistant", "content": result.get("content"), "tool_calls": calls}
+        return {
+            "choices": [{"finish_reason": "tool_calls" if calls else "stop", "message": message}],
+            "usage": {
+                "prompt_tokens": input_tokens,
+                "completion_tokens": output_tokens,
+                "cost": None,
+            },
+            "smithers_job_id": job_id,
+            "smithers_created_at": job.get("created_at"),
+            "smithers_started_at": job.get("started_at"),
+            "smithers_completed_at": job.get("completed_at"),
+            "queue_latency_seconds": queue_latency,
+            "wall_seconds": wall_seconds,
+        }
+
     def run_cell(self, *, cell_id: str, package: Mapping[str, str]) -> LoopResult:
         if not self._lock.acquire(blocking=False):
             raise AgentLoopError("concurrency_limit", {"events": []})
@@ -569,7 +785,7 @@ class RepositoryAgentClient:
             {"role": "user", "content": instruction},
         ]
         prompt_tokens = completion_tokens = requests = 0
-        cost_usd = 0.0
+        cost_usd: float | None = 0.0 if self.model_route.paid_route_reachable else None
         primary_failed = False
         try:
             storage.prepare()
@@ -588,6 +804,20 @@ class RepositoryAgentClient:
                     "cache": str(cache),
                 }
             )
+            if self.qualify_smoke:
+                for step, command in SMOKE_CHECKS:
+                    checked = sandbox.execute(
+                        ["/bin/sh", "-lc", command],
+                        max_output_bytes=self.bounds.max_tool_output_bytes,
+                    )
+                    if checked.truncated or not checked.text.startswith("exit=0\n"):
+                        raise ValueError(f"smoke_{step}_failed")
+                    if step == "test" and "# pass 1" not in checked.text:
+                        raise ValueError("smoke_test_failed")
+                    events.append({
+                        "kind": "harness_check", "step": step, "command": command,
+                        "exit_code": 0, "output": checked.text,
+                    })
             for turn in range(1, self.bounds.max_turns + 1):
                 _shrink_conversation(messages, self.bounds.max_conversation_bytes, events)
                 if len(_json_bytes(messages)) > self.bounds.max_conversation_bytes:
@@ -609,18 +839,35 @@ class RepositoryAgentClient:
                     if type(usage.get(key)) is not int or usage[key] < 0:
                         raise ValueError("provider_usage")
                 cost = usage.get("cost")
-                if (
-                    isinstance(cost, bool)
-                    or not isinstance(cost, (int, float))
-                    or not math.isfinite(cost)
-                    or cost < 0
-                ):
-                    raise ValueError("provider_usage")
+                if self.model_route.paid_route_reachable:
+                    if (
+                        isinstance(cost, bool)
+                        or not isinstance(cost, (int, float))
+                        or not math.isfinite(cost)
+                        or cost < 0
+                    ):
+                        raise ValueError("provider_usage")
+                elif cost is not None:
+                    raise ValueError("local_billing_must_be_uncertain")
                 if usage["completion_tokens"] > self.bounds.max_output_tokens:
                     raise ValueError("output_token_limit")
                 prompt_tokens += usage["prompt_tokens"]
                 completion_tokens += usage["completion_tokens"]
-                cost_usd += cost
+                if cost_usd is not None:
+                    assert isinstance(cost, (int, float))
+                    cost_usd += cost
+                events.append({
+                    "kind": "model_request", "turn": turn,
+                    "prompt_tokens": usage["prompt_tokens"],
+                    "completion_tokens": usage["completion_tokens"],
+                    "billing": "uncertain" if cost is None else "measured",
+                    "smithers_job_id": data.get("smithers_job_id"),
+                    "smithers_created_at": data.get("smithers_created_at"),
+                    "smithers_started_at": data.get("smithers_started_at"),
+                    "smithers_completed_at": data.get("smithers_completed_at"),
+                    "queue_latency_seconds": data.get("queue_latency_seconds"),
+                    "wall_seconds": data.get("wall_seconds"),
+                })
                 calls = message.get("tool_calls")
                 if (
                     choice.get("finish_reason") != "tool_calls"
@@ -629,7 +876,7 @@ class RepositoryAgentClient:
                 ):
                     raise ValueError("no_tool_call")
                 messages.append(message)
-                for call in calls:
+                for call_index, call in enumerate(calls):
                     if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
                         raise ValueError("invalid_tool_call")
                     function = call["function"]
@@ -644,15 +891,20 @@ class RepositoryAgentClient:
                     if not isinstance(arguments, dict):
                         raise ValueError("invalid_tool_call")
                     if name == "submit_output":
+                        if not self.model_route.paid_route_reachable and turn == 1:
+                            raise ValueError("invalid_submission")
                         if (
                             set(arguments) != {"source"}
                             or not isinstance(arguments["source"], str)
-                            or len(calls) != 1
+                            or call_index != len(calls) - 1
                         ):
                             raise ValueError("invalid_submission")
                         _shrink_conversation(messages, self.bounds.max_conversation_bytes, events)
                         if len(_json_bytes(messages)) > self.bounds.max_conversation_bytes:
                             raise ValueError("conversation_limit")
+                        peaks = sandbox.capture_workspace()
+                        if peaks:
+                            events.append({"kind": "cgroup_peaks", **peaks})
                         patch = submission_patch(baseline, workspace).patch
                         trajectory["messages"] = messages
                         events.append({"kind": "submitted", "turn": turn})
@@ -716,6 +968,15 @@ class RepositoryAgentClient:
             raise AgentLoopError(cause, trajectory) from error
         finally:
             cleanup_cause: str | None = None
+            if sandbox is not None and not any(
+                event.get("kind") == "cgroup_peaks" for event in events
+            ):
+                try:
+                    peaks = sandbox.capture_workspace()
+                    if peaks:
+                        events.append({"kind": "cgroup_peaks", **peaks})
+                except (RuntimeError, OSError, subprocess.SubprocessError):
+                    events.append({"kind": "peak_observation_failed"})
             try:
                 if sandbox is not None:
                     sandbox.close()

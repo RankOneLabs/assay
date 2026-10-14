@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from workflow_edit.settings import PROVISIONAL_SOURCE, Part1AgentSettings
+from workflow_edit.settings import MEASUREMENT_SOURCE, Part1AgentSettings
 
 
 def test_part1_settings_match_bridge_configuration() -> None:
@@ -16,7 +16,7 @@ def test_part1_settings_match_bridge_configuration() -> None:
     )
     assert configuration == Part1AgentSettings().model_dump()
     assert all(
-        PROVISIONAL_SOURCE in (Part1AgentSettings.model_fields[name].description or "")
+        MEASUREMENT_SOURCE in (Part1AgentSettings.model_fields[name].description or "")
         for name in (
             "max_tool_schema_bytes",
             "max_tool_output_bytes",

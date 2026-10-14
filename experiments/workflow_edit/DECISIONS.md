@@ -2,7 +2,7 @@
 
 This is the live decision record for the workflow edit study. Later cohorts
 append decisions here as the study takes shape, including dispatch topology and
-the provenance of provisional bounds.
+the provenance of measured qualification ceilings.
 
 ## Scaffold
 
@@ -41,7 +41,10 @@ the provenance of provisional bounds.
   `ImageDigestMismatchError`. Each rebuild is a new fixture, even when its
   locked dependencies are unchanged.
 - **Toolchain timing:** Node and TypeScript belong in the image before a trial
-  starts. The trial has no network and performs no dependency installation.
+  starts. Study trials have no network and perform no dependency installation.
+  The throwaway wf-12 qualification fixture deliberately runs a real
+  `npm ci --offline --no-bin-links` against the image's local TypeScript
+  package so the measured install footprint includes that operation.
   The fixture's Node `package.json` and `package-lock.json` live under
   `integrations/pier/workflow_edit/`, the bridge Docker build context. `npm ci`
   installs the locked tree in the Node build stage; the final image copies that
@@ -64,8 +67,31 @@ advance together to `assay-pier-trial/0.2.0`. The exact revised field set is:
   `scratch_quota_mb`. Its existing `storage_limit_mb` is the observed quota,
   and `network_policy` reports the inspected Docker network posture.
 
-Initial storage, memory, and PID numbers are provisional; replace them after
-the footprint runs recorded in `experiments/workflow_edit/SMOKE.md` (wf-12).
+The wf-12 offline gate passed install, typecheck, and test in a container, and
+the harness sealed its observed artifacts. The final local Smithers/Pier gate
+completed 20 distinct cells with 40 model requests, zero paid cells, and
+successful install/typecheck/test output in each cell. `SMOKE.md` records the
+observed cgroup memory/PID peaks and the separately configured Docker ceilings.
+The Part 1 settings and bridge protocol no longer label their ceilings
+provisional; their defaults remain authorized caps, not claims that the
+observed peaks are worst-case maxima.
+
+**Zero-paid qualification route resolution (wf-12 follow-up):** The bridge
+protocol now admits exactly one local Smithers tuple,
+`http://willie:8900` / `qwen-coder-32b` / `smithers-local`, alongside the
+guarded production tuple. A local trial requires `toolchain-only` network
+posture; the OpenRouter host driver rejects it. The repository-agent loop
+dispatches each model turn to Smithers with no API key and zero retries, and
+reads token usage from the completed worker task because Smithers' dispatch
+`JobResponse` drops that usage. Its local cost remains unknown, never a
+measured zero. Tests assert the local client makes no OpenRouter request and
+that mixed route fields are rejected. The first Gate 3 attempt stopped before
+model dispatch at `QuotaCellStorage.prepare` because `sudo -n mount` requires
+a password. The completed run used Docker-enforced tmpfs quotas for the agent
+workspace and cache, with a read-only root and no container network. The two
+writable tmpfs mounts together match the configured storage cap; the separate
+memory cgroup ceiling exceeds that cap. Each cell's cgroup peak was read
+before teardown and the package snapshot was copied out for patch review.
 
 ## Packaging and fixture identity
 
