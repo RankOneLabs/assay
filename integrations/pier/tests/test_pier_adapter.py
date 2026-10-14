@@ -15,6 +15,7 @@ from assay_pier_bridge.pier_adapter import (
 from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest
 from pier.models.environment_type import EnvironmentType
 from pier.models.task.task import Task
+from test_support import exchange_for
 
 ROUTE = ModelRoute(
     endpoint="https://openrouter.ai/api/v1",
@@ -27,6 +28,7 @@ def _request(**overrides: object) -> TrialRequest:
     base = dict(
         cell_id="s1:a1:w0",
         package_digest="sha256:" + "0" * 64,
+        exchange=exchange_for("s1:a1:w0", "sha256:" + "0" * 64),
         model_route=ROUTE,
         limits=TrialLimits(cpu=1.5, memory_mb=512, pids=32, timeout_s=120, storage_mb=64),
     )

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 import pytest
 from assay_pier_bridge.protocol import (
+    CandidateSubmission,
     EffectiveEnforcement,
     ModelRoute,
     TrialLimits,
@@ -20,6 +21,7 @@ from assay_pier_bridge.runtime import (
     TrialCancelledError,
     TrialTimeoutError,
 )
+from test_support import exchange_for
 
 ROUTE = ModelRoute(
     endpoint="https://openrouter.ai/api/v1",
@@ -33,6 +35,7 @@ def _request() -> TrialRequest:
     return TrialRequest(
         cell_id="s1:a1:w0",
         package_digest="sha256:" + "0" * 64,
+        exchange=exchange_for("s1:a1:w0", "sha256:" + "0" * 64),
         model_route=ROUTE,
         limits=LIMITS,
     )
@@ -70,8 +73,11 @@ class FakeTrialHandle:
         if self.outcome == "succeed":
             return TrialResult(
                 cell_id="s1:a1:w0",
-                status="succeeded",
-                submission_ref="sha256:" + "1" * 64,
+                outcome=CandidateSubmission(
+                    patch_ref="sha256:" + "1" * 64,
+                    tree_digest="sha256:" + "2" * 64,
+                    baseline_tree_digest="sha256:" + "3" * 64,
+                ),
                 usage=TrialUsage(prompt_tokens=1, completion_tokens=1, cost_usd=0.0001, requests=1),
                 effective=_clean_effective(teardown_completed=False, containers_remaining=1),
             )
@@ -128,7 +134,16 @@ def test_lifecycle_always_tears_down_and_reports_status(outcome: str, expected_s
 
     result = runtime.run_cell(_request())
 
-    assert result.status == expected_status
+    assert (
+        result.outcome.kind == "candidate"
+        if expected_status == "succeeded"
+        else result.outcome.cause
+        == {
+            "failed": "unexpected_exception",
+            "timeout": "harness_deadline",
+            "cancelled": "cancelled",
+        }[expected_status]
+    )
     assert client.handle is not None
     assert client.handle.teardown_calls == ["teardown"]
     assert result.effective.teardown_completed is True
@@ -174,7 +189,7 @@ def test_successful_result_effective_reflects_teardown_not_mid_run_snapshot() ->
     # FakeTrialHandle.run() returns a dirty mid-run snapshot; the runtime must
     # replace it with the post-teardown observation, never trust the earlier one.
     assert result.effective.containers_remaining == 0
-    assert result.submission_ref is not None
+    assert isinstance(result.outcome, CandidateSubmission)
 
 
 @pytest.mark.parametrize("outcome", ["fail", "timeout", "cancel"])

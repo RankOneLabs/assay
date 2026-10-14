@@ -27,11 +27,13 @@ class ArtifactCollectionRejected(ValueError):
         *,
         artifacts: dict[str, bytes] | None = None,
         rejected_path: str | None = None,
+        origin: str = "submission",
     ) -> None:
         super().__init__(message)
         self.cause = cause
         self.artifacts = artifacts or {}
         self.rejected_path = rejected_path
+        self.origin = origin
 
 
 def safe_relative_path(raw_path: str) -> PurePosixPath:
@@ -86,7 +88,8 @@ def regular_tree(root: Path) -> dict[str, bytes]:
             relative = safe_relative_path(raw_relative).as_posix()
         except ValueError as error:
             raise ArtifactCollectionRejected(
-                "traversal", str(error), rejected_path=raw_relative
+                "traversal", str(error), artifacts=files,
+                rejected_path=raw_relative, origin="working_copy"
             ) from error
         if path.is_symlink():
             raise ArtifactCollectionRejected(
@@ -94,6 +97,7 @@ def regular_tree(root: Path) -> dict[str, bytes]:
                 f"escaping symlink in submission: {relative}",
                 artifacts=files,
                 rejected_path=relative,
+                origin="working_copy",
             )
         if path.is_dir():
             continue
@@ -103,6 +107,7 @@ def regular_tree(root: Path) -> dict[str, bytes]:
                 f"non-regular entry in submission: {relative}",
                 artifacts=files,
                 rejected_path=relative,
+                origin="working_copy",
             )
         data = path.read_bytes()
         if b"\x00" in data:
@@ -111,6 +116,7 @@ def regular_tree(root: Path) -> dict[str, bytes]:
                 f"binary payload in submission: {relative}",
                 artifacts=files,
                 rejected_path=relative,
+                origin="working_copy",
             )
         try:
             data.decode("utf-8", errors="strict")
@@ -120,6 +126,7 @@ def regular_tree(root: Path) -> dict[str, bytes]:
                 f"binary payload in submission: {relative}",
                 artifacts=files,
                 rejected_path=relative,
+                origin="working_copy",
             ) from error
         files[relative] = data
     return files

@@ -9,9 +9,8 @@ for why that dependency cannot be pinned from this environment today).
 
 from __future__ import annotations
 
-import hashlib
 from ipaddress import IPv4Address, IPv4Network
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -25,7 +24,6 @@ CellId = Annotated[
     StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*:w[0-9]+$"),
 ]
 
-TrialStatus = Literal["succeeded", "failed", "timeout", "cancelled"]
 NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
 TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.3.0"
 _LAN_NETWORKS = (
@@ -102,12 +100,46 @@ class BridgeIdentity(ClosedModel):
     bridge_image_digest: Sha256Ref
 
 
+class CellCoordinate(ClosedModel):
+    subject_id: Identifier
+    arm_id: Identifier
+    worker_repeat: int = Field(ge=0)
+    realization_ref: Sha256Ref
+
+    @property
+    def id(self) -> str:
+        return f"{self.subject_id}:{self.arm_id}:w{self.worker_repeat}"
+
+
+class RuntimeBinding(ClosedModel):
+    runtime_id: Literal["pier"] = "pier"
+    runtime_version: str = Field(min_length=1)
+    image_digest: Sha256Ref
+    configuration_ref: Sha256Ref
+    package_digest: Sha256Ref
+
+
+class PierExchange(ClosedModel):
+    coordinate: CellCoordinate
+    binding: RuntimeBinding
+    trial_name: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def valid_name(self) -> PierExchange:
+        subject = self.coordinate.subject_id.replace("-", "--")
+        arm = self.coordinate.arm_id.replace("-", "--")
+        if self.trial_name != f"{subject}-{arm}-w{self.coordinate.worker_repeat}":
+            raise ValueError("trial name does not match the bound cell coordinate")
+        return self
+
+
 class TrialRequest(ClosedModel):
     """One authorized cell. ``verify`` is always disabled: Assay is the authority."""
 
     schema_version: Literal["assay-pier-trial/0.3.0"] = "assay-pier-trial/0.3.0"
     cell_id: CellId
     package_digest: Sha256Ref
+    exchange: PierExchange
     model_route: ModelRoute
     limits: TrialLimits
     verify: Literal[False] = False
@@ -117,6 +149,10 @@ class TrialRequest(ClosedModel):
 
     @model_validator(mode="after")
     def closed_egress(self) -> TrialRequest:
+        if self.exchange.coordinate.id != self.cell_id:
+            raise ValueError("exchange coordinate does not match cell_id")
+        if self.exchange.binding.package_digest != self.package_digest:
+            raise ValueError("exchange package digest does not match package_digest")
         if self.network_policy == "egress-lan-host-port":
             if self.egress_host is None or self.egress_port is None:
                 raise ValueError("LAN posture requires egress_host and egress_port")
@@ -231,12 +267,8 @@ class TrialResult(ClosedModel):
     destroys, so a result that did not carry them out could never be
     turned into durable evidence.
 
-    What this contract still does not carry is an artifact *manifest*
-    binding those bytes to the authorized exchange. ``assay``'s
-    ``PierAdapter`` requires one before it will settle a cell as a success,
-    and nothing here produces it yet -- recorded as a known gap rather than
-    papered over with a manifest the consumer would only be attesting to
-    itself.
+    Successful handles bind their observed artifact bytes to the request's
+    authorized exchange in ``manifest.json`` before teardown.
     """
 
     cell_id: CellId
@@ -244,72 +276,6 @@ class TrialResult(ClosedModel):
     usage: TrialUsage | None = None
     effective: EffectiveEnforcement
     artifacts: dict[str, bytes] = Field(default_factory=dict)
-
-    def __init__(self, **data: Any) -> None:
-        # Older in-process handles still call the keyword constructor. The
-        # before-validator translates them; serialized results expose only
-        # ``outcome`` as the source of truth.
-        super().__init__(**data)
-
-    @model_validator(mode="before")
-    @classmethod
-    def legacy_constructor(cls, value: Any) -> Any:
-        """Accept old in-process handles while keeping the wire shape singular."""
-        if not isinstance(value, dict) or "outcome" in value or "status" not in value:
-            return value
-        data = dict(value)
-        status = data.pop("status")
-        ref = data.pop("submission_ref", None)
-        error_type = data.pop("error_type", None)
-        detail = data.pop("error_message", None) or ""
-        if status == "succeeded" and ref is not None and error_type is None:
-            data["outcome"] = CandidateSubmission(
-                patch_ref=ref, tree_digest=ref, baseline_tree_digest=ref
-            )
-        elif status != "succeeded" and ref is None and error_type:
-            cause: InfrastructureCause = (
-                "harness_deadline"
-                if status == "timeout"
-                else "cancelled"
-                if status == "cancelled"
-                else "unexpected_exception"
-            )
-            data["outcome"] = InfrastructureFailure(
-                cause=cause, detail=detail, exception_type=error_type
-            )
-        return data
-
-    @property
-    def status(self) -> TrialStatus:
-        if isinstance(self.outcome, CandidateSubmission):
-            return "succeeded"
-        if isinstance(self.outcome, InfrastructureFailure):
-            if self.outcome.cause == "harness_deadline":
-                return "timeout"
-            if self.outcome.cause == "cancelled":
-                return "cancelled"
-        return "failed"
-
-    @property
-    def submission_ref(self) -> str | None:
-        if not isinstance(self.outcome, CandidateSubmission):
-            return None
-        # Compatibility for the old in-process single-file consumer while it
-        # migrates to ``outcome.patch_ref``. This is never serialized on wire.
-        legacy = self.artifacts.get("output")
-        if legacy and self.artifacts.get("candidate.patch") == b"":
-            return f"sha256:{hashlib.sha256(legacy).hexdigest()}"
-        return self.outcome.patch_ref
-
-    @property
-    def error_type(self) -> str | None:
-        if isinstance(self.outcome, CandidateSubmission):
-            return None
-        return self.outcome.exception_type or self.outcome.cause
-
-    @property
-    def error_message(self) -> str | None:
-        return self.outcome.detail if not isinstance(self.outcome, CandidateSubmission) else None
 
     @model_validator(mode="after")
     def bounded_artifacts(self) -> TrialResult:

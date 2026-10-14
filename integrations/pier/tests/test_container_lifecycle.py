@@ -21,8 +21,10 @@ from pathlib import Path
 
 import pytest
 from assay_pier_bridge.container import DockerTrialClient, docker_available, package_digest
+from assay_pier_bridge.identity import digest_bytes
 from assay_pier_bridge.protocol import ModelRoute, NetworkPolicy, TrialLimits, TrialRequest
 from assay_pier_bridge.runtime import BridgeRuntime
+from test_support import exchange_for
 
 IMAGE_TAG = "assay-pier-bridge:test-lifecycle"
 BRIDGE_ROOT = Path(__file__).parents[1]
@@ -46,6 +48,7 @@ def _request(
     return TrialRequest(
         cell_id="s1:a1:w0",
         package_digest=package_digest(PACKAGE),
+        exchange=exchange_for("s1:a1:w0", package_digest(PACKAGE)),
         model_route=ROUTE,
         limits=TrialLimits(
             cpu=1, memory_mb=256, pids=32, timeout_s=timeout_s, storage_mb=storage_mb
@@ -115,11 +118,11 @@ def test_lan_posture_reaches_only_the_allowlisted_host_and_port(image: str) -> N
         socketserver.ThreadingTCPServer(("0.0.0.0", 0), _AnswerHandler) as allowed_server,
         socketserver.ThreadingTCPServer(("0.0.0.0", 0), _AnswerHandler) as other_server,
     ):
-            threading.Thread(target=allowed_server.serve_forever, daemon=True).start()
-            threading.Thread(target=other_server.serve_forever, daemon=True).start()
-            allowed_port = allowed_server.server_address[1]
-            other_port = other_server.server_address[1]
-            script = """
+        threading.Thread(target=allowed_server.serve_forever, daemon=True).start()
+        threading.Thread(target=other_server.serve_forever, daemon=True).start()
+        allowed_port = allowed_server.server_address[1]
+        other_port = other_server.server_address[1]
+        script = """
 import json, socket, struct
 host, allowed_port, other_port = __import__('sys').argv[1:]
 with open('/proc/net/route', encoding='ascii') as routes:
@@ -141,16 +144,16 @@ result = {
 with open('/submission/output', 'w', encoding='utf-8') as output:
     json.dump(result, output)
 """
-            client = DockerTrialClient(
-                image=image,
-                package=PACKAGE,
-                command=["python", "-c", script, host, str(allowed_port), str(other_port)],
-            )
-            request = _request(
-                network_policy="egress-lan-host-port", egress_host=host, egress_port=allowed_port
-            )
-            result = BridgeRuntime(client).run_cell(request)
-    assert result.status == "succeeded", result.error_message
+        client = DockerTrialClient(
+            image=image,
+            package=PACKAGE,
+            command=["python", "-c", script, host, str(allowed_port), str(other_port)],
+        )
+        request = _request(
+            network_policy="egress-lan-host-port", egress_host=host, egress_port=allowed_port
+        )
+        result = BridgeRuntime(client).run_cell(request)
+    assert result.outcome.kind == "candidate", result.outcome
     assert json.loads(result.artifacts["output"]) == {
         "allowlisted": "allowed",
         "other_host": "refused",
@@ -195,8 +198,8 @@ def test_success_leaves_a_read_only_mount_and_zero_containers(image: str) -> Non
 
     result = runtime.run_cell(_request())
 
-    assert result.status == "succeeded"
-    assert result.submission_ref is not None
+    assert result.outcome.kind == "candidate"
+    assert result.outcome.patch_ref == digest_bytes(result.artifacts["candidate.patch"])
     assert result.effective.workspace_read_only is True
     assert result.effective.root_read_only is True
     assert result.effective.scratch_mount_kind == "bind"
@@ -220,15 +223,15 @@ def test_scratch_storage_limit_is_really_enforced_not_merely_declared(image: str
             "/bin/sh",
             "-c",
             "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null; "
-            "status=$?; printf '%s' \"$status\" > /submission/output; exit \"$status\"",
+            'status=$?; printf \'%s\' "$status" > /submission/output; exit "$status"',
         ],
     )
     runtime = BridgeRuntime(client)
 
     result = runtime.run_cell(_request(storage_mb=16))
 
-    assert result.status == "failed"
-    assert result.error_type == "StorageExhaustedError"
+    assert result.outcome.kind == "candidate_failure"
+    assert result.outcome.cause == "storage_exhausted"
     assert result.effective.storage_limit_mb == 16
     assert result.effective.memory_limit_mb == 256
     assert _no_stray_containers()
@@ -242,12 +245,12 @@ def test_memory_exhaustion_has_a_distinct_cause(image: str) -> None:
             "/bin/sh",
             "-c",
             "exec python -c 'x = bytearray(512 * 1024 * 1024); "
-            "x[::4096] = b\"x\" * (len(x) // 4096)'",
+            'x[::4096] = b"x" * (len(x) // 4096)\'',
         ],
     )
     result = BridgeRuntime(client).run_cell(_request())
-    assert result.status == "failed"
-    assert result.error_type == "MemoryLimitExceededError", result.error_message
+    assert result.outcome.kind == "candidate_failure"
+    assert result.outcome.cause == "memory_limit", result.outcome.detail
     assert result.effective.memory_limit_mb == 256
     assert result.effective.storage_limit_mb == 64
     assert _no_stray_containers()
@@ -259,8 +262,8 @@ def test_nonzero_exit_is_reported_as_failed_and_tears_down(image: str) -> None:
 
     result = runtime.run_cell(_request())
 
-    assert result.status == "failed"
-    assert result.submission_ref is None
+    assert result.outcome.kind == "candidate_failure"
+    assert result.outcome.kind != "candidate"
     assert result.effective.containers_remaining == 0
     assert result.effective.teardown_completed is True
     assert _no_stray_containers()
@@ -272,7 +275,7 @@ def test_a_deadline_breach_is_reported_as_timeout_and_tears_down(image: str) -> 
 
     result = runtime.run_cell(_request(timeout_s=2))
 
-    assert result.status == "timeout"
+    assert result.outcome.cause == "harness_deadline"
     assert result.effective.containers_remaining == 0
     assert result.effective.teardown_completed is True
     assert _no_stray_containers()
@@ -295,7 +298,7 @@ def test_operator_cancellation_stops_the_container_and_tears_down(image: str) ->
     runtime = BridgeRuntime(_PrecreatedClient())  # type: ignore[arg-type]
     result = runtime.run_cell(_request())
 
-    assert result.status == "cancelled"
+    assert result.outcome.cause == "cancelled"
     assert result.effective.containers_remaining == 0
     assert result.effective.teardown_completed is True
     assert _no_stray_containers()

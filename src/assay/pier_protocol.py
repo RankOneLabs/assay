@@ -65,6 +65,7 @@ class TrialRequest(WireModel):
     schema_version: Literal["assay-pier-trial/0.3.0"] = "assay-pier-trial/0.3.0"
     cell_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*:w[0-9]+$")
     package_digest: Sha256Ref
+    exchange: PierExchange
     model_route: ModelRoute
     limits: TrialLimits
     verify: Literal[False] = False
@@ -74,6 +75,10 @@ class TrialRequest(WireModel):
 
     @model_validator(mode="after")
     def closed_egress(self) -> TrialRequest:
+        if self.exchange.coordinate.id != self.cell_id:
+            raise ValueError("exchange coordinate does not match cell_id")
+        if self.exchange.binding.package_digest != self.package_digest:
+            raise ValueError("exchange package digest does not match package_digest")
         if self.network_policy == "egress-lan-host-port":
             if self.egress_host is None or self.egress_port is None:
                 raise ValueError("LAN posture requires egress_host and egress_port")
@@ -232,6 +237,9 @@ def bind_exchange(*, coordinate: CellCoordinate, binding: RuntimeBinding) -> Pie
     )
 
 
+TrialRequest.model_rebuild()
+
+
 def exchanges_match(expected: PierExchange, actual: PierExchange) -> bool:
     """A bridge response is only ever accepted against the exact exchange it was sent for."""
     return expected == actual
@@ -381,10 +389,7 @@ def reject_on_binding_mismatch(expected: RuntimeBinding, actual: RuntimeBinding)
 
 
 # mini-swe-agent's own terminal signal for the agent loop: only this exact
-# value means the agent actually produced and submitted a candidate. Every
-# other value (e.g. "LimitsExceeded", "Error") is a partial/failed run, and
-# Pier's own reported failure (a non-"succeeded" ``status``, a set
-# ``error_type``, or a missing ``submission_ref``) is independently terminal.
+# value means the agent produced and submitted a candidate.
 SUCCEEDED_EXIT_STATUS = "Submitted"
 
 
@@ -404,8 +409,8 @@ def mini_exit_status_from_result_bytes(result_bytes: bytes | None) -> str | None
 
     Returns ``None`` on anything but a clean top-level string value -- missing
     bytes, non-UTF-8, non-JSON, a non-object payload, or a non-string value.
-    ``bridge_reports_failure`` treats ``None`` as "not the succeeded sentinel",
-    so a malformed or absent result artifact is conservatively a failure.
+    ``None`` is not the succeeded sentinel, so a malformed or absent result
+    artifact is conservatively a failure.
     """
     if result_bytes is None:
         return None
@@ -417,25 +422,6 @@ def mini_exit_status_from_result_bytes(result_bytes: bytes | None) -> str | None
         return None
     status = value.get("exit_status")
     return status if isinstance(status, str) else None
-
-
-def bridge_reports_failure(
-    *,
-    status: str,
-    submission_ref: str | None,
-    error_type: str | None,
-    mini_exit_status: str | None,
-) -> bool:
-    """Both Pier's own trial status and mini's embedded exit_status must pass.
-
-    Mirrors ``assay_pier_bridge.protocol.TrialResult``'s own consistency rule
-    (a "succeeded" trial has a submission and no error; anything else is a
-    failure) as an independent, defense-in-depth check on this side of the
-    isolation boundary -- a bridge response is never trusted structurally
-    just because it claims ``status="succeeded"``.
-    """
-    pier_signal_ok = status == "succeeded" and submission_ref is not None and error_type is None
-    return not pier_signal_ok or mini_exit_status != SUCCEEDED_EXIT_STATUS
 
 
 __all__ = [
@@ -453,7 +439,6 @@ __all__ = [
     "PierExchange",
     "RuntimeBinding",
     "bind_exchange",
-    "bridge_reports_failure",
     "exchanges_match",
     "mini_exit_status_from_result_bytes",
     "reject_on_binding_mismatch",

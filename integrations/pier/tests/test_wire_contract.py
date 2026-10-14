@@ -24,6 +24,7 @@ from assay_pier_bridge.protocol import (
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
     CandidateCause,
+    CandidateSubmission,
     EffectiveEnforcement,
     InfrastructureCause,
     NetworkPolicy,
@@ -129,8 +130,11 @@ def test_artifact_budget_matches_the_shared_fixture(case: dict[str, Any]) -> Non
     artifacts = {path: b"\x00" * size for path, size in case["artifacts"].items()}
     fields: dict[str, Any] = {
         "cell_id": "s1:a1:w0",
-        "status": "succeeded",
-        "submission_ref": "sha256:" + "0" * 64,
+        "outcome": CandidateSubmission(
+            patch_ref="sha256:" + "0" * 64,
+            tree_digest="sha256:" + "1" * 64,
+            baseline_tree_digest="sha256:" + "2" * 64,
+        ),
         "effective": _effective(),
         "artifacts": artifacts,
     }

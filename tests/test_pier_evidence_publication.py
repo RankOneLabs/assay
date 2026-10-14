@@ -33,6 +33,7 @@ from assay.pier_protocol import (
     REQUIRED_SUCCESS_KINDS,
     ArtifactEntry,
     ArtifactManifest,
+    CandidateSubmission,
     PierExchange,
     RuntimeBinding,
 )
@@ -131,10 +132,11 @@ class _Bridge:
         return _Handle(
             BridgeTrialResult(
                 exchange=exchange,
-                status="succeeded",
-                submission_ref=digest_bytes(artifacts["candidate.txt"]),
-                error_type=None,
-                error_message=None,
+                outcome=CandidateSubmission(
+                    patch_ref=digest_bytes(artifacts["candidate.txt"]),
+                    tree_digest="sha256:" + "0" * 64,
+                    baseline_tree_digest="sha256:" + "0" * 64,
+                ),
                 usage={"cost_usd": 0.01},
                 artifacts=artifacts,
             )
@@ -281,7 +283,7 @@ def test_every_required_kind_has_an_output_ref_field(kind: str) -> None:
 
 # "result" is excluded deliberately: an undeclared result artifact means no
 # result bytes, so mini's "Submitted" sentinel cannot be read and
-# ``bridge_reports_failure`` rejects the cell before the evidence check is
+# the outcome/result-status check rejects the cell before the evidence check is
 # reached. The test below pins that ordering so this exclusion stays a fact
 # about ``_settle`` rather than an assumption about it.
 @pytest.mark.parametrize("omitted", sorted(REQUIRED_SUCCESS_KINDS - {"result"}))

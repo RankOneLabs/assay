@@ -27,7 +27,7 @@ from assay._version import __version__
 from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult, PierBridgeHandle
 from assay.canonical import canonical_json, digest_bytes
 from assay.models import ReportConfig, RunManifest, StatisticalProfile
-from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange
+from assay.pier_protocol import ArtifactEntry, ArtifactManifest, CandidateSubmission, PierExchange
 from assay.references import reference_closure
 from assay.report_engine import ReportError, build_report
 from assay.store import ObjectStore
@@ -121,10 +121,11 @@ class _AlwaysSucceedsBridge:
         return _Handle(
             BridgeTrialResult(
                 exchange=exchange,
-                status="succeeded",
-                submission_ref=digest_bytes(artifacts["candidate.txt"]),
-                error_type=None,
-                error_message=None,
+                outcome=CandidateSubmission(
+                    patch_ref=digest_bytes(artifacts["candidate.txt"]),
+                    tree_digest="sha256:" + "0" * 64,
+                    baseline_tree_digest="sha256:" + "0" * 64,
+                ),
                 usage={"cost_usd": 0.72, "prompt_tokens": 100, "completion_tokens": 50},
                 artifacts=artifacts,
             )

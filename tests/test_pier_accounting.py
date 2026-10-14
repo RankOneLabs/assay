@@ -30,7 +30,13 @@ from assay.models import (
     StudySnapshot,
     Subject,
 )
-from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange, RuntimeBinding
+from assay.pier_protocol import (
+    ArtifactEntry,
+    ArtifactManifest,
+    CandidateSubmission,
+    PierExchange,
+    RuntimeBinding,
+)
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 
@@ -115,10 +121,11 @@ class _FixedBridge:
         return _Handle(
             BridgeTrialResult(
                 exchange=exchange,
-                status="succeeded",
-                submission_ref=digest_bytes(artifacts["candidate.txt"]),
-                error_type=None,
-                error_message=None,
+                outcome=CandidateSubmission(
+                    patch_ref=digest_bytes(artifacts["candidate.txt"]),
+                    tree_digest="sha256:" + "0" * 64,
+                    baseline_tree_digest="sha256:" + "0" * 64,
+                ),
                 usage=self.usage,
                 artifacts=artifacts,
             )
@@ -226,10 +233,11 @@ async def test_submission_ref_mismatched_with_candidate_bytes_is_rejected(tmp_pa
             return _Handle(
                 BridgeTrialResult(
                     exchange=exchange,
-                    status="succeeded",
-                    submission_ref="sha256:" + "9" * 64,
-                    error_type=None,
-                    error_message=None,
+                    outcome=CandidateSubmission(
+                        patch_ref="sha256:" + "9" * 64,
+                        tree_digest="sha256:" + "0" * 64,
+                        baseline_tree_digest="sha256:" + "0" * 64,
+                    ),
                     usage=None,
                     artifacts=artifacts,
                 )

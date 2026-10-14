@@ -25,10 +25,16 @@ from assay_pier_bridge.protocol import (
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
     MAX_SUBMISSION_ENTRIES,
+    CandidateSubmission,
     EffectiveEnforcement,
+    ModelRoute,
+    TrialLimits,
+    TrialRequest,
     TrialResult,
 )
+from assay_pier_bridge.runtime import BridgeRuntime, CandidateTrialError
 from pydantic import ValidationError
+from test_support import exchange_for
 
 
 def _effective() -> EffectiveEnforcement:
@@ -52,8 +58,11 @@ def _effective() -> EffectiveEnforcement:
 def _result(**overrides: object) -> TrialResult:
     fields: dict[str, object] = {
         "cell_id": "s1:a1:w0",
-        "status": "succeeded",
-        "submission_ref": "sha256:" + "0" * 64,
+        "outcome": CandidateSubmission(
+            patch_ref="sha256:" + "0" * 64,
+            tree_digest="sha256:" + "1" * 64,
+            baseline_tree_digest="sha256:" + "2" * 64,
+        ),
         "effective": _effective(),
     }
     fields.update(overrides)
@@ -73,6 +82,30 @@ def _collect(
         max_aggregate_bytes=max_aggregate_bytes,
         max_entries=max_entries,
         aggregate_exempt_path=MANIFEST_PATH,
+    )
+
+
+def _failure_result(error: Exception) -> TrialResult:
+    class Handle:
+        def run(self) -> TrialResult:
+            raise error
+
+        def teardown(self) -> EffectiveEnforcement:
+            return _effective()
+
+    class Client:
+        def create(self, request: TrialRequest) -> Handle:
+            return Handle()
+
+    ref = "sha256:" + "0" * 64
+    return BridgeRuntime(Client()).run_cell(
+        TrialRequest(
+            cell_id="s1:a1:w0",
+            package_digest=ref,
+            exchange=exchange_for("s1:a1:w0", ref),
+            model_route=ModelRoute(),
+            limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=20, storage_mb=64),
+        )
     )
 
 
@@ -164,10 +197,16 @@ def test_collect_artifacts_never_follows_a_symlink_out_of_the_root(tmp_path: Pat
 
 
 def test_collect_artifacts_rejects_an_oversized_file_without_reading_it(tmp_path: Path) -> None:
+    (tmp_path / "a").write_bytes(b"retained")
     oversized = tmp_path / "huge"
     oversized.write_bytes(b"x" * 64)
-    with pytest.raises(ValueError, match="exceeds the byte limit"):
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
         _collect(tmp_path, max_bytes=32)
+    assert rejected.value.cause == "oversized_artifact"
+    assert rejected.value.artifacts == {"a": b"retained"}
+    result = _failure_result(rejected.value)
+    assert result.outcome.cause == "oversized_artifact"
+    assert result.artifacts == {"a": b"retained"}
 
 
 def test_collect_artifacts_bounds_a_file_that_grows_after_lstat(
@@ -186,15 +225,17 @@ def test_collect_artifacts_bounds_a_file_that_grows_after_lstat(
         return result
 
     monkeypatch.setattr(Path, "lstat", stale_lstat)
-    with pytest.raises(ValueError, match="exceeds the byte limit"):
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
         _collect(tmp_path, max_bytes=32)
+    assert rejected.value.cause == "oversized_artifact"
 
 
 def test_collect_artifacts_rejects_too_many_filesystem_entries(tmp_path: Path) -> None:
     for index in range(3):
         (tmp_path / f"empty-{index}").write_bytes(b"")
-    with pytest.raises(ValueError, match="filesystem entry limit"):
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
         _collect(tmp_path, max_entries=2)
+    assert rejected.value.cause == "entry_limit"
 
 
 def test_collect_artifacts_enforces_aggregate_bytes_while_reading(
@@ -213,8 +254,102 @@ def test_collect_artifacts_enforces_aggregate_bytes_while_reading(
         return result
 
     monkeypatch.setattr(Path, "lstat", stale_lstat)
-    with pytest.raises(ValueError, match="aggregate byte limit"):
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
         _collect(tmp_path, max_bytes=8, max_aggregate_bytes=7)
+    assert rejected.value.cause == "aggregate_artifact_limit"
+    assert rejected.value.artifacts == {"a": b"1234", "b": b"567"}
+    result = _failure_result(rejected.value)
+    assert result.outcome.cause == "aggregate_artifact_limit"
+    assert result.artifacts == rejected.value.artifacts
+
+
+@pytest.mark.parametrize(
+    ("filename", "payload", "cause"),
+    [("z\\name", b"x", "traversal"), ("z.bin", b"\x00", "binary_payload")],
+)
+def test_regular_tree_rejects_typed_bad_paths_and_bytes(
+    tmp_path: Path, filename: str, payload: bytes, cause: str
+) -> None:
+    (tmp_path / "output").write_bytes(b"working-copy output")
+    (tmp_path / filename).write_bytes(payload)
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        regular_tree(tmp_path)
+    assert rejected.value.cause == cause
+    assert rejected.value.origin == "working_copy"
+    assert rejected.value.artifacts == {"output": b"working-copy output"}
+    result = _failure_result(rejected.value)
+    assert result.outcome.cause == cause
+    assert result.artifacts == {"rejected_worktree/output": b"working-copy output"}
+
+
+@pytest.mark.parametrize("cause", ["out_of_scope_edit", "tampering"])
+def test_candidate_rejection_carries_its_own_artifacts(cause: str) -> None:
+    class Handle:
+        def run(self) -> TrialResult:
+            raise CandidateTrialError(cause, "rejected", artifacts={"output": b"evidence"})
+
+        def teardown(self) -> EffectiveEnforcement:
+            return _effective()
+
+    class Client:
+        def create(self, request: TrialRequest) -> Handle:
+            return Handle()
+
+    ref = "sha256:" + "0" * 64
+    request = TrialRequest(
+        cell_id="s1:a1:w0",
+        package_digest=ref,
+        exchange=exchange_for("s1:a1:w0", ref),
+        model_route=ModelRoute(),
+        limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=20, storage_mb=64),
+    )
+    result = BridgeRuntime(Client()).run_cell(request)
+    assert result.outcome.kind == "candidate_failure"
+    assert result.outcome.cause == cause
+    assert result.artifacts == {"output": b"evidence"}
+
+
+def test_rejected_worktree_paths_cannot_replace_submission_artifacts() -> None:
+    class Handle:
+        def run(self) -> TrialResult:
+            raise ArtifactCollectionRejected(
+                "binary_payload",
+                "bad working copy",
+                origin="working_copy",
+                artifacts={"output": b"worktree", "manifest.json": b"worktree manifest"},
+            )
+
+        def partial_artifacts(self) -> dict[str, bytes]:
+            return {
+                "output": b"submission",
+                "manifest.json": b"submission manifest",
+                "rejected_worktree/output": b"candidate spoof",
+            }
+
+        def teardown(self) -> EffectiveEnforcement:
+            return _effective()
+
+    class Client:
+        def create(self, request: TrialRequest) -> Handle:
+            return Handle()
+
+    ref = "sha256:" + "0" * 64
+    result = BridgeRuntime(Client()).run_cell(
+        TrialRequest(
+            cell_id="s1:a1:w0",
+            package_digest=ref,
+            exchange=exchange_for("s1:a1:w0", ref),
+            model_route=ModelRoute(),
+            limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=20, storage_mb=64),
+        )
+    )
+    assert result.outcome.cause == "binary_payload"
+    assert result.artifacts == {
+        "output": b"submission",
+        "manifest.json": b"submission manifest",
+        "rejected_worktree/output": b"worktree",
+        "rejected_worktree/manifest.json": b"worktree manifest",
+    }
 
 
 def test_collect_artifacts_skips_a_non_regular_file(tmp_path: Path) -> None:

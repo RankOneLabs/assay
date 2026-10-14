@@ -23,7 +23,6 @@ from assay_pier_bridge.protocol import (
     TrialHandle,
     TrialRequest,
     TrialResult,
-    TrialStatus,
 )
 
 
@@ -42,7 +41,16 @@ class TrialCancelledError(Exception):
 class CandidateTrialError(RuntimeError):
     """A candidate-caused rejection with a stable, typed reason."""
 
-    def __init__(self, cause: CandidateCause, message: str) -> None:
+    def __init__(
+        self, cause: CandidateCause, message: str, *, artifacts: Mapping[str, bytes] | None = None
+    ) -> None:
+        super().__init__(message)
+        self.cause = cause
+        self.artifacts = dict(artifacts or {})
+
+
+class InfrastructureTrialError(RuntimeError):
+    def __init__(self, cause: InfrastructureCause, message: str) -> None:
         super().__init__(message)
         self.cause = cause
 
@@ -67,16 +75,16 @@ class BridgeRuntime:
         try:
             result = handle.run()
         except TrialTimeoutError as error:
-            return self._failure(handle, request, status="timeout", error=error)
+            return self._failure(handle, request, cause="harness_deadline", error=error)
         except TrialCancelledError as error:
-            return self._failure(handle, request, status="cancelled", error=error)
+            return self._failure(handle, request, cause="cancelled", error=error)
         except asyncio.CancelledError:
             # BaseException, not Exception: an async client's own
             # cancellation must still tear the trial down before propagating.
             handle.teardown()
             raise
         except Exception as error:  # noqa: BLE001 - converted to a typed failure result
-            return self._failure(handle, request, status="failed", error=error)
+            return self._failure(handle, request, cause="unexpected_exception", error=error)
         effective = handle.teardown()
         if result.cell_id != request.cell_id:
             return TrialResult(
@@ -99,13 +107,11 @@ class BridgeRuntime:
         handle: TrialHandle,
         request: TrialRequest,
         *,
-        status: TrialStatus,
+        cause: InfrastructureCause,
         error: Exception,
     ) -> TrialResult:
         artifacts: dict[str, bytes] = {}
         outcome: CandidateFailure | InfrastructureFailure
-        if isinstance(error, ArtifactCollectionRejected):
-            artifacts.update(error.artifacts)
         partial = getattr(handle, "partial_artifacts", None)
         if callable(partial):
             try:
@@ -116,21 +122,30 @@ class BridgeRuntime:
                 artifacts.update(rejection.artifacts)
             except Exception:
                 pass
+        if isinstance(error, ArtifactCollectionRejected):
+            if error.origin == "working_copy":
+                # This prefix is bridge-owned. A candidate may create a file
+                # with the same name in /submission, but cannot replace the
+                # separately observed working-copy bytes in the result.
+                artifacts = {
+                    path: data for path, data in artifacts.items()
+                    if not path.startswith("rejected_worktree/")
+                }
+                artifacts.update(
+                    {f"rejected_worktree/{path}": data for path, data in error.artifacts.items()}
+                )
+            else:
+                artifacts.update(error.artifacts)
+        elif isinstance(error, CandidateTrialError):
+            artifacts.update(error.artifacts)
         effective: EffectiveEnforcement = handle.teardown()
         if isinstance(error, ArtifactCollectionRejected):
             outcome = CandidateFailure(cause=cast(CandidateCause, error.cause), detail=str(error))
         elif isinstance(error, CandidateTrialError):
             outcome = CandidateFailure(cause=error.cause, detail=str(error))
         else:
-            cause: InfrastructureCause = (
-                "harness_deadline"
-                if status == "timeout"
-                else "cancelled"
-                if status == "cancelled"
-                else "unexpected_exception"
-            )
             outcome = InfrastructureFailure(
-                cause=cause,
+                cause=error.cause if isinstance(error, InfrastructureTrialError) else cause,
                 detail=str(error)[:2000] or type(error).__name__,
                 exception_type=type(error).__name__,
             )

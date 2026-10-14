@@ -40,7 +40,7 @@ from pier_qualification.pier_experiment import (
 from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult
 from assay.canonical import digest_bytes
 from assay.investigations.correctness import DockerPythonRunner
-from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange
+from assay.pier_protocol import ArtifactEntry, ArtifactManifest, CandidateSubmission, PierExchange
 from assay.store import ObjectStore
 from assay.verify import verify_bundle, verify_manifest
 
@@ -124,11 +124,12 @@ class _RehearsalHandle:
         artifacts = {**contents, "manifest.json": manifest.model_dump_json().encode()}
         return BridgeTrialResult(
             exchange=self._exchange,
-            status="succeeded",
-            submission_ref=digest_bytes(contents["candidate.py"]),
+            outcome=CandidateSubmission(
+                patch_ref=digest_bytes(contents["candidate.py"]),
+                tree_digest="sha256:" + "0" * 64,
+                baseline_tree_digest="sha256:" + "0" * 64,
+            ),
             usage={"cost_usd": 0.72, "prompt_tokens": 100, "completion_tokens": 50},
-            error_type=None,
-            error_message=None,
             artifacts=artifacts,
         )
 

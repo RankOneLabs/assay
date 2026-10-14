@@ -59,6 +59,19 @@ SHA-256 of the sorted sequence of `path UTF-8`, NUL, mode `100644`, NUL,
 file bytes, NUL. Applying the patch to the arm baseline must reproduce that
 digest. Evidence is read from the host-visible working copy before teardown.
 
+Every trial request carries the authorized exchange (cell coordinate, runtime
+binding, and trial name). On success, the bridge writes `manifest.json` after
+collecting the host-observed `candidate.patch`, trajectory, result, and
+resolved configuration. Its entries bind each artifact's path, kind, byte
+length, SHA-256 digest, and UTF-8 status to that exchange; the manifest never
+declares itself. Assay verifies those bytes and requires the candidate entry's
+digest to equal `outcome.patch_ref` before settling a success. The guarded
+single-call host route records any nonempty submitted source as an `output`
+file in its writable working copy, then derives the patch from that tree; a
+blank source leaves the working copy unchanged. Rejected working-copy bytes
+are retained under the bridge-owned `rejected_worktree/` prefix so a file
+named `output` or `manifest.json` cannot overwrite submission evidence.
+
 Trial usage keeps token counts even when the worker has no pricing model.
 Such a trial reports `cost_usd: null`; Assay records amount `null` with
 `unavailable` cost coverage. Missing usage, or usage that omitted its cost

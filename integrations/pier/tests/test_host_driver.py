@@ -10,14 +10,17 @@ from typing import Any
 
 import httpx
 import pytest
+from assay_pier_bridge.evidence import ArtifactManifest
 from assay_pier_bridge.host_driver import (
     GuardedCompletionTrialClient,
     GuardedCompletionTrialHandle,
 )
-from assay_pier_bridge.identity import package_digest
+from assay_pier_bridge.identity import digest_bytes, package_digest
+from assay_pier_bridge.paths import tree_digest
 from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest
 from assay_pier_bridge.provider import MODEL, PROVIDER_NAME, GuardedOpenRouterClient
 from assay_pier_bridge.runtime import BridgeRuntime
+from test_support import exchange_for
 
 ROUTE = ModelRoute(
     endpoint="https://openrouter.ai/api/v1",
@@ -31,6 +34,7 @@ def _request(package: dict[str, str] = PACKAGE) -> TrialRequest:
     return TrialRequest(
         cell_id="s1:a1:w0",
         package_digest=package_digest(package),
+        exchange=exchange_for("s1:a1:w0", package_digest(package)),
         model_route=ROUTE,
         limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=20, storage_mb=64),
     )
@@ -88,8 +92,8 @@ def test_a_trial_succeeds_with_the_container_network_permanently_off(
 
     result = runtime.run_cell(_request())
 
-    assert result.status == "succeeded"
-    assert result.submission_ref is not None
+    assert result.outcome.kind == "candidate"
+    assert result.outcome.patch_ref == digest_bytes(result.artifacts["candidate.patch"])
     assert result.usage is not None
     assert result.usage.prompt_tokens == 10
     assert result.usage.completion_tokens == 5
@@ -98,6 +102,46 @@ def test_a_trial_succeeds_with_the_container_network_permanently_off(
     assert result.effective.network_policy == "host-process-guarded-route-only"
     assert result.effective.containers_remaining == 0
     assert result.effective.teardown_completed is True
+    assert result.outcome.baseline_tree_digest == tree_digest({})
+    assert result.outcome.tree_digest == tree_digest({"output": b"answer = 42"})
+    manifest = ArtifactManifest.model_validate_json(result.artifacts["manifest.json"])
+    assert manifest.exchange == _request().exchange
+    assert manifest.entries[0].checksum == digest_bytes(result.artifacts[manifest.entries[0].path])
+    assert {entry.kind for entry in manifest.entries} == {
+        "raw_trajectory",
+        "candidate",
+        "result",
+        "configuration",
+    }
+
+
+def test_blank_submission_is_a_manifest_bound_no_op(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from assay_pier_bridge.provider import RouteResponse, RouteUsage, SubmittedOutput
+
+    def fake_run_one_cell(**kwargs: Any) -> RouteResponse:
+        kwargs["submission_output"].write_bytes(b"")
+        return RouteResponse(
+            message={"role": "assistant", "content": "no edit needed"},
+            usage=RouteUsage(prompt_tokens=1, completion_tokens=1, cost_usd=0.0),
+            submission=SubmittedOutput(call_id="call", source=""),
+            request_bytes=1,
+        )
+
+    monkeypatch.setattr("assay_pier_bridge.host_driver.run_one_cell", fake_run_one_cell)
+    result = BridgeRuntime(
+        GuardedCompletionTrialClient(
+            package=PACKAGE, api_key="test-key", runs_root=tmp_path, system_prompt="sys"
+        )
+    ).run_cell(_request())
+    assert result.outcome.kind == "candidate"
+    assert result.artifacts["candidate.patch"] == b""
+    assert result.outcome.patch_ref == digest_bytes(b"")
+    assert result.outcome.tree_digest == result.outcome.baseline_tree_digest
+    manifest = ArtifactManifest.model_validate_json(result.artifacts["manifest.json"])
+    candidate = next(entry for entry in manifest.entries if entry.kind == "candidate")
+    assert candidate.checksum == result.outcome.patch_ref
 
 
 def test_a_missing_instruction_fails_the_trial_without_a_network_call(
@@ -173,5 +217,8 @@ def test_handle_uses_the_package_snapshot_taken_at_creation(
 
     result = handle.run()
 
-    assert result.status == "succeeded"
+    assert result.outcome.kind == "candidate"
+    assert (handle.submission_dir / "manifest.json").read_bytes() == result.artifacts[
+        "manifest.json"
+    ]
     assert seen == [PACKAGE["instruction.md"]]
