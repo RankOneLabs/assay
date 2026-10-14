@@ -30,6 +30,23 @@ The candidate did not supply the manifest.
 
 ## Gate 3: model loop and dispatch
 
+The bridge now has a zero-paid qualification route through local Smithers
+(`qwen-coder-32b` on `mcbain`) and a test proving it cannot reach OpenRouter.
+The observing clients for a completed run would be the Smithers dispatch
+API, its worker task endpoint for token counts, the Pier repository-agent
+loop, and Docker inspection. A real attempt on 2026-10-14 entered the Pier
+loop with that route but stopped during quota preparation with
+`AgentLoopError: storage_mount`: this host's `sudo -n mount` requires a
+password. No model request or cell completed in that attempt. The existing
+image ID still matches `MANIFEST.json`; it was not rebuilt.
+
+The wf-06 arm worker configurations still do not declare repository file or
+byte limits in this checkout. The 4-file, 6,763-byte slice therefore remains
+compared against Pier's defaults in the fixture README; that comparison is
+not being presented as an arm-configured margin. The smoke manifest's hidden
+test, patch, and rubric references remain placeholders and the fixture stays
+excluded from every study population by `validate_worker_grid`.
+
 Per-turn prompt and completion tokens, wall time from Smithers acceptance,
 queue latency, failure rate, peak memory and PID usage, and package size as a
 Docker-inspected quantity remain unmeasured. The 20 live end-to-end dispatches,

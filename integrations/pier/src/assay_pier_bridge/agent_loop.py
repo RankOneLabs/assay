@@ -20,12 +20,14 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
 import httpx
 
 from assay_pier_bridge.paths import materialize_under, safe_relative_path, submission_patch
+from assay_pier_bridge.protocol import ModelRoute
 from assay_pier_bridge.provider import (
     CHAT_COMPLETIONS_URL,
     MAX_COMPLETION_PRICE_PER_MILLION,
@@ -73,7 +75,7 @@ class LoopResult:
     trajectory: dict[str, Any]
     prompt_tokens: int
     completion_tokens: int
-    cost_usd: float
+    cost_usd: float | None
     requests: int
 
 
@@ -423,9 +425,10 @@ def _shrink_conversation(
 class RepositoryAgentClient:
     """Fixed one-attempt loop. A client can run cells sequentially, never concurrently."""
 
-    api_key: str
+    api_key: str | None
     image: str
     runs_root: Path
+    model_route: ModelRoute = field(default_factory=ModelRoute)
     bounds: LoopBounds = field(default_factory=LoopBounds)
     transport: httpx.BaseTransport | None = None
     sandbox_factory: SandboxFactory = DockerToolSandbox
@@ -434,8 +437,12 @@ class RepositoryAgentClient:
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
     def __post_init__(self) -> None:
-        if not self.api_key or any(char.isspace() for char in self.api_key):
-            raise ValueError("nonblank API key required")
+        if self.model_route.paid_route_reachable and (
+            not self.api_key or any(char.isspace() for char in self.api_key)
+        ):
+            raise ValueError("nonblank API key required for the paid route")
+        if not self.model_route.paid_route_reachable and self.api_key is not None:
+            raise ValueError("zero-paid Smithers route must not receive an OpenRouter API key")
         if not self.image:
             raise ValueError("locked image identity required")
         if self.bounds.max_turns != 20 or min(asdict(self.bounds).values()) < 1:
@@ -467,6 +474,8 @@ class RepositoryAgentClient:
         raise ValueError("unverifiable_transport_retries")
 
     def _completion(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        if not self.model_route.paid_route_reachable:
+            return self._smithers_completion(messages)
         body = {
             "model": MODEL,
             "messages": messages,
@@ -519,6 +528,100 @@ class RepositoryAgentClient:
             raise ValueError("provider_identity")
         return data
 
+    def _smithers_completion(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Submit one local job per turn; no paid URL or credential is reachable."""
+        payload = {
+            "messages": messages,
+            "tools": TOOLS,
+            "tool_choice": "auto",
+            "max_tokens": self.bounds.max_output_tokens,
+        }
+        if len(_json_bytes(payload)) > self.bounds.max_request_bytes:
+            raise ValueError("request_limit")
+        submission = {
+            "task_type": "inference",
+            "payload": payload,
+            "requester": "assay-wf12-qualification",
+            "model": self.model_route.model,
+            "machine": "mcbain",
+            "timeout_seconds": 900,
+            "max_retries": 0,
+            "idempotency_key": f"assay-wf12:{uuid.uuid4().hex}",
+        }
+        with self._http_client() as client:
+            if self._transport_retries(client) != 0:
+                raise ValueError("retry_config_violation")
+            response = client.post(f"{self.model_route.endpoint}/jobs", json=submission)
+            response.raise_for_status()
+            job_id = response.json().get("job_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("smithers_job_id")
+            deadline = time.monotonic() + 900
+            while time.monotonic() < deadline:
+                response = client.get(f"{self.model_route.endpoint}/jobs/{job_id}")
+                response.raise_for_status()
+                job = response.json()
+                if (
+                    job.get("job_id") != job_id
+                    or job.get("model") != self.model_route.model
+                    or job.get("machine") != "mcbain"
+                ):
+                    raise ValueError("smithers_identity")
+                if job.get("status") == "complete":
+                    break
+                if job.get("status") in ("failed", "cancelled"):
+                    raise ValueError("smithers_job_failed")
+                if job.get("status") not in ("queued", "waking_machine", "dispatched", "running"):
+                    raise ValueError("smithers_status")
+                time.sleep(0.5)
+            else:
+                raise ValueError("smithers_deadline")
+        result = job.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("smithers_result")
+        # Dispatch's JobResponse currently drops TaskStatusResponse.usage.
+        # Read the completed worker task instead of turning missing counts
+        # into zeros (which would make the qualification unpublishable).
+        with self._http_client() as client:
+            worker_response = client.get(f"http://mcbain:8901/tasks/{job_id}")
+            worker_response.raise_for_status()
+            worker_task = worker_response.json()
+        if worker_task.get("job_id") != job_id or worker_task.get("status") != "complete":
+            raise ValueError("smithers_worker_identity")
+        usage = worker_task.get("usage")
+        if not isinstance(usage, dict):
+            raise ValueError("smithers_usage_missing")
+        input_tokens = usage.get("input_tokens")
+        output_tokens = usage.get("output_tokens")
+        if type(input_tokens) is not int or type(output_tokens) is not int:
+            raise ValueError("smithers_usage_missing")
+        try:
+            created = datetime.fromisoformat(job["created_at"])
+            started = datetime.fromisoformat(job["started_at"])
+            completed = datetime.fromisoformat(job["completed_at"])
+            queue_latency = (started - created).total_seconds()
+            wall_seconds = (completed - started).total_seconds()
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("smithers_timing_missing") from error
+        if queue_latency < 0 or wall_seconds < 0:
+            raise ValueError("smithers_timing_invalid")
+        calls = result.get("tool_calls")
+        message = {"role": "assistant", "content": result.get("content"), "tool_calls": calls}
+        return {
+            "choices": [{"finish_reason": "tool_calls" if calls else "stop", "message": message}],
+            "usage": {
+                "prompt_tokens": input_tokens,
+                "completion_tokens": output_tokens,
+                "cost": None,
+            },
+            "smithers_job_id": job_id,
+            "smithers_created_at": job.get("created_at"),
+            "smithers_started_at": job.get("started_at"),
+            "smithers_completed_at": job.get("completed_at"),
+            "queue_latency_seconds": queue_latency,
+            "wall_seconds": wall_seconds,
+        }
+
     def run_cell(self, *, cell_id: str, package: Mapping[str, str]) -> LoopResult:
         if not self._lock.acquire(blocking=False):
             raise AgentLoopError("concurrency_limit", {"events": []})
@@ -569,7 +672,7 @@ class RepositoryAgentClient:
             {"role": "user", "content": instruction},
         ]
         prompt_tokens = completion_tokens = requests = 0
-        cost_usd = 0.0
+        cost_usd: float | None = 0.0 if self.model_route.paid_route_reachable else None
         primary_failed = False
         try:
             storage.prepare()
@@ -609,18 +712,35 @@ class RepositoryAgentClient:
                     if type(usage.get(key)) is not int or usage[key] < 0:
                         raise ValueError("provider_usage")
                 cost = usage.get("cost")
-                if (
-                    isinstance(cost, bool)
-                    or not isinstance(cost, (int, float))
-                    or not math.isfinite(cost)
-                    or cost < 0
-                ):
-                    raise ValueError("provider_usage")
+                if self.model_route.paid_route_reachable:
+                    if (
+                        isinstance(cost, bool)
+                        or not isinstance(cost, (int, float))
+                        or not math.isfinite(cost)
+                        or cost < 0
+                    ):
+                        raise ValueError("provider_usage")
+                elif cost is not None:
+                    raise ValueError("local_billing_must_be_uncertain")
                 if usage["completion_tokens"] > self.bounds.max_output_tokens:
                     raise ValueError("output_token_limit")
                 prompt_tokens += usage["prompt_tokens"]
                 completion_tokens += usage["completion_tokens"]
-                cost_usd += cost
+                if cost_usd is not None:
+                    assert isinstance(cost, (int, float))
+                    cost_usd += cost
+                events.append({
+                    "kind": "model_request", "turn": turn,
+                    "prompt_tokens": usage["prompt_tokens"],
+                    "completion_tokens": usage["completion_tokens"],
+                    "billing": "uncertain" if cost is None else "measured",
+                    "smithers_job_id": data.get("smithers_job_id"),
+                    "smithers_created_at": data.get("smithers_created_at"),
+                    "smithers_started_at": data.get("smithers_started_at"),
+                    "smithers_completed_at": data.get("smithers_completed_at"),
+                    "queue_latency_seconds": data.get("queue_latency_seconds"),
+                    "wall_seconds": data.get("wall_seconds"),
+                })
                 calls = message.get("tool_calls")
                 if (
                     choice.get("finish_reason") != "tool_calls"

@@ -273,6 +273,8 @@ class GuardedCompletionTrialClient:
     system_prompt: str = field(default_factory=_default_system_prompt)
 
     def create(self, request: TrialRequest) -> GuardedCompletionTrialHandle:
+        if not request.model_route.paid_route_reachable:
+            raise ValueError("guarded OpenRouter driver cannot execute a local model route")
         package = _validated_snapshot(request, self.package)
         submission_dir = self.runs_root / f"guarded-{uuid.uuid4().hex[:12]}"
         submission_dir.mkdir(parents=True, exist_ok=True)

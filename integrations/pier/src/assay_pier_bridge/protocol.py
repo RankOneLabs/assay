@@ -75,17 +75,31 @@ class ClosedModel(BaseModel):
 
 
 class ModelRoute(ClosedModel):
-    """The exact guarded OpenRouter route a trial is authorized to call.
+    """One of the two exact routes a trial is authorized to call.
 
-    Exact ``Literal`` values, not permissive patterns: this is the only
-    route ``GuardedOpenRouterClient`` (provider.py) ever calls, so a caller
-    must not be able to authorize a route that execution then silently
-    ignores in favor of a different one.
+    The Smithers route is reserved for zero-paid qualification. Exact tuples
+    prevent mixing its local endpoint with OpenRouter's paid model/provider.
     """
 
-    endpoint: Literal["https://openrouter.ai/api/v1"] = "https://openrouter.ai/api/v1"
-    model: Literal["anthropic/claude-3-haiku"] = "anthropic/claude-3-haiku"
-    provider: Literal["amazon-bedrock"] = "amazon-bedrock"
+    endpoint: Literal["https://openrouter.ai/api/v1", "http://willie:8900"] = (
+        "https://openrouter.ai/api/v1"
+    )
+    model: Literal["anthropic/claude-3-haiku", "qwen-coder-32b"] = "anthropic/claude-3-haiku"
+    provider: Literal["amazon-bedrock", "smithers-local"] = "amazon-bedrock"
+
+    @model_validator(mode="after")
+    def exact_route(self) -> ModelRoute:
+        route = (self.endpoint, self.model, self.provider)
+        if route not in {
+            ("https://openrouter.ai/api/v1", "anthropic/claude-3-haiku", "amazon-bedrock"),
+            ("http://willie:8900", "qwen-coder-32b", "smithers-local"),
+        }:
+            raise ValueError("model route fields must identify one exact route")
+        return self
+
+    @property
+    def paid_route_reachable(self) -> bool:
+        return self.provider == "amazon-bedrock"
 
 
 class TrialLimits(ClosedModel):
@@ -204,6 +218,8 @@ class TrialRequest(ClosedModel):
             raise ValueError("exchange coordinate does not match cell_id")
         if self.exchange.binding.package_digest != self.package_digest:
             raise ValueError("exchange package digest does not match package_digest")
+        if not self.model_route.paid_route_reachable and self.network_policy != "toolchain-only":
+            raise ValueError("local Smithers route requires the network-disabled toolchain posture")
         if self.network_policy == "egress-lan-host-port":
             if self.egress_host is None or self.egress_port is None:
                 raise ValueError("LAN posture requires egress_host and egress_port")

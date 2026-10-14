@@ -73,6 +73,20 @@ values are configured ceilings, not peak usage. The Smithers/Pier model gate
 and 20-dispatch qualification are outstanding, so the provisional bounds
 remain until real replacement measurements exist.
 
+**Zero-paid qualification route resolution (wf-12 follow-up):** The bridge
+protocol now admits exactly one local Smithers tuple,
+`http://willie:8900` / `qwen-coder-32b` / `smithers-local`, alongside the
+guarded production tuple. A local trial requires `toolchain-only` network
+posture; the OpenRouter host driver rejects it. The repository-agent loop
+dispatches each model turn to Smithers with no API key and zero retries, and
+reads token usage from the completed worker task because Smithers' dispatch
+`JobResponse` drops that usage. Its local cost remains unknown, never a
+measured zero. Tests assert the local client makes no OpenRouter request and
+that mixed route fields are rejected. The first real Gate 3 attempt stopped
+before model dispatch at `QuotaCellStorage.prepare`: `sudo -n mount` requires
+a password on this host. Passwordless quota mount access or an equivalent
+quota-backed storage path is required before the measured run can proceed.
+
 ## Packaging and fixture identity
 
 - **Arm-bound limits:** Each authorized Pier worker configuration records the

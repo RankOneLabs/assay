@@ -57,6 +57,26 @@ def test_trial_request_disables_verification_by_default() -> None:
     assert request.verify is False
 
 
+def test_qualification_route_cannot_mix_paid_and_local_fields() -> None:
+    local = ModelRoute(
+        endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
+    )
+    assert local.paid_route_reachable is False
+    assert ROUTE.paid_route_reachable is True
+    with pytest.raises(ValidationError, match="one exact route"):
+        ModelRoute(endpoint="http://willie:8900", model="qwen-coder-32b")
+    base = {
+        "cell_id": "s1:a1:w0",
+        "package_digest": "sha256:" + "0" * 64,
+        "exchange": exchange_for("s1:a1:w0", "sha256:" + "0" * 64),
+        "model_route": local,
+        "limits": LIMITS,
+    }
+    with pytest.raises(ValidationError, match="network-disabled toolchain"):
+        TrialRequest(**base)
+    assert TrialRequest(**base, network_policy="toolchain-only").model_route == local
+
+
 def test_request_rejects_an_exchange_for_another_cell_or_package() -> None:
     base = {
         "cell_id": "s1:a1:w0",

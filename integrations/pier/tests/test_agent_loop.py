@@ -20,6 +20,7 @@ from assay_pier_bridge.agent_loop import (
     RepositoryAgentClient,
     ToolOutput,
 )
+from assay_pier_bridge.protocol import ModelRoute
 from assay_pier_bridge.provider import MODEL, PROVIDER_NAME
 
 
@@ -146,6 +147,58 @@ def test_multiple_turns_and_two_cells_are_isolated(tmp_path: Path) -> None:
     assert not left.workspace.exists() and not right.workspace.exists()
     with pytest.raises(AgentLoopError, match="attempt_limit"):
         client.run_cell(cell_id="s:a:w0", package=package)
+
+
+def test_local_smithers_route_runs_two_requests_without_paid_url(tmp_path: Path) -> None:
+    posts: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host in {"willie", "mcbain"}
+        assert "Authorization" not in request.headers
+        if request.method == "POST":
+            posts.append(request)
+            submitted = json.loads(request.content)
+            assert submitted["max_retries"] == 0
+            assert submitted["model"] == "qwen-coder-32b"
+            return httpx.Response(200, json={"job_id": f"job-{len(posts)}"})
+        turn = len(posts)
+        if request.url.host == "mcbain":
+            return httpx.Response(200, json={
+                "job_id": f"job-{turn}", "status": "complete",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            })
+        answer = (
+            _answer("read_file", {"path": "a.txt"}, turn)
+            if turn == 1 else _answer("submit_output", {"source": "done"}, turn)
+        )
+        return httpx.Response(200, json={
+            "job_id": f"job-{turn}", "status": "complete", "model": "qwen-coder-32b",
+            "machine": "mcbain", "result": {
+                "content": None, "tool_calls": answer["choices"][0]["message"]["tool_calls"],
+            },
+            "created_at": "2026-10-14T10:00:00", "started_at": "2026-10-14T10:00:01",
+            "completed_at": "2026-10-14T10:00:02",
+        })
+
+    client = RepositoryAgentClient(
+        api_key=None, image="locked-image", runs_root=tmp_path,
+        model_route=ModelRoute(
+            endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
+        ),
+        transport=httpx.MockTransport(handler),
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    assert client.model_route.paid_route_reachable is False
+    result = client.run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit", "workspace/a.txt": "one"}
+    )
+    assert result.requests == 2 and len(posts) == 2
+    assert result.cost_usd is None
+    model_events = [
+        event for event in result.trajectory["events"] if event["kind"] == "model_request"
+    ]
+    assert len(model_events) == 2
+    assert all(event["billing"] == "uncertain" for event in model_events)
 
 
 def test_hidden_test_package_entries_never_reach_tools(tmp_path: Path) -> None:
