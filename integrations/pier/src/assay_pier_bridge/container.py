@@ -14,7 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import re
+import shlex
 import shutil
 import subprocess
 import threading
@@ -118,6 +118,12 @@ class ContainerObservation:
     memory_limit_mb: int
     pids_limit: int
     storage_limit_mb: int
+    gid: int = 1000
+    scratch_mount_kind: str = "unknown"
+    scratch_source: str | None = None
+    scratch_tmpfs: bool = False
+    oom_killed: bool = False
+    network_policy_label: str = "unknown"
 
 
 def _usable_observation(observation: ContainerObservation | None) -> ContainerObservation | None:
@@ -127,7 +133,6 @@ def _usable_observation(observation: ContainerObservation | None) -> ContainerOb
     positive_ints = (
         observation.memory_limit_mb,
         observation.pids_limit,
-        observation.storage_limit_mb,
     )
     if (
         isinstance(observation.cpu_limit, bool)
@@ -136,25 +141,27 @@ def _usable_observation(observation: ContainerObservation | None) -> ContainerOb
         or any(type(value) is not int or value <= 0 for value in positive_ints)
         or not isinstance(observation.network_mode, str)
         or not isinstance(observation.workspace_mount_read_only, (bool, type(None)))
+        or type(observation.uid) is not int
+        or type(observation.gid) is not int
+        or observation.uid <= 0
+        or observation.gid <= 0
     ):
         return None
     return observation
 
 
-def _tmpfs_storage_limit_mb(host_config: Mapping[str, object]) -> int:
-    """Parse the size this container's ``/scratch`` tmpfs was actually declared with.
-
-    ``docker inspect``'s ``HostConfig.Tmpfs`` map echoes back the exact
-    ``--tmpfs`` option string this process passed (see
-    ``_docker_run_args``), not a derived or rounded value -- a missing or
-    unparsable entry is reported as 0, never silently substituted with the
-    limit this process asked for, so a caller cannot mistake "docker did not
-    confirm this" for "docker confirmed this."
-    """
-    tmpfs = host_config.get("Tmpfs")
-    options = tmpfs.get("/scratch", "") if isinstance(tmpfs, Mapping) else ""
-    match = re.search(r"size=(\d+)m", options)
-    return int(match.group(1)) if match else 0
+def _quota_mb(source: str | None) -> int:
+    """Read the loop device capacity backing Docker's inspected bind source."""
+    if source is None or not os.path.ismount(source):
+        return 0
+    device = os.stat(source).st_dev
+    sys_device = Path(f"/sys/dev/block/{os.major(device)}:{os.minor(device)}")
+    # A plain host directory would otherwise report the capacity of its
+    # containing filesystem and pretend to have the requested per-trial quota.
+    if not (sys_device / "loop" / "backing_file").is_file():
+        return 0
+    size_bytes = int((sys_device / "size").read_text(encoding="ascii")) * 512
+    return size_bytes // (1024 * 1024) if size_bytes % (1024 * 1024) == 0 else 0
 
 
 def _inspect(name: str) -> ContainerObservation | None:
@@ -164,19 +171,36 @@ def _inspect(name: str) -> ContainerObservation | None:
     (data,) = json.loads(result.stdout)
     host_config = data["HostConfig"]
     workspace_ro = None
+    scratch_kind = "missing"
+    scratch_source = None
     for mount in data.get("Mounts", []):
         if mount.get("Destination") == "/workspace":
             workspace_ro = not mount.get("RW", True)
-            break
+        if mount.get("Destination") == "/scratch":
+            scratch_kind = mount.get("Type", "unknown")
+            scratch_source = mount.get("Source")
+    tmpfs = host_config.get("Tmpfs")
+    scratch_tmpfs = isinstance(tmpfs, Mapping) and "/scratch" in tmpfs
+    storage_mb = _quota_mb(scratch_source) if scratch_kind == "bind" else 0
+    user = str(data.get("Config", {}).get("User", ""))
+    uid = int(user.split(":", 1)[0]) if user.split(":", 1)[0].isdigit() else 0
+    gid_part = user.split(":", 1)[1] if ":" in user else ""
+    gid = int(gid_part) if gid_part.isdigit() else 0
     return ContainerObservation(
         read_only_root=bool(host_config.get("ReadonlyRootfs")),
         workspace_mount_read_only=workspace_ro,
-        uid=_UID,
+        uid=uid,
+        gid=gid,
         network_mode=host_config.get("NetworkMode", ""),
         cpu_limit=(host_config.get("NanoCpus") or 0) / 1_000_000_000,
         memory_limit_mb=(host_config.get("Memory") or 0) // (1024 * 1024),
         pids_limit=host_config.get("PidsLimit") or 0,
-        storage_limit_mb=_tmpfs_storage_limit_mb(host_config),
+        storage_limit_mb=storage_mb,
+        scratch_mount_kind=scratch_kind,
+        scratch_source=scratch_source,
+        scratch_tmpfs=scratch_tmpfs,
+        oom_killed=bool(data.get("State", {}).get("OOMKilled", False)),
+        network_policy_label=_network_policy_label(host_config.get("NetworkMode", "")),
     )
 
 
@@ -185,7 +209,55 @@ def _network_policy_label(network_mode: str | None) -> str:
         return "network-none-no-egress-allowlist"
     if not network_mode:
         return "unknown"
-    return network_mode
+    result = _run(["docker", "network", "inspect", network_mode], timeout=_POLL_TIMEOUT_S)
+    if result.returncode != 0:
+        return "unknown"
+    try:
+        (network,) = json.loads(result.stdout)
+        options = network["Options"]
+        labels = network["Labels"]
+        interface = options["com.docker.network.bridge.name"]
+        host = labels["assay.egress.host"]
+        port = labels["assay.egress.port"]
+        if network["Driver"] != "bridge" or network.get("EnableIPv6") or network.get("Internal"):
+            return "unknown"
+        for chain in ("INPUT", "FORWARD"):
+            rules = _host_run(["iptables", "-S", chain])
+            if rules.returncode != 0:
+                return "unknown"
+            observed = [_firewall_rule_fields(line, chain) for line in rules.stdout.splitlines()]
+            allow = sorted(
+                (
+                    ("-i", interface),
+                    ("-p", "tcp"),
+                    ("-d", host),
+                    ("--dport", str(int(port))),
+                    ("-j", "ACCEPT"),
+                )
+            )
+            deny = sorted((("-i", interface), ("-j", "DROP")))
+            if allow not in observed or deny not in observed:
+                return "unknown"
+            if observed.index(allow) >= observed.index(deny):
+                return "unknown"
+    except (KeyError, ValueError, TypeError, IndexError, OSError):
+        return "unknown"
+    return f"egress-lan-host-port:{host}:{port}"
+
+
+def _firewall_rule_fields(line: str, chain: str) -> list[tuple[str, str]] | None:
+    """Normalize iptables -S flag order without losing rule order in the chain."""
+    tokens = shlex.split(line)
+    if tokens[:2] != ["-A", chain] or len(tokens[2:]) % 2:
+        return None
+    fields = []
+    for flag, value in zip(tokens[2::2], tokens[3::2], strict=True):
+        if (flag, value) == ("-m", "tcp"):
+            continue
+        if flag == "-d" and value.endswith("/32"):
+            value = value[:-3]
+        fields.append((flag, value))
+    return sorted(fields)
 
 
 def _container_count(name: str) -> int | None:
@@ -202,6 +274,53 @@ def _container_count(name: str) -> int | None:
 def _force_remove(name: str) -> bool:
     result = _run(["docker", "rm", "-f", name], timeout=_REMOVE_TIMEOUT_S)
     return result.returncode == 0
+
+
+def _host_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Host mount/firewall operations require root; fail closed without noninteractive sudo."""
+    command = args if os.geteuid() == 0 else ["sudo", "-n", *args]
+    return _run(command, timeout=_START_TIMEOUT_S)
+
+
+def _checked_host(args: list[str]) -> None:
+    result = _host_run(args)
+    if result.returncode != 0:
+        raise RuntimeError(f"host envelope setup failed: {args[0]}: {result.stderr.strip()}")
+
+
+def _firewall_rules(host: str, port: int) -> list[tuple[str, list[str]]]:
+    return [
+        (chain, rule)
+        for chain in ("INPUT", "FORWARD")
+        for rule in (
+            ["-p", "tcp", "-d", host, "--dport", str(port), "-j", "ACCEPT"],
+            ["-j", "DROP"],
+        )
+    ]
+
+
+class MountKindMismatchError(RuntimeError):
+    pass
+
+
+class StorageQuotaMismatchError(RuntimeError):
+    pass
+
+
+class NetworkPolicyMismatchError(RuntimeError):
+    pass
+
+
+class ReadOnlyMismatchError(RuntimeError):
+    pass
+
+
+class StorageExhaustedError(RuntimeError):
+    pass
+
+
+class MemoryLimitExceededError(RuntimeError):
+    pass
 
 
 class DockerTrialHandle:
@@ -236,12 +355,17 @@ class DockerTrialHandle:
         self._workdir = runs_root / name
         self._workspace = self._workdir / "workspace"
         self._submission = self._workdir / "submission"
+        self._scratch = self._workdir / "scratch"
+        self._quota_image = self._workdir / "scratch.ext4"
+        self._quota_mounted = False
+        self._network_name = f"{name}-lan"
+        self._network_interface = f"ap{name[-12:]}"[:15]
+        self._network_created = False
+        self._firewall_installed: list[tuple[str, list[str]]] = []
         for directory in (self._workspace, self._submission):
             directory.mkdir(parents=True, exist_ok=True)
         # /submission is writable by the container's uid 1000, which will
-        # not equal the runner's own uid on most real hosts. /scratch is a
-        # size-capped tmpfs (below), not a host directory -- there is
-        # nothing on the host to create or clean up for it.
+        # not equal the runner's own uid on most real hosts.
         self._submission.chmod(0o777)
         materialize_under(self._workspace, _mount_paths(package))
         self._cancel = threading.Event()
@@ -249,6 +373,91 @@ class DockerTrialHandle:
     def cancel(self) -> None:
         """Operator-initiated cancellation, observable by an in-flight ``run()``."""
         self._cancel.set()
+
+    def _prepare_quota(self, limits: TrialLimits) -> None:
+        self._scratch.mkdir()
+        self._quota_image.touch()
+        os.truncate(self._quota_image, limits.storage_mb * 1024 * 1024)
+        formatted = _run(
+            ["mkfs.ext4", "-F", "-q", str(self._quota_image)], timeout=_START_TIMEOUT_S
+        )
+        if formatted.returncode != 0:
+            raise RuntimeError(f"host envelope setup failed: mkfs.ext4: {formatted.stderr.strip()}")
+        _checked_host(
+            [
+                "mount",
+                "-t",
+                "ext4",
+                "-o",
+                "loop,nosuid,nodev",
+                str(self._quota_image),
+                str(self._scratch),
+            ]
+        )
+        self._quota_mounted = True
+        _checked_host(["chmod", "0777", str(self._scratch)])
+
+    def _prepare_network(self) -> None:
+        if self._request.network_policy != "egress-lan-host-port":
+            return
+        host = self._request.egress_host
+        port = self._request.egress_port
+        assert host is not None and port is not None
+        result = _run(
+            [
+                "docker",
+                "network",
+                "create",
+                "--driver",
+                "bridge",
+                "--opt",
+                f"com.docker.network.bridge.name={self._network_interface}",
+                "--label",
+                f"assay.egress.host={host}",
+                "--label",
+                f"assay.egress.port={port}",
+                self._network_name,
+            ],
+            timeout=_START_TIMEOUT_S,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"LAN network setup failed: {result.stderr.strip()}")
+        self._network_created = True
+        # Insert a per-interface deny rule first, then the single TCP exception.
+        # These rules cover traffic to the host (INPUT) and routed traffic
+        # (FORWARD); an IPv4 literal avoids a DNS escape path.
+        for chain in ("INPUT", "FORWARD"):
+            for rule in (
+                ["-j", "DROP"],
+                ["-p", "tcp", "-d", host, "--dport", str(port), "-j", "ACCEPT"],
+            ):
+                _checked_host(["iptables", "-I", chain, "1", "-i", self._network_interface, *rule])
+                self._firewall_installed.append((chain, rule))
+
+    def _assert_enforcement(self, observation: ContainerObservation | None) -> None:
+        if observation is None:
+            raise MountKindMismatchError("docker inspect did not confirm the trial mount")
+        if (
+            observation.scratch_mount_kind != "bind"
+            or observation.scratch_tmpfs
+            or observation.scratch_source != str(self._scratch)
+        ):
+            raise MountKindMismatchError("/scratch is not the inspected quota-backed bind mount")
+        if observation.storage_limit_mb != self._request.limits.storage_mb:
+            raise StorageQuotaMismatchError(
+                "inspected /scratch filesystem quota differs from storage_mb"
+            )
+        if not observation.read_only_root or observation.workspace_mount_read_only is not True:
+            raise ReadOnlyMismatchError("inspected root or baseline mount is writable")
+        expected = "network-none-no-egress-allowlist"
+        if self._request.network_policy == "egress-lan-host-port":
+            expected = (
+                f"egress-lan-host-port:{self._request.egress_host}:{self._request.egress_port}"
+            )
+        if observation.network_policy_label != expected:
+            raise NetworkPolicyMismatchError(
+                "inspected Docker network differs from the declared posture"
+            )
 
     def _docker_run_args(self, limits: TrialLimits) -> list[str]:
         args = [
@@ -260,12 +469,12 @@ class DockerTrialHandle:
             "--user",
             f"{_UID}:{_GID}",
             "--network",
-            "none",
+            self._network_name
+            if self._request.network_policy == "egress-lan-host-port"
+            else "none",
             "--read-only",
             "--tmpfs",
             "/tmp",
-            "--tmpfs",
-            f"/scratch:size={limits.storage_mb}m,uid={_UID},gid={_GID}",
             "--cpus",
             str(limits.cpu),
             "--memory",
@@ -287,6 +496,8 @@ class DockerTrialHandle:
             f"{self._workspace}:/workspace:ro",
             "-v",
             f"{self._submission}:/submission:rw",
+            "-v",
+            f"{self._scratch}:/scratch:rw",
             "--entrypoint",
             self._command[0],
             self._image,
@@ -295,9 +506,12 @@ class DockerTrialHandle:
         return args
 
     def run(self) -> TrialResult:
+        self._prepare_quota(self._request.limits)
+        self._prepare_network()
         start_result = _run(self._docker_run_args(self._request.limits), timeout=_START_TIMEOUT_S)
         if start_result.returncode != 0:
             raise RuntimeError(f"container failed to start: {start_result.stderr.strip()}")
+        self._assert_enforcement(_usable_observation(_inspect(self._name)))
         deadline = time.monotonic() + self._request.limits.timeout_s
         while True:
             if self._cancel.is_set():
@@ -315,6 +529,22 @@ class DockerTrialHandle:
             ["docker", "inspect", "--format", "{{.State.ExitCode}}", self._name],
             timeout=_POLL_TIMEOUT_S,
         )
+        observation = _usable_observation(_inspect(self._name))
+        self._assert_enforcement(observation)
+        assert observation is not None
+        if observation.oom_killed:
+            raise MemoryLimitExceededError("trial exceeded the memory cgroup ceiling")
+        if exit_code.stdout.strip() != "0":
+            logs = _run(["docker", "logs", self._name], timeout=_POLL_TIMEOUT_S)
+            if logs.returncode == 0 and "MemoryError" in logs.stdout + logs.stderr:
+                raise MemoryLimitExceededError("trial reported memory allocation failure")
+            # A full filesystem is only evidence of capacity, not evidence
+            # that the trial attempted a write which failed with ENOSPC.
+            if logs.returncode == 0 and any(
+                "/scratch" in line and ("No space left on device" in line or "[Errno 28]" in line)
+                for line in (logs.stdout + logs.stderr).splitlines()
+            ):
+                raise StorageExhaustedError("trial reported ENOSPC on /scratch")
         submission_file = self._submission / "output"
         if (
             exit_code.stdout.strip() != "0"
@@ -360,23 +590,31 @@ class DockerTrialHandle:
         self, observation: ContainerObservation | None, count: int | None
     ) -> EffectiveEnforcement:
         containers_remaining = count if count is not None else 1
-        limits = self._request.limits
         return EffectiveEnforcement(
-            uid=_UID,
-            gid=_GID,
+            uid=observation.uid if observation else 0,
+            gid=observation.gid if observation else 0,
             workspace_read_only=bool(observation.workspace_mount_read_only)
             if observation and observation.workspace_mount_read_only is not None
             else False,
+            root_read_only=observation.read_only_root if observation else False,
             submission_mount="/submission",
             scratch_mount="/scratch",
-            network_policy=_network_policy_label(observation.network_mode if observation else None),
-            cpu_limit=observation.cpu_limit if observation else limits.cpu,
-            memory_limit_mb=observation.memory_limit_mb if observation else limits.memory_mb,
-            pids_limit=observation.pids_limit if observation else limits.pids,
-            storage_limit_mb=observation.storage_limit_mb if observation else limits.storage_mb,
+            scratch_mount_kind=observation.scratch_mount_kind if observation else "unknown",
+            scratch_quota_mb=observation.storage_limit_mb if observation else 0,
+            network_policy=observation.network_policy_label if observation else "unknown",
+            cpu_limit=observation.cpu_limit if observation else 0,
+            memory_limit_mb=observation.memory_limit_mb if observation else 0,
+            pids_limit=observation.pids_limit if observation else 0,
+            storage_limit_mb=observation.storage_limit_mb if observation else 0,
             containers_remaining=containers_remaining,
             child_processes_remaining=0,
-            teardown_completed=containers_remaining == 0,
+            teardown_completed=(
+                containers_remaining == 0
+                and not self._firewall_installed
+                and not self._network_created
+                and not self._quota_mounted
+                and not self._workdir.exists()
+            ),
         )
 
     def teardown(self) -> EffectiveEnforcement:
@@ -388,7 +626,36 @@ class DockerTrialHandle:
             observation = None
         with contextlib.suppress(Exception):
             _force_remove(self._name)
-        shutil.rmtree(self._workdir, ignore_errors=True)
+        failed_rules: list[tuple[str, list[str]]] = []
+        for chain, rule in reversed(self._firewall_installed):
+            try:
+                removed = _host_run(["iptables", "-D", chain, "-i", self._network_interface, *rule])
+            except Exception:
+                failed_rules.append((chain, rule))
+            else:
+                if removed.returncode != 0:
+                    failed_rules.append((chain, rule))
+        self._firewall_installed = list(reversed(failed_rules))
+        if self._network_created:
+            try:
+                removed = _run(
+                    ["docker", "network", "rm", self._network_name], timeout=_REMOVE_TIMEOUT_S
+                )
+            except Exception:
+                pass
+            else:
+                if removed.returncode == 0:
+                    self._network_created = False
+        if self._quota_mounted:
+            try:
+                unmounted = _host_run(["umount", str(self._scratch)])
+            except Exception:
+                pass
+            else:
+                if unmounted.returncode == 0:
+                    self._quota_mounted = False
+        if not self._quota_mounted:
+            shutil.rmtree(self._workdir, ignore_errors=True)
         try:
             count = _container_count(self._name)
         except Exception:

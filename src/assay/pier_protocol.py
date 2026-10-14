@@ -17,6 +17,7 @@ one (see ``integrations/pier/README.md``).
 from __future__ import annotations
 
 import json
+from ipaddress import IPv4Address, IPv4Network
 from pathlib import PurePosixPath
 from typing import Final, Literal
 
@@ -30,6 +31,89 @@ MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
 MAX_ARTIFACT_COUNT = 1_024
 
 ArtifactKind = Literal["raw_trajectory", "candidate", "result", "configuration", "transcript"]
+NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
+TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.2.0"
+_LAN_NETWORKS = (
+    IPv4Network("10.0.0.0/8"),
+    IPv4Network("172.16.0.0/12"),
+    IPv4Network("192.168.0.0/16"),
+)
+
+
+class ModelRoute(WireModel):
+    endpoint: Literal["https://openrouter.ai/api/v1"] = "https://openrouter.ai/api/v1"
+    model: Literal["anthropic/claude-3-haiku"] = "anthropic/claude-3-haiku"
+    provider: Literal["amazon-bedrock"] = "amazon-bedrock"
+
+
+class TrialLimits(WireModel):
+    cpu: float = Field(gt=0, le=8, allow_inf_nan=False)
+    # Provisional bounds: replace from experiments/workflow_edit/SMOKE.md in wf-12.
+    memory_mb: int = Field(ge=64, le=8192)
+    pids: int = Field(ge=1, le=256)
+    timeout_s: float = Field(gt=0, le=1800, allow_inf_nan=False)
+    storage_mb: int = Field(ge=16, le=8192)
+
+    @model_validator(mode="after")
+    def separate_budgets(self) -> TrialLimits:
+        if self.memory_mb <= self.storage_mb:
+            raise ValueError("memory_mb must exceed storage_mb")
+        return self
+
+
+class TrialRequest(WireModel):
+    schema_version: Literal["assay-pier-trial/0.2.0"] = "assay-pier-trial/0.2.0"
+    cell_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*:w[0-9]+$")
+    package_digest: Sha256Ref
+    model_route: ModelRoute
+    limits: TrialLimits
+    verify: Literal[False] = False
+    network_policy: NetworkPolicy = "egress-openrouter-only"
+    egress_host: str | None = None
+    egress_port: int | None = Field(default=None, ge=1, le=65535)
+
+    @model_validator(mode="after")
+    def closed_egress(self) -> TrialRequest:
+        if self.network_policy == "egress-lan-host-port":
+            if self.egress_host is None or self.egress_port is None:
+                raise ValueError("LAN posture requires egress_host and egress_port")
+            try:
+                address = IPv4Address(self.egress_host)
+            except ValueError as error:
+                raise ValueError("egress_host must be a LAN IPv4 address") from error
+            if not any(address in network for network in _LAN_NETWORKS):
+                raise ValueError("egress_host must be a LAN IPv4 address")
+        elif self.egress_host is not None or self.egress_port is not None:
+            raise ValueError("egress_host and egress_port require the LAN posture")
+        return self
+
+
+class EffectiveEnforcement(WireModel):
+    uid: int = Field(ge=0)
+    gid: int = Field(ge=0)
+    workspace_read_only: bool
+    root_read_only: bool = False
+    submission_mount: str = Field(pattern=r"^/submission$")
+    scratch_mount: str = Field(pattern=r"^/scratch$")
+    scratch_mount_kind: str = "unknown"
+    scratch_quota_mb: int = Field(default=0, ge=0)
+    network_policy: str = Field(min_length=1)
+    cpu_limit: float = Field(ge=0, allow_inf_nan=False)
+    memory_limit_mb: int = Field(ge=0)
+    pids_limit: int = Field(ge=0)
+    storage_limit_mb: int = Field(ge=0)
+    containers_remaining: int = Field(ge=0)
+    child_processes_remaining: int = Field(ge=0)
+    teardown_completed: bool
+
+    @model_validator(mode="after")
+    def clean_teardown(self) -> EffectiveEnforcement:
+        if self.teardown_completed and (
+            self.containers_remaining != 0 or self.child_processes_remaining != 0
+        ):
+            raise ValueError("teardown cannot be complete with resources still remaining")
+        return self
+
 
 # The manifest is what binds artifacts; it is never one of them. A "manifest"
 # kind used to be required here and no honest bridge could satisfy it: the
@@ -158,9 +242,9 @@ class ArtifactManifest(WireModel):
     which is the only place actual artifact content is trusted.
     """
 
-    schema_version: Literal[
+    schema_version: Literal["assay-pier-artifact-manifest/0.1.0"] = (
         "assay-pier-artifact-manifest/0.1.0"
-    ] = "assay-pier-artifact-manifest/0.1.0"
+    )
     exchange: PierExchange
     entries: tuple[ArtifactEntry, ...]
     aggregate_bytes: int = Field(ge=0, le=MAX_AGGREGATE_ARTIFACT_BYTES, strict=True)
@@ -249,6 +333,7 @@ def reject_on_binding_mismatch(expected: RuntimeBinding, actual: RuntimeBinding)
 # Pier's own reported failure (a non-"succeeded" ``status``, a set
 # ``error_type``, or a missing ``submission_ref``) is independently terminal.
 SUCCEEDED_EXIT_STATUS = "Submitted"
+
 
 # The real bridge's ``TrialResult`` (integrations/pier's
 # ``assay_pier_bridge.protocol.TrialResult``) has no top-level field for
