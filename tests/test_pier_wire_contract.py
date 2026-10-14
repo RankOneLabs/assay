@@ -28,8 +28,11 @@ from assay.pier_protocol import (
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
     CandidateCause,
+    CandidateFailure,
+    CandidateSubmission,
     EffectiveEnforcement,
     InfrastructureCause,
+    InfrastructureFailure,
     NetworkPolicy,
     TrialLimits,
     TrialRequest,
@@ -55,6 +58,11 @@ def test_trial_envelope_revision_matches_the_shared_fixture() -> None:
     assert request.schema_version == envelope["schema_version"]
     assert set(get_args(CandidateCause)) == set(envelope["candidate_causes"])
     assert set(get_args(InfrastructureCause)) == set(envelope["infrastructure_causes"])
+    assert {
+        kind
+        for outcome in (CandidateSubmission, CandidateFailure, InfrastructureFailure)
+        for kind in get_args(outcome.model_fields["kind"].annotation)
+    } == set(envelope["result_outcomes"])
 
 
 @pytest.mark.parametrize(
