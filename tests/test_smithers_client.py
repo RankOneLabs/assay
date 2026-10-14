@@ -188,3 +188,28 @@ async def test_acceptance_budget_excludes_queue_time(tmp_path: Path) -> None:
     assert isinstance(result, WorkerFailure)
     assert result.error_type == "AcceptanceDeadlineExceeded"
     assert client.diagnostics()["queue_latency_seconds"] == 120.0
+
+
+async def test_running_job_uses_recorded_completion_clock(tmp_path: Path) -> None:
+    factory = _factory(tmp_path)
+    client = factory.create(idempotency_key="cell-1")
+    polls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        if request.method == "POST":
+            return httpx.Response(200, json={"job_id": "job-1"})
+        polls += 1
+        if polls == 1:
+            return httpx.Response(
+                200, json={**_job(), "status": "running", "completed_at": None, "result": None}
+            )
+        return httpx.Response(200, json=_job())
+
+    client._http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    try:
+        result = await client.complete_result(_params())
+    finally:
+        await client.aclose()
+    assert not isinstance(result, WorkerFailure)
+    assert polls == 2

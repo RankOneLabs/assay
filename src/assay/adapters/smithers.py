@@ -220,7 +220,12 @@ class SmithersClient(DispatchClient, DescribedClient):
             return None
         started = datetime.fromisoformat(started_raw)
         completed_raw = job.get("completed_at")
-        completed = datetime.fromisoformat(completed_raw) if completed_raw else datetime.now(UTC)
+        if completed_raw is None:
+            # Smithers timestamps are naive wall-clock values. Comparing one
+            # against this client's clock would make host timezone/skew count
+            # against the cell. Smithers enforces the live timeout itself.
+            return None
+        completed = datetime.fromisoformat(completed_raw)
         if created.tzinfo is None:
             created = created.replace(tzinfo=UTC)
         if started.tzinfo is None:
