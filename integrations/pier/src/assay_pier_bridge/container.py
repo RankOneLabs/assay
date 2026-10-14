@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from assay_pier_bridge.evidence import seal_artifacts, worker_usage_from_result_bytes
+from assay_pier_bridge.evidence import worker_usage_from_result_bytes
 from assay_pier_bridge.identity import canonical_json
 from assay_pier_bridge.identity import digest_bytes as _digest
 from assay_pier_bridge.identity import package_digest as package_digest
@@ -52,6 +52,7 @@ from assay_pier_bridge.runtime import (
     InfrastructureTrialError,
     TrialCancelledError,
     TrialTimeoutError,
+    seal_observed_artifacts,
 )
 
 _UID = 1000
@@ -684,7 +685,12 @@ class DockerTrialHandle:
         # The worker's own counts, if it reported any. This cell has no
         # pricing model, so the cost stays unobserved rather than zero.
         usage = worker_usage_from_result_bytes(artifacts["result.json"])
-        artifacts = seal_artifacts(self._request.exchange, artifacts)
+        artifacts = seal_observed_artifacts(
+            self._request.exchange,
+            artifacts,
+            regular_tree(self._working_copy),
+            patch.final_tree_digest,
+        )
         (self._submission / MANIFEST_PATH).write_bytes(artifacts[MANIFEST_PATH])
         return TrialResult(
             cell_id=self._request.cell_id,

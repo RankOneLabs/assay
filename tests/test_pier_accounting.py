@@ -36,6 +36,7 @@ from assay.pier_protocol import (
     CandidateSubmission,
     PierExchange,
     RuntimeBinding,
+    candidate_tree_digest,
 )
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
@@ -64,13 +65,39 @@ def _manifest_and_artifacts(exchange: PierExchange) -> tuple[ArtifactManifest, d
     """
     contents = {
         "raw_trajectory.json": b'{"steps": []}',
-        "candidate.txt": b"final answer",
+        "candidate-index.json": canonical_json(["a.py", "b.py"]),
+        "candidate_files/a.py": b"final answer\n",
+        "candidate_files/b.py": b"more output\n",
+        "candidate.patch": b"patch bytes",
+        "tree-digest.txt": b"",
         "result.json": b'{"passed": true, "exit_status": "Submitted"}',
         "configuration.json": b'{"model": "x"}',
     }
+    candidate_entries = tuple(
+        ArtifactEntry(
+            path=path,
+            kind="candidate",
+            size_bytes=len(contents[path]),
+            checksum=digest_bytes(contents[path]),
+            utf8=True,
+        )
+        for path in ("candidate-index.json", "candidate_files/a.py", "candidate_files/b.py")
+    )
+    candidate_manifest = ArtifactManifest(
+        exchange=exchange,
+        entries=candidate_entries,
+        aggregate_bytes=sum(entry.size_bytes for entry in candidate_entries),
+    )
+    contents["tree-digest.txt"] = candidate_tree_digest(
+        candidate_manifest, artifact_bytes=contents
+    ).encode("ascii")
     kinds = {
         "raw_trajectory.json": "raw_trajectory",
-        "candidate.txt": "candidate",
+        "candidate-index.json": "candidate",
+        "candidate_files/a.py": "candidate",
+        "candidate_files/b.py": "candidate",
+        "candidate.patch": "patch",
+        "tree-digest.txt": "tree_digest",
         "result.json": "result",
         "configuration.json": "configuration",
     }
@@ -122,8 +149,8 @@ class _FixedBridge:
             BridgeTrialResult(
                 exchange=exchange,
                 outcome=CandidateSubmission(
-                    patch_ref=digest_bytes(artifacts["candidate.txt"]),
-                    tree_digest="sha256:" + "0" * 64,
+                    patch_ref=digest_bytes(artifacts["candidate.patch"]),
+                    tree_digest=artifacts["tree-digest.txt"].decode("ascii"),
                     baseline_tree_digest="sha256:" + "0" * 64,
                 ),
                 usage=self.usage,
@@ -224,18 +251,21 @@ async def test_repository_entry_with_traversal_path_is_rejected(tmp_path: Path) 
 
 
 async def test_submission_ref_mismatched_with_candidate_bytes_is_rejected(tmp_path: Path) -> None:
-    """A bridge that reports success for a submission_ref not matching the
-    declared candidate bytes must not be accepted."""
+    """A bridge that reports a tree digest unlike its manifest-bound candidate
+    files must reach the SubmissionMismatch gate and be rejected."""
 
     class _LyingBridge:
         def create(self, *, exchange: PierExchange, package: dict[str, str]) -> PierBridgeHandle:
-            _, artifacts = _manifest_and_artifacts(exchange)
+            manifest, artifacts = _manifest_and_artifacts(exchange)
+            assert candidate_tree_digest(manifest, artifact_bytes=artifacts) == artifacts[
+                "tree-digest.txt"
+            ].decode("ascii")
             return _Handle(
                 BridgeTrialResult(
                     exchange=exchange,
                     outcome=CandidateSubmission(
-                        patch_ref="sha256:" + "9" * 64,
-                        tree_digest="sha256:" + "0" * 64,
+                        patch_ref=digest_bytes(artifacts["candidate.patch"]),
+                        tree_digest="sha256:" + "9" * 64,
                         baseline_tree_digest="sha256:" + "0" * 64,
                     ),
                     usage=None,

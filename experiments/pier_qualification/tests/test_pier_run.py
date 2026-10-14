@@ -27,7 +27,13 @@ from assay._version import __version__
 from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult, PierBridgeHandle
 from assay.canonical import canonical_json, digest_bytes
 from assay.models import ReportConfig, RunManifest, StatisticalProfile
-from assay.pier_protocol import ArtifactEntry, ArtifactManifest, CandidateSubmission, PierExchange
+from assay.pier_protocol import (
+    ArtifactEntry,
+    ArtifactManifest,
+    CandidateSubmission,
+    PierExchange,
+    candidate_tree_digest,
+)
 from assay.references import reference_closure
 from assay.report_engine import ReportError, build_report
 from assay.store import ObjectStore
@@ -74,13 +80,37 @@ def _qualified_inventory_ref(store: ObjectStore) -> str:
 def _manifest_and_artifacts(exchange: PierExchange) -> tuple[ArtifactManifest, dict[str, bytes]]:
     contents = {
         "raw_trajectory.json": b'{"steps": ["thought", "action", "submit"]}',
-        "candidate.txt": b"def solve():\n    return 42\n",
+        "candidate-index.json": canonical_json(["solve.py"]),
+        "candidate_files/solve.py": b"def solve():\n    return 42\n",
+        "candidate.patch": b"patch evidence",
+        "tree-digest.txt": b"",
         "result.json": b'{"passed": true, "exit_status": "Submitted"}',
         "configuration.json": b'{"model": "anthropic/claude-3-haiku"}',
     }
+    candidate_entries = tuple(
+        ArtifactEntry(
+            path=path,
+            kind="candidate",
+            size_bytes=len(contents[path]),
+            checksum=digest_bytes(contents[path]),
+            utf8=True,
+        )
+        for path in ("candidate-index.json", "candidate_files/solve.py")
+    )
+    candidate_manifest = ArtifactManifest(
+        exchange=exchange,
+        entries=candidate_entries,
+        aggregate_bytes=sum(entry.size_bytes for entry in candidate_entries),
+    )
+    contents["tree-digest.txt"] = candidate_tree_digest(
+        candidate_manifest, artifact_bytes=contents
+    ).encode("ascii")
     kinds = {
         "raw_trajectory.json": "raw_trajectory",
-        "candidate.txt": "candidate",
+        "candidate-index.json": "candidate",
+        "candidate_files/solve.py": "candidate",
+        "candidate.patch": "patch",
+        "tree-digest.txt": "tree_digest",
         "result.json": "result",
         "configuration.json": "configuration",
     }
@@ -122,8 +152,8 @@ class _AlwaysSucceedsBridge:
             BridgeTrialResult(
                 exchange=exchange,
                 outcome=CandidateSubmission(
-                    patch_ref=digest_bytes(artifacts["candidate.txt"]),
-                    tree_digest="sha256:" + "0" * 64,
+                    patch_ref=digest_bytes(artifacts["candidate.patch"]),
+                    tree_digest=artifacts["tree-digest.txt"].decode("ascii"),
                     baseline_tree_digest="sha256:" + "0" * 64,
                 ),
                 usage={"cost_usd": 0.72, "prompt_tokens": 100, "completion_tokens": 50},
@@ -167,6 +197,8 @@ async def test_full_successful_smoke_run_publishes_evidence_reachable_from_closu
         output = json.loads(store.read_bytes(outcome["output_ref"]))
         for key in (
             "candidate_ref",
+            "patch_ref",
+            "tree_digest_ref",
             "raw_trajectory_ref",
             "result_ref",
             "configuration_ref",

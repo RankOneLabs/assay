@@ -63,12 +63,15 @@ file bytes, NUL. Applying the patch to the arm baseline must reproduce that
 digest. Evidence is read from the host-visible working copy before teardown.
 
 Every trial request carries the authorized exchange (cell coordinate, runtime
-binding, and trial name). On success, the bridge writes `manifest.json` after
-collecting the host-observed `candidate.patch`, trajectory, result, and
-resolved configuration. Its entries bind each artifact's path, kind, byte
+binding, and trial name). On Docker trial success, the bridge writes `manifest.json` after
+collecting the host-observed candidate files, `candidate.patch`, final tree
+digest, trajectory, result, and resolved configuration. The candidate index
+lists every file in the final working tree, including an empty list for a
+no-op submission. Its entries bind each artifact's path, kind, byte
 length, SHA-256 digest, and UTF-8 status to that exchange; the manifest never
-declares itself. Assay verifies those bytes and requires the candidate entry's
-digest to equal `outcome.patch_ref` before settling a success. The guarded
+declares itself. Assay verifies those bytes, recomputes the tree digest from
+the candidate file entries, and requires both that digest and the patch digest
+to match the outcome before settling a success. The guarded
 single-call host route records any nonempty submitted source as an `output`
 file in its writable working copy, then derives the patch from that tree; a
 blank source leaves the working copy unchanged. Rejected working-copy bytes

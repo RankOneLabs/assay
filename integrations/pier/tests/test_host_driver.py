@@ -10,14 +10,19 @@ from typing import Any
 
 import httpx
 import pytest
-from assay_pier_bridge.evidence import ArtifactManifest
 from assay_pier_bridge.host_driver import (
     GuardedCompletionTrialClient,
     GuardedCompletionTrialHandle,
 )
 from assay_pier_bridge.identity import digest_bytes, package_digest
 from assay_pier_bridge.paths import tree_digest
-from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest
+from assay_pier_bridge.protocol import (
+    REQUIRED_SUCCESS_KINDS,
+    ArtifactManifest,
+    ModelRoute,
+    TrialLimits,
+    TrialRequest,
+)
 from assay_pier_bridge.provider import MODEL, PROVIDER_NAME, GuardedOpenRouterClient
 from assay_pier_bridge.runtime import BridgeRuntime
 from test_support import exchange_for
@@ -106,13 +111,13 @@ def test_a_trial_succeeds_with_the_container_network_permanently_off(
     assert result.outcome.tree_digest == tree_digest({"output": b"answer = 42"})
     manifest = ArtifactManifest.model_validate_json(result.artifacts["manifest.json"])
     assert manifest.exchange == _request().exchange
-    assert manifest.entries[0].checksum == digest_bytes(result.artifacts[manifest.entries[0].path])
-    assert {entry.kind for entry in manifest.entries} == {
-        "raw_trajectory",
-        "candidate",
-        "result",
-        "configuration",
-    }
+    assert all(
+        entry.checksum == digest_bytes(result.artifacts[entry.path]) for entry in manifest.entries
+    )
+    assert {entry.kind for entry in manifest.entries} >= REQUIRED_SUCCESS_KINDS
+    assert result.artifacts["candidate-index.json"] == b'["output"]'
+    assert result.artifacts["candidate_files/output"] == b"answer = 42"
+    assert result.artifacts["tree-digest.txt"] == result.outcome.tree_digest.encode("ascii")
 
 
 def test_blank_submission_is_a_manifest_bound_no_op(
@@ -140,8 +145,10 @@ def test_blank_submission_is_a_manifest_bound_no_op(
     assert result.outcome.patch_ref == digest_bytes(b"")
     assert result.outcome.tree_digest == result.outcome.baseline_tree_digest
     manifest = ArtifactManifest.model_validate_json(result.artifacts["manifest.json"])
-    candidate = next(entry for entry in manifest.entries if entry.kind == "candidate")
-    assert candidate.checksum == result.outcome.patch_ref
+    patch_entry = next(entry for entry in manifest.entries if entry.kind == "patch")
+    assert patch_entry.checksum == result.outcome.patch_ref
+    assert result.artifacts["candidate-index.json"] == b"[]"
+    assert result.artifacts["tree-digest.txt"] == result.outcome.tree_digest.encode("ascii")
 
 
 @pytest.mark.parametrize("violation", ["symlink_submission", "tampering"])
