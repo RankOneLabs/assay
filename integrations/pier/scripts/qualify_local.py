@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import re
 import subprocess
@@ -215,6 +216,12 @@ def probe_smoke_binding(
     raw = json.loads(inspected.stdout)[0]
     if raw["State"]["ExitCode"] != 0 or raw["HostConfig"]["NetworkMode"] != "none":
         raise QualificationFailed("smoke_binding", "offline trial did not complete successfully")
+    work_mounts = [
+        mount for mount in raw.get("Mounts", [])
+        if mount.get("Destination") == "/work" and mount.get("Type") == "bind"
+    ]
+    if len(work_mounts) != 1 or Path(work_mounts[0]["Source"]).resolve() != fixture_dir.resolve():
+        raise QualificationFailed("smoke_binding", "fixture does not match inspected /work mount")
     image = _run(["docker", "image", "inspect", "--format", "{{.Id}}", image_tag], timeout=10)
     if image.returncode != 0 or raw["Image"] != image.stdout.strip():
         raise QualificationFailed("smoke_binding", "container image digest does not match")
@@ -246,7 +253,9 @@ def probe_smoke_binding(
         "trajectory.json": json.dumps({"docker_log": logs.stdout}).encode(),
         "candidate.patch": b"",
         "result.json": json.dumps({"exit_code": raw["State"]["ExitCode"]}).encode(),
-        "configuration.json": json.dumps({"network": "none", "image": raw["Image"]}).encode(),
+        "configuration.json": json.dumps({
+            "network": "none", "image": raw["Image"], "container_id": raw["Id"],
+        }).encode(),
     }
     sealed = seal_observed_artifacts(exchange, artifacts, files, digest)
     return {
@@ -255,6 +264,11 @@ def probe_smoke_binding(
         "artifact_count": len(sealed) - 1,
         "manifest_digest": digest_bytes(sealed["manifest.json"]),
         "tree_digest": digest,
+        "container_id": raw["Id"],
+        "mount_source": work_mounts[0]["Source"],
+        "artifacts_base64": {
+            name: base64.b64encode(content).decode("ascii") for name, content in sealed.items()
+        },
     }
 
 

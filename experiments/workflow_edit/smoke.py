@@ -8,6 +8,9 @@ number to a completed SMOKE report.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
+import hashlib
 import json
 import math
 import statistics
@@ -17,6 +20,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from assay.investigations.workflow_correctness import workflow_tree_digest
 from assay.repository import validate_repository
 from workflow_edit.settings import SMOKE_SUBJECT_ID
 
@@ -25,6 +29,19 @@ SUBJECT_ID = SMOKE_SUBJECT_ID
 SOURCE_PATH = "src/domain/artifact-types.ts"
 MAX_REPOSITORY_FILES = 200
 MAX_REPOSITORY_BYTES = 1_000_000
+SMOKE_CHECKS = (
+    ("install", "node /usr/local/lib/node_modules/npm/bin/npm-cli.js ci --offline "
+     "--ignore-scripts --no-audit --no-fund --no-bin-links"),
+    ("typecheck", "node node_modules/typescript/bin/tsc --noEmit --strict "
+     "--target es2022 --module commonjs src/domain/artifact-types.ts"),
+    ("compile", "node node_modules/typescript/bin/tsc --target es2022 "
+     "--module commonjs --outDir dist src/domain/artifact-types.ts"),
+    ("test", "node --test tests/artifact-types.test.cjs"),
+)
+
+
+def _digest(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
 
 PACKAGE_JSON = json.dumps(
     {
@@ -232,6 +249,85 @@ def _require_inspect(value: Any) -> Mapping[str, Any]:
     return raw
 
 
+def _verified_binding(
+    value: Any, inspected: Mapping[str, Any], snapshot: Mapping[str, str],
+    fixture_manifest: Mapping[str, Any],
+) -> dict[str, str]:
+    if not isinstance(value, dict) or value.get("client") != "qualify_local.py + docker inspect":
+        raise ValueError("harness-sealed binding evidence is required")
+    if value.get("container_id") != inspected.get("Id"):
+        raise ValueError("binding container differs from inspected trial")
+    mount = [
+        item for item in inspected.get("Mounts", [])
+        if item.get("Destination") == "/work" and item.get("Type") == "bind"
+    ]
+    if len(mount) != 1 or mount[0].get("Source") != value.get("mount_source"):
+        raise ValueError("binding fixture mount differs from inspected trial")
+    encoded = value.get("artifacts_base64")
+    if not isinstance(encoded, dict) or not all(
+        isinstance(name, str) and isinstance(data, str) for name, data in encoded.items()
+    ):
+        raise ValueError("binding artifacts are missing")
+    try:
+        artifacts = {
+            name: base64.b64decode(data, validate=True) for name, data in encoded.items()
+        }
+        if value.get("artifact_count") != len(artifacts) - 1:
+            raise ValueError("binding artifact count differs")
+        manifest_bytes = artifacts["manifest.json"]
+        sealed = json.loads(manifest_bytes)
+        if not isinstance(sealed, dict):
+            raise ValueError("binding manifest must be an object")
+        entries = sealed["entries"]
+        if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+            raise ValueError("binding entries must be objects")
+        declared = {entry["path"]: entry for entry in entries}
+    except (ValueError, KeyError, TypeError, binascii.Error) as error:
+        raise ValueError("binding artifacts are invalid") from error
+    if (sealed.get("schema_version") != "assay-pier-artifact-manifest/0.2.0"
+            or set(declared) != set(artifacts) - {"manifest.json"}
+            or len(declared) != len(entries)):
+        raise ValueError("binding manifest does not describe sealed artifacts")
+    if any(
+        entry.get("size_bytes") != len(artifacts[name])
+        or entry.get("checksum") != _digest(artifacts[name])
+        for name, entry in declared.items()
+    ) or sealed.get("aggregate_bytes") != sum(
+        len(data) for name, data in artifacts.items() if name != "manifest.json"
+    ):
+        raise ValueError("binding artifact checksums differ")
+    if _digest(manifest_bytes) != value.get("manifest_digest"):
+        raise ValueError("binding manifest digest differs")
+    try:
+        configuration = json.loads(artifacts["configuration.json"])
+        result = json.loads(artifacts["result.json"])
+        index = json.loads(artifacts["candidate-index.json"])
+        sealed_files = {
+            name.removeprefix("candidate_files/"): data
+            for name, data in artifacts.items() if name.startswith("candidate_files/")
+        }
+    except (KeyError, ValueError) as error:
+        raise ValueError("binding required artifacts are missing") from error
+    if configuration != {
+        "network": "none", "image": inspected["Image"], "container_id": inspected["Id"],
+    } or result != {"exit_code": inspected["State"]["ExitCode"]}:
+        raise ValueError("binding trial identity differs from docker inspect")
+    if index != sorted(snapshot, key=lambda path: path.encode("utf-8")) or sealed_files != {
+        name: content.encode("utf-8") for name, content in snapshot.items()
+    }:
+        raise ValueError("binding candidate files differ from the package snapshot")
+    tree = workflow_tree_digest(snapshot)
+    exchange = sealed.get("exchange")
+    runtime_binding = exchange.get("binding") if isinstance(exchange, dict) else None
+    if (artifacts.get("tree-digest.txt") != tree.encode("ascii")
+            or value.get("tree_digest") != tree
+            or not isinstance(runtime_binding, dict)
+            or runtime_binding.get("image_digest") != inspected["Image"]
+            or tree != fixture_manifest["per_arm_tree_digests"]["mess-00"]):
+        raise ValueError("binding tree or runtime image differs from fixture manifest")
+    return {"manifest_digest": _digest(manifest_bytes), "tree_digest": tree}
+
+
 def _publication_metrics(evidence: Mapping[str, Any]) -> dict[str, Any]:
     """Derive every report number from inspected Docker and raw trial records."""
     inspected = _require_inspect(evidence.get("container"))
@@ -261,9 +357,6 @@ def _publication_metrics(evidence: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("qualification requires 20 dispatches")
     if len({record.get("cell_id") for record in records if isinstance(record, dict)}) != 20:
         raise ValueError("qualification requires 20 distinct cell ids")
-    request_counts = [record.get("requests") for record in records]
-    if all(type(count) is int for count in request_counts) and sum(request_counts) < 2:
-        raise ValueError("single-model-request trials cannot be published")
     requests: list[dict[str, Any]] = []
     peaks: list[dict[str, Any]] = []
     request_peaks: list[dict[str, Any]] = []
@@ -279,34 +372,46 @@ def _publication_metrics(evidence: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("model trial requires raw events and tool messages")
         model_events = [item for item in events if item.get("kind") == "model_request"]
         peak_events = [item for item in events if item.get("kind") == "cgroup_peaks"]
-        if (len(model_events) < 1 or len(model_events) != record.get("requests")
+        if (len(model_events) < 2 or len(model_events) != record.get("requests")
                 or len(peak_events) != 1):
-            raise ValueError("model requests and cgroup peaks require one observed trace")
-        if not any(item.get("kind") == "submitted" for item in events):
+            raise ValueError("each cell requires a multi-model-request trace and cgroup peaks")
+        if [item.get("turn") for item in model_events] != list(range(1, len(model_events) + 1)):
+            raise ValueError("model request turns are inconsistent")
+        if not any(item.get("kind") == "submitted" and item.get("turn", 0) >= 2
+                   for item in events):
             raise ValueError("model loop did not submit a completion")
+        checks = [item for item in events if item.get("kind") == "harness_check"]
+        if [(item.get("step"), item.get("command")) for item in checks] != list(SMOKE_CHECKS):
+            raise ValueError("harness-controlled smoke checks are missing")
+        if max(events.index(item) for item in checks) >= events.index(model_events[0]):
+            raise ValueError("harness checks must precede model dispatch")
+        if any(item.get("exit_code") != 0 or not isinstance(item.get("output"), str)
+               or not item["output"].startswith("exit=0\n") for item in checks):
+            raise ValueError("harness-controlled smoke check failed")
+        if "# pass 1" not in checks[-1]["output"]:
+            raise ValueError("harness-controlled smoke test did not pass")
         tools = [item for item in messages if item.get("role") == "tool"]
         if not tools or not all(isinstance(item.get("content"), str) for item in tools):
             raise ValueError("qualification tool output is missing")
-        tool_results = {item.get("tool_call_id"): item["content"] for item in tools}
+        assistant_positions = [index for index, item in enumerate(messages)
+                               if item.get("role") == "assistant"]
+        first_calls = (
+            messages[assistant_positions[0]].get("tool_calls", [])
+            if assistant_positions else []
+        )
+        first_ids = {call.get("id") for call in first_calls if isinstance(call, dict)}
+        if (len(assistant_positions) != len(model_events)
+                or any(call.get("function", {}).get("name") == "submit_output"
+                       for call in first_calls)
+                or not any(
+                    messages[index].get("role") == "tool"
+                    and messages[index].get("tool_call_id") in first_ids
+                    for index in range(assistant_positions[0] + 1, assistant_positions[1])
+                )):
+            raise ValueError("each cell requires a model/tool/model round trip")
         failed_tool_calls += sum(
             not item["content"].startswith("exit=0\n") for item in tools
         )
-        assistant_calls = [
-            call
-            for item in messages if item.get("role") == "assistant"
-            for call in item.get("tool_calls", [])
-        ]
-        if not any(
-            call.get("function", {}).get("name") == "run_command"
-            and all(
-                part in json.loads(call["function"]["arguments"]).get("command", "")
-                for part in ("ci --offline", "--no-bin-links", "--noEmit --strict", "node --test")
-            )
-            and tool_results.get(call.get("id"), "").startswith("exit=0\n")
-            and "# pass 1" in tool_results.get(call.get("id"), "")
-            for call in assistant_calls
-        ):
-            raise ValueError("qualification did not run install, typecheck, and test")
         for item in model_events:
             if item.get("billing") != "uncertain" or not isinstance(
                 item.get("smithers_job_id"), str
@@ -358,7 +463,14 @@ def _publication_metrics(evidence: Mapping[str, Any]) -> dict[str, Any]:
     )
     if sorted(package) != manifest["included_paths"]:
         raise ValueError("package paths differ from the pinned smoke manifest")
+    if workflow_tree_digest(package) != manifest["per_arm_tree_digests"]["mess-00"]:
+        raise ValueError("package snapshot differs from the pinned tree digest")
+    for name, expected in manifest["dependency_lock_digests"].items():
+        if name not in package or _digest(package[name].encode("utf-8")) != expected:
+            raise ValueError("package dependency lock digest differs")
+    binding = _verified_binding(evidence.get("binding"), inspected, package, manifest)
     return {
+        "binding": binding,
         "requests": requests, "peaks": peaks, "request_peaks": request_peaks,
         "package_files": len(package),
         "package_bytes": sum(len(content.encode()) for content in package.values()),
@@ -393,6 +505,14 @@ def publish(evidence_path: Path, output_path: Path) -> None:
     if container.get("raw") != actual:
         raise ValueError("container evidence differs from live docker inspect")
     metrics = _publication_metrics(evidence)
+    artifacts = evidence["binding"]["artifacts_base64"]
+    observed_log = subprocess.run(
+        ["docker", "logs", container_id], capture_output=True, text=True, check=True,
+    )
+    if json.loads(base64.b64decode(artifacts["trajectory.json"])) != {
+        "docker_log": observed_log.stdout
+    }:
+        raise ValueError("sealed Docker log differs from inspected trial")
     inspected = evidence["container"]["raw"]
     lines = [
         "# Workflow edit smoke qualification", "",
@@ -404,11 +524,10 @@ def publish(evidence_path: Path, output_path: Path) -> None:
         "",
         "## Artifact binding", "",
         "`qualify_local.py` authored the artifact manifest over the observed offline "
-        "container files. Its manifest digest is "
-        "`sha256:eadc54eb67105b18d1110a5e7704a2385e06257ab27c557523945b72b086a5a7`; "
-        "the observed tree digest is "
-        "`sha256:430aa657221810315c5e65a54bab86cbe335f21e8be41da93b34dc792a859e8f` "
-        "(client: `qualify_local.py`).",
+        "container files. Its verified manifest digest is "
+        f"`{metrics['binding']['manifest_digest']}`; "
+        f"the observed tree digest is `{metrics['binding']['tree_digest']}` "
+        "(client: `qualify_local.py` and `docker inspect`).",
         "",
         "## Container and package footprint", "",
         f"- Docker writable layer: {inspected['SizeRw']} bytes (`docker inspect`).",
@@ -434,7 +553,7 @@ def publish(evidence_path: Path, output_path: Path) -> None:
         "",
         "## Model and dispatch measurements", "",
         f"- Completed dispatches: 20 of 20; failure rate {metrics['failure_rate']:.0%} "
-        "(Pier trial records and successful tool/test output).",
+        "(Pier trial records and harness-controlled install/typecheck/test results).",
         f"- Nonfatal failed tool calls: {metrics['failed_tool_calls']} "
         "(Pier container tool output); these were attempts to invoke "
         "`submit_output` as a shell command before the model used the proper tool.",
@@ -456,7 +575,7 @@ def publish(evidence_path: Path, output_path: Path) -> None:
         "- An earlier preflight command failed under the read-only runtime when npm "
         "tried to chmod a linked tool. The measured run used `npm ci --offline "
         "--no-bin-links`; every install/typecheck/test command exited successfully "
-        "(Pier container tool output).",
+        "(Pier harness check events).",
         "",
         "| Smithers job ID | Prompt tokens (Smithers worker) | Completion tokens "
         "(Smithers worker) | Wall s from acceptance (Smithers dispatch) | Queue s "

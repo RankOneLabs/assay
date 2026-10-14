@@ -46,6 +46,16 @@ SYSTEM_PROMPT = (
     "are never available. Do not seek network access or install packages."
 )
 
+SMOKE_CHECKS: tuple[tuple[str, str], ...] = (
+    ("install", "node /usr/local/lib/node_modules/npm/bin/npm-cli.js ci --offline "
+     "--ignore-scripts --no-audit --no-fund --no-bin-links"),
+    ("typecheck", "node node_modules/typescript/bin/tsc --noEmit --strict "
+     "--target es2022 --module commonjs src/domain/artifact-types.ts"),
+    ("compile", "node node_modules/typescript/bin/tsc --target es2022 "
+     "--module commonjs --outDir dist src/domain/artifact-types.ts"),
+    ("test", "node --test tests/artifact-types.test.cjs"),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class LoopBounds:
@@ -256,14 +266,17 @@ class DockerToolSandbox:
         if started.returncode:
             self._failed_start(started.returncode)
         if tmpfs_storage:
-            archive = io.BytesIO()
-            with tarfile.open(fileobj=archive, mode="w") as stream:
-                for path in sorted(workspace.rglob("*")):
-                    stream.add(path, arcname=path.relative_to(workspace), recursive=False)
-            copied = subprocess.run(
-                ["docker", "exec", "-i", self.name, "tar", "-x", "-C", "/workspace"],
-                input=archive.getvalue(), capture_output=True, timeout=30, check=False,
-            )
+            try:
+                archive = io.BytesIO()
+                with tarfile.open(fileobj=archive, mode="w") as stream:
+                    for path in sorted(workspace.rglob("*")):
+                        stream.add(path, arcname=path.relative_to(workspace), recursive=False)
+                copied = subprocess.run(
+                    ["docker", "exec", "-i", self.name, "tar", "-x", "-C", "/workspace"],
+                    input=archive.getvalue(), capture_output=True, timeout=30, check=False,
+                )
+            except Exception as error:
+                self._failed_start(-1, cause=error)
             if copied.returncode:
                 self._failed_start(copied.returncode)
 
@@ -281,6 +294,11 @@ class DockerToolSandbox:
             memory_peak, pids_peak = int(values[1]), int(values[2])
         except ValueError as error:
             raise RuntimeError("cgroup_peak_observation") from error
+        for path in self._workspace.iterdir():
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
         copied = subprocess.run(
             ["docker", "cp", f"{self.name}:/workspace/.", str(self._workspace)],
             capture_output=True, text=True, timeout=30, check=False,
@@ -499,6 +517,7 @@ class RepositoryAgentClient:
     image: str
     runs_root: Path
     model_route: ModelRoute = field(default_factory=ModelRoute)
+    qualify_smoke: bool = False
     bounds: LoopBounds = field(default_factory=LoopBounds)
     transport: httpx.BaseTransport | None = None
     sandbox_factory: SandboxFactory = DockerToolSandbox
@@ -507,6 +526,8 @@ class RepositoryAgentClient:
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
     def __post_init__(self) -> None:
+        if self.qualify_smoke and self.model_route.paid_route_reachable:
+            raise ValueError("smoke qualification requires the local route")
         if self.model_route.paid_route_reachable and (
             not self.api_key or any(char.isspace() for char in self.api_key)
         ):
@@ -598,6 +619,24 @@ class RepositoryAgentClient:
             raise ValueError("provider_identity")
         return data
 
+    def _bounded_local_json(
+        self, client: httpx.Client, method: str, url: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        with client.stream(method, url, **kwargs) as response:
+            response.raise_for_status()
+            declared = response.headers.get("content-length")
+            if declared is not None and int(declared) > self.bounds.max_response_bytes:
+                raise ValueError("response_limit")
+            chunks = bytearray()
+            for chunk in response.iter_bytes(chunk_size=8192):
+                if len(chunks) + len(chunk) > self.bounds.max_response_bytes:
+                    raise ValueError("response_limit")
+                chunks.extend(chunk)
+        parsed = json.loads(chunks)
+        if not isinstance(parsed, dict):
+            raise ValueError("smithers_response")
+        return parsed
+
     def _smithers_completion(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """Submit one local job per turn; no paid URL or credential is reachable."""
         payload = {
@@ -624,16 +663,17 @@ class RepositoryAgentClient:
         with self._http_client() as client:
             if self._transport_retries(client) != 0:
                 raise ValueError("retry_config_violation")
-            response = client.post(f"{self.model_route.endpoint}/jobs", json=submission)
-            response.raise_for_status()
-            job_id = response.json().get("job_id")
+            submitted = self._bounded_local_json(
+                client, "POST", f"{self.model_route.endpoint}/jobs", json=submission
+            )
+            job_id = submitted.get("job_id")
             if not isinstance(job_id, str) or not job_id:
                 raise ValueError("smithers_job_id")
             deadline = time.monotonic() + 900
             while time.monotonic() < deadline:
-                response = client.get(f"{self.model_route.endpoint}/jobs/{job_id}")
-                response.raise_for_status()
-                job = response.json()
+                job = self._bounded_local_json(
+                    client, "GET", f"{self.model_route.endpoint}/jobs/{job_id}"
+                )
                 if (
                     job.get("job_id") != job_id
                     or job.get("model") != self.model_route.model
@@ -656,9 +696,9 @@ class RepositoryAgentClient:
         # Read the completed worker task instead of turning missing counts
         # into zeros (which would make the qualification unpublishable).
         with self._http_client() as client:
-            worker_response = client.get(f"http://mcbain:8901/tasks/{job_id}")
-            worker_response.raise_for_status()
-            worker_task = worker_response.json()
+            worker_task = self._bounded_local_json(
+                client, "GET", f"http://mcbain:8901/tasks/{job_id}"
+            )
         if worker_task.get("job_id") != job_id or worker_task.get("status") != "complete":
             raise ValueError("smithers_worker_identity")
         usage = worker_task.get("usage")
@@ -764,6 +804,20 @@ class RepositoryAgentClient:
                     "cache": str(cache),
                 }
             )
+            if self.qualify_smoke:
+                for step, command in SMOKE_CHECKS:
+                    checked = sandbox.execute(
+                        ["/bin/sh", "-lc", command],
+                        max_output_bytes=self.bounds.max_tool_output_bytes,
+                    )
+                    if checked.truncated or not checked.text.startswith("exit=0\n"):
+                        raise ValueError(f"smoke_{step}_failed")
+                    if step == "test" and "# pass 1" not in checked.text:
+                        raise ValueError("smoke_test_failed")
+                    events.append({
+                        "kind": "harness_check", "step": step, "command": command,
+                        "exit_code": 0, "output": checked.text,
+                    })
             for turn in range(1, self.bounds.max_turns + 1):
                 _shrink_conversation(messages, self.bounds.max_conversation_bytes, events)
                 if len(_json_bytes(messages)) > self.bounds.max_conversation_bytes:
@@ -837,6 +891,8 @@ class RepositoryAgentClient:
                     if not isinstance(arguments, dict):
                         raise ValueError("invalid_tool_call")
                     if name == "submit_output":
+                        if not self.model_route.paid_route_reachable and turn == 1:
+                            raise ValueError("invalid_submission")
                         if (
                             set(arguments) != {"source"}
                             or not isinstance(arguments["source"], str)

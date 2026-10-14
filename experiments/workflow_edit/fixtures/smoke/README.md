@@ -34,8 +34,11 @@ this manifest must not be used as a study fixture.
 The later non-root model-loop qualification used `npm ci --offline
 --no-bin-links`: npm otherwise tried to chmod the linked TypeScript binary
 on the image's read-only root. All 20 measured cells installed, typechecked,
-and tested successfully with that flag. The image was not rebuilt, so its
-observed digest above remains bound.
+and tested successfully with that flag. `RepositoryAgentClient` ran with
+`qualify_smoke=True`, which records four harness-controlled checks before each
+model request; every cell then made two local Smithers requests with a tool
+result between them. The image was not rebuilt, so its observed digest above
+remains bound.
 
 From the Assay checkout, reproduce the first two gates with:
 
@@ -47,5 +50,8 @@ uv run --project integrations/pier python integrations/pier/scripts/qualify_loca
 ```
 
 The trial command requires a fresh container name and prints the test log.
+The binding command requires the exact directory mounted at `/work` in that
+container and returns its sealed artifacts for publication. `smoke.publish`
+checks those artifacts against the live Docker inspection and package snapshot.
 The bound image digest in `MANIFEST.json` must match the rebuilt image before
 its measurements are used.

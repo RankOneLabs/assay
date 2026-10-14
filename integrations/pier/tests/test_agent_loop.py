@@ -208,6 +208,64 @@ def test_local_smithers_route_runs_two_requests_without_paid_url(tmp_path: Path)
     assert all(event["billing"] == "uncertain" for event in model_events)
 
 
+def test_local_route_rejects_first_turn_submission(tmp_path: Path) -> None:
+    client = RepositoryAgentClient(
+        api_key=None, image="locked-image", runs_root=tmp_path,
+        model_route=ModelRoute(
+            endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
+        ),
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    answer = _answer("submit_output", {"source": "done"}, 1)
+    answer["usage"]["cost"] = None
+    client._completion = lambda messages: answer  # type: ignore[method-assign]
+    with pytest.raises(AgentLoopError, match="invalid_submission"):
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+
+
+def test_harness_smoke_checks_fail_before_model_dispatch(tmp_path: Path) -> None:
+    client = RepositoryAgentClient(
+        api_key=None, image="locked-image", runs_root=tmp_path,
+        model_route=ModelRoute(
+            endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
+        ),
+        qualify_smoke=True, sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    client._completion = lambda messages: pytest.fail("model must not be called")  # type: ignore[method-assign]
+    with pytest.raises(AgentLoopError, match="smoke_install_failed"):
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+
+
+@pytest.mark.parametrize("stage", ["submission", "poll", "worker"])
+def test_local_route_bounds_every_http_response(tmp_path: Path, stage: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if stage == "submission" and request.method == "POST":
+            return httpx.Response(200, content=b"x" * 1000)
+        if stage == "poll" and request.url.host == "willie" and request.method == "GET":
+            return httpx.Response(200, content=b"x" * 1000)
+        if stage == "worker" and request.url.host == "mcbain":
+            return httpx.Response(200, content=b"x" * 1000)
+        if request.method == "POST":
+            return httpx.Response(200, json={"job_id": "job-1"})
+        return httpx.Response(200, json={
+            "job_id": "job-1", "status": "complete", "model": "qwen-coder-32b",
+            "machine": "mcbain", "result": {"content": None, "tool_calls": []},
+            "created_at": "2026-10-14T10:00:00", "started_at": "2026-10-14T10:00:01",
+            "completed_at": "2026-10-14T10:00:02",
+        })
+
+    client = RepositoryAgentClient(
+        api_key=None, image="locked-image", runs_root=tmp_path,
+        model_route=ModelRoute(
+            endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
+        ),
+        bounds=LoopBounds(max_response_bytes=512), transport=httpx.MockTransport(handler),
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    with pytest.raises(AgentLoopError, match="response_limit"):
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+
+
 def test_final_submission_may_follow_a_tool_in_the_same_model_turn(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         answer = _answer("run_command", {"command": "true"}, 1)
@@ -410,6 +468,67 @@ def test_docker_sandbox_mounts_only_neutral_cell_directories(
     assert "XDG_CACHE_HOME=/cache" in command
     assert not any("hidden" in arg for arg in command)
     assert commands[-1][:3] == ["docker", "rm", "-f"]
+
+
+def test_tmpfs_archive_failure_removes_started_container(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def fail_archive(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("archive failed")
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.tarfile.open", fail_archive)
+    with pytest.raises(ContainerStartError):
+        DockerToolSandbox(tmp_path, tmp_path, "locked-image", tmpfs_storage=True)
+    assert commands[0][:3] == ["docker", "run", "-d"]
+    assert commands[-1][:3] == ["docker", "rm", "-f"]
+
+
+def test_tmpfs_transfer_timeout_removes_started_container(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[:3] == ["docker", "exec", "-i"]:
+            raise subprocess.TimeoutExpired(command, 30)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    with pytest.raises(ContainerStartError):
+        DockerToolSandbox(tmp_path, tmp_path, "locked-image", tmpfs_storage=True)
+    assert commands[-1][:3] == ["docker", "rm", "-f"]
+
+
+def test_tmpfs_capture_replaces_staging_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "deleted.txt").write_text("old")
+    sandbox = DockerToolSandbox.__new__(DockerToolSandbox)
+    sandbox.name = "fake-container"
+    sandbox._tmpfs_storage = True
+    sandbox._workspace = workspace
+    sandbox.execute = lambda *args, **kwargs: ToolOutput(  # type: ignore[method-assign]
+        "exit=0\n1024\n2\n", 14, False
+    )
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        (workspace / "new.txt").write_text("new")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    assert sandbox.capture_workspace() == {"memory_peak_bytes": 1024, "pids_peak": 2}
+    assert not (workspace / "deleted.txt").exists()
+    assert (workspace / "new.txt").read_text() == "new"
 
 
 def test_quota_storage_mounts_and_unmounts_one_cell_volume(

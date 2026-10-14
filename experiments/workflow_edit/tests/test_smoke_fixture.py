@@ -7,6 +7,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from assay.fixture_manifest import FixtureManifest
+from assay.investigations.workflow_correctness import workflow_tree_digest
 from assay.models import CellCoordinate
 from workflow_edit.arms import ARM_IDS
 from workflow_edit.shape import validate_worker_grid
@@ -37,9 +38,13 @@ def test_pinned_slice_fits_repository_boundary() -> None:
     if not (oakridge / ".git").exists():
         pytest.skip("pinned Oakridge source checkout is unavailable")
     files = fixture_files(oakridge)
+    manifest = json.loads(
+        (ROOT / "experiments/workflow_edit/fixtures/smoke/MANIFEST.json").read_text()
+    )
     assert len(files) == 4
     assert len(files) < MAX_REPOSITORY_FILES
     assert sum(len(value.encode()) for value in files.values()) < MAX_REPOSITORY_BYTES
+    assert workflow_tree_digest(files) == manifest["per_arm_tree_digests"]["mess-00"]
 
 
 def test_smoke_subject_is_reserved_from_part_two_population() -> None:
