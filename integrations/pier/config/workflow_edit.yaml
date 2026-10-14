@@ -11,3 +11,4 @@ max_conversation_bytes: 262144
 max_request_bytes: 327680
 max_response_bytes: 65536
 max_output_tokens: 2048
+max_storage_mb: 512

@@ -55,3 +55,11 @@ class Part1AgentSettings(BaseModel):
         le=32_768,
         description=f"Provisional per turn; replace from {PROVISIONAL_SOURCE} (wf-12).",
     )
+    max_storage_mb: int = Field(
+        default=512,
+        ge=1,
+        le=4_096,
+        description=(
+            f"Provisional per-cell writable quota; replace from {PROVISIONAL_SOURCE} (wf-12)."
+        ),
+    )

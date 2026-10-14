@@ -10,14 +10,18 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import selectors
 import shutil
 import subprocess
+import tempfile
 import threading
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 
 import httpx
 
@@ -50,6 +54,7 @@ class LoopBounds:
     max_request_bytes: int = 327_680
     max_response_bytes: int = 65_536
     max_output_tokens: int = 2_048
+    max_storage_mb: int = 512
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,8 +89,84 @@ class AgentLoopError(RuntimeError):
 class ToolSandbox(Protocol):
     name: str
 
-    def execute(self, argv: list[str], *, input_text: str | None = None) -> str: ...
+    def execute(
+        self, argv: list[str], *, max_output_bytes: int, input_text: str | None = None
+    ) -> ToolOutput: ...
     def close(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ToolOutput:
+    text: str
+    original_bytes: int
+    truncated: bool
+
+
+class CellStorage(Protocol):
+    workspace: Path
+    cache: Path
+    mounted: bool
+
+    def prepare(self) -> None: ...
+    def close(self) -> None: ...
+
+
+class QuotaCellStorage:
+    """One private ext4 quota for both writable container mounts."""
+
+    def __init__(self, cell_root: Path, max_storage_mb: int) -> None:
+        self.mount = cell_root / "quota"
+        self.image = cell_root / "quota.ext4"
+        self.workspace = self.mount / "workspace"
+        self.cache = self.mount / "cache"
+        self.max_storage_mb = max_storage_mb
+        self.mounted = False
+
+    @staticmethod
+    def _host_command(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        command = argv if os.geteuid() == 0 else ["sudo", "-n", *argv]
+        return subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+
+    def prepare(self) -> None:
+        self.mount.mkdir(parents=True, exist_ok=False)
+        self.image.touch(exist_ok=False)
+        os.truncate(self.image, self.max_storage_mb * 1024 * 1024)
+        formatted = subprocess.run(
+            ["mkfs.ext4", "-F", "-q", str(self.image)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if formatted.returncode:
+            raise ValueError("storage_format")
+        mounted = self._host_command(
+            ["mount", "-t", "ext4", "-o", "loop,nosuid,nodev", str(self.image), str(self.mount)]
+        )
+        if mounted.returncode:
+            raise ValueError("storage_mount")
+        self.mounted = True
+        if not os.path.ismount(self.mount):
+            raise ValueError("storage_quota_unverified")
+        stats = os.statvfs(self.mount)
+        if stats.f_blocks * stats.f_frsize > self.max_storage_mb * 1024 * 1024:
+            raise ValueError("storage_quota_unverified")
+        if self._host_command(["chmod", "0777", str(self.mount)]).returncode:
+            raise ValueError("storage_permissions")
+        self.workspace.mkdir()
+        self.cache.mkdir()
+
+    def close(self) -> None:
+        if self.mounted:
+            if self._host_command(["umount", str(self.mount)]).returncode:
+                raise RuntimeError("storage_cleanup")
+            self.mounted = False
+
+
+class ContainerStartError(RuntimeError):
+    def __init__(self, returncode: int, *, cleanup_failed: bool) -> None:
+        self.cleanup_failed = cleanup_failed
+        super().__init__(f"container_start:{returncode}")
 
 
 class DockerToolSandbox:
@@ -134,21 +215,73 @@ class DockerToolSandbox:
             image,
             "infinity",
         ]
-        started = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+        try:
+            started = subprocess.run(
+                command, capture_output=True, text=True, timeout=30, check=False
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            self._failed_start(-1, cause=error)
         if started.returncode:
-            self.close()
-            raise RuntimeError(f"container_start:{started.returncode}")
+            self._failed_start(started.returncode)
 
-    def execute(self, argv: list[str], *, input_text: str | None = None) -> str:
-        result = subprocess.run(
-            ["docker", "exec", "-i", "-w", "/workspace", self.name, *argv],
-            input=input_text,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
+    def _failed_start(self, returncode: int, *, cause: Exception | None = None) -> NoReturn:
+        cleanup_failed = False
+        try:
+            self.close()
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            cleanup_failed = True
+        raise ContainerStartError(returncode, cleanup_failed=cleanup_failed) from cause
+
+    def execute(
+        self, argv: list[str], *, max_output_bytes: int, input_text: str | None = None
+    ) -> ToolOutput:
+        command = ["docker", "exec", "-i", "-w", "/workspace", self.name, *argv]
+        with tempfile.TemporaryFile() as input_file:
+            if input_text is not None:
+                input_file.write(input_text.encode("utf-8"))
+                input_file.seek(0)
+            process = subprocess.Popen(
+                command,
+                stdin=input_file if input_text is not None else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            assert process.stdout is not None
+            deadline = time.monotonic() + 120
+            captured = bytearray()
+            original_bytes = 0
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not selector.select(remaining):
+                            raise RuntimeError("tool_timeout")
+                        chunk = os.read(process.stdout.fileno(), 8192)
+                        if not chunk:
+                            break
+                        original_bytes += len(chunk)
+                        if len(captured) < max_output_bytes:
+                            captured.extend(chunk[: max_output_bytes - len(captured)])
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError("tool_timeout")
+                returncode = process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError("tool_timeout") from error
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
+                process.stdout.close()
+        prefix = f"exit={returncode}\n".encode()
+        bounded = (prefix + captured)[:max_output_bytes]
+        total_bytes = len(prefix) + original_bytes
+        return ToolOutput(
+            bounded.decode("utf-8", errors="ignore"),
+            total_bytes,
+            total_bytes > max_output_bytes,
         )
-        return f"exit={result.returncode}\n{result.stdout}{result.stderr}"
 
     def close(self) -> None:
         if not self._closed:
@@ -223,6 +356,14 @@ def _bounded_text(text: str, limit: int) -> tuple[str, bool]:
     return encoded[:limit].decode("utf-8", errors="ignore"), True
 
 
+def _prepare_container_writes(workspace: Path, cache: Path) -> None:
+    """Permit container UID 1000 to edit this cell's private mounted tree."""
+    for directory in (workspace, cache):
+        directory.chmod(0o777)
+    for path in workspace.rglob("*"):
+        path.chmod(0o777 if path.is_dir() else 0o666)
+
+
 def _relative_path(arguments: dict[str, Any]) -> str:
     path = arguments.get("path")
     if not isinstance(path, str):
@@ -230,9 +371,14 @@ def _relative_path(arguments: dict[str, Any]) -> str:
     return safe_relative_path(path).as_posix()
 
 
-def _execute_tool(sandbox: ToolSandbox, name: str, arguments: dict[str, Any]) -> str:
+def _execute_tool(
+    sandbox: ToolSandbox, name: str, arguments: dict[str, Any], max_output_bytes: int
+) -> ToolOutput:
     if name == "read_file" and set(arguments) == {"path"}:
-        return sandbox.execute(["cat", "--", f"/workspace/{_relative_path(arguments)}"])
+        return sandbox.execute(
+            ["cat", "--", f"/workspace/{_relative_path(arguments)}"],
+            max_output_bytes=max_output_bytes,
+        )
     if name == "write_file" and set(arguments) == {"path", "content"}:
         content = arguments["content"]
         if not isinstance(content, str):
@@ -244,13 +390,15 @@ def _execute_tool(sandbox: ToolSandbox, name: str, arguments: dict[str, Any]) ->
             "p.write_text(sys.stdin.read(), encoding='utf-8')"
         )
         return sandbox.execute(
-            ["python", "-c", script, _relative_path(arguments)], input_text=content
+            ["python", "-c", script, _relative_path(arguments)],
+            max_output_bytes=max_output_bytes,
+            input_text=content,
         )
     if name == "run_command" and set(arguments) == {"command"}:
         command = arguments["command"]
         if not isinstance(command, str) or len(command.encode("utf-8")) > 8_192:
             raise ValueError("command must be a string of at most 8192 bytes")
-        return sandbox.execute(["sh", "-lc", command])
+        return sandbox.execute(["sh", "-lc", command], max_output_bytes=max_output_bytes)
     raise ValueError("unknown tool or argument field")
 
 
@@ -281,6 +429,7 @@ class RepositoryAgentClient:
     bounds: LoopBounds = field(default_factory=LoopBounds)
     transport: httpx.BaseTransport | None = None
     sandbox_factory: SandboxFactory = DockerToolSandbox
+    storage_factory: Callable[[Path, int], CellStorage] = QuotaCellStorage
     _used_cells: set[str] = field(default_factory=set, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
@@ -409,13 +558,11 @@ class RepositoryAgentClient:
             )
             raise AgentLoopError(cause, trajectory) from error
         cell_root = self.runs_root / uuid.uuid4().hex
-        workspace, baseline, cache = (
-            cell_root / "workspace",
-            cell_root / "baseline",
-            cell_root / "cache",
-        )
-        for directory in (workspace, baseline, cache):
-            directory.mkdir(parents=True, exist_ok=False)
+        cell_root.mkdir(parents=True, exist_ok=False)
+        baseline = cell_root / "baseline"
+        baseline.mkdir()
+        storage = self.storage_factory(cell_root, self.bounds.max_storage_mb)
+        workspace, cache = storage.workspace, storage.cache
         sandbox: ToolSandbox | None = None
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -423,9 +570,15 @@ class RepositoryAgentClient:
         ]
         prompt_tokens = completion_tokens = requests = 0
         cost_usd = 0.0
+        primary_failed = False
         try:
+            storage.prepare()
+            events.append(
+                {"kind": "storage_prepared", "max_storage_mb": self.bounds.max_storage_mb}
+            )
             materialize_under(workspace, repository)
             materialize_under(baseline, repository)
+            _prepare_container_writes(workspace, cache)
             sandbox = self.sandbox_factory(workspace, cache, self.image)
             events.append(
                 {
@@ -513,17 +666,21 @@ class RepositoryAgentClient:
                             requests,
                         )
                     try:
-                        output = _execute_tool(sandbox, name, arguments)
+                        output = _execute_tool(
+                            sandbox, name, arguments, self.bounds.max_tool_output_bytes
+                        )
                     except ValueError as error:
                         raise ValueError("invalid_tool_call") from error
-                    bounded, truncated = _bounded_text(output, self.bounds.max_tool_output_bytes)
-                    if truncated:
+                    bounded, bounded_truncated = _bounded_text(
+                        output.text, self.bounds.max_tool_output_bytes
+                    )
+                    if output.truncated or bounded_truncated:
                         events.append(
                             {
                                 "kind": "tool_output_truncated",
                                 "turn": turn,
                                 "tool": name,
-                                "original_bytes": len(output.encode("utf-8")),
+                                "original_bytes": output.original_bytes,
                             }
                         )
                     messages.append(
@@ -541,11 +698,16 @@ class RepositoryAgentClient:
             httpx.HTTPError,
             subprocess.SubprocessError,
         ) as error:
+            primary_failed = True
             trajectory["messages"] = messages
             if isinstance(error, ValueError):
                 cause = str(error)
-            elif isinstance(error, RuntimeError) and str(error).startswith("container_start:"):
+            elif isinstance(error, ContainerStartError):
                 cause = "container_start"
+                if error.cleanup_failed:
+                    events.append({"kind": "cleanup_failed", "cause": "container_cleanup"})
+            elif isinstance(error, RuntimeError) and str(error) == "tool_timeout":
+                cause = "tool_timeout"
             elif isinstance(error, httpx.HTTPError):
                 cause = "transport_failure"
             else:
@@ -553,11 +715,22 @@ class RepositoryAgentClient:
             events.append({"kind": "stopped", "cause": cause, "requests": requests})
             raise AgentLoopError(cause, trajectory) from error
         finally:
+            cleanup_cause: str | None = None
             try:
                 if sandbox is not None:
                     sandbox.close()
-            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
-                events.append({"kind": "stopped", "cause": "container_cleanup"})
-                raise AgentLoopError("container_cleanup", trajectory) from error
+            except (RuntimeError, OSError, subprocess.SubprocessError):
+                events.append({"kind": "cleanup_failed", "cause": "container_cleanup"})
+                cleanup_cause = "container_cleanup"
+            try:
+                storage.close()
+            except (RuntimeError, OSError, subprocess.SubprocessError):
+                events.append({"kind": "cleanup_failed", "cause": "storage_cleanup"})
+                if cleanup_cause is None:
+                    cleanup_cause = "storage_cleanup"
             finally:
-                shutil.rmtree(cell_root, ignore_errors=True)
+                if not storage.mounted:
+                    shutil.rmtree(cell_root, ignore_errors=True)
+            if cleanup_cause is not None and not primary_failed:
+                events.append({"kind": "stopped", "cause": cleanup_cause, "requests": requests})
+                raise AgentLoopError(cleanup_cause, trajectory)

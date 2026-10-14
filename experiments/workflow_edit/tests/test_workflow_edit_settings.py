@@ -24,6 +24,7 @@ def test_part1_settings_match_bridge_configuration() -> None:
             "max_request_bytes",
             "max_response_bytes",
             "max_output_tokens",
+            "max_storage_mb",
         )
     )
 
