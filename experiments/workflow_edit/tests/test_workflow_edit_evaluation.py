@@ -5,12 +5,13 @@ from typing import Any
 
 import pytest
 
-from assay.canonical import canonical_json, digest_bytes
+from assay.canonical import canonical_json
 from assay.fixture_manifest import FixtureManifest
 from assay.investigations.workflow_correctness import (
     WorkflowCorrectnessResult,
     WorkflowRunnerSettings,
     WorkflowTestGroup,
+    workflow_tree_digest,
 )
 from assay.pier_protocol import CandidateSubmission
 from assay.store import ObjectStore
@@ -41,7 +42,7 @@ class RecordingRunner:
 async def test_evaluation_never_reads_reference_patch(tmp_path: Path) -> None:
     store = RecordingStore(tmp_path)
     baseline = {"src.ts": "export const value = 0;\n"}
-    baseline_digest = digest_bytes(canonical_json(baseline))
+    baseline_digest = workflow_tree_digest(baseline)
     image = "sha256:" + "a" * 64
     patch_ref = str(store.publish_bytes(b"candidate patch"))
     hidden = []
@@ -81,6 +82,7 @@ async def test_evaluation_never_reads_reference_patch(tmp_path: Path) -> None:
     assert store.reads == [hidden[0], hidden[1], patch_ref]
     assert reference_ref not in store.reads
     assert runner.received["baseline_tree_digest"] == baseline_digest
+    assert runner.received["expected_tree_digest"] == "sha256:" + "b" * 64
     assert [group.name for group in runner.received["groups"]] == [
         "visible_regression",
         "hidden_regression",

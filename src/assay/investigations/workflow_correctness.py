@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
 import json
 import uuid
 from collections.abc import Mapping
@@ -23,6 +24,14 @@ GROUP_NAMES: tuple[GroupName, ...] = (
     "hidden_regression",
     "new_behavior",
 )
+
+
+def workflow_tree_digest(files: Mapping[str, str]) -> str:
+    """Match the bridge's regular-tree digest over paths, mode, and file bytes."""
+    digest = hashlib.sha256()
+    for path in sorted(files, key=lambda value: value.encode("utf-8")):
+        digest.update(path.encode("utf-8") + b"\x00100644\x00" + files[path].encode() + b"\x00")
+    return f"sha256:{digest.hexdigest()}"
 
 
 class WorkflowRunnerSettings(WireModel):
@@ -57,8 +66,8 @@ class WorkflowCorrectnessResult:
     cause: str | None = None
 
 
-_HARNESS = r"""import json
-import os
+_HARNESS = r"""import hashlib
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -87,11 +96,26 @@ def run(args, timeout):
         return result('failed', 'output_limit')
     return result('passed') if completed.returncode == 0 else result('failed', 'nonzero_exit')
 
+def tree_digest(root):
+    digest = hashlib.sha256()
+    files = []
+    for path in root.rglob('*'):
+        if path.is_symlink() or (not path.is_file() and not path.is_dir()):
+            raise ValueError('candidate tree contains a special path')
+        if path.is_file():
+            files.append(path)
+    for path in sorted(files, key=lambda p: p.relative_to(root).as_posix().encode()):
+        name = path.relative_to(root).as_posix().encode()
+        digest.update(name + b'\x00100644\x00' + path.read_bytes() + b'\x00')
+    return 'sha256:' + digest.hexdigest()
+
 patch = subprocess.run(['git', 'apply', '-'], cwd=root,
                        input=payload['patch'].encode('utf-8'),
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 if patch.returncode:
     outcome = {'preflight': result('failed', 'patch_rejected'), 'groups': {}}
+elif tree_digest(root) != payload['expected_tree_digest']:
+    outcome = {'preflight': result('unavailable', 'candidate_tree_digest_mismatch'), 'groups': {}}
 else:
     for group in payload['groups']:
         for name, source in group['files'].items():
@@ -156,6 +180,7 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
         *,
         baseline: Mapping[str, str],
         baseline_tree_digest: str,
+        expected_tree_digest: str,
         patch: str,
         groups: tuple[WorkflowTestGroup, ...],
     ) -> WorkflowCorrectnessResult:
@@ -168,7 +193,7 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
 
         try:
             tree = validate_repository(baseline)
-            if digest_bytes(canonical_json(tree)) != baseline_tree_digest:
+            if workflow_tree_digest(tree) != baseline_tree_digest:
                 return unavailable("baseline_digest_mismatch")
             if tuple(group.name for group in groups) != GROUP_NAMES:
                 return unavailable("invalid_test_groups")
@@ -191,6 +216,7 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
         payload = canonical_json(
             {
                 "baseline": tree,
+                "expected_tree_digest": expected_tree_digest,
                 "patch": patch,
                 "groups": [group.model_dump(mode="json") for group in groups],
                 "candidate_timeout_s": self.settings.candidate_timeout_s,

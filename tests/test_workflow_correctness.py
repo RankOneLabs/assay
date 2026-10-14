@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from assay.canonical import canonical_json, digest_bytes
 from assay.investigations import workflow_correctness as correctness
 from assay.investigations.workflow_correctness import (
     DockerWorkflowRunner,
     WorkflowRunnerSettings,
     WorkflowTestGroup,
+    workflow_tree_digest,
 )
 
 IMAGE = "sha256:" + "a" * 64
@@ -22,6 +22,7 @@ BASELINE = {
     "src.ts": "export const value = 0;\n",
     "tsconfig.json": '{"compilerOptions":{"target":"ES2022","module":"commonjs"}}',
 }
+FINAL_TREE = {**BASELINE, "src.ts": "export const value = 1;\n"}
 PATCH = """diff --git a/src.ts b/src.ts
 --- a/src.ts
 +++ b/src.ts
@@ -29,6 +30,12 @@ PATCH = """diff --git a/src.ts b/src.ts
 -export const value = 0;
 +export const value = 1;
 """
+
+
+def test_tree_digest_matches_bridge_regular_tree_encoding() -> None:
+    assert workflow_tree_digest({"file.ts": "x\n"}) == (
+        "sha256:602f0f36522f6b7b005f72b1abe2d296fa2e1646073508bb243cbd0701469ee7"
+    )
 
 
 def groups(*, hang: bool = False) -> tuple[WorkflowTestGroup, ...]:
@@ -72,6 +79,7 @@ async def run_fake_docker(
     root: Path,
     *,
     groups_to_run: tuple[WorkflowTestGroup, ...],
+    expected_tree_digest: str | None = None,
 ) -> correctness.WorkflowCorrectnessResult:
     async def check_runtime() -> None:
         return None
@@ -100,7 +108,8 @@ async def run_fake_docker(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     return await runner.run(
         baseline=BASELINE,
-        baseline_tree_digest=digest_bytes(canonical_json(BASELINE)),
+        baseline_tree_digest=workflow_tree_digest(BASELINE),
+        expected_tree_digest=expected_tree_digest or workflow_tree_digest(FINAL_TREE),
         patch=PATCH,
         groups=groups_to_run,
     )
@@ -130,7 +139,7 @@ async def test_candidate_timeout_and_evaluator_deadline_have_distinct_causes(
 ) -> None:
     prepare_fake_toolchain(tmp_path, monkeypatch)
     runner = DockerWorkflowRunner(
-        WorkflowRunnerSettings(image=IMAGE, candidate_timeout_s=0.2, deadline_s=10)
+        WorkflowRunnerSettings(image=IMAGE, candidate_timeout_s=1.0, deadline_s=10)
     )
     candidate = await run_fake_docker(
         monkeypatch, runner, tmp_path / "candidate", groups_to_run=groups(hang=True)
@@ -141,8 +150,35 @@ async def test_candidate_timeout_and_evaluator_deadline_have_distinct_causes(
     runner = DockerWorkflowRunner(
         WorkflowRunnerSettings(image=IMAGE, candidate_timeout_s=10, deadline_s=0.05)
     )
-    infrastructure = await run_fake_docker(
-        monkeypatch, runner, tmp_path / "deadline", groups_to_run=groups(hang=True)
+
+    class StalledProcess:
+        returncode = None
+
+        async def communicate(self, payload: bytes) -> tuple[bytes, bytes]:
+            del payload
+            await asyncio.Event().wait()
+            return b"", b""
+
+    async def stalled_spawn(*args: str, **kwargs: object) -> StalledProcess:
+        del args, kwargs
+        return StalledProcess()
+
+    async def check_runtime() -> None:
+        return None
+
+    async def finish_cleanup(process: object, name: str) -> bool:
+        del process, name
+        return True
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", stalled_spawn)
+    monkeypatch.setattr(runner, "_check_runtime", check_runtime)
+    monkeypatch.setattr(runner, "_finish_cleanup", finish_cleanup)
+    infrastructure = await runner.run(
+        baseline=BASELINE,
+        baseline_tree_digest=workflow_tree_digest(BASELINE),
+        expected_tree_digest=workflow_tree_digest(FINAL_TREE),
+        patch=PATCH,
+        groups=groups(hang=True),
     )
     assert infrastructure.verdict == "unavailable"
     assert infrastructure.cause == "infrastructure_deadline"
@@ -154,7 +190,26 @@ async def test_baseline_digest_must_match_before_starting_sandbox() -> None:
     result = await runner.run(
         baseline=BASELINE,
         baseline_tree_digest="sha256:" + "0" * 64,
+        expected_tree_digest=workflow_tree_digest(FINAL_TREE),
         patch=PATCH,
         groups=groups(),
     )
     assert result.verdict == "unavailable" and result.cause == "baseline_digest_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_patched_tree_must_match_declared_candidate_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    result = await run_fake_docker(
+        monkeypatch,
+        runner,
+        tmp_path / "work",
+        groups_to_run=groups(),
+        expected_tree_digest="sha256:" + "0" * 64,
+    )
+    assert result.verdict == "unavailable"
+    assert result.cause == "candidate_tree_digest_mismatch"
+    assert log.read_text().splitlines() == ["call"]

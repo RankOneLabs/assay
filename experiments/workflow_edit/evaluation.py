@@ -60,6 +60,7 @@ async def evaluate_candidate(
     return await runner.run(
         baseline=baseline,
         baseline_tree_digest=expected,
+        expected_tree_digest=submission.tree_digest,
         patch=patch,
         groups=(visible_regression, hidden_regression, new_behavior),
     )
