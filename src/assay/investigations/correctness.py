@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import dataclasses
 import json
 import uuid
@@ -15,6 +14,7 @@ from pydantic import Field, model_serializer
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import EvaluationFailed, EvaluationResult, EvaluationSuccess
 from assay.investigations.consistency import CodingTask, parse_candidate_source
+from assay.investigations.sandbox_lifecycle import SandboxFailure, SandboxLifecycle
 from assay.models import EvaluationCoordinate, WireModel
 from assay.repository import validate_repository
 
@@ -229,25 +229,18 @@ class SandboxResult:
     failures: tuple[dict[str, Any], ...]
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class SandboxFailure:
-    error_type: str
-    message: str
-
-
 class _OutputLimitExceeded(Exception):
     pass
 
 
-class DockerPythonRunner:
+class DockerPythonRunner(SandboxLifecycle[DockerRunnerSettings]):
     """Run untrusted generated code without host mounts, network, or writable root."""
 
     def __init__(self, settings: DockerRunnerSettings | None = None) -> None:
         self.settings = settings or DockerRunnerSettings()
         self._harness = _render_harness(self.settings.max_output_bytes)
         self._tmpfs = f"/tmp:rw,noexec,nosuid,nodev,size={self.settings.tmpfs_size}"
-        self._runtime_checked = False
-        self._runtime_lock = asyncio.Lock()
+        super().__init__()
 
     def configuration(self) -> dict[str, Any]:
         return {
@@ -269,72 +262,6 @@ class DockerPythonRunner:
             "ulimits": {"core": "0:0", "fsize": "1048576:1048576", "nofile": "64:64"},
         }
 
-    async def _command(self, *args: str) -> tuple[int, bytes]:
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        try:
-            async with asyncio.timeout(self.settings.command_timeout_s):
-                stdout, _ = await process.communicate()
-        except TimeoutError as error:
-            await self._finish_process(process)
-            raise OSError("Docker command timed out") from error
-        except asyncio.CancelledError:
-            await self._finish_process(process)
-            raise
-        return process.returncode or 0, stdout
-
-    @staticmethod
-    async def _stop_process(process: asyncio.subprocess.Process) -> None:
-        if process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                process.kill()
-            with contextlib.suppress(TimeoutError):
-                async with asyncio.timeout(3):
-                    await process.wait()
-
-    async def _finish_process(self, process: asyncio.subprocess.Process) -> None:
-        closing = asyncio.create_task(self._stop_process(process))
-        cancellation: asyncio.CancelledError | None = None
-        while not closing.done():
-            try:
-                await asyncio.shield(closing)
-            except asyncio.CancelledError as error:
-                cancellation = error
-        if cancellation is not None:
-            raise cancellation
-
-    async def _check_runtime(self) -> SandboxFailure | None:
-        async with self._runtime_lock:
-            if self._runtime_checked:
-                return None
-            try:
-                code, versions = await self._command(
-                    "docker",
-                    "version",
-                    "--format",
-                    "{{.Client.Version}} {{.Server.Version}}",
-                )
-                expected = (
-                    self.settings.docker_client_version + " " + self.settings.docker_server_version
-                )
-                if code or versions.decode("ascii").strip() != expected:
-                    return SandboxFailure(
-                        "SandboxRuntimeMismatch", "Docker runtime version changed"
-                    )
-                code, _ = await self._command(
-                    "docker", "image", "inspect", "--format", "{{.Id}}", self.settings.image
-                )
-                if code:
-                    return SandboxFailure("SandboxImageUnavailable", "pinned image is unavailable")
-            except (OSError, UnicodeError):
-                return SandboxFailure("SandboxUnavailable", "Docker runtime is unavailable")
-            self._runtime_checked = True
-            return None
-
     async def _read_limited(self, stream: asyncio.StreamReader, total: list[int]) -> bytes:
         output = bytearray()
         while chunk := await stream.read(4096):
@@ -343,41 +270,6 @@ class DockerPythonRunner:
             if total[0] > self.settings.max_output_bytes:
                 raise _OutputLimitExceeded
         return bytes(output)
-
-    async def _remove(self, name: str) -> bool:
-        try:
-            code, _ = await self._command("docker", "rm", "-f", name)
-            if code == 0:
-                return True
-            check_code, remaining = await self._command(
-                "docker", "ps", "-aq", "--filter", f"name=^/{name}$"
-            )
-            return check_code == 0 and not remaining.strip()
-        except OSError:
-            return False
-
-    async def _cleanup(self, process: asyncio.subprocess.Process | None, name: str) -> bool:
-        try:
-            if process is not None and process.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    process.kill()
-                async with asyncio.timeout(3):
-                    await process.wait()
-        except TimeoutError:
-            return False
-        return await self._remove(name)
-
-    async def _finish_cleanup(self, process: asyncio.subprocess.Process | None, name: str) -> bool:
-        closing = asyncio.create_task(self._cleanup(process, name))
-        cancellation: asyncio.CancelledError | None = None
-        while not closing.done():
-            try:
-                await asyncio.shield(closing)
-            except asyncio.CancelledError as error:
-                cancellation = error
-        if cancellation is not None:
-            raise cancellation
-        return closing.result()
 
     async def run(
         self,
