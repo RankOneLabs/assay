@@ -1,5 +1,5 @@
-# Part 1 repository agent. Provisional bounds: replace from
-# experiments/workflow_edit/SMOKE.md after wf-12 measures the 20-turn envelope.
+# Part 1 repository-agent ceilings exercised by the wf-12 qualification.
+# Observed usage is published in experiments/workflow_edit/SMOKE.md.
 max_turns: 20
 attempts: 1
 concurrency: 1

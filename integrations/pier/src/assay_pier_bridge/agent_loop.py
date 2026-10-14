@@ -8,12 +8,14 @@ and submit_output; each result is returned to the same cell's conversation.
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import os
 import selectors
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import threading
 import time
@@ -47,7 +49,7 @@ SYSTEM_PROMPT = (
 
 @dataclass(frozen=True, slots=True)
 class LoopBounds:
-    """Provisional: replace every size after experiments/workflow_edit/SMOKE.md (wf-12)."""
+    """Ceilings exercised by the measured wf-12 repository-agent run."""
 
     max_turns: int = 20
     max_tool_schema_bytes: int = 16_384
@@ -94,6 +96,7 @@ class ToolSandbox(Protocol):
     def execute(
         self, argv: list[str], *, max_output_bytes: int, input_text: str | None = None
     ) -> ToolOutput: ...
+    def capture_workspace(self) -> dict[str, int]: ...
     def close(self) -> None: ...
 
 
@@ -165,6 +168,24 @@ class QuotaCellStorage:
             self.mounted = False
 
 
+class DockerTmpfsStagingStorage:
+    """Host staging only; the paired Docker sandbox enforces the real quota."""
+
+    def __init__(self, cell_root: Path, max_storage_mb: int) -> None:
+        if max_storage_mb != 512:
+            raise ValueError("Docker tmpfs qualification requires the pinned 512 MiB bound")
+        self.workspace = cell_root / "staging" / "workspace"
+        self.cache = cell_root / "staging" / "cache"
+        self.mounted = False
+
+    def prepare(self) -> None:
+        self.workspace.mkdir(parents=True)
+        self.cache.mkdir()
+
+    def close(self) -> None:
+        pass
+
+
 class ContainerStartError(RuntimeError):
     def __init__(self, returncode: int, *, cleanup_failed: bool) -> None:
         self.cleanup_failed = cleanup_failed
@@ -174,9 +195,21 @@ class ContainerStartError(RuntimeError):
 class DockerToolSandbox:
     """Disposable container with only the neutral repository and cache mounts."""
 
-    def __init__(self, workspace: Path, cache: Path, image: str) -> None:
+    def __init__(
+        self, workspace: Path, cache: Path, image: str, *, tmpfs_storage: bool = False
+    ) -> None:
         self.name = f"assay-agent-{uuid.uuid4().hex}"
         self._closed = False
+        self._workspace = workspace
+        self._tmpfs_storage = tmpfs_storage
+        mounts = (
+            [
+                "--tmpfs", "/workspace:size=256m,mode=1777",
+                "--tmpfs", "/cache:size=256m,mode=1777",
+            ]
+            if tmpfs_storage
+            else ["-v", f"{workspace}:/workspace:rw", "-v", f"{cache}:/cache:rw"]
+        )
         command = [
             "docker",
             "run",
@@ -203,13 +236,10 @@ class DockerToolSandbox:
             "--pids-limit",
             "64",
             "--memory",
-            "512m",
+            "1024m" if tmpfs_storage else "512m",
             "--cpus",
             "1",
-            "-v",
-            f"{workspace}:/workspace:rw",
-            "-v",
-            f"{cache}:/cache:rw",
+            *mounts,
             "--workdir",
             "/workspace",
             "--entrypoint",
@@ -225,6 +255,39 @@ class DockerToolSandbox:
             self._failed_start(-1, cause=error)
         if started.returncode:
             self._failed_start(started.returncode)
+        if tmpfs_storage:
+            archive = io.BytesIO()
+            with tarfile.open(fileobj=archive, mode="w") as stream:
+                for path in sorted(workspace.rglob("*")):
+                    stream.add(path, arcname=path.relative_to(workspace), recursive=False)
+            copied = subprocess.run(
+                ["docker", "exec", "-i", self.name, "tar", "-x", "-C", "/workspace"],
+                input=archive.getvalue(), capture_output=True, timeout=30, check=False,
+            )
+            if copied.returncode:
+                self._failed_start(copied.returncode)
+
+    def capture_workspace(self) -> dict[str, int]:
+        if not self._tmpfs_storage:
+            return {}
+        peaks = self.execute(
+            ["cat", "/sys/fs/cgroup/memory.peak", "/sys/fs/cgroup/pids.peak"],
+            max_output_bytes=1024,
+        )
+        values = peaks.text.splitlines()
+        if len(values) != 3 or values[0] != "exit=0":
+            raise RuntimeError("cgroup_peak_observation")
+        try:
+            memory_peak, pids_peak = int(values[1]), int(values[2])
+        except ValueError as error:
+            raise RuntimeError("cgroup_peak_observation") from error
+        copied = subprocess.run(
+            ["docker", "cp", f"{self.name}:/workspace/.", str(self._workspace)],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if copied.returncode:
+            raise RuntimeError("workspace_capture")
+        return {"memory_peak_bytes": memory_peak, "pids_peak": pids_peak}
 
     def _failed_start(self, returncode: int, *, cause: Exception | None = None) -> NoReturn:
         cleanup_failed = False
@@ -297,6 +360,13 @@ class DockerToolSandbox:
             )
             if removed.returncode:
                 raise RuntimeError("container_cleanup")
+
+
+class DockerTmpfsToolSandbox(DockerToolSandbox):
+    """Qualification sandbox with a real 512 MiB Docker-enforced writable cap."""
+
+    def __init__(self, workspace: Path, cache: Path, image: str) -> None:
+        super().__init__(workspace, cache, image, tmpfs_storage=True)
 
 
 SandboxFactory = Callable[[Path, Path, str], ToolSandbox]
@@ -532,8 +602,11 @@ class RepositoryAgentClient:
         """Submit one local job per turn; no paid URL or credential is reachable."""
         payload = {
             "messages": messages,
-            "tools": TOOLS,
-            "tool_choice": "auto",
+            # A local qualification must observe at least one real tool result
+            # before it can submit; otherwise a model can declare success in
+            # the same turn as a failed install or test command.
+            "tools": TOOLS if len(messages) > 2 else TOOLS[:-1],
+            "tool_choice": "required",
             "max_tokens": self.bounds.max_output_tokens,
         }
         if len(_json_bytes(payload)) > self.bounds.max_request_bytes:
@@ -749,7 +822,7 @@ class RepositoryAgentClient:
                 ):
                     raise ValueError("no_tool_call")
                 messages.append(message)
-                for call in calls:
+                for call_index, call in enumerate(calls):
                     if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
                         raise ValueError("invalid_tool_call")
                     function = call["function"]
@@ -767,12 +840,15 @@ class RepositoryAgentClient:
                         if (
                             set(arguments) != {"source"}
                             or not isinstance(arguments["source"], str)
-                            or len(calls) != 1
+                            or call_index != len(calls) - 1
                         ):
                             raise ValueError("invalid_submission")
                         _shrink_conversation(messages, self.bounds.max_conversation_bytes, events)
                         if len(_json_bytes(messages)) > self.bounds.max_conversation_bytes:
                             raise ValueError("conversation_limit")
+                        peaks = sandbox.capture_workspace()
+                        if peaks:
+                            events.append({"kind": "cgroup_peaks", **peaks})
                         patch = submission_patch(baseline, workspace).patch
                         trajectory["messages"] = messages
                         events.append({"kind": "submitted", "turn": turn})
@@ -836,6 +912,15 @@ class RepositoryAgentClient:
             raise AgentLoopError(cause, trajectory) from error
         finally:
             cleanup_cause: str | None = None
+            if sandbox is not None and not any(
+                event.get("kind") == "cgroup_peaks" for event in events
+            ):
+                try:
+                    peaks = sandbox.capture_workspace()
+                    if peaks:
+                        events.append({"kind": "cgroup_peaks", **peaks})
+                except (RuntimeError, OSError, subprocess.SubprocessError):
+                    events.append({"kind": "peak_observation_failed"})
             try:
                 if sandbox is not None:
                     sandbox.close()

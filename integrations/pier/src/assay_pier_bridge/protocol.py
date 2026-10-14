@@ -104,8 +104,8 @@ class ModelRoute(ClosedModel):
 
 class TrialLimits(ClosedModel):
     cpu: float = Field(gt=0, le=8, allow_inf_nan=False)
-    # Provisional storage/memory/PID bounds: replace after the footprint runs
-    # in experiments/workflow_edit/SMOKE.md (wf-12).
+    # The broad wire envelope is separate from the measured smoke footprint
+    # and from the narrower limits authorized for a concrete trial.
     memory_mb: int = Field(ge=64, le=8192)
     pids: int = Field(ge=1, le=256)
     timeout_s: float = Field(gt=0, le=1800, allow_inf_nan=False)

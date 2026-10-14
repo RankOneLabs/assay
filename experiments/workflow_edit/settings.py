@@ -1,14 +1,10 @@
-"""Part 1 repository-agent limits, separate from the DRY pilot settings.
-
-Every size below is provisional until the wf-12 measurements in
-``experiments/workflow_edit/SMOKE.md`` replace it.
-"""
+"""Part 1 repository-agent ceilings qualified by the wf-12 smoke run."""
 
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PROVISIONAL_SOURCE = "experiments/workflow_edit/SMOKE.md"
+MEASUREMENT_SOURCE = "experiments/workflow_edit/SMOKE.md"
 SMOKE_SUBJECT_ID = "oakridge-dbos-smoke-wf12"
 
 
@@ -24,43 +20,43 @@ class Part1AgentSettings(BaseModel):
         default=16_384,
         ge=1,
         le=1_000_000,
-        description=f"Provisional; replace from {PROVISIONAL_SOURCE} (wf-12).",
+        description=f"Qualified ceiling; observed usage in {MEASUREMENT_SOURCE}.",
     )
     max_tool_output_bytes: int = Field(
         default=16_384,
         ge=1,
         le=1_000_000,
-        description=f"Provisional per tool result; replace from {PROVISIONAL_SOURCE} (wf-12).",
+        description=f"Qualified per-tool ceiling; observed usage in {MEASUREMENT_SOURCE}.",
     )
     max_conversation_bytes: int = Field(
         default=262_144,
         ge=1,
         le=4_000_000,
-        description=f"Provisional across 20 turns; replace from {PROVISIONAL_SOURCE} (wf-12).",
+        description=f"Qualified conversation ceiling; observed usage in {MEASUREMENT_SOURCE}.",
     )
     max_request_bytes: int = Field(
         default=327_680,
         ge=1,
         le=4_000_000,
-        description=f"Provisional including tools; replace from {PROVISIONAL_SOURCE} (wf-12).",
+        description=f"Qualified request ceiling; observed usage in {MEASUREMENT_SOURCE}.",
     )
     max_response_bytes: int = Field(
         default=65_536,
         ge=1,
         le=1_000_000,
-        description=f"Provisional per turn; replace from {PROVISIONAL_SOURCE} (wf-12).",
+        description=f"Qualified response ceiling; observed usage in {MEASUREMENT_SOURCE}.",
     )
     max_output_tokens: int = Field(
         default=2_048,
         ge=1,
         le=32_768,
-        description=f"Provisional per turn; replace from {PROVISIONAL_SOURCE} (wf-12).",
+        description=f"Qualified token ceiling; observed usage in {MEASUREMENT_SOURCE}.",
     )
     max_storage_mb: int = Field(
         default=512,
         ge=1,
         le=4_096,
         description=(
-            f"Provisional per-cell writable quota; replace from {PROVISIONAL_SOURCE} (wf-12)."
+            f"Qualified per-cell writable quota; observed usage in {MEASUREMENT_SOURCE}."
         ),
     )

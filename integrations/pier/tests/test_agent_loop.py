@@ -79,6 +79,9 @@ class FakeSandbox:
     def close(self) -> None:
         self.closed = True
 
+    def capture_workspace(self) -> dict[str, int]:
+        return {}
+
 
 class FakeStorage:
     def __init__(self, cell_root: Path, max_storage_mb: int) -> None:
@@ -160,6 +163,10 @@ def test_local_smithers_route_runs_two_requests_without_paid_url(tmp_path: Path)
             submitted = json.loads(request.content)
             assert submitted["max_retries"] == 0
             assert submitted["model"] == "qwen-coder-32b"
+            tool_names = {
+                tool["function"]["name"] for tool in submitted["payload"]["tools"]
+            }
+            assert ("submit_output" in tool_names) is (len(posts) > 1)
             return httpx.Response(200, json={"job_id": f"job-{len(posts)}"})
         turn = len(posts)
         if request.url.host == "mcbain":
@@ -199,6 +206,25 @@ def test_local_smithers_route_runs_two_requests_without_paid_url(tmp_path: Path)
     ]
     assert len(model_events) == 2
     assert all(event["billing"] == "uncertain" for event in model_events)
+
+
+def test_final_submission_may_follow_a_tool_in_the_same_model_turn(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        answer = _answer("run_command", {"command": "true"}, 1)
+        answer["choices"][0]["message"]["tool_calls"].append({
+            "id": "call-2", "type": "function",
+            "function": {
+                "name": "submit_output", "arguments": json.dumps({"source": "done"}),
+            },
+        })
+        return httpx.Response(200, json=answer)
+
+    result = _client(tmp_path, handler).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit", "workspace/a.txt": "one"}
+    )
+    assert result.source == "done"
+    assert result.requests == 1
+    assert [event["kind"] for event in result.trajectory["events"]][-1] == "submitted"
 
 
 def test_hidden_test_package_entries_never_reach_tools(tmp_path: Path) -> None:
