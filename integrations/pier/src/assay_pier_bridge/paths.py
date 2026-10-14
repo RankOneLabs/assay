@@ -17,6 +17,23 @@ from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 
 
+class ArtifactCollectionRejected(ValueError):
+    """Bounded rejected evidence, available even when collection aborts."""
+
+    def __init__(
+        self,
+        cause: str,
+        message: str,
+        *,
+        artifacts: dict[str, bytes] | None = None,
+        rejected_path: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.cause = cause
+        self.artifacts = artifacts or {}
+        self.rejected_path = rejected_path
+
+
 def safe_relative_path(raw_path: str) -> PurePosixPath:
     """Reject anything that is not a canonical, traversal-free relative path.
 
@@ -171,17 +188,38 @@ def collect_artifacts(
     for path in root.rglob("*"):
         paths.append(path)
         if len(paths) > max_entries:
-            raise ValueError("trial submission exceeds the filesystem entry limit")
+            raise ArtifactCollectionRejected(
+                "entry_limit",
+                "trial submission exceeds the filesystem entry limit",
+                rejected_path=path.relative_to(root).as_posix(),
+            )
 
     artifacts: dict[str, bytes] = {}
     aggregate_bytes = 0
     for path in sorted(paths):
-        if path.is_symlink() or not path.is_file():
+        if path.is_symlink():
+            raise ArtifactCollectionRejected(
+                "escaping_symlink",
+                f"symlink in submission: {path.relative_to(root)}",
+                artifacts=artifacts,
+                rejected_path=path.relative_to(root).as_posix(),
+            )
+        if not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
         if path.lstat().st_size > max_bytes:
-            raise ValueError(f"trial artifact exceeds the byte limit: {relative}")
-        safe_relative_path(relative)
+            raise ArtifactCollectionRejected(
+                "oversized_artifact",
+                f"trial artifact exceeds the byte limit: {relative}",
+                artifacts=artifacts,
+                rejected_path=relative,
+            )
+        try:
+            safe_relative_path(relative)
+        except ValueError as error:
+            raise ArtifactCollectionRejected(
+                "traversal", str(error), artifacts=artifacts, rejected_path=relative
+            ) from error
         remaining = (
             max_bytes
             if relative == aggregate_exempt_path
@@ -191,8 +229,18 @@ def collect_artifacts(
             data = artifact_file.read(remaining + 1)
         if len(data) > remaining:
             if relative == aggregate_exempt_path or remaining == max_bytes:
-                raise ValueError(f"trial artifact exceeds the byte limit: {relative}")
-            raise ValueError("trial artifacts exceed the aggregate byte limit")
+                raise ArtifactCollectionRejected(
+                    "oversized_artifact",
+                    f"trial artifact exceeds the byte limit: {relative}",
+                    artifacts={**artifacts, relative: data[:max_bytes]},
+                    rejected_path=relative,
+                )
+            raise ArtifactCollectionRejected(
+                "aggregate_artifact_limit",
+                "trial artifacts exceed the aggregate byte limit",
+                artifacts={**artifacts, relative: data[:remaining]},
+                rejected_path=relative,
+            )
         artifacts[relative] = data
         if relative != aggregate_exempt_path:
             aggregate_bytes += len(data)

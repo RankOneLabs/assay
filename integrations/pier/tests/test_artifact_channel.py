@@ -12,7 +12,13 @@ import os
 from pathlib import Path
 
 import pytest
-from assay_pier_bridge.paths import collect_artifacts, regular_tree, submission_patch, tree_digest
+from assay_pier_bridge.paths import (
+    ArtifactCollectionRejected,
+    collect_artifacts,
+    regular_tree,
+    submission_patch,
+    tree_digest,
+)
 from assay_pier_bridge.protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
@@ -150,9 +156,11 @@ def test_collect_artifacts_never_follows_a_symlink_out_of_the_root(tmp_path: Pat
     submission.mkdir()
     (submission / "output").write_bytes(b"answer = 42\n")
     (submission / "stolen").symlink_to(secret)
-    artifacts = _collect(submission)
-    assert artifacts == {"output": b"answer = 42\n"}
-    assert b"HOST SECRET" not in b"".join(artifacts.values())
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        _collect(submission)
+    assert rejected.value.cause == "escaping_symlink"
+    assert rejected.value.artifacts == {"output": b"answer = 42\n"}
+    assert b"HOST SECRET" not in b"".join(rejected.value.artifacts.values())
 
 
 def test_collect_artifacts_rejects_an_oversized_file_without_reading_it(tmp_path: Path) -> None:
