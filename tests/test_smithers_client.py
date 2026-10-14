@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,60 @@ from jig.core.types import CompletionParams, Message, Role
 from assay.adapters.smithers import SmithersFactory
 from assay.canonical import canonical_json
 from assay.execution import WorkerFailure
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments"))
+
+from workflow_edit.dispatch import SmithersBoundWorker  # noqa: E402
+
+
+async def test_execution_checks_smithers_bound_worker_configuration(tmp_path: Path) -> None:
+    from test_execution import execution_fixture
+
+    from assay.canonical import digest_bytes
+    from assay.execution import RunFailed, RunSucceeded, WorkerSuccess, execute_plan
+    from assay.planning import compile_plan
+    from assay.store import ObjectStore
+
+    class Delegate:
+        def configuration(self, arm_id: str) -> dict[str, str]:
+            return {"id": "smithers-fixture", "version": "1", "arm_id": arm_id}
+
+        async def run_cell(
+            self, *, input_value: Any, coordinate: Any, client: Any
+        ) -> WorkerSuccess:
+            return WorkerSuccess({"score": 1})
+
+    store = ObjectStore(tmp_path / "store")
+    fixture = execution_fixture(store, subject_ids=("ok",), worker_repeats=1)
+    routing = tmp_path / "routing_config.yaml"
+    _routing(routing)
+    factory = SmithersFactory("qwen", "mcbain", routing, "http://smithers.test")
+    worker = SmithersBoundWorker(Delegate(), factory, "run-1")
+    snapshot = fixture.snapshot.model_copy(update={
+        "arms": tuple(
+            arm.model_copy(update={"worker": worker.configuration(arm.id)})
+            for arm in fixture.snapshot.arms
+        )
+    })
+    snapshot_ref = str(store.publish_json(snapshot.model_dump(mode="json")))
+    plan = compile_plan(
+        snapshot, snapshot_ref=snapshot_ref, worker_repeats=1,
+        jig_revision="55081e8", concurrency=4,
+    )
+    plan_bytes = canonical_json(plan.model_dump(mode="json"))
+    args = fixture.arguments | {
+        "snapshot": snapshot,
+        "plan_bytes": plan_bytes,
+        "authorization": digest_bytes(plan_bytes),
+        "workers": {arm.id: worker for arm in snapshot.arms},
+    }
+    accepted = await execute_plan(**args)
+    assert isinstance(accepted, RunSucceeded), accepted
+
+    _routing(routing, "qwen:Q4")
+    rejected = await execute_plan(**args)
+    assert isinstance(rejected, RunFailed)
+    assert "worker configuration mismatch" in rejected.message
 
 
 def _routing(path: Path, tag: str = "qwen:Q8") -> None:
@@ -136,7 +191,9 @@ async def test_dropped_response_retries_same_submission_and_reports_clock(tmp_pa
     assert seen[0]["idempotency_key"] == "cell-1"
     assert completions == 1
     assert client.diagnostics() == {
-        "queue_latency_seconds": 120.0, "time_from_acceptance_seconds": 30.0
+        "started_at": _job()["started_at"],
+        "queue_latency_seconds": 120.0,
+        "time_from_acceptance_seconds": 30.0,
     }
 
 

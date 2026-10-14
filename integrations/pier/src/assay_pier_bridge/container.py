@@ -412,6 +412,18 @@ class DockerTrialHandle:
             directory.chmod(0o777 if directory.is_dir() else 0o666)
         self._working_copy.chmod(0o777)
         self._cancel = threading.Event()
+        self._deadline: float | None = None
+
+    def set_deadline(self, deadline: float) -> None:
+        """Receive the absolute monotonic acceptance deadline before setup."""
+        self._deadline = deadline
+
+    def _remaining(self) -> float:
+        assert self._deadline is not None
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise TrialTimeoutError("trial exceeded its worker-acceptance deadline")
+        return remaining
 
     def cancel(self) -> None:
         """Operator-initiated cancellation, observable by an in-flight ``run()``."""
@@ -422,7 +434,8 @@ class DockerTrialHandle:
         self._quota_image.touch()
         os.truncate(self._quota_image, limits.storage_mb * 1024 * 1024)
         formatted = _run(
-            ["mkfs.ext4", "-F", "-q", str(self._quota_image)], timeout=_START_TIMEOUT_S
+            ["mkfs.ext4", "-F", "-q", str(self._quota_image)],
+            timeout=min(_START_TIMEOUT_S, self._remaining()),
         )
         if formatted.returncode != 0:
             raise InfrastructureTrialError(
@@ -463,7 +476,7 @@ class DockerTrialHandle:
                 f"assay.egress.port={port}",
                 self._network_name,
             ],
-            timeout=_START_TIMEOUT_S,
+            timeout=min(_START_TIMEOUT_S, self._remaining()),
         )
         if result.returncode != 0:
             raise InfrastructureTrialError(
@@ -553,26 +566,34 @@ class DockerTrialHandle:
         return args
 
     def run(self) -> TrialResult:
+        if self._deadline is None:
+            self._deadline = time.monotonic() + self._request.limits.timeout_s
+        self._remaining()
         self._prepare_quota(self._request.limits)
+        self._remaining()
         self._prepare_network()
-        start_result = _run(self._docker_run_args(self._request.limits), timeout=_START_TIMEOUT_S)
+        self._remaining()
+        start_result = _run(
+            self._docker_run_args(self._request.limits),
+            timeout=min(_START_TIMEOUT_S, self._remaining()),
+        )
+        self._remaining()
         if start_result.returncode != 0:
             raise InfrastructureTrialError(
                 "container_start", f"container failed to start: {start_result.stderr.strip()}"
             )
         self._assert_enforcement(_usable_observation(_inspect(self._name)))
-        deadline = time.monotonic() + self._request.limits.timeout_s
         while True:
+            self._remaining()
             if self._cancel.is_set():
                 raise TrialCancelledError("operator cancelled the trial")
             inspect = _run(
                 ["docker", "inspect", "--format", "{{.State.Running}}", self._name],
-                timeout=_POLL_TIMEOUT_S,
+                timeout=min(_POLL_TIMEOUT_S, self._remaining()),
             )
+            self._remaining()
             if inspect.returncode == 0 and inspect.stdout.strip() == "false":
                 break
-            if time.monotonic() >= deadline:
-                raise TrialTimeoutError(f"trial exceeded {self._request.limits.timeout_s}s")
             time.sleep(_POLL_INTERVAL_S)
         exit_code = _run(
             ["docker", "inspect", "--format", "{{.State.ExitCode}}", self._name],

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import subprocess
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -180,6 +182,61 @@ def test_runtime_preserves_timeout_when_teardown_inspection_fails(
     assert result.outcome.exception_type == "TrialTimeoutError"
     assert result.outcome.detail == "original timeout"
     assert len(removed) == 1
+
+
+def test_accepted_at_reaches_docker_handle_as_absolute_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: list[float] = []
+
+    def timed_out_run(self: DockerTrialHandle) -> None:
+        assert self._deadline is not None
+        observed.append(self._deadline - time.monotonic())
+        raise TrialTimeoutError("test deadline")
+
+    monkeypatch.setattr(DockerTrialHandle, "run", timed_out_run)
+    monkeypatch.setattr(container, "_inspect", lambda name: None)
+    monkeypatch.setattr(container, "_force_remove", lambda name: True)
+    monkeypatch.setattr(container, "_container_count", lambda name: 0)
+    client = DockerTrialClient(
+        image="unused@test", package=PACKAGE, command=["python", "-m", "assay_pier_bridge"],
+        runs_root=tmp_path,
+    )
+    accepted_at = datetime.now(UTC) - timedelta(seconds=7)
+    result = BridgeRuntime(client).run_cell(_request(), accepted_at=accepted_at)
+    assert result.outcome.cause == "harness_deadline"
+    assert len(observed) == 1
+    assert 11 < observed[0] < 14  # 20-second limit less seven seconds in queue/transit.
+
+    with pytest.raises(TrialTimeoutError, match="worker-acceptance"):
+        BridgeRuntime(client).run_cell(
+            _request(), accepted_at=datetime.now(UTC) - timedelta(seconds=21)
+        )
+
+
+def test_container_setup_consumes_acceptance_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handle = _handle(tmp_path)
+    quota_started = False
+    network_started = False
+
+    def slow_quota(self: DockerTrialHandle, limits: TrialLimits) -> None:
+        nonlocal quota_started
+        quota_started = True
+        time.sleep(0.1)
+
+    def prepare_network(self: DockerTrialHandle) -> None:
+        nonlocal network_started
+        network_started = True
+
+    monkeypatch.setattr(DockerTrialHandle, "_prepare_quota", slow_quota)
+    monkeypatch.setattr(DockerTrialHandle, "_prepare_network", prepare_network)
+    handle.set_deadline(time.monotonic() + 0.05)
+    with pytest.raises(TrialTimeoutError, match="worker-acceptance"):
+        handle.run()
+    assert quota_started
+    assert not network_started
 
 
 def test_driver_hashes_the_exact_bounded_output_bytes(

@@ -89,7 +89,9 @@ the footprint runs recorded in `experiments/workflow_edit/SMOKE.md` (wf-12).
   The client checks the routing file again before accepting a completion.
   Smithers 9e305b6 reports the alias and machine in `JobResponse`, but does
   not report the resolved worker tag; a worker-side tag attestation therefore
-  cannot be verified from that response alone.
+  cannot be verified from that response alone. The optional response/result
+  tag checks in the client are forward-compatible with a future attesting
+  Smithers response, and do not strengthen the current guarantee.
 - **Idempotency topology:** Run one dispatch process against one persistent
   SQLite database path for the entire qualification run. Smithers defaults to
   `db_path="smithers.db"`, relative to the dispatch process working directory;
@@ -101,5 +103,8 @@ the footprint runs recorded in `experiments/workflow_edit/SMOKE.md` (wf-12).
 - **Clock:** Set Smithers `timeout_seconds` to 900. Its `started_at` is written
   when the worker accepts a task. Report `started_at - created_at` as queue
   latency and `completed_at - started_at` as time from acceptance; only the
-  latter is charged to the 15-minute cell budget. The bridge may receive
-  `accepted_at` and reduces its local container allowance by elapsed time.
+  latter is charged to the 15-minute cell budget. The concrete workflow
+  delegate passes the recorded `started_at` into `BridgeRuntime.run_cell`.
+  The bridge gives the Docker handle an absolute monotonic deadline before
+  quota setup, network setup, and container launch; those stages consume the
+  same acceptance budget.

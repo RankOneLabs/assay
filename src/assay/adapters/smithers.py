@@ -164,7 +164,7 @@ class SmithersClient(DispatchClient, DescribedClient):
                 if isinstance(timing, WorkerFailure):
                     return timing
                 if timing is not None:
-                    self._diagnostics = timing
+                    self._diagnostics.update(timing)
                     if timing["time_from_acceptance_seconds"] > self._factory.timeout_seconds:
                         return WorkerFailure(
                             "AcceptanceDeadlineExceeded", "worker acceptance budget expired"
@@ -206,6 +206,9 @@ class SmithersClient(DispatchClient, DescribedClient):
             or tag != authorized["resolved_backend_tag"]
         ):
             return WorkerFailure("ResolvedTagIdentityMismatch", "Smithers resolved tag changed")
+        # Smithers 9e305b6 emits neither field. These checks are forward-compatible
+        # with a future job response that attests the actual worker tag; today the
+        # routing-file digest and locally resolved tag are the whole guarantee.
         if "resolved_backend_tag" in job and job["resolved_backend_tag"] != tag:
             return WorkerFailure("ResolvedTagIdentityMismatch", "Smithers job tag differs")
         result = job.get("result")
@@ -219,6 +222,16 @@ class SmithersClient(DispatchClient, DescribedClient):
         if started_raw is None:
             return None
         started = datetime.fromisoformat(started_raw)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        queue = (started - created).total_seconds()
+        if queue < 0:
+            return WorkerFailure("InvalidJobTiming", "Smithers job timestamps are inconsistent")
+        self._diagnostics.update(
+            {"started_at": started.isoformat(), "queue_latency_seconds": queue}
+        )
         completed_raw = job.get("completed_at")
         if completed_raw is None:
             # Smithers timestamps are naive wall-clock values. Comparing one
@@ -226,15 +239,10 @@ class SmithersClient(DispatchClient, DescribedClient):
             # against the cell. Smithers enforces the live timeout itself.
             return None
         completed = datetime.fromisoformat(completed_raw)
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=UTC)
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=UTC)
         if completed.tzinfo is None:
             completed = completed.replace(tzinfo=UTC)
-        queue = (started - created).total_seconds()
         run = (completed - started).total_seconds()
-        if queue < 0 or run < 0:
+        if run < 0:
             return WorkerFailure("InvalidJobTiming", "Smithers job timestamps are inconsistent")
         return {"queue_latency_seconds": queue, "time_from_acceptance_seconds": run}
 

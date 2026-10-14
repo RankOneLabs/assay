@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
+from functools import partial
 from typing import Any, Protocol
+
+from jig.core.types import CompletionParams, Message, Role
 
 from assay.adapters.smithers import SmithersClient, SmithersFactory
 from assay.canonical import canonical_json
-from assay.execution import WorkerResult
+from assay.execution import WorkerFailure, WorkerResult, WorkerSuccess
 from assay.models import CellCoordinate
+from assay.store import ObjectStore
 
 
 def cell_idempotency_key(run_id: str, coordinate: CellCoordinate) -> str:
@@ -26,6 +34,100 @@ class SmithersCellDelegate(Protocol):
     async def run_cell(
         self, *, input_value: Any, coordinate: CellCoordinate, client: SmithersClient
     ) -> WorkerResult: ...
+
+
+class BridgeRuntimeLike(Protocol):
+    def run_cell(self, request: Any, *, accepted_at: datetime) -> Any: ...
+
+
+@dataclass(frozen=True)
+class SmithersBridgeCellDelegate:
+    """Dispatch the cell's Smithers job, then run its bridge trial from acceptance.
+
+    A new single-use BridgeRuntime is supplied for each cell. The request
+    builder receives the Smithers completion when constructing that cell's
+    TrialRequest; its stable configuration is part of the arm's authorized bytes.
+    """
+
+    store: ObjectStore
+    runtime_factory: Callable[[], BridgeRuntimeLike]
+    request_builder: Callable[[Any, CellCoordinate, str], Any]
+    bridge_configuration: dict[str, Any]
+
+    def configuration(self, arm_id: str) -> dict[str, Any]:
+        return {
+            "id": "workflow-edit-smithers-bridge",
+            "version": "1",
+            "delegate": "smithers-bridge-v1",
+            "arm_id": arm_id,
+            "bridge": self.bridge_configuration,
+        }
+
+    async def run_cell(
+        self, *, input_value: Any, coordinate: CellCoordinate, client: SmithersClient
+    ) -> WorkerResult:
+        if not isinstance(input_value, dict) or not isinstance(input_value.get("prompt"), str):
+            return WorkerFailure("InvalidInput", "workflow cell requires a prompt")
+        completion = await client.complete_result(
+            CompletionParams(messages=[Message(role=Role.USER, content=input_value["prompt"])])
+        )
+        if isinstance(completion, WorkerFailure):
+            return completion
+        diagnostics = client.diagnostics()
+        started_raw = diagnostics.get("started_at")
+        if not isinstance(started_raw, str):
+            return WorkerFailure("InvalidJobTiming", "Smithers job omitted started_at")
+        try:
+            accepted_at = datetime.fromisoformat(started_raw)
+            request = self.request_builder(input_value, coordinate, completion.content)
+            if request.cell_id != coordinate.id:
+                return WorkerFailure("IdentityMismatch", "bridge request is for another cell")
+            executor = ThreadPoolExecutor(max_workers=1)
+            try:
+                result = await asyncio.get_running_loop().run_in_executor(
+                    executor,
+                    partial(self.runtime_factory().run_cell, request, accepted_at=accepted_at),
+                )
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+        except Exception as error:
+            return WorkerFailure(type(error).__name__, str(error), trace={"smithers": diagnostics})
+        if result.cell_id != coordinate.id:
+            return WorkerFailure("IdentityMismatch", "bridge result is for another cell")
+        if result.outcome.kind == "candidate":
+            required = {
+                "manifest.json", "candidate-index.json", "candidate.patch",
+                "tree-digest.txt", "result.json", "configuration.json", "trajectory.json",
+            }
+            missing = sorted(required - result.artifacts.keys())
+            if missing:
+                return WorkerFailure(
+                    "IncompleteEvidence", "bridge omitted success evidence: " + ", ".join(missing),
+                    trace={"smithers": diagnostics},
+                )
+        artifact_refs = {
+            path: str(self.store.publish_bytes(data)) for path, data in result.artifacts.items()
+        }
+        trace = {"smithers": diagnostics, "artifact_refs": artifact_refs}
+        if result.outcome.kind != "candidate":
+            return WorkerFailure(
+                type(result.outcome).__name__, result.outcome.detail or result.outcome.cause,
+                trace=trace,
+            )
+        return WorkerSuccess(
+            output={
+                "cell_id": coordinate.id,
+                "candidate_ref": artifact_refs["candidate-index.json"],
+                "patch_ref": artifact_refs["candidate.patch"],
+                "tree_digest_ref": artifact_refs["tree-digest.txt"],
+                "result_ref": artifact_refs["result.json"],
+                "configuration_ref": artifact_refs["configuration.json"],
+                "raw_trajectory_ref": artifact_refs["trajectory.json"],
+                "manifest_ref": artifact_refs["manifest.json"],
+                "artifact_refs": artifact_refs,
+            },
+            trace=trace,
+        )
 
 
 @dataclass(frozen=True)
