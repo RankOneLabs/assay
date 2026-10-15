@@ -48,6 +48,7 @@ class Scripted:
 def _reset() -> None:
     FakeSandbox.created.clear()
     FakeSandbox.peaks = {}
+    FakeSandbox.oom_kill_count = FakeSandbox.late_oom_kills = 0
 
 
 def _request(package: dict[str, str] = PACKAGE, **overrides: Any) -> TrialRequest:

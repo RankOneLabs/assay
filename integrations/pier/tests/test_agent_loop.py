@@ -57,6 +57,10 @@ def _answer(name: str, arguments: dict[str, str], turn: int) -> dict[str, Any]:
 class FakeSandbox:
     created: list[FakeSandbox] = []
     peaks: dict[str, int] = {}
+    # ``oom`` is killed inside its own tool call; ``oom-later`` leaves a process
+    # behind that is killed after the tool result was observed.
+    oom_kill_count = 0
+    late_oom_kills = 0
 
     def __init__(self, workspace: Path, cache: Path, image: str) -> None:
         self.workspace = workspace
@@ -84,6 +88,11 @@ class FakeSandbox:
         self.timeouts.append(timeout_s)
         if argv[-1] == "hang":
             raise RuntimeError("tool_timeout")
+        if argv[-1] == "oom":
+            type(self).oom_kill_count += 1
+            return ToolOutput("exit=137\nKilled\n", 14, False)
+        if argv[-1] == "oom-later":
+            type(self).late_oom_kills += 1
         if argv[0] == "cat":
             relative = argv[-1].removeprefix("/workspace/")
             output = "exit=0\n" + (self.workspace / relative).read_text()
@@ -103,7 +112,13 @@ class FakeSandbox:
         self.interrupted = True
 
     def capture_workspace(self) -> dict[str, int]:
-        return dict(self.peaks)
+        if not self.peaks:
+            return {}
+        total = self.peaks.get("oom_kills", 0) + self.oom_kill_count + self.late_oom_kills
+        return {**self.peaks, "oom_kills": total}
+
+    def oom_kills(self) -> int | None:
+        return self.peaks.get("oom_kills", 0) + self.oom_kill_count if self.peaks else None
 
 
 class FakeStorage:
@@ -124,6 +139,7 @@ class FakeStorage:
 def _reset_sandboxes() -> Iterator[None]:
     FakeSandbox.created.clear()
     FakeSandbox.peaks = {}
+    FakeSandbox.oom_kill_count = FakeSandbox.late_oom_kills = 0
     yield
 
 
@@ -390,6 +406,80 @@ def test_exhausted_ceilings_fail_the_submission(
     with pytest.raises(AgentLoopError) as failure:
         _local(tmp_path, completion).run_cell(cell_id="s:a:w0", package={"instruction.md": "E"})
     assert failure.value.cause == cause
+
+
+HEALTHY = {"oom_kills": 0, "workspace_free_kb": 9999, "cache_free_kb": 9999}
+
+
+def test_recovered_oom_kill_is_recorded_but_keeps_the_submission(tmp_path: Path) -> None:
+    FakeSandbox.peaks = dict(HEALTHY)
+    completion = Scripted(
+        [_call("run_command", {"command": "oom"}, 1)],
+        [_call("write_file", {"path": "src/a.ts", "content": "fixed"}, 2)],
+        [_call("submit_output", {"summary": "s"}, 3)],
+    )
+    result = _local(tmp_path, completion, writable_prefixes=("src/",)).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "E", "workspace/src/a.ts": "one"}
+    )
+    assert b"+fixed" in result.patch
+    events = result.trajectory["events"]
+    assert [e for e in events if e["kind"] == "oom_kill"] == [
+        {"kind": "oom_kill", "turn": 1, "tool": "run_command", "oom_kills": 1, "total": 1}
+    ]
+    peaks = next(e for e in events if e["kind"] == "cgroup_peaks")
+    assert peaks["oom_kills"] == peaks["oom_kills_seen_by_tools"] == 1
+
+
+def test_oom_kill_after_the_last_tool_result_is_memory_limit(tmp_path: Path) -> None:
+    FakeSandbox.peaks = dict(HEALTHY)
+    completion = Scripted(
+        [_call("run_command", {"command": "oom"}, 1)],
+        [_call("run_command", {"command": "oom-later"}, 2)],
+        [_call("submit_output", {"summary": "s"}, 3)],
+    )
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion).run_cell(cell_id="s:a:w0", package={"instruction.md": "E"})
+    assert failure.value.cause == "memory_limit"
+    # The kill the model saw stays recorded; the one at submission voids the tree.
+    events = failure.value.trajectory["events"]
+    assert [e["total"] for e in events if e["kind"] == "oom_kill"] == [1]
+    assert "candidate.patch" in failure.value.evidence
+
+
+@pytest.mark.parametrize(
+    "peaks",
+    [
+        {"oom_kills": 1, "workspace_free_kb": 9999, "cache_free_kb": 9999},
+        {"oom_kills": 0, "workspace_free_kb": 9999, "cache_free_kb": 0},
+    ],
+)
+def test_scope_and_tampering_outrank_resource_causes(
+    tmp_path: Path, peaks: dict[str, int]
+) -> None:
+    FakeSandbox.peaks = peaks
+    completion = Scripted(
+        [_call("write_file", {"path": "package.json", "content": "{\"x\":1}"}, 1)],
+        [_call("submit_output", {"summary": "s"}, 2)],
+    )
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion, writable_prefixes=("src/",)).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "E", "workspace/package.json": "{}"}
+        )
+    assert failure.value.cause == "tampering"
+
+
+def test_nested_git_metadata_in_a_submission_is_out_of_scope(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("write_file", {"path": "src/x/.git", "content": "gitdir: /elsewhere"}, 1)],
+        [_call("submit_output", {"summary": "s"}, 2)],
+    )
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion, writable_prefixes=("src/",)).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "E", "workspace/src/a.ts": "one"}
+        )
+    assert failure.value.cause == "out_of_scope_edit"
+    assert failure.value.rejection is not None
+    assert failure.value.rejection.rejected_path == "src/x/.git"
 
 
 def test_final_submission_may_follow_a_tool_in_the_same_model_turn(tmp_path: Path) -> None:
@@ -688,6 +778,33 @@ def test_tmpfs_capture_streams_the_tree_and_replaces_staging(
     }
     assert not (workspace / "deleted.txt").exists()
     assert (workspace / "src" / "new.txt").read_text() == "new"
+
+
+@pytest.mark.parametrize(
+    ("tmpfs", "stdout", "expected"),
+    [(True, "exit=0\n3\n", 3), (False, "unused", None),
+     (True, "exit=1\ngrep: no such file\n", "error"), (True, "exit=0\nmany\n", "error")],
+)
+def test_docker_sandbox_reads_the_cgroup_oom_kill_count(
+    tmpfs: bool, stdout: str, expected: int | str | None
+) -> None:
+    sandbox = DockerToolSandbox.__new__(DockerToolSandbox)
+    sandbox._tmpfs_storage = tmpfs
+    seen: list[list[str]] = []
+
+    def execute(argv: list[str], **kwargs: Any) -> ToolOutput:
+        seen.append(argv)
+        return ToolOutput(stdout, len(stdout), False)
+
+    sandbox.execute = execute  # type: ignore[method-assign]
+    if expected == "error":
+        with pytest.raises(RuntimeError, match="cgroup_peak_observation"):
+            sandbox.oom_kills()
+        return
+    assert sandbox.oom_kills() == expected
+    assert bool(seen) is tmpfs
+    if seen:
+        assert "/sys/fs/cgroup/memory.events" in seen[0][-1]
 
 
 @pytest.mark.parametrize(

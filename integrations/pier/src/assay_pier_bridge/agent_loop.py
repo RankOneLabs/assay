@@ -199,6 +199,7 @@ class ToolSandbox(Protocol):
         timeout_s: float = MAX_TOOL_SECONDS,
     ) -> ToolOutput: ...
     def capture_workspace(self) -> dict[str, int]: ...
+    def oom_kills(self) -> int | None: ...
     def interrupt(self) -> None: ...
     def close(self) -> None: ...
 
@@ -299,6 +300,9 @@ _OBSERVE = (
     "grep '^oom_kill ' /sys/fs/cgroup/memory.events | cut -d' ' -f2 && "
     "df -Pk /workspace /cache | tail -n 2 | tr -s ' ' | cut -d' ' -f4"
 )
+
+
+_OOM_KILLS = "grep '^oom_kill ' /sys/fs/cgroup/memory.events | cut -d' ' -f2"
 
 
 _KILL_STRAYS = (
@@ -458,6 +462,23 @@ class DockerToolSandbox:
             "workspace_free_kb": workspace_free,
             "cache_free_kb": cache_free,
         }
+
+    def oom_kills(self) -> int | None:
+        """The cell cgroup's cumulative OOM-kill count, read after each tool call.
+
+        ``None`` in bind-mount mode, which, like ``capture_workspace``, observes
+        no cgroup counters.
+        """
+        if not self._tmpfs_storage:
+            return None
+        observed = self.execute(["/bin/sh", "-c", _OOM_KILLS], max_output_bytes=256, timeout_s=30)
+        values = observed.text.splitlines()
+        if len(values) != 2 or values[0] != "exit=0":
+            raise RuntimeError("cgroup_peak_observation")
+        try:
+            return int(values[1])
+        except ValueError as error:
+            raise RuntimeError("cgroup_peak_observation") from error
 
     def _failed_start(self, returncode: int, *, cause: Exception | None = None) -> NoReturn:
         cleanup_failed = False
@@ -726,8 +747,16 @@ def _replayable_call(call: object) -> dict[str, Any]:
     return {"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
 
 
-def _resource_cause(peaks: Mapping[str, int]) -> str | None:
-    if peaks.get("oom_kills", 0) > 0:
+def _resource_cause(peaks: Mapping[str, int], oom_kills_seen: int) -> str | None:
+    """The resource cause the final submission check finds, if any.
+
+    ``memory_limit`` only when the cgroup hit its ceiling after the model last
+    saw a tool result: an OOM kill counted by the final observation but not by
+    the observation after the last tool call. A test run killed earlier, whose
+    result the model saw and recovered from, is in the trajectory and does not
+    void the submission.
+    """
+    if peaks.get("oom_kills", 0) > oom_kills_seen:
         return "memory_limit"
     for key in ("workspace_free_kb", "cache_free_kb"):
         if key in peaks and peaks[key] < EXHAUSTED_FREE_KB:
@@ -905,12 +934,21 @@ class RepositoryAgentClient:
             self._lock.release()
 
     def _observed_work(
-        self, baseline: Path, workspace: Path, *, enforce_scope: bool = True
+        self,
+        baseline: Path,
+        workspace: Path,
+        *,
+        enforce_scope: bool = True,
+        resource_cause: str | None = None,
     ) -> tuple[bytes, dict[str, bytes], str, str]:
         before = regular_tree(baseline)
         after = regular_tree(workspace)
         if enforce_scope:
             check_submission_scope(before, after, writable_prefixes=self.writable_prefixes)
+        # The captured tree's own typed rejections and the scope and tampering
+        # checks outrank a resource cause; only an in-scope tree reaches it.
+        if resource_cause is not None:
+            raise ValueError(resource_cause)
         captured = submission_patch(baseline, workspace)
         return captured.patch, after, captured.baseline_tree_digest, captured.final_tree_digest
 
@@ -956,6 +994,8 @@ class RepositoryAgentClient:
         cost_usd: float | None = 0.0 if self.model_route.paid_route_reachable else None
         primary_failed = False
         captured = False
+        # The cgroup's OOM-kill count as of the model's last tool result.
+        oom_kills_seen = 0
 
         def usage() -> dict[str, int | float | None]:
             return {
@@ -979,8 +1019,22 @@ class RepositoryAgentClient:
             peaks = sandbox.capture_workspace()
             captured = True
             if peaks:
-                events.append({"kind": "cgroup_peaks", **peaks})
+                events.append(
+                    {"kind": "cgroup_peaks", **peaks, "oom_kills_seen_by_tools": oom_kills_seen}
+                )
             return peaks
+
+        def observe_oom_kills(turn: int, tool: str) -> None:
+            """Record kills the model can see in this tool's result as recovered."""
+            nonlocal oom_kills_seen
+            assert sandbox is not None
+            total = sandbox.oom_kills()
+            if total is not None and total > oom_kills_seen:
+                events.append({
+                    "kind": "oom_kill", "turn": turn, "tool": tool,
+                    "oom_kills": total - oom_kills_seen, "total": total,
+                })
+                oom_kills_seen = total
 
         try:
             storage.prepare()
@@ -1071,11 +1125,9 @@ class RepositoryAgentClient:
                                 raise ToolArgumentError("submit_output must be the last call")
                             events.append({"kind": "submit_requested", "turn": turn})
                             peaks = capture()
-                            resource = _resource_cause(peaks)
-                            if resource is not None:
-                                raise ValueError(resource)
                             patch, files, before_digest, after_digest = self._observed_work(
-                                baseline, workspace
+                                baseline, workspace,
+                                resource_cause=_resource_cause(peaks, oom_kills_seen),
                             )
                             trajectory["messages"] = messages
                             events.append({"kind": "submitted", "turn": turn})
@@ -1107,6 +1159,7 @@ class RepositoryAgentClient:
                                 "kind": "tool_timeout", "turn": turn, "tool": name,
                                 "limit_seconds": round(limit, 3),
                             })
+                            observe_oom_kills(turn, name)
                             messages.append({
                                 "role": "tool", "tool_call_id": call_id,
                                 "content": (
@@ -1115,6 +1168,7 @@ class RepositoryAgentClient:
                                 ),
                             })
                             continue
+                        observe_oom_kills(turn, name)
                     except (ToolArgumentError, json.JSONDecodeError) as error:
                         # The call is the model's mistake, not the harness's:
                         # it sees why and may revise within its turn budget.
