@@ -156,6 +156,8 @@ jobs:
         run: uv run mypy .
       - name: Test experiments
         working-directory: experiments
+        env:
+          ASSAY_REQUIRE_DOCKER: "1"
         run: uv run pytest -q
 
   pier-qualification:
