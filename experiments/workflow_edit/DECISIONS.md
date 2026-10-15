@@ -439,3 +439,106 @@ Smithers; the Phase A requalification smoke qualifies them.
 - **Publication of wf-13:** `publish.py` uses the 1,120-byte schema size of the
   four tools the wf-13 image ran, not the current `TOOLS`. That way SMOKE.md
   still reproduces exactly from its committed evidence.
+
+## Part 2a — fixture manifest 0.2.0 and multi-arm wiring (Phase A items 7, 8)
+
+- **One document, task records inside it:** `assay-fixture-manifest/0.2.0`
+  (`FixtureManifestV2`) is one checkpoint-level manifest with a `tasks` tuple
+  of `FixtureTask` records, one per subject, sorted by subject id. A single
+  document gives one `fixture_identity` for the whole population, and that
+  identity is what the evaluator configuration and therefore the authorized
+  plan bind. Adding or changing a task is a new fixture version, which is
+  right because the population is frozen before the full plan.
+  `task_record_digest` still digests one record on its own, and each
+  subject's payload binds it. Two separate documents would need a second
+  identity and a cross-reference that could drift.
+- **Dose arms are fixed in the core model:** `DoseArm` is the closed literal
+  `mess-00 | mess-low | mess-mid | mess-high`. `FixtureTask.arms` must have
+  exactly those four keys, and the exported schema enforces the same through
+  `propertyNames` and `minProperties`. A test checks that it equals
+  `arms.ARM_IDS`. Each arm records its tree digest, its own reference patch,
+  its negative patches, and four typed qualification results
+  (`baseline_passes`, `feature_fails`, `reference_passes`,
+  `equivalence_passes`). Each result is an observed outcome
+  (`passed | failed | unavailable`) plus the digest of its retained record.
+  The field name states the expected outcome. A manifest can record a failed
+  qualification, which keeps the record honest during Phase B, but
+  `study.check_fixture` refuses to plan a study unless every arm of every
+  task qualified (spec 6: no paid runs until everything qualifies). The four
+  arm trees must have distinct digests.
+- **Site span unit:** A span is a 1-based, inclusive line range in the
+  `mess-00` tree. The treatment unit is a whole calling function, so line
+  granularity is exact enough, and a line range can be read with the ranged
+  `read_file` and against a diff. Byte offsets are not human-auditable.
+  `mess-00` coordinates are the only ones that are stable: an inline copy
+  shifts every later line in a dosed arm, and each arm's tree digest pins the
+  rest. Sites in one file must not overlap and must name different functions
+  (`symbol`).
+- **Dose membership is explicit and validated against rank:** Each site lists
+  the arms in which it is inline (never `mess-00`), in dose order, and the
+  list must be upward closed (a `mess-low` site is in mid and high), which
+  gives low ⊂ mid ⊂ high. Ranks are exactly 1..N. Arm k must dose exactly the
+  `dose_count(k, N)` lowest-ranked sites (1, ceil(N/2), N). Membership is
+  therefore fully implied by rank, but it is stored anyway so the published
+  record states the positions without needing the rule to read it, and
+  validation catches any disagreement. N (`treatment_site_count`) must be at
+  least 4 (spec 5.1) and must equal the number of sites.
+- **Removed imports belong to a site and its arms:** An import shared by
+  several sites in one file is removed only once all of them are inline. So a
+  `RemovedImport` is attributed to the site whose dosing removes it and lists
+  exactly the arms where it is gone. Those arms must be inside the site's
+  membership and upward closed. Comment corrections are line spans in the
+  site's file (in `mess-00` coordinates) with a reason, and they apply
+  wherever the site is dosed. The canonical owner is never edited, so a
+  correction never lands outside the site's file.
+- **Test groups by name:** `visible_tests` and `hidden_tests` are
+  `(name, digest)` pairs whose names are unique across both and whose digests
+  are distinct. The digest is the store ref of the frozen `WorkflowTestGroup`.
+  The evaluator looks each group up by name and refuses a stored group whose
+  own name or `restores` flag disagrees.
+- **Routing digest required but nullable:** `routing_config_digest` is
+  `Sha256Ref | null` and has no default. A hosted fixture states `null`
+  explicitly, so forgetting to bind a local routing file cannot be confused
+  with "hosted". Identity changes with the image digest and with the routing
+  digest, whether set or null.
+- **0.1.0 untouched:** `FixtureManifest` and
+  `schemas/assay-fixture-manifest.schema.json` are byte-identical, so the
+  smoke manifest and readers pinned to that document keep validating. 0.2.0
+  is exported beside it as `assay-fixture-manifest-v0.2.schema.json`.
+  `parse_fixture_manifest` selects the model from `schema_version`. A
+  root-level `oneOf` like the execution plan's would have changed the
+  existing document, so the unversioned name stays 0.1.0.
+- **Per-cell evaluator (spec 8.1):** `evaluation.CellEvaluator` takes subject
+  and arm from the cell id, the baseline from `input_value` (the realization
+  `execute_plan` read from the cell's own `realization_ref`, the same bytes
+  the worker was given), and the submission's baseline digest from the
+  worker's `result.json` (`worker_candidate`). It refuses
+  `realization_digest_mismatch` when the given tree is not the manifest's
+  tree for that arm, and `baseline_digest_mismatch` when the worker's
+  recorded baseline is not that tree. It also refuses an output whose
+  `cell_id` is another cell's. The smoke's `CorrectnessEvaluator` now reads
+  the baseline digest and the baseline the same way, which removes the
+  fabricated digest that made `evaluate_candidate`'s check vacuous. Only its
+  0.1.0 hidden refs stay positional. A positional slip still surfaces as
+  `invalid_hidden_tests`, because each stored group carries its own name.
+- **Study path beside the smoke path:** `study.plan_study` / `prepare_study`
+  build four realizations per subject. Every arm carries
+  `assay_execution_schedule: subject-rotated-v1`, and `validate_worker_grid`
+  runs on the compiled plan's cells inside `compile_workflow_plan`, before
+  the plan bytes exist to authorize. `qualify.prepare` (smoke and probes)
+  shares that plan compiler without the grid check, because its one-arm grid
+  over a qualification subject is refused by design. `qualify.run`
+  dispatches every snapshot arm to the same worker. One worker serves all
+  four arms because the arm differs only in the realization it is given.
+- **Fixture checks before planning:** `study.check_fixture` requires the
+  manifest's image digest to match the run's image, its routing digest to
+  match the run's routing digest (`null` for hosted), each subject to have
+  exactly one tree per arm matching its arm digest, every arm to have
+  qualified, and visible tests to be identical across arms (spec 5.1: exposed
+  tests are fixed).
+- **Not here:** No real 2a fixture is built (Phase B). The offline test
+  `tests/test_workflow_edit_study.py` uses a synthetic subject with N = 4 and
+  four tiny trees, runs a 1 × 4 × 4 grid through `execute_plan` with a
+  scripted worker and a recording runner, and covers a worker that reports
+  the wrong baseline. Per-arm file sizes for the envelope check (spec 5.1)
+  are not yet a manifest field.

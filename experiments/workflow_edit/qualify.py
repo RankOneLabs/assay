@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import gzip
 import json
 import time
@@ -32,13 +31,12 @@ from assay.canonical import canonical_json, digest_bytes
 from assay.execution import (
     EvaluationFailed,
     EvaluationResult,
-    EvaluationSuccess,
     RunFailed,
     WorkerResult,
     WorkerSuccess,
     execute_plan,
 )
-from assay.fixture_manifest import FixtureManifest, fixture_identity
+from assay.fixture_manifest import FixtureManifest, FixtureManifestV2, fixture_identity
 from assay.investigations.workflow_correctness import (
     DockerWorkflowRunner,
     WorkflowRunnerSettings,
@@ -65,7 +63,15 @@ from workflow_edit.bridge import (
     trial_limits,
 )
 from workflow_edit.diagnose import diagnose
-from workflow_edit.evaluation import evaluate_candidate
+from workflow_edit.evaluation import (
+    CORRECTNESS_CATEGORIES,
+    CellEvaluator,
+    cell_arm,
+    envelope_bytes,
+    evaluate_candidate,
+    record_result,
+    worker_candidate,
+)
 from workflow_edit.fixture import (
     MAX_REPOSITORY_BYTES,
     MAX_REPOSITORY_FILES,
@@ -75,19 +81,12 @@ from workflow_edit.fixture import (
 )
 
 CHECKPOINT = "f3b3ffca43e43672ff2f58ab797d65c7532aaed8"
-CORRECTNESS_CATEGORIES = ("correct", "incorrect", "unavailable")
 SMITHERS = "http://willie:8900"
 MACHINE = "mcbain"
 MODEL_ALIAS = "qwen-coder-32b"
 CELL_TIMEOUT_S = 900.0
 EVIDENCE = Path(__file__).resolve().parent / "evidence" / "wf13"
 HOSTED_MODEL = "qwen/qwen3.5-397b-a17b"
-
-
-def envelope_bytes(store: ObjectStore, ref: str) -> bytes:
-    """Undo ``PierAdapter``'s base64 envelope around a published artifact."""
-    envelope = json.loads(store.read_bytes(ref))
-    return base64.b64decode(envelope["content_base64"])
 
 
 def fixture_manifest(
@@ -125,7 +124,14 @@ def fixture_manifest(
 
 @dataclass
 class CorrectnessEvaluator:
-    """Grade one settled cell: reconstruct its patch once, run the frozen groups."""
+    """Grade one settled smoke cell against the single-arm 0.1.0 manifest.
+
+    As in the study's ``CellEvaluator``, the arm comes from the cell, the
+    baseline from the realization the worker was given, and the baseline
+    digest from the worker's own evidence. Only the hidden groups stay
+    positional, because 0.1.0 records them that way; each must still carry
+    the name it is graded under.
+    """
 
     store: ObjectStore
     fixture: SmokeEditFixture
@@ -149,39 +155,30 @@ class CorrectnessEvaluator:
         self, *, input_value: Any, output: Any, coordinate: EvaluationCoordinate
     ) -> EvaluationResult:
         started = time.monotonic()
+        _subject_id, arm_id = cell_arm(coordinate)
         try:
-            patch = envelope_bytes(self.store, output["patch_ref"])
-            tree = envelope_bytes(self.store, output["tree_digest_ref"]).decode("ascii")
+            candidate = worker_candidate(self.store, output)
+            baseline = input_value["repository"]
         except (KeyError, TypeError, ValueError) as error:
             return EvaluationFailed("MissingCandidate", f"unreadable candidate: {error}")
         submission = CandidateSubmission(
-            patch_ref=str(self.store.publish_bytes(patch)),
-            tree_digest=tree,
-            baseline_tree_digest=self.fixture.tree_digest,
+            patch_ref=str(self.store.publish_bytes(candidate.patch)),
+            tree_digest=candidate.tree_digest,
+            baseline_tree_digest=candidate.baseline_tree_digest,
         )
         result = await evaluate_candidate(
             store=self.store,
             fixture=self.manifest,
-            arm_id=MESS_00,
-            baseline=self.fixture.repository,
+            arm_id=arm_id,
+            baseline=baseline,
             submission=submission,
             visible_regression=self.fixture.groups[0],
             hidden_regression_ref=self.manifest.hidden_tests[0],
             new_behavior_ref=self.manifest.hidden_tests[1],
             runner=self.runner,
         )
-        groups = {item.name: {"status": item.status, "cause": item.cause} for item in result.groups}
-        self.records[coordinate.cell_id] = {
-            "verdict": result.verdict,
-            "cause": result.cause,
-            "groups": groups,
-            "empty_patch": patch == b"",
-            "seconds": round(time.monotonic() - started, 3),
-        }
-        return EvaluationSuccess(
-            result.verdict,
-            (result.cause,) if result.cause else (),
-            {"groups": groups, "empty_patch": patch == b""},
+        return record_result(
+            self.records, coordinate, result, empty_patch=candidate.patch == b"", started=started
         )
 
 
@@ -307,15 +304,32 @@ class Prepared:
     plan_bytes: bytes
     authorization: str
     worker: WorkflowEditWorker
-    evaluator: CorrectnessEvaluator
-    manifest: FixtureManifest
+    evaluator: CorrectnessEvaluator | CellEvaluator
+    manifest: FixtureManifest | FixtureManifestV2
 
 
-def prepare(q: Qualification, *, repeats: int, ceiling: ExecutionCeiling) -> Prepared:
-    store = q.store
-    fixture = load_fixture()
+@dataclass(frozen=True)
+class PlanKind:
+    """What distinguishes one authorized workflow-edit plan from another."""
+
+    task: str
+    description: str
+    payload_schema: str
+    partition: str
+
+
+SMOKE_PLAN = PlanKind(
+    task="workflow_edit_wf13",
+    description="wf-13 zero-paid repository-agent qualification smoke",
+    payload_schema="https://assay.local/schemas/workflow-edit-wf13-correctness-v1.json",
+    partition="qualification",
+)
+
+
+def bridge_worker(q: Qualification) -> tuple[WorkflowEditWorker, RuntimeProfile]:
+    """The repository-agent worker every arm dispatches through, and its runtime."""
     bridge = q.bridge()
-    configuration_ref = str(store.publish_json(bridge.configuration()))
+    configuration_ref = str(q.store.publish_json(bridge.configuration()))
     binding = RuntimeBinding(
         runtime_version="workflow-edit-wf13",
         image_digest=q.image,
@@ -323,7 +337,7 @@ def prepare(q: Qualification, *, repeats: int, ceiling: ExecutionCeiling) -> Pre
         package_digest="sha256:" + "0" * 64,
     )
     adapter = PierAdapter(
-        store=store,
+        store=q.store,
         bridge=bridge,
         binding=binding,
         model_route=LOCAL_ROUTE.model_dump(mode="json"),
@@ -333,19 +347,33 @@ def prepare(q: Qualification, *, repeats: int, ceiling: ExecutionCeiling) -> Pre
         worker_id="workflow-edit-repository-agent",
         package_layout="repository-agent",
     )
-    manifest = fixture_manifest(
-        store, fixture, image=q.image,
-        routing_digest=q.factory().configuration()["routing_config_digest"],
-    )
-    evaluator = CorrectnessEvaluator(store, fixture, manifest, q.runner())
-    worker = WorkflowEditWorker(adapter, bridge, store)
+    runtime = RuntimeProfile(id="pier", version=binding.runtime_version,
+                             configuration_ref=configuration_ref)
+    return WorkflowEditWorker(adapter, bridge, q.store), runtime
+
+
+def compile_workflow_plan(
+    store: ObjectStore,
+    kind: PlanKind,
+    *,
+    subjects: tuple[Subject, ...],
+    arms: tuple[Arm, ...],
+    realizations: tuple[Realization, ...],
+    evaluator_configuration: dict[str, Any],
+    runtime: RuntimeProfile,
+    repeats: int,
+    ceiling: ExecutionCeiling,
+    check: Callable[[ExecutionPlanV3], None] | None = None,
+) -> tuple[StudySnapshot, bytes]:
+    """Snapshot and canonical 0.3.0 plan bytes; ``check`` runs before they are returned.
+
+    The caller derives the authorization from the returned bytes, so a
+    ``check`` that raises leaves nothing to authorize.
+    """
 
     def publish(value: Any) -> str:
         return str(store.publish_json(value))
 
-    task_value = {"task": fixture.task, "fixture": fixture_identity(manifest)}
-    subject_ref = publish(task_value)
-    realization_ref = publish({"task": fixture.task, "repository": fixture.repository})
     identity = {
         "property": "functional_correctness",
         "target": "output",
@@ -360,10 +388,9 @@ def prepare(q: Qualification, *, repeats: int, ceiling: ExecutionCeiling) -> Pre
         "version": "1",
         "authority": "advisory",
     }
-    schema_id = "https://assay.local/schemas/workflow-edit-wf13-correctness-v1.json"
     schema = {
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "$id": schema_id,
+        "$id": kind.payload_schema,
         "allOf": [
             {"$ref": "https://paa.dev/paa-evidence-record.schema.json"},
             {"properties": {"verdict": {"properties": {
@@ -373,23 +400,23 @@ def prepare(q: Qualification, *, repeats: int, ceiling: ExecutionCeiling) -> Pre
     declaration = EvaluatorDeclaration(
         id="correctness",
         identity=identity,
-        payload_schema=schema_id,
+        payload_schema=kind.payload_schema,
         payload_schema_ref=publish(schema),
-        configuration=evaluator.configuration(),
+        configuration=evaluator_configuration,
         basis_ref=publish({"invariant": "frozen test groups on the reconstructed patch"}),
         repeats=1,
     )
     task_declaration = {
-        "task": "workflow_edit_wf13",
+        "task": kind.task,
         "version": 1,
-        "description": "wf-13 zero-paid repository-agent qualification smoke",
+        "description": kind.description,
         "boundary": {"input": "task_repository", "output": "candidate_patch"},
         "initial_position": "manual",
         "deployment": "shadow",
         "evaluators": [identity],
         "position_policy": {"manual": "offline", "hitl": "blocking"},
         "promotion": {
-            "from": "manual", "to": "hitl", "report": "workflow_edit_wf13_report",
+            "from": "manual", "to": "hitl", "report": f"{kind.task}_report",
             "window": {"kind": "cases", "size": 10}, "execution": "operator_approval",
         },
         "demotion": {
@@ -398,12 +425,9 @@ def prepare(q: Qualification, *, repeats: int, ceiling: ExecutionCeiling) -> Pre
         },
     }
     snapshot = StudySnapshot(
-        subjects=(Subject(id=SMOKE_EDIT_SUBJECT_ID, label="wf-13 smoke-edit task",
-                          partition="qualification", digest=subject_ref, payload_ref=subject_ref),),
-        arms=(Arm(id=MESS_00, worker=worker.configuration(MESS_00),
-                  intervention={"repository": "smoke-edit"}),),
-        realizations=(Realization(subject_id=SMOKE_EDIT_SUBJECT_ID, arm_id=MESS_00,
-                                  digest=realization_ref, artifact_ref=realization_ref),),
+        subjects=subjects,
+        arms=arms,
+        realizations=realizations,
         evaluators=(declaration,),
         paa_task_ref=publish(task_declaration),
         pricing_catalog_ref=publish({"local": "unpriced: Smithers reports no billing"}),
@@ -416,16 +440,50 @@ def prepare(q: Qualification, *, repeats: int, ceiling: ExecutionCeiling) -> Pre
     for item in (*snapshot.arms, *snapshot.evaluators):
         publish(item.model_dump(mode="json"))
     publish([arm.conditions for arm in snapshot.arms])
-    runtime = RuntimeProfile(id="pier", version=binding.runtime_version,
-                             configuration_ref=configuration_ref)
     base = compile_plan_v2(snapshot, snapshot_ref=snapshot_ref, worker_repeats=repeats,
                            runtime=runtime, concurrency=1)
     plan = ExecutionPlanV3.model_validate(
         {**base.model_dump(mode="json"), "schema_version": "assay-execution-plan/0.3.0",
          "ceiling": ceiling.model_dump(mode="json")}
     )
+    if check is not None:
+        check(plan)
     plan_bytes = canonical_json(plan.model_dump(mode="json"))
     store.publish_bytes(plan_bytes)
+    return snapshot, plan_bytes
+
+
+def prepare(q: Qualification, *, repeats: int, ceiling: ExecutionCeiling) -> Prepared:
+    """The single-arm wf-13 smoke; its subject is refused by the study grid by design."""
+    store = q.store
+    fixture = load_fixture()
+    worker, runtime = bridge_worker(q)
+    manifest = fixture_manifest(
+        store, fixture, image=q.image,
+        routing_digest=q.factory().configuration()["routing_config_digest"],
+    )
+    evaluator = CorrectnessEvaluator(store, fixture, manifest, q.runner())
+    subject_ref = str(store.publish_json(
+        {"task": fixture.task, "fixture": fixture_identity(manifest)}
+    ))
+    realization_ref = str(store.publish_json(
+        {"task": fixture.task, "repository": fixture.repository}
+    ))
+    snapshot, plan_bytes = compile_workflow_plan(
+        store,
+        SMOKE_PLAN,
+        subjects=(Subject(id=SMOKE_EDIT_SUBJECT_ID, label="wf-13 smoke-edit task",
+                          partition=SMOKE_PLAN.partition, digest=subject_ref,
+                          payload_ref=subject_ref),),
+        arms=(Arm(id=MESS_00, worker=worker.configuration(MESS_00),
+                  intervention={"repository": "smoke-edit"}),),
+        realizations=(Realization(subject_id=SMOKE_EDIT_SUBJECT_ID, arm_id=MESS_00,
+                                  digest=realization_ref, artifact_ref=realization_ref),),
+        evaluator_configuration=evaluator.configuration(),
+        runtime=runtime,
+        repeats=repeats,
+        ceiling=ceiling,
+    )
     return Prepared(
         snapshot=snapshot,
         plan_bytes=plan_bytes,
@@ -442,7 +500,7 @@ async def run(prepared: Prepared, store: ObjectStore) -> dict[str, Any]:
         authorization=prepared.authorization,
         snapshot=prepared.snapshot,
         store=store,
-        workers={MESS_00: prepared.worker},
+        workers={arm.id: prepared.worker for arm in prepared.snapshot.arms},
         evaluators={"correctness": prepared.evaluator},
     )
     manifest = result.manifest
