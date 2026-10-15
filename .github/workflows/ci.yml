@@ -140,7 +140,10 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: vendor/node-tools/package-lock.json
+          # The workflow-edit metric tests npm ci the fixture image's lock too.
+          cache-dependency-path: |
+            vendor/node-tools/package-lock.json
+            integrations/pier/workflow_edit/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: vendor/node-tools
       - name: Lint experiments with the root Ruff configuration
@@ -153,6 +156,8 @@ jobs:
         run: uv run mypy .
       - name: Test experiments
         working-directory: experiments
+        env:
+          ASSAY_REQUIRE_DOCKER: "1"
         run: uv run pytest -q
 
   pier-qualification:
@@ -161,6 +166,10 @@ jobs:
     # paid-profile and paid-marker test in pier_qualification/tests/test_pier_acceptance.py stays
     # gated and skipped, and qualify_local.py's own probes never dial out.
     runs-on: ubuntu-latest
+    env:
+      # Docker, sudo and a LAN address are part of this job, so their absence
+      # fails the Docker-backed tests instead of skipping them green.
+      ASSAY_REQUIRE_DOCKER: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

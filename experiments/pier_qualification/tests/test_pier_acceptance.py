@@ -31,6 +31,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -220,29 +221,35 @@ def test_qualify_local_never_reads_or_needs_a_provider_credential() -> None:
     assert "os.environ" not in text and "os.getenv" not in text
 
 
-def _docker_daemon_reachable() -> bool:
-    """False for both an unreachable daemon and a missing ``docker`` CLI.
+def _require_docker_daemon() -> None:
+    """Skip only where Docker is not installed; fail on a daemon that misbehaves.
 
-    A bare ``subprocess.run(["docker", ...])`` raises ``FileNotFoundError``
-    when the executable itself is absent, which would otherwise blow up
-    collection instead of skipping -- exactly the credential-free-suite
-    contradiction this helper exists to prevent.
+    A missing ``docker`` CLI is the one environment this credential-free suite
+    may skip in, and ``ASSAY_REQUIRE_DOCKER`` turns even that into a failure
+    where Docker is expected (CI). A daemon that errors or does not answer in
+    time fails the test with its output: a skip there would report green for
+    exactly the condition worth seeing. This runs inside the test, not as an
+    import-time ``skipif``, so a slow daemon fails one test rather than erroring
+    collection for the whole suite.
     """
+    if shutil.which("docker") is None:
+        if os.environ.get("ASSAY_REQUIRE_DOCKER"):
+            pytest.fail("ASSAY_REQUIRE_DOCKER is set but the docker CLI is not installed")
+        pytest.skip("docker CLI is not installed in this environment")
     try:
-        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10, check=False)
-    except FileNotFoundError:
-        return False
-    return result.returncode == 0
+        result = subprocess.run(
+            ["docker", "info"], capture_output=True, text=True, timeout=30, check=False
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("`docker info` did not answer within 30 s")
+    assert result.returncode == 0, f"docker daemon is not reachable:\n{result.stderr[-2000:]}"
 
 
-@pytest.mark.skipif(
-    not _docker_daemon_reachable(),
-    reason="docker daemon is not reachable in this environment",
-)
 def test_qualify_local_emits_an_inventory_after_every_probe_passes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qualify_local: ModuleType
 ) -> None:
     """Qualify an actual prebuilt image and require every probe to pass."""
+    _require_docker_daemon()
     image_tag = "assay-pier-bridge:test-acceptance"
     build = subprocess.run(
         ["docker", "build", "-t", image_tag, str(ROOT / "integrations" / "pier")],

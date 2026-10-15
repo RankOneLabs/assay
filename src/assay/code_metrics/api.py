@@ -11,6 +11,7 @@ import sys
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from importlib.metadata import version
+from pathlib import Path
 from typing import Any
 
 from assay.repository import RepositoryPathError
@@ -57,6 +58,7 @@ from .pins import (
     tool_versions,
     typescript_tool_versions,
 )
+from .toolchain import PROJECT, TypeScriptToolchain, resolve_toolchain
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,8 @@ class CodeMetricsConfig:
     ruff_ignore: tuple[str, ...] = ()
     components: tuple[ComponentConfig, ...] = ()
     allow_unmatched_patterns: bool = False
+    # None typechecks with the analyzers' compiler and a synthetic project.
+    typescript_toolchain: TypeScriptToolchain | None = None
 
 
 def _preflight() -> None:
@@ -98,6 +102,13 @@ def _validate_config(config: CodeMetricsConfig) -> None:
         raise ConfigurationError(f"ruff_ignore {config.ruff_ignore!r} must be a tuple of strings")
     if type(config.allow_unmatched_patterns) is not bool:
         raise ConfigurationError("allow_unmatched_patterns must be a bool")
+    if config.typescript_toolchain is not None and not (
+        isinstance(config.typescript_toolchain, TypeScriptToolchain)
+        and isinstance(config.typescript_toolchain.dependencies, Path)
+    ):
+        raise ConfigurationError(
+            f"typescript_toolchain {config.typescript_toolchain!r} must be a TypeScriptToolchain"
+        )
     names: set[str] = set()
     if not isinstance(config.components, tuple):
         raise MalformedComponentConfig(f"components {config.components!r} must be a tuple")
@@ -156,6 +167,13 @@ def _analyze(
     typescript_files = {
         path: source for path, source in snapshot.items() if language_of(path) == "typescript"
     }
+    toolchain = None
+    if config.typescript_toolchain is not None and typescript_files:
+        if PROJECT not in snapshot:
+            raise ConfigurationError(
+                f"a TypeScript toolchain typechecks the snapshot's own {PROJECT}, which it lacks"
+            )
+        toolchain = resolve_toolchain(config.typescript_toolchain)
     typescript = extract_typescript_graph(typescript_files)
     rust_files = {path: source for path, source in snapshot.items() if language_of(path) == "rust"}
     rust = extract_rust_graph(
@@ -171,7 +189,9 @@ def _analyze(
     coverage = SnapshotCoverageV2(
         languages=tuple(extracted_coverage[language] for language in LANGUAGES)
     )
-    legacy_config = _Config(config.clone_min_lines, config.clone_min_tokens, config.ruff_ignore)
+    legacy_config = _Config(
+        config.clone_min_lines, config.clone_min_tokens, config.ruff_ignore, toolchain
+    )
     try:
         payload = dict(
             tools._snapshot(
@@ -193,6 +213,8 @@ def _analyze(
     versions = tool_versions()
     if typescript_files:
         versions |= typescript_tool_versions()
+    if toolchain is not None:
+        versions |= toolchain.versions()
     if rust_files:
         versions |= rust_tool_versions()
     # jscpd also reads TypeScript; all other existing metrics require Python.

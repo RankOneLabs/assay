@@ -8,7 +8,6 @@ Failed cells are counted by typed cause, never filtered out.
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import statistics
 from collections import Counter
@@ -16,14 +15,16 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from workflow_edit.bridge import TOOLS
 from workflow_edit.fixture import MAX_REPOSITORY_BYTES, MAX_REPOSITORY_FILES, load_fixture
 from workflow_edit.qualify import CELL_TIMEOUT_S, read_evidence
 from workflow_edit.settings import Part1AgentSettings
 
 SMOKE_MD = Path(__file__).resolve().parent / "SMOKE.md"
-# Turn events log the messages; every request also carries the fixed tool schemas.
-TOOLS_BYTES = len(json.dumps(TOOLS, separators=(",", ":"), ensure_ascii=False).encode())
+# Turn events log the messages; every request also carried the fixed tool
+# schemas. These are the bytes of the four-tool schema the wf-13 image ran
+# (read_file, write_file, run_command, submit_output), not the current TOOLS:
+# a later tool revision must never restate wf-13's request sizes.
+TOOLS_BYTES = 1_120
 TURNS = 20
 # vLLM on mcbain serves the local model with --max-model-len 32768.
 LOCAL_CONTEXT_TOKENS = 32_768

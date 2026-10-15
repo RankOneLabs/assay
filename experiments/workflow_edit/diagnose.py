@@ -19,21 +19,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from workflow_edit.fixture import SmokeEditFixture, load_fixture
+from workflow_edit.fixture import SmokeEditFixture, load_fixture, materialize
 
 _FAIL = re.compile(r"^\(fail\) (.*?)(?: \[[\d.]+ms\])?$", re.MULTILINE)
 _TS_ERROR = re.compile(r"^(\S+\.ts)\(\d+,\d+\): error (TS\d+): (.*)$", re.MULTILINE)
 TYPECHECK = ("tsc", "--noEmit", "-p", "tsconfig.json")
-
-
-def _apply_candidate(root: Path, fixture: SmokeEditFixture, patch: str) -> None:
-    for path, text in fixture.repository.items():
-        target = root / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-    subprocess.run(
-        ["patch", "-p1", "--quiet", "--batch"], cwd=root, input=patch.encode(), check=True
-    )
 
 
 def _install_tests(root: Path, fixture: SmokeEditFixture) -> None:
@@ -75,7 +65,7 @@ def diagnose_candidate(
     # mkdtemp is 0700; the container user must be able to traverse the mount.
     root.chmod(0o755)
     try:
-        _apply_candidate(root, fixture, patch)
+        materialize(root, fixture.repository, patch)
         # As in the evaluator, the candidate typechecks before any frozen test exists.
         if any(g.get("cause") == "typecheck_nonzero_exit" for g in groups.values()):
             errors = _TS_ERROR.findall(_run(image, root, TYPECHECK))

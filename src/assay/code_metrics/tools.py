@@ -21,10 +21,11 @@ from radon.metrics import h_visit, mi_visit  # type: ignore[import-untyped]
 from radon.raw import analyze  # type: ignore[import-untyped]
 from radon.visitors import ComplexityVisitor, Function  # type: ignore[import-untyped]
 
-from .errors import AnalyzerFailed, SnapshotPathError, ToolUnavailable
+from .errors import AnalyzerFailed, ConfigurationError, SnapshotPathError, ToolUnavailable
 from .graph import build_import_graph, write_sources
 from .models import DELTAS, ModuleGraph, Snapshot, _Config, language_of
 from .pins import JSCPD, node_binary
+from .toolchain import PROJECT, typecheck
 
 
 def _python(snapshot: Snapshot) -> dict[str, str]:
@@ -72,7 +73,10 @@ def _snapshot(
             )
     if not files:
         return _empty()
-    digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+    toolchain = config.typescript_toolchain if typescript_files else None
+    # The project file is not a metric language, but it decides the typecheck.
+    project = None if toolchain is None else _project(snapshot)
+    digest = hashlib.sha256(json.dumps([files, project], sort_keys=True).encode()).hexdigest()
     key = (digest, config)
     with _CACHE_LOCK:
         if key in _CACHE:
@@ -101,9 +105,13 @@ def _snapshot(
             **_jscpd(root, config),
             "functions": sorted(_functions(root)) if python_files else [],
             "typescript.lines": sum(len(text.splitlines()) for text in typescript_files.values()),
-            "typescript.type_errors": _typescript_errors(root, typescript_files)
-            if typescript_files
-            else None,
+            "typescript.type_errors": (
+                None
+                if not typescript_files
+                else _typescript_errors(root, typescript_files)
+                if toolchain is None
+                else typecheck(typescript_files, _project(snapshot), toolchain)
+            ),
         }
     with _CACHE_LOCK:
         result = _CACHE.setdefault(key, result)
@@ -111,6 +119,15 @@ def _snapshot(
         if len(_CACHE) > 8:
             _CACHE.popitem(last=False)
     return result
+
+
+def _project(snapshot: Snapshot) -> str:
+    try:
+        return snapshot[PROJECT]
+    except KeyError:
+        raise ConfigurationError(
+            f"a TypeScript toolchain typechecks the snapshot's own {PROJECT}, which it lacks"
+        ) from None
 
 
 def _radon(files: dict[str, str]) -> dict[str, Any]:

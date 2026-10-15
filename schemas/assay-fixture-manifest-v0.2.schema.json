@@ -1,0 +1,435 @@
+{
+  "$defs": {
+    "ArmFixture": {
+      "additionalProperties": false,
+      "description": "One arm's realization and its per-arm hidden assets, by digest only.",
+      "properties": {
+        "tree_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Tree Digest",
+          "type": "string"
+        },
+        "reference_patch": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Reference Patch",
+          "type": "string"
+        },
+        "negative_patches": {
+          "items": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Negative Patches",
+          "type": "array"
+        },
+        "qualification": {
+          "$ref": "#/$defs/ArmQualification"
+        }
+      },
+      "required": [
+        "tree_digest",
+        "reference_patch",
+        "negative_patches",
+        "qualification"
+      ],
+      "title": "ArmFixture",
+      "type": "object"
+    },
+    "ArmQualification": {
+      "additionalProperties": false,
+      "description": "The four section-6 checks on one arm; each field name states its expected outcome.",
+      "properties": {
+        "baseline_passes": {
+          "$ref": "#/$defs/QualificationResult"
+        },
+        "feature_fails": {
+          "$ref": "#/$defs/QualificationResult"
+        },
+        "reference_passes": {
+          "$ref": "#/$defs/QualificationResult"
+        },
+        "equivalence_passes": {
+          "$ref": "#/$defs/QualificationResult"
+        }
+      },
+      "required": [
+        "baseline_passes",
+        "feature_fails",
+        "reference_passes",
+        "equivalence_passes"
+      ],
+      "title": "ArmQualification",
+      "type": "object"
+    },
+    "CommentCorrection": {
+      "additionalProperties": false,
+      "description": "A mechanically necessary comment edit in the site's file, wherever the site is dosed.",
+      "properties": {
+        "span": {
+          "$ref": "#/$defs/LineSpan"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "span",
+        "reason"
+      ],
+      "title": "CommentCorrection",
+      "type": "object"
+    },
+    "DoseSite": {
+      "additionalProperties": false,
+      "description": "One treatment unit: a calling function whose delegation becomes an inline copy.",
+      "properties": {
+        "rank": {
+          "description": "Dose order; mess-low doses rank 1.",
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "The calling function that is the treatment unit.",
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        },
+        "span": {
+          "$ref": "#/$defs/LineSpan"
+        },
+        "arms": {
+          "description": "Dose membership: every arm in which this site is inline.",
+          "items": {
+            "enum": [
+              "mess-low",
+              "mess-mid",
+              "mess-high"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Arms",
+          "type": "array"
+        },
+        "removed_imports": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RemovedImport"
+          },
+          "title": "Removed Imports",
+          "type": "array"
+        },
+        "comment_corrections": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CommentCorrection"
+          },
+          "title": "Comment Corrections",
+          "type": "array"
+        }
+      },
+      "required": [
+        "rank",
+        "path",
+        "symbol",
+        "span",
+        "arms"
+      ],
+      "title": "DoseSite",
+      "type": "object"
+    },
+    "FixtureTask": {
+      "additionalProperties": false,
+      "description": "The task record of one subject: its prompt, dose inventory, arms and oracles.",
+      "properties": {
+        "subject_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Subject Id",
+          "type": "string"
+        },
+        "task_prompt": {
+          "description": "Byte-identical across the four arms.",
+          "minLength": 1,
+          "title": "Task Prompt",
+          "type": "string"
+        },
+        "normalization_patch": {
+          "description": "Consolidation from the checkpoint slice to the mess-00 reference.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Normalization Patch",
+          "type": "string"
+        },
+        "transformation_version": {
+          "minLength": 1,
+          "title": "Transformation Version",
+          "type": "string"
+        },
+        "treatment_site_count": {
+          "description": "N, the eligible sites.",
+          "minimum": 4,
+          "title": "Treatment Site Count",
+          "type": "integer"
+        },
+        "treatment_sites": {
+          "items": {
+            "$ref": "#/$defs/DoseSite"
+          },
+          "title": "Treatment Sites",
+          "type": "array"
+        },
+        "arms": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ArmFixture"
+          },
+          "minProperties": 4,
+          "propertyNames": {
+            "enum": [
+              "mess-00",
+              "mess-low",
+              "mess-mid",
+              "mess-high"
+            ]
+          },
+          "title": "Arms",
+          "type": "object"
+        },
+        "visible_tests": {
+          "items": {
+            "$ref": "#/$defs/NamedTestGroup"
+          },
+          "minItems": 1,
+          "title": "Visible Tests",
+          "type": "array"
+        },
+        "hidden_tests": {
+          "items": {
+            "$ref": "#/$defs/NamedTestGroup"
+          },
+          "minItems": 1,
+          "title": "Hidden Tests",
+          "type": "array"
+        },
+        "equivalence_suite": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Equivalence Suite",
+          "type": "string"
+        },
+        "rubric": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Rubric",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject_id",
+        "task_prompt",
+        "normalization_patch",
+        "transformation_version",
+        "treatment_site_count",
+        "treatment_sites",
+        "arms",
+        "visible_tests",
+        "hidden_tests",
+        "equivalence_suite",
+        "rubric"
+      ],
+      "title": "FixtureTask",
+      "type": "object"
+    },
+    "LineSpan": {
+      "additionalProperties": false,
+      "description": "1-based, inclusive line range in the ``mess-00`` tree.",
+      "properties": {
+        "start_line": {
+          "minimum": 1,
+          "title": "Start Line",
+          "type": "integer"
+        },
+        "end_line": {
+          "minimum": 1,
+          "title": "End Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_line",
+        "end_line"
+      ],
+      "title": "LineSpan",
+      "type": "object"
+    },
+    "NamedTestGroup": {
+      "additionalProperties": false,
+      "description": "A frozen test group by name and the digest of its stored group object.",
+      "properties": {
+        "name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "digest"
+      ],
+      "title": "NamedTestGroup",
+      "type": "object"
+    },
+    "QualificationResult": {
+      "additionalProperties": false,
+      "description": "One observed qualification run and the digest of its retained record.",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "passed",
+            "failed",
+            "unavailable"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "evidence": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Evidence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "evidence"
+      ],
+      "title": "QualificationResult",
+      "type": "object"
+    },
+    "RemovedImport": {
+      "additionalProperties": false,
+      "description": "An import the treatment removes from the site's file in the listed arms.\n\nAn import shared by several sites in one file is removed only once all of\nthem are inline, so it is attributed to the site whose dosing removes it,\nwith exactly the arms where it is gone.",
+      "properties": {
+        "module": {
+          "minLength": 1,
+          "title": "Module",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "arms": {
+          "items": {
+            "enum": [
+              "mess-low",
+              "mess-mid",
+              "mess-high"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Arms",
+          "type": "array"
+        }
+      },
+      "required": [
+        "module",
+        "name",
+        "arms"
+      ],
+      "title": "RemovedImport",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One checkpoint-level fixture and a task record per subject, hidden assets by digest.\n\n``routing_config_digest`` is required but nullable: a local fixture binds\nits Smithers routing digest, and a hosted fixture states ``null`` rather\nthan omitting it.",
+  "properties": {
+    "schema_version": {
+      "const": "assay-fixture-manifest/0.2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "checkpoint_sha": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Checkpoint Sha",
+      "type": "string"
+    },
+    "included_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Included Paths",
+      "type": "array"
+    },
+    "excluded_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Excluded Paths",
+      "type": "array"
+    },
+    "normalization_diff": {
+      "title": "Normalization Diff",
+      "type": "string"
+    },
+    "dependency_lock_digests": {
+      "additionalProperties": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Dependency Lock Digests",
+      "type": "object"
+    },
+    "observed_runtime_image_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Observed Runtime Image Digest",
+      "type": "string"
+    },
+    "routing_config_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Routing Config Digest"
+    },
+    "tasks": {
+      "items": {
+        "$ref": "#/$defs/FixtureTask"
+      },
+      "minItems": 1,
+      "title": "Tasks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "checkpoint_sha",
+    "included_paths",
+    "excluded_paths",
+    "normalization_diff",
+    "dependency_lock_digests",
+    "observed_runtime_image_digest",
+    "routing_config_digest",
+    "tasks"
+  ],
+  "title": "FixtureManifestV2",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-fixture-manifest-v0.2.schema.json"
+}
