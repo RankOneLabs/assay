@@ -267,9 +267,10 @@ def check_submission_scope(
     """Reject any added, changed, or deleted path outside the declared scope.
 
     An empty scope places no restriction. Otherwise a change to a dependency
-    manifest, test configuration, or a test outside the writable prefixes is
-    ``tampering``; any other stray path is ``out_of_scope_edit``. The changed
-    files are retained on the rejection as evidence.
+    manifest or test configuration anywhere, even beneath a writable prefix,
+    or to a test outside the writable prefixes is ``tampering``; any other
+    stray path is ``out_of_scope_edit``. The changed files are retained on
+    the rejection as evidence.
     """
     if not writable_prefixes:
         return
@@ -279,12 +280,13 @@ def check_submission_scope(
         if before.get(path) != after.get(path)
     )
     for path in changed:
-        if path.startswith(writable_prefixes):
+        # A nested manifest or tsconfig changes resolution as surely as the root one.
+        protected = PurePosixPath(path).name in PROTECTED_NAMES
+        if path.startswith(writable_prefixes) and not protected:
             continue
-        name = PurePosixPath(path).name
         cause = (
             "tampering"
-            if name in PROTECTED_NAMES or path.startswith("tests/")
+            if protected or path.startswith("tests/")
             else "out_of_scope_edit"
         )
         raise ArtifactCollectionRejected(

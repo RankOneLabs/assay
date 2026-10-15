@@ -6,7 +6,10 @@ import subprocess
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
-ALLOWED_BUNDLES: set[PurePosixPath] = set()
+ALLOWED_BUNDLES: set[PurePosixPath] = {
+    # SMOKE.md is recomputed from this bundle, and a test fails if they drift.
+    PurePosixPath("experiments/workflow_edit/evidence/wf13"),
+}
 RUN_RECEIPTS_PROSE = {
     PurePosixPath("experiments/typesafe_relevance/run_packet.py"),
     PurePosixPath("experiments/conftest.py"),

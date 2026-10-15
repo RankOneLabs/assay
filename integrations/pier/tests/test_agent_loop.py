@@ -352,6 +352,8 @@ def test_model_dispatch_failure_is_named(tmp_path: Path) -> None:
     [
         ("package.json", "tampering"),
         ("tests/hidden.test.ts", "tampering"),
+        ("src/package.json", "tampering"),
+        ("tests/visible/tsconfig.json", "tampering"),
         ("notes.txt", "out_of_scope_edit"),
     ],
 )

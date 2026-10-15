@@ -156,7 +156,8 @@ advance together to `assay-pier-trial/0.2.0`. The exact revised field set is:
   any link or special file is a typed rejection. (The wf-12 qualification's
   capture used `docker cp` and could not have observed an edit.)
 - **Scope:** A submission may change `src/` and `tests/visible/` only. Any
-  change to a dependency manifest, test configuration, or other test is
+  change to a dependency manifest or test configuration (at any depth, even
+  beneath `src/` or `tests/visible/`) or to any other test is
   `tampering`; any other stray path is `out_of_scope_edit`. The rejected tree
   is retained as evidence.
 - **Model mistakes are the model's:** A malformed or unknown tool call is

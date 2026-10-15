@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,7 @@ _TS_ERROR = re.compile(r"^(\S+\.ts)\(\d+,\d+\): error (TS\d+): (.*)$", re.MULTIL
 TYPECHECK = ("tsc", "--noEmit", "-p", "tsconfig.json")
 
 
-def _materialize(root: Path, fixture: SmokeEditFixture, patch: str) -> None:
+def _apply_candidate(root: Path, fixture: SmokeEditFixture, patch: str) -> None:
     for path, text in fixture.repository.items():
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -33,6 +34,9 @@ def _materialize(root: Path, fixture: SmokeEditFixture, patch: str) -> None:
     subprocess.run(
         ["patch", "-p1", "--quiet", "--batch"], cwd=root, input=patch.encode(), check=True
     )
+
+
+def _install_tests(root: Path, fixture: SmokeEditFixture) -> None:
     for group in fixture.groups:
         for path, text in group.files.items():
             target = root / path
@@ -41,16 +45,25 @@ def _materialize(root: Path, fixture: SmokeEditFixture, patch: str) -> None:
 
 
 def _run(image: str, root: Path, argv: Sequence[str]) -> str:
-    completed = subprocess.run(
-        [
-            "docker", "run", "--rm", "--network", "none", "--read-only",
-            "--tmpfs", "/tmp:size=256m", "--user", "1000:1000",
-            "--env", "HOME=/tmp", "--env", "BUN_INSTALL_CACHE_DIR=/tmp/bun",
-            "--volume", f"{root}:/w:ro", "--workdir", "/w",
-            "--entrypoint", argv[0], image, *argv[1:],
-        ],
-        capture_output=True, text=True, timeout=300, check=False,
-    )
+    # The evaluator's own sandbox limits: this re-executes candidate code.
+    name = "assay-workflow-diagnose-" + uuid.uuid4().hex
+    try:
+        completed = subprocess.run(
+            [
+                "docker", "run", "--rm", "--name", name, "--pull=never",
+                "--network=none", "--read-only", "--cap-drop=ALL",
+                "--security-opt=no-new-privileges", "--pids-limit", "64",
+                "--memory", "512m", "--cpus", "1",
+                "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m", "--user", "1000:1000",
+                "--env", "HOME=/tmp", "--env", "BUN_INSTALL_CACHE_DIR=/tmp/bun",
+                "--volume", f"{root}:/w:ro", "--workdir", "/w",
+                "--entrypoint", argv[0], image, *argv[1:],
+            ],
+            capture_output=True, text=True, timeout=300, check=False,
+        )
+    finally:
+        # A timeout kills only the client; the container would keep running.
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
     return completed.stdout + completed.stderr
 
 
@@ -59,14 +72,18 @@ def diagnose_candidate(
     *, scratch: Path,
 ) -> dict[str, Any]:
     root = Path(tempfile.mkdtemp(dir=scratch))
+    # mkdtemp is 0700; the container user must be able to traverse the mount.
+    root.chmod(0o755)
     try:
-        _materialize(root, fixture, patch)
+        _apply_candidate(root, fixture, patch)
+        # As in the evaluator, the candidate typechecks before any frozen test exists.
         if any(g.get("cause") == "typecheck_nonzero_exit" for g in groups.values()):
             errors = _TS_ERROR.findall(_run(image, root, TYPECHECK))
             return {"typecheck_errors": [
                 {"file": file, "code": code, "message": message}
                 for file, code, message in errors[:5]
             ]}
+        _install_tests(root, fixture)
         commands: dict[str, tuple[str, ...]] = {
             group.name: group.command for group in fixture.groups
         }
