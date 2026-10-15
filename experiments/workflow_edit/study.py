@@ -26,7 +26,7 @@ from assay.models import (
 )
 from assay.store import ObjectStore
 from workflow_edit.arms import ARM_IDS
-from workflow_edit.evaluation import CellEvaluator
+from workflow_edit.evaluation import STUDY_GROUPS, CellEvaluator
 from workflow_edit.fixture import VISIBLE_PREFIX
 from workflow_edit.qualify import (
     PlanKind,
@@ -78,6 +78,11 @@ def check_fixture(fixture: StudyFixture, *, image: str, routing_digest: str | No
         assert task is not None
         if set(subject.realizations) != set(ARM_IDS):
             raise ValueError(f"{subject.subject_id} must have one realization per arm")
+        # The manifest model accepts any one visible and one hidden group, but the
+        # evaluator needs all three by name; a missing one would void every cell.
+        missing = [name for name, hidden in STUDY_GROUPS if task.group(name, hidden=hidden) is None]
+        if missing:
+            raise ValueError(f"{subject.subject_id} lacks study test groups: {', '.join(missing)}")
         for arm_id, record in task.arms.items():
             tree = subject.realizations[arm_id]
             if workflow_tree_digest(tree) != record.tree_digest:

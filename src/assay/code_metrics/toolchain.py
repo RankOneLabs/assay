@@ -96,7 +96,8 @@ def install_typescript_dependencies(
 
 def resolve_toolchain(toolchain: TypeScriptToolchain) -> ResolvedToolchain:
     """Check every locked package is installed at its locked version, and find ``tsc``."""
-    directory = toolchain.dependencies
+    # Absolute, because ``tsc`` runs from inside the temporary project tree.
+    directory = toolchain.dependencies.resolve()
     try:
         packages = json.loads((directory / "package-lock.json").read_text(encoding="utf-8"))[
             "packages"

@@ -99,6 +99,18 @@ def test_resolution_checks_installed_versions_against_the_lock(tmp_path: Path) -
         resolve_toolchain(TypeScriptToolchain(tmp_path / "absent"))
 
 
+def test_relative_dependencies_typecheck_from_the_temporary_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # What `--config metrics.yaml` with `typescript_dependencies: deps` produces.
+    monkeypatch.chdir(pins.NODE_TOOLS.parent)
+    relative = TypeScriptToolchain(Path(pins.NODE_TOOLS.name))
+    assert Path(resolve_toolchain(relative).tsc).is_absolute()
+    snapshot = {"src/a.ts": SOURCE, "tsconfig.json": _project(noUnusedLocals=True)}
+    report = analyze(snapshot, config=CodeMetricsConfig(typescript_toolchain=relative))
+    assert report.typescript_metrics.type_errors == 1
+
+
 def test_install_copies_manifests_and_runs_npm_ci_with_dev_dependencies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
