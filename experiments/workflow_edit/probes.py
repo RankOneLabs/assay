@@ -115,11 +115,10 @@ async def rejection_probe(
         subject_id=SMOKE_EDIT_SUBJECT_ID, arm_id=MESS_00, worker_repeat=0,
         realization_ref=prepared.snapshot.realizations[0].artifact_ref,
     )
+    # The realization the worker is given is also the evaluator's baseline.
+    realization = {"task": fixture.task, "repository": fixture.repository}
     started = time.monotonic()
-    result = await adapter.run_cell(
-        input_value={"task": fixture.task, "repository": fixture.repository},
-        coordinate=coordinate,
-    )
+    result = await adapter.run_cell(input_value=realization, coordinate=coordinate)
     record = cell_record(q.store, result, started_at="", seconds=time.monotonic() - started)
     record.pop("trajectory")
     record["retained_artifacts"] = sorted(record.pop("artifact_refs"))
@@ -127,7 +126,7 @@ async def rejection_probe(
     record["patch_bytes"] = None if patch is None else len(patch.encode())
     if isinstance(result, WorkerSuccess):
         verdict = await prepared.evaluator.evaluate(
-            input_value=None, output=result.output,
+            input_value=realization, output=result.output,
             coordinate=EvaluationCoordinate(
                 cell_id=coordinate.id, evaluator_id="correctness", evaluator_repeat=0),
         )
