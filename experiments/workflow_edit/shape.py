@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 from assay.models import CellCoordinate
 from workflow_edit.arms import ARM_IDS
-from workflow_edit.settings import SMOKE_SUBJECT_ID
+from workflow_edit.settings import SMOKE_SUBJECT_IDS
 
 
 def validate_worker_grid(
@@ -23,7 +23,7 @@ def validate_worker_grid(
         raise ValueError("workflow edit arms must be exactly the four declared ids")
     if not subject_ids or len(subject_ids) != len(set(subject_ids)):
         raise ValueError("workflow edit subject ids must be nonempty and unique")
-    if SMOKE_SUBJECT_ID in subject_ids:
+    if SMOKE_SUBJECT_IDS.intersection(subject_ids):
         raise ValueError("the qualification smoke subject cannot enter a study population")
     if worker_repeats < 1:
         raise ValueError("worker_repeats must be positive")

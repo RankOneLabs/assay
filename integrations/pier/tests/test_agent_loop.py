@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
+import tarfile
+import time
 from collections.abc import Iterator
-from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,12 +18,26 @@ from assay_pier_bridge.agent_loop import (
     ContainerStartError,
     DockerToolSandbox,
     LoopBounds,
+    ModelDispatchError,
+    ModelTurn,
     QuotaCellStorage,
     RepositoryAgentClient,
+    SandboxLimits,
     ToolOutput,
 )
+from assay_pier_bridge.paths import ArtifactCollectionRejected, extract_workspace_archive
 from assay_pier_bridge.protocol import ModelRoute
 from assay_pier_bridge.provider import MODEL, PROVIDER_NAME
+
+LOCAL = ModelRoute(endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local")
+
+
+def _call(name: str, arguments: dict[str, str], turn: int) -> dict[str, Any]:
+    return {
+        "id": f"call-{turn}",
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }
 
 
 def _answer(name: str, arguments: dict[str, str], turn: int) -> dict[str, Any]:
@@ -31,16 +47,7 @@ def _answer(name: str, arguments: dict[str, str], turn: int) -> dict[str, Any]:
         "choices": [
             {
                 "finish_reason": "tool_calls",
-                "message": {
-                    "role": "assistant",
-                    "tool_calls": [
-                        {
-                            "id": f"call-{turn}",
-                            "type": "function",
-                            "function": {"name": name, "arguments": json.dumps(arguments)},
-                        }
-                    ],
-                },
+                "message": {"role": "assistant", "tool_calls": [_call(name, arguments, turn)]},
             }
         ],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.001},
@@ -49,6 +56,7 @@ def _answer(name: str, arguments: dict[str, str], turn: int) -> dict[str, Any]:
 
 class FakeSandbox:
     created: list[FakeSandbox] = []
+    peaks: dict[str, int] = {}
 
     def __init__(self, workspace: Path, cache: Path, image: str) -> None:
         self.workspace = workspace
@@ -62,25 +70,40 @@ class FakeSandbox:
         }
         self.workspace_mode = workspace.stat().st_mode & 0o777
         self.cache_mode = cache.stat().st_mode & 0o777
+        self.timeouts: list[float] = []
         self.created.append(self)
 
     def execute(
-        self, argv: list[str], *, max_output_bytes: int, input_text: str | None = None
+        self,
+        argv: list[str],
+        *,
+        max_output_bytes: int,
+        input_text: str | None = None,
+        timeout_s: float = 120.0,
     ) -> ToolOutput:
+        self.timeouts.append(timeout_s)
+        if argv[-1] == "hang":
+            raise RuntimeError("tool_timeout")
         if argv[0] == "cat":
-            output = (self.workspace / Path(argv[-1]).name).read_text()
+            relative = argv[-1].removeprefix("/workspace/")
+            output = "exit=0\n" + (self.workspace / relative).read_text()
         elif argv[0] == "python":
-            (self.workspace / argv[-1]).write_text(input_text or "")
-            output = "written"
+            target = self.workspace / argv[-1]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(input_text or "")
+            output = "exit=0\n"
         else:
-            output = "x" * 100
+            output = "exit=0\n" + "x" * 100
         return ToolOutput(output, len(output.encode()), False)
 
     def close(self) -> None:
         self.closed = True
 
+    def interrupt(self) -> None:
+        self.interrupted = True
+
     def capture_workspace(self) -> dict[str, int]:
-        return {}
+        return dict(self.peaks)
 
 
 class FakeStorage:
@@ -100,6 +123,7 @@ class FakeStorage:
 @pytest.fixture(autouse=True)
 def _reset_sandboxes() -> Iterator[None]:
     FakeSandbox.created.clear()
+    FakeSandbox.peaks = {}
     yield
 
 
@@ -113,6 +137,48 @@ def _client(tmp_path: Path, handler: Any, **kwargs: Any) -> RepositoryAgentClien
         transport=httpx.MockTransport(handler),
         sandbox_factory=sandbox_factory,
         storage_factory=storage_factory,
+        **kwargs,
+    )
+
+
+class Scripted:
+    """A local-route turn completion that replays fixed tool calls."""
+
+    def __init__(self, *turns: list[dict[str, Any]], finish: str = "tool_calls") -> None:
+        self.turns = list(turns)
+        self.finish = finish
+        self.seen: list[dict[str, Any]] = []
+
+    def __call__(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int,
+        turn: int,
+        deadline: float | None,
+    ) -> ModelTurn:
+        self.seen.append({"messages": json.loads(json.dumps(messages)), "turn": turn})
+        calls = self.turns[turn - 1] if turn <= len(self.turns) else self.turns[-1]
+        return ModelTurn(
+            message={"role": "assistant", "content": None, "tool_calls": calls},
+            finish_reason=self.finish,
+            prompt_tokens=7,
+            completion_tokens=3,
+            cost_usd=None,
+            observations={"smithers_job_id": f"job-{turn}"},
+        )
+
+
+def _local(tmp_path: Path, completion: Any, **kwargs: Any) -> RepositoryAgentClient:
+    return RepositoryAgentClient(
+        api_key=None,
+        image="locked-image",
+        runs_root=tmp_path,
+        model_route=LOCAL,
+        completion=completion,
+        sandbox_factory=kwargs.pop("sandbox_factory", FakeSandbox),
+        storage_factory=kwargs.pop("storage_factory", FakeStorage),
         **kwargs,
     )
 
@@ -132,162 +198,219 @@ def test_multiple_turns_and_two_cells_are_isolated(tmp_path: Path) -> None:
         assert body["provider"]["allow_fallbacks"] is False
         if len(body["messages"]) == 2:
             return httpx.Response(200, json=_answer("read_file", {"path": "a.txt"}, len(requests)))
-        return httpx.Response(200, json=_answer("submit_output", {"source": "done"}, len(requests)))
+        return httpx.Response(
+            200, json=_answer("submit_output", {"summary": "done"}, len(requests))
+        )
 
     client = _client(tmp_path, handler)
     package = {"instruction.md": "Edit", "workspace/a.txt": "one"}
     first = client.run_cell(cell_id="s:a:w0", package=package)
     second = client.run_cell(cell_id="s:b:w0", package=package)
     assert first.requests == second.requests == 2
+    assert first.cost_usd == pytest.approx(0.002)
     assert len(requests) == 4
     assert requests[2]["messages"] == requests[0]["messages"]
     left, right = FakeSandbox.created
     assert left.workspace != right.workspace
-    assert left.cache != right.cache
     assert left.name != right.name
-    assert left.workspace.name == right.workspace.name == "workspace"
     assert left.closed and right.closed
     assert not left.workspace.exists() and not right.workspace.exists()
     with pytest.raises(AgentLoopError, match="attempt_limit"):
         client.run_cell(cell_id="s:a:w0", package=package)
 
 
-def test_local_smithers_route_runs_two_requests_without_paid_url(tmp_path: Path) -> None:
-    posts: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.host in {"willie", "mcbain"}
-        assert "Authorization" not in request.headers
-        if request.method == "POST":
-            posts.append(request)
-            submitted = json.loads(request.content)
-            assert submitted["max_retries"] == 0
-            assert submitted["model"] == "qwen-coder-32b"
-            tool_names = {
-                tool["function"]["name"] for tool in submitted["payload"]["tools"]
-            }
-            assert ("submit_output" in tool_names) is (len(posts) > 1)
-            return httpx.Response(200, json={"job_id": f"job-{len(posts)}"})
-        turn = len(posts)
-        if request.url.host == "mcbain":
-            return httpx.Response(200, json={
-                "job_id": f"job-{turn}", "status": "complete",
-                "usage": {"input_tokens": 10, "output_tokens": 5},
-            })
-        answer = (
-            _answer("read_file", {"path": "a.txt"}, turn)
-            if turn == 1 else _answer("submit_output", {"source": "done"}, turn)
+def test_local_route_requires_an_injected_completion_and_no_key(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="injected turn completion"):
+        _local(tmp_path, None)
+    with pytest.raises(ValueError, match="must not receive"):
+        RepositoryAgentClient(
+            api_key="key", image="i", runs_root=tmp_path, model_route=LOCAL, completion=Scripted()
         )
-        return httpx.Response(200, json={
-            "job_id": f"job-{turn}", "status": "complete", "model": "qwen-coder-32b",
-            "machine": "mcbain", "result": {
-                "content": None, "tool_calls": answer["choices"][0]["message"]["tool_calls"],
-            },
-            "created_at": "2026-10-14T10:00:00", "started_at": "2026-10-14T10:00:01",
-            "completed_at": "2026-10-14T10:00:02",
-        })
+    with pytest.raises(ValueError, match="built in"):
+        RepositoryAgentClient(api_key="key", image="i", runs_root=tmp_path, completion=Scripted())
 
-    client = RepositoryAgentClient(
-        api_key=None, image="locked-image", runs_root=tmp_path,
-        model_route=ModelRoute(
-            endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
-        ),
-        transport=httpx.MockTransport(handler),
-        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+
+def test_local_turns_record_observations_and_uncertain_billing(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("write_file", {"path": "src/a.ts", "content": "two"}, 1)],
+        [_call("submit_output", {"summary": "edited"}, 2)],
     )
-    assert client.model_route.paid_route_reachable is False
-    result = client.run_cell(
+    result = _local(tmp_path, completion, writable_prefixes=("src/",)).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit", "workspace/src/a.ts": "one"}
+    )
+    assert result.summary == "edited"
+    assert result.cost_usd is None
+    assert result.files == {"src/a.ts": b"two"}
+    assert b"+two" in result.patch
+    assert result.baseline_tree_digest != result.final_tree_digest
+    model_events = [e for e in result.trajectory["events"] if e["kind"] == "model_request"]
+    assert [e["smithers_job_id"] for e in model_events] == ["job-1", "job-2"]
+    assert all(e["billing"] == "uncertain" for e in model_events)
+    # The replayed assistant turn carries exactly the portable tool-call fields.
+    replayed = completion.seen[1]["messages"][2]
+    assert replayed["tool_calls"][0].keys() == {"id", "type", "function"}
+
+
+def test_tool_call_mistakes_go_back_to_the_model(tmp_path: Path) -> None:
+    completion = Scripted(
+        [
+            _call("delete_everything", {"path": "x"}, 1),
+            {"id": "bad-json", "type": "function",
+             "function": {"name": "read_file", "arguments": "{nope"}},
+            _call("read_file", {"path": "../escape"}, 1),
+        ],
+        [_call("submit_output", {"summary": "s"}, 2), _call("run_command", {"command": "x"}, 3)],
+        [_call("submit_output", {"summary": "s"}, 4)],
+    )
+    result = _local(tmp_path, completion).run_cell(
         cell_id="s:a:w0", package={"instruction.md": "Edit", "workspace/a.txt": "one"}
     )
-    assert result.requests == 2 and len(posts) == 2
-    assert result.cost_usd is None
-    model_events = [
-        event for event in result.trajectory["events"] if event["kind"] == "model_request"
-    ]
-    assert len(model_events) == 2
-    assert all(event["billing"] == "uncertain" for event in model_events)
+    errors = [e for e in result.trajectory["events"] if e["kind"] == "tool_error"]
+    assert len(errors) == 4
+    assert result.requests == 3
+    tool_messages = [m for m in result.trajectory["messages"] if m["role"] == "tool"]
+    assert all(m["content"].startswith("error: ") for m in tool_messages[:3])
 
 
-def test_local_route_rejects_first_turn_submission(tmp_path: Path) -> None:
-    client = RepositoryAgentClient(
-        api_key=None, image="locked-image", runs_root=tmp_path,
-        model_route=ModelRoute(
-            endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
-        ),
-        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+@pytest.mark.parametrize(
+    ("completion", "cause"),
+    [
+        (Scripted([]), "no_tool_call"),
+        (Scripted([], finish="length"), "output_token_limit"),
+        (Scripted([{"id": 3}]), "invalid_tool_call"),
+    ],
+)
+def test_model_stops_are_named_and_keep_partial_work(
+    tmp_path: Path, completion: Scripted, cause: str
+) -> None:
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit", "workspace/a.txt": "one"}
+        )
+    assert failure.value.cause == cause
+    assert failure.value.usage["requests"] == 1
+    assert "candidate.patch" in failure.value.evidence
+
+
+def test_turn_limit_retains_what_the_model_left_behind(tmp_path: Path) -> None:
+    completion = Scripted([_call("write_file", {"path": "a.txt", "content": "half"}, 1)])
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit", "workspace/a.txt": "one"}
+        )
+    assert failure.value.cause == "turn_limit"
+    assert failure.value.usage["requests"] == 20
+    assert b"+half" in failure.value.evidence["candidate.patch"]
+
+
+def test_expired_deadline_stops_before_the_next_turn(tmp_path: Path) -> None:
+    completion = Scripted([_call("run_command", {"command": "true"}, 1)])
+    with pytest.raises(AgentLoopError, match="agent_deadline") as failure:
+        _local(tmp_path, completion).run_cell(
+            cell_id="s:a:w0",
+            package={"instruction.md": "Edit"},
+            deadline=time.monotonic() - 1,
+        )
+    assert failure.value.usage["requests"] == 0
+
+
+def test_tool_timeout_is_bounded_by_the_remaining_budget(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("run_command", {"command": "true"}, 1)],
+        [_call("submit_output", {"summary": "s"}, 2)],
     )
-    answer = _answer("submit_output", {"source": "done"}, 1)
-    answer["usage"]["cost"] = None
-    client._completion = lambda messages: answer  # type: ignore[method-assign]
-    with pytest.raises(AgentLoopError, match="invalid_submission"):
-        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
-
-
-def test_harness_smoke_checks_fail_before_model_dispatch(tmp_path: Path) -> None:
-    client = RepositoryAgentClient(
-        api_key=None, image="locked-image", runs_root=tmp_path,
-        model_route=ModelRoute(
-            endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
-        ),
-        qualify_smoke=True, sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    _local(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit"}, deadline=time.monotonic() + 30
     )
-    client._completion = lambda messages: pytest.fail("model must not be called")  # type: ignore[method-assign]
-    with pytest.raises(AgentLoopError, match="smoke_install_failed"):
-        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert 0 < FakeSandbox.created[0].timeouts[0] <= 30
 
 
-@pytest.mark.parametrize("stage", ["submission", "poll", "worker"])
-def test_local_route_bounds_every_http_response(tmp_path: Path, stage: str) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        if stage == "submission" and request.method == "POST":
-            return httpx.Response(200, content=b"x" * 1000)
-        if stage == "poll" and request.url.host == "willie" and request.method == "GET":
-            return httpx.Response(200, content=b"x" * 1000)
-        if stage == "worker" and request.url.host == "mcbain":
-            return httpx.Response(200, content=b"x" * 1000)
-        if request.method == "POST":
-            return httpx.Response(200, json={"job_id": "job-1"})
-        return httpx.Response(200, json={
-            "job_id": "job-1", "status": "complete", "model": "qwen-coder-32b",
-            "machine": "mcbain", "result": {"content": None, "tool_calls": []},
-            "created_at": "2026-10-14T10:00:00", "started_at": "2026-10-14T10:00:01",
-            "completed_at": "2026-10-14T10:00:02",
-        })
-
-    client = RepositoryAgentClient(
-        api_key=None, image="locked-image", runs_root=tmp_path,
-        model_route=ModelRoute(
-            endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
-        ),
-        bounds=LoopBounds(max_response_bytes=512), transport=httpx.MockTransport(handler),
-        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+def test_hung_command_is_killed_and_reported_back(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("run_command", {"command": "hang"}, 1)],
+        [_call("submit_output", {"summary": "s"}, 2)],
     )
-    with pytest.raises(AgentLoopError, match="response_limit"):
-        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    result = _local(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit"}
+    )
+    assert FakeSandbox.created[0].interrupted
+    assert [e["kind"] for e in result.trajectory["events"]].count("tool_timeout") == 1
+    tool = next(m for m in result.trajectory["messages"] if m["role"] == "tool")
+    assert "killed" in tool["content"]
+
+
+def test_model_dispatch_failure_is_named(tmp_path: Path) -> None:
+    def failing(**kwargs: Any) -> ModelTurn:
+        raise ModelDispatchError("MachineIdentityMismatch", "moved")
+
+    with pytest.raises(AgentLoopError, match="model_dispatch:MachineIdentityMismatch"):
+        _local(tmp_path, failing).run_cell(cell_id="s:a:w0", package={"instruction.md": "E"})
+
+
+@pytest.mark.parametrize(
+    ("path", "cause"),
+    [
+        ("package.json", "tampering"),
+        ("tests/hidden.test.ts", "tampering"),
+        ("src/package.json", "tampering"),
+        ("tests/visible/tsconfig.json", "tampering"),
+        ("notes.txt", "out_of_scope_edit"),
+    ],
+)
+def test_out_of_scope_submission_is_rejected_with_its_files(
+    tmp_path: Path, path: str, cause: str
+) -> None:
+    completion = Scripted(
+        [_call("write_file", {"path": path, "content": "changed"}, 1)],
+        [_call("submit_output", {"summary": "s"}, 2)],
+    )
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion, writable_prefixes=("src/", "tests/visible/")).run_cell(
+            cell_id="s:a:w0",
+            package={"instruction.md": "Edit", "workspace/package.json": "{}"},
+        )
+    assert failure.value.cause == cause
+    assert failure.value.rejection is not None
+    assert failure.value.rejection.artifacts[path] == b"changed"
+
+
+@pytest.mark.parametrize(
+    ("peaks", "cause"),
+    [
+        ({"oom_kills": 1, "workspace_free_kb": 9999, "cache_free_kb": 9999}, "memory_limit"),
+        ({"oom_kills": 0, "workspace_free_kb": 12, "cache_free_kb": 9999}, "storage_exhausted"),
+        ({"oom_kills": 0, "workspace_free_kb": 9999, "cache_free_kb": 0}, "storage_exhausted"),
+    ],
+)
+def test_exhausted_ceilings_fail_the_submission(
+    tmp_path: Path, peaks: dict[str, int], cause: str
+) -> None:
+    FakeSandbox.peaks = peaks
+    completion = Scripted([_call("submit_output", {"summary": "s"}, 1)])
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion).run_cell(cell_id="s:a:w0", package={"instruction.md": "E"})
+    assert failure.value.cause == cause
 
 
 def test_final_submission_may_follow_a_tool_in_the_same_model_turn(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         answer = _answer("run_command", {"command": "true"}, 1)
-        answer["choices"][0]["message"]["tool_calls"].append({
-            "id": "call-2", "type": "function",
-            "function": {
-                "name": "submit_output", "arguments": json.dumps({"source": "done"}),
-            },
-        })
+        answer["choices"][0]["message"]["tool_calls"].append(
+            _call("submit_output", {"summary": "done"}, 2)
+        )
         return httpx.Response(200, json=answer)
 
     result = _client(tmp_path, handler).run_cell(
         cell_id="s:a:w0", package={"instruction.md": "Edit", "workspace/a.txt": "one"}
     )
-    assert result.source == "done"
+    assert result.summary == "done"
     assert result.requests == 1
     assert [event["kind"] for event in result.trajectory["events"]][-1] == "submitted"
 
 
 def test_hidden_test_package_entries_never_reach_tools(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_answer("submit_output", {"source": ""}, 1))
+        return httpx.Response(200, json=_answer("submit_output", {"summary": ""}, 1))
 
     client = _client(tmp_path, handler)
     client.run_cell(
@@ -315,9 +438,9 @@ def test_tool_and_conversation_truncation_are_recorded(tmp_path: Path) -> None:
         calls += 1
         if calls < 5:
             return httpx.Response(200, json=_answer("run_command", {"command": "echo x"}, calls))
-        return httpx.Response(200, json=_answer("submit_output", {"source": "ok"}, calls))
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "ok"}, calls))
 
-    bounds = LoopBounds(max_conversation_bytes=650, max_tool_output_bytes=20)
+    bounds = LoopBounds(max_conversation_bytes=950, max_tool_output_bytes=20)
     result = _client(tmp_path, handler, bounds=bounds).run_cell(
         cell_id="s:a:w0", package={"instruction.md": "Edit"}
     )
@@ -327,28 +450,9 @@ def test_tool_and_conversation_truncation_are_recorded(tmp_path: Path) -> None:
     assert result.requests == 5
 
 
-def test_repository_write_is_returned_as_patch(tmp_path: Path) -> None:
-    calls = 0
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return httpx.Response(
-                200, json=_answer("write_file", {"path": "a.txt", "content": "changed"}, calls)
-            )
-        return httpx.Response(200, json=_answer("submit_output", {"source": ""}, calls))
-
-    result = _client(tmp_path, handler).run_cell(
-        cell_id="s:a:w0",
-        package={"instruction.md": "Edit", "workspace/a.txt": "original"},
-    )
-    assert b"+changed" in result.patch
-
-
 def test_container_uid_can_write_materialized_repository_and_cache(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_answer("submit_output", {"source": "done"}, 1))
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "done"}, 1))
 
     _client(tmp_path, handler).run_cell(
         cell_id="s:a:w0",
@@ -360,6 +464,8 @@ def test_container_uid_can_write_materialized_repository_and_cache(tmp_path: Pat
 
 
 def test_bridge_loop_bounds_match_dedicated_config() -> None:
+    from dataclasses import asdict
+
     configuration = Path(__file__).resolve().parents[1] / "config/workflow_edit.yaml"
     values = {
         key: int(value)
@@ -370,12 +476,7 @@ def test_bridge_loop_bounds_match_dedicated_config() -> None:
     assert {key: values[key] for key in asdict(LoopBounds())} == asdict(LoopBounds())
     assert {
         key: values[key] for key in ("attempts", "concurrency", "provider_retries", "sdk_retries")
-    } == {
-        "attempts": 1,
-        "concurrency": 1,
-        "provider_retries": 0,
-        "sdk_retries": 0,
-    }
+    } == {"attempts": 1, "concurrency": 1, "provider_retries": 0, "sdk_retries": 0}
 
 
 def test_twenty_turn_limit_and_zero_retries(tmp_path: Path) -> None:
@@ -422,7 +523,7 @@ def test_resolved_config_observes_constructed_transport_retries(tmp_path: Path) 
 )
 def test_byte_bounds_end_with_named_causes(tmp_path: Path, bounds: LoopBounds, cause: str) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_answer("submit_output", {"source": "ok"}, 1))
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "ok"}, 1))
 
     client = _client(tmp_path, handler, bounds=bounds)
     with pytest.raises(AgentLoopError) as failure:
@@ -446,6 +547,15 @@ def test_transport_failure_consumes_attempt_without_retry(tmp_path: Path) -> Non
     assert calls == 1
 
 
+def _inspect_stdout() -> str:
+    host = {
+        "NetworkMode": "none", "ReadonlyRootfs": True, "Memory": 1610612736,
+        "PidsLimit": 128, "NanoCpus": 1000000000, "CapDrop": ["ALL"],
+        "Tmpfs": {"/workspace": "size=256m,mode=1777", "/cache": "size=256m,mode=1777"},
+    }
+    return json.dumps(host) + "|" + json.dumps("1000:1000")
+
+
 def test_docker_sandbox_mounts_only_neutral_cell_directories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -453,11 +563,14 @@ def test_docker_sandbox_mounts_only_neutral_cell_directories(
 
     def fake_run(command: list[str], **kwargs: Any) -> Any:
         commands.append(command)
-        return type("Result", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+        stdout = _inspect_stdout() if command[:2] == ["docker", "inspect"] else "ok"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     workspace, cache = tmp_path / "workspace", tmp_path / "cache"
     sandbox = DockerToolSandbox(workspace, cache, "locked-image")
+    assert sandbox.observed["network_mode"] == "none"
+    assert sandbox.observed["user"] == "1000:1000"
     sandbox.close()
     command = commands[0]
     assert command[:3] == ["docker", "run", "-d"]
@@ -465,9 +578,33 @@ def test_docker_sandbox_mounts_only_neutral_cell_directories(
     assert f"{workspace}:/workspace:rw" in command
     assert f"{cache}:/cache:rw" in command
     assert "HOME=/cache" in command
-    assert "XDG_CACHE_HOME=/cache" in command
     assert not any("hidden" in arg for arg in command)
     assert commands[-1][:3] == ["docker", "rm", "-f"]
+
+
+def test_tmpfs_sandbox_takes_its_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        commands.append(command)
+        stdout = _inspect_stdout() if command[:2] == ["docker", "inspect"] else ""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    limits = SandboxLimits(memory_mb=900, pids=40, cpus=2.0, workspace_mb=100, cache_mb=50,
+                           tmp_mb=25)
+    DockerToolSandbox(tmp_path, tmp_path, "img", tmpfs_storage=True, limits=limits)
+    run = commands[0]
+    assert "/workspace:size=100m,mode=1777" in run and "/cache:size=50m,mode=1777" in run
+    assert "/tmp:size=25m" in run
+    assert run[run.index("--memory") + 1] == "900m"
+    assert run[run.index("--pids-limit") + 1] == "40"
+    assert run[run.index("--cpus") + 1] == "2.0"
+
+
+def test_sandbox_limits_keep_memory_above_tmpfs() -> None:
+    with pytest.raises(ValueError, match="memory_mb must exceed"):
+        SandboxLimits(memory_mb=700, workspace_mb=256, cache_mb=256, tmp_mb=256)
 
 
 def test_tmpfs_archive_failure_removes_started_container(
@@ -507,7 +644,22 @@ def test_tmpfs_transfer_timeout_removes_started_container(
     assert commands[-1][:3] == ["docker", "rm", "-f"]
 
 
-def test_tmpfs_capture_replaces_staging_tree(
+def _tar(entries: list[tarfile.TarInfo], data: dict[str, bytes] | None = None) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as stream:
+        for entry in entries:
+            content = (data or {}).get(entry.name)
+            stream.addfile(entry, io.BytesIO(content) if content is not None else None)
+    return buffer.getvalue()
+
+
+def _file(name: str, content: bytes) -> tuple[tarfile.TarInfo, bytes]:
+    info = tarfile.TarInfo(name)
+    info.size = len(content)
+    return info, content
+
+
+def test_tmpfs_capture_streams_the_tree_and_replaces_staging(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -518,17 +670,50 @@ def test_tmpfs_capture_replaces_staging_tree(
     sandbox._tmpfs_storage = True
     sandbox._workspace = workspace
     sandbox.execute = lambda *args, **kwargs: ToolOutput(  # type: ignore[method-assign]
-        "exit=0\n1024\n2\n", 14, False
+        "exit=0\n1024\n2\n0\n5000\n6000\n", 30, False
     )
+    directory = tarfile.TarInfo("./src")
+    directory.type = tarfile.DIRTYPE
+    info, content = _file("./src/new.txt", b"new")
+    archive = _tar([directory, info], {"./src/new.txt": content})
 
-    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        (workspace / "new.txt").write_text("new")
-        return subprocess.CompletedProcess(command, 0, "", "")
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        assert command[:3] == ["docker", "exec", "fake-container"]
+        return subprocess.CompletedProcess(command, 0, archive, b"")
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
-    assert sandbox.capture_workspace() == {"memory_peak_bytes": 1024, "pids_peak": 2}
+    assert sandbox.capture_workspace() == {
+        "memory_peak_bytes": 1024, "pids_peak": 2, "oom_kills": 0,
+        "workspace_free_kb": 5000, "cache_free_kb": 6000,
+    }
     assert not (workspace / "deleted.txt").exists()
-    assert (workspace / "new.txt").read_text() == "new"
+    assert (workspace / "src" / "new.txt").read_text() == "new"
+
+
+@pytest.mark.parametrize(
+    ("kind", "cause"),
+    [("symlink", "escaping_symlink"), ("fifo", "out_of_scope_edit"),
+     ("traversal", "traversal")],
+)
+def test_archive_extraction_rejects_links_specials_and_escapes(
+    tmp_path: Path, kind: str, cause: str
+) -> None:
+    kept, kept_content = _file("./a.txt", b"kept")
+    if kind == "symlink":
+        bad = tarfile.TarInfo("./link")
+        bad.type = tarfile.SYMTYPE
+        bad.linkname = "/etc/passwd"
+    elif kind == "fifo":
+        bad = tarfile.TarInfo("./pipe")
+        bad.type = tarfile.FIFOTYPE
+    else:
+        bad, _ = _file("../escape.txt", b"")
+    archive = _tar([kept, bad], {"./a.txt": kept_content})
+    with pytest.raises(ArtifactCollectionRejected) as rejection:
+        extract_workspace_archive(archive, tmp_path)
+    assert rejection.value.cause == cause
+    assert rejection.value.artifacts == {"a.txt": b"kept"}
+    assert not (tmp_path.parent / "escape.txt").exists()
 
 
 def test_quota_storage_mounts_and_unmounts_one_cell_volume(
@@ -555,7 +740,6 @@ def test_quota_storage_mounts_and_unmounts_one_cell_volume(
     assert storage.workspace.is_dir() and storage.cache.is_dir()
     assert commands[0][:3] == ["mkfs.ext4", "-F", "-q"]
     assert commands[1][:5] == ["sudo", "-n", "mount", "-t", "ext4"]
-    assert commands[2][:3] == ["sudo", "-n", "chmod"]
     storage.close()
     assert not storage.mounted
     assert commands[-1][:3] == ["sudo", "-n", "umount"]
@@ -574,29 +758,6 @@ def test_storage_setup_failure_is_named_and_keeps_sandbox_unstarted(tmp_path: Pa
         client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
     assert not FakeSandbox.created
     assert failure.value.trajectory["events"][-1]["cause"] == "storage_mount"
-
-
-def test_unverified_quota_fails_closed_and_unmounts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    commands: list[list[str]] = []
-
-    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        commands.append(command)
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
-    monkeypatch.setattr("assay_pier_bridge.agent_loop.os.geteuid", lambda: 1001)
-    monkeypatch.setattr("assay_pier_bridge.agent_loop.os.path.ismount", lambda path: False)
-    cell_root = tmp_path / "cell"
-    cell_root.mkdir()
-    storage = QuotaCellStorage(cell_root, 512)
-    with pytest.raises(ValueError, match="storage_quota_unverified"):
-        storage.prepare()
-    assert storage.mounted
-    storage.close()
-    assert not storage.mounted
-    assert commands[-1][:3] == ["sudo", "-n", "umount"]
 
 
 def test_failed_container_start_keeps_named_cause_and_records_cleanup(

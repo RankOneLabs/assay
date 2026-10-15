@@ -53,6 +53,8 @@ markers = [
 [tool.mypy]
 python_version = "3.13"
 strict = true
+# workflow_edit.bridge is the one boundary that imports the isolated bridge project.
+mypy_path = "../integrations/pier/src"
 exclude = ["(^|/)tests/"]
 
 [[tool.mypy.overrides]]

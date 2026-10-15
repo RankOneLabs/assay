@@ -67,7 +67,7 @@ def prepare_fake_toolchain(
         "with open(os.environ['ASSAY_TSC_LOG'], 'a', encoding='utf-8') as log:\n"
         "    log.write(' '.join(args) + '\\n')\n"
         "if args == ['--version']:\n"
-        "    print('Version 5.9.2')\n"
+        "    print('Version 5.9.3')\n"
         "elif '--outDir' in args and os.environ['ASSAY_EMIT_BUILD'] == '1':\n"
         "    output = Path(args[args.index('--outDir') + 1])\n"
         "    output.mkdir(parents=True)\n"
@@ -336,3 +336,111 @@ async def test_build_requires_emitted_javascript(
     assert (tmp_path / "tsc.log").read_text().splitlines()[-1] == (
         f"--noEmit false --emitDeclarationOnly false --outDir {tmp_path / 'build'}"
     )
+
+
+def prepare_fake_bun(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A bun that logs each call and whether frozen hidden tests existed at that moment."""
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    log = tmp_path / "bun.log"
+    bun = tmp_path / "tools" / "bun"
+    bun.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "with open(os.environ['ASSAY_BUN_LOG'], 'a', encoding='utf-8') as log:\n"
+        "    log.write(' '.join(args) + '|' + str(Path('tests/hidden').exists()) + '\\n')\n"
+        "if args == ['--version']:\n"
+        "    print('1.3.13')\n"
+        "elif args[0] == 'build':\n"
+        "    sys.exit(0)\n"
+        "elif args[0] == 'test':\n"
+        "    frozen = Path('tests/visible.test.ts')\n"
+        "    if frozen.exists() and 'weakened' in frozen.read_text():\n"
+        "        sys.exit(0)\n"
+        "    sys.exit(0 if 'value = 1' in Path('src.ts').read_text() else 1)\n"
+    )
+    bun.chmod(0o755)
+    monkeypatch.setenv("ASSAY_BUN_LOG", str(log))
+    return log
+
+
+def bun_groups(visible: dict[str, str]) -> tuple[WorkflowTestGroup, ...]:
+    return (
+        WorkflowTestGroup(name="visible_regression", files=visible,
+                          command=("bun", "test", "./tests/visible.test.ts"), restores=True),
+        WorkflowTestGroup(name="hidden_regression", files={"tests/hidden/r.test.ts": "//\n"},
+                          command=("bun", "test", "./tests/hidden")),
+        WorkflowTestGroup(name="new_behavior", files={"tests/hidden/n.test.ts": "//\n"},
+                          command=("bun", "test", "./tests/hidden/n.test.ts")),
+    )
+
+
+@pytest.mark.asyncio
+async def test_bun_mode_typechecks_and_builds_the_candidate_before_tests_arrive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = prepare_fake_bun(tmp_path, monkeypatch)
+    baseline = {**BASELINE, "src/lib.ts": "export {};\n",
+                "tests/visible.test.ts": "// frozen visible\n"}
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE, toolchain="bun"))
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", baseline=baseline,
+        groups_to_run=bun_groups({"tests/visible.test.ts": "// frozen visible\n"}),
+    )
+    assert result.verdict == "correct", result
+    calls = log.read_text().splitlines()
+    assert calls[0] == "--version|False"
+    build = next(call for call in calls if call.startswith("build"))
+    assert build.startswith("build --target=bun --outdir") and "src/lib.ts" in build
+    assert build.endswith("|False")
+    tests = [call for call in calls if call.startswith("test")]
+    assert len(tests) == 3 and all(call.endswith("|True") for call in tests)
+    assert (tmp_path / "tsc.log").read_text().splitlines()[-1] == "--noEmit -p tsconfig.json"
+
+
+@pytest.mark.asyncio
+async def test_restored_visible_tests_undo_a_candidates_edit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_bun(tmp_path, monkeypatch)
+    frozen = "// frozen visible\n"
+    baseline = {**BASELINE, "src/lib.ts": "export {};\n", "tests/visible.test.ts": frozen}
+    weakening = (
+        "diff --git a/tests/visible.test.ts b/tests/visible.test.ts\n"
+        "--- a/tests/visible.test.ts\n+++ b/tests/visible.test.ts\n"
+        "@@ -1 +1 @@\n-// frozen visible\n+// weakened\n"
+    )
+    final = {**baseline, "tests/visible.test.ts": "// weakened\n"}
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE, toolchain="bun"))
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", baseline=baseline, patch=weakening,
+        expected_tree_digest=workflow_tree_digest(final),
+        groups_to_run=bun_groups({"tests/visible.test.ts": frozen}),
+    )
+    # The weakened test would pass; restoring the frozen bytes makes the
+    # unimplemented change fail instead.
+    assert result.verdict == "incorrect", result
+    assert result.groups[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_restored_files_must_be_the_baselines_own_bytes() -> None:
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE, toolchain="bun"))
+    baseline = {**BASELINE, "tests/visible.test.ts": "// frozen visible\n"}
+    result = await runner.run(
+        baseline=baseline, baseline_tree_digest=workflow_tree_digest(baseline),
+        expected_tree_digest=workflow_tree_digest(baseline), patch="",
+        groups=bun_groups({"tests/visible.test.ts": "// something else\n"}),
+    )
+    assert result.verdict == "unavailable" and result.cause == "restored_test_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_bun_mode_rejects_node_test_commands() -> None:
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE, toolchain="bun"))
+    result = await runner.run(
+        baseline=BASELINE, baseline_tree_digest=workflow_tree_digest(BASELINE),
+        expected_tree_digest=workflow_tree_digest(BASELINE), patch="", groups=groups(),
+    )
+    assert result.cause == "invalid_test_command"

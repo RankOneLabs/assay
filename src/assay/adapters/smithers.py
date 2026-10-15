@@ -1,8 +1,11 @@
 """Pinned Smithers inference client for one authorized workflow cell.
 
 Smithers 9e305b6 echoes the alias and machine in JobResponse, but does not
-expose the backend tag there. We pin the tag from its routing file and reject
-any change to that file before accepting a completed job.
+expose the backend tag there, and its JobResponse drops the worker's token
+usage. We pin the tag from its routing file, reject any change to that file
+before accepting a completed job, and read the completed task back from the
+pinned machine's worker: its ``usage`` carries the token counts and the tag
+the worker actually ran, which must equal the authorized tag.
 """
 
 from __future__ import annotations
@@ -61,10 +64,15 @@ class SmithersFactory:
     requester: str = "assay-workflow-edit"
     timeout_seconds: Literal[900] = 900
     poll_interval: float = 0.5
+    worker_url: str | None = None
 
     def __post_init__(self) -> None:
         if self.timeout_seconds != 900:
             raise ValueError("Smithers workflow cells have a 900-second acceptance budget")
+
+    @property
+    def resolved_worker_url(self) -> str:
+        return (self.worker_url or f"http://{self.machine}:8901").rstrip("/")
 
     def configuration(self) -> dict[str, Any]:
         digest, tag = _routing_identity(self.routing_config, self.model, self.machine)
@@ -74,11 +82,13 @@ class SmithersFactory:
             "resolved_backend_tag": tag,
             "routing_config_digest": digest,
             "endpoint": self.dispatch_url.rstrip("/"),
+            "worker_url": self.resolved_worker_url,
             "requester": self.requester,
             "timeout_seconds": self.timeout_seconds,
             "poll_interval": self.poll_interval,
-            "revision": "assay-smithers-9e305b6-v1",
+            "revision": "assay-smithers-9e305b6-v2",
             "billing": "unavailable",
+            "usage": "worker-task",
             "hidden_retries": 0,
         }
 
@@ -92,6 +102,19 @@ class SmithersRequestError(RuntimeError):
     def __init__(self, failure: WorkerFailure) -> None:
         self.failure = failure
         super().__init__(failure.message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SmithersCompletion:
+    """One completed job: the worker's raw result plus what the worker attested."""
+
+    job_id: str
+    result: dict[str, Any]
+    input_tokens: int
+    output_tokens: int
+    worker_model: str
+    queue_latency_seconds: float
+    time_from_acceptance_seconds: float
 
 
 class SmithersClient(DispatchClient, DescribedClient):
@@ -120,9 +143,11 @@ class SmithersClient(DispatchClient, DescribedClient):
     def diagnostics(self) -> dict[str, Any]:
         return dict(self._diagnostics)
 
-    async def complete_result(self, params: CompletionParams) -> LLMResponse | WorkerFailure:
+    async def complete_payload(
+        self, payload: dict[str, Any]
+    ) -> SmithersCompletion | WorkerFailure:
+        """Submit one prepared executor payload and return the attested completion."""
         try:
-            payload = self._build_payload(params)
             submission = {
                 "task_type": "inference",
                 "payload": payload,
@@ -151,6 +176,7 @@ class SmithersClient(DispatchClient, DescribedClient):
             job_id = submitted.get("job_id")
             if not isinstance(job_id, str) or not job_id:
                 return WorkerFailure("InvalidResponse", "Smithers omitted the job ID")
+            self._diagnostics["job_id"] = job_id
             while True:
                 response = await self._http.get(f"{self._dispatch_url}/jobs/{job_id}")
                 response.raise_for_status()
@@ -171,7 +197,7 @@ class SmithersClient(DispatchClient, DescribedClient):
                         )
                 status = job.get("status")
                 if status == "complete":
-                    return self._completion(job, timing)
+                    return await self._completion(job_id, job, timing)
                 if status in ("failed", "cancelled"):
                     return WorkerFailure("SmithersJobFailed", str(job.get("error") or status))
                 if status not in ("queued", "waking_machine", "dispatched", "running"):
@@ -183,6 +209,28 @@ class SmithersClient(DispatchClient, DescribedClient):
             httpx.HTTPError, JigLLMError, ValueError, TypeError, KeyError, AttributeError
         ) as error:
             return WorkerFailure(type(error).__name__, f"Smithers response failed: {error}")
+
+    async def complete_result(self, params: CompletionParams) -> LLMResponse | WorkerFailure:
+        try:
+            payload = self._build_payload(params)
+        except (JigLLMError, ValueError, TypeError) as error:
+            return WorkerFailure(type(error).__name__, f"Smithers request failed: {error}")
+        completion = await self.complete_payload(payload)
+        if isinstance(completion, WorkerFailure):
+            return completion
+        content = completion.result.get("content")
+        if not isinstance(content, str):
+            return WorkerFailure("InvalidResponse", "Smithers completion lacks content")
+        return LLMResponse(
+            content=content,
+            tool_calls=_parse_tool_calls(completion.result.get("tool_calls")),
+            usage=Usage(
+                input_tokens=completion.input_tokens,
+                output_tokens=completion.output_tokens,
+            ),
+            latency_ms=completion.time_from_acceptance_seconds * 1000,
+            model=completion.worker_model,
+        )
 
     async def _sleep(self) -> None:
         import asyncio
@@ -206,9 +254,8 @@ class SmithersClient(DispatchClient, DescribedClient):
             or tag != authorized["resolved_backend_tag"]
         ):
             return WorkerFailure("ResolvedTagIdentityMismatch", "Smithers resolved tag changed")
-        # Smithers 9e305b6 emits neither field. These checks are forward-compatible
-        # with a future job response that attests the actual worker tag; today the
-        # routing-file digest and locally resolved tag are the whole guarantee.
+        # Smithers 9e305b6 emits neither field on the job. The worker task's
+        # usage.model is the attestation actually checked (see _completion).
         if "resolved_backend_tag" in job and job["resolved_backend_tag"] != tag:
             return WorkerFailure("ResolvedTagIdentityMismatch", "Smithers job tag differs")
         result = job.get("result")
@@ -246,25 +293,47 @@ class SmithersClient(DispatchClient, DescribedClient):
             return WorkerFailure("InvalidJobTiming", "Smithers job timestamps are inconsistent")
         return {"queue_latency_seconds": queue, "time_from_acceptance_seconds": run}
 
-    def _completion(
-        self, job: dict[str, Any], timing: dict[str, float] | None
-    ) -> LLMResponse | WorkerFailure:
+    async def _completion(
+        self, job_id: str, job: dict[str, Any], timing: dict[str, float] | None
+    ) -> SmithersCompletion | WorkerFailure:
         if timing is None or job.get("completed_at") is None:
             return WorkerFailure("InvalidJobTiming", "completed Smithers job lacks timestamps")
         result = job.get("result")
-        if not isinstance(result, dict) or not isinstance(result.get("content"), str):
-            return WorkerFailure("InvalidResponse", "Smithers completion lacks content")
-        usage = result.get("usage")
-        usage = usage if isinstance(usage, dict) else {}
-        return LLMResponse(
-            content=result["content"],
-            tool_calls=_parse_tool_calls(result.get("tool_calls")),
-            usage=Usage(
-                input_tokens=int(usage.get("input_tokens", 0)),
-                output_tokens=int(usage.get("output_tokens", 0)),
-            ),
-            latency_ms=timing["time_from_acceptance_seconds"] * 1000,
-            model=self.configuration()["resolved_backend_tag"],
+        if not isinstance(result, dict):
+            return WorkerFailure("InvalidResponse", "Smithers completion lacks a result")
+        response = await self._http.get(f"{self._factory.resolved_worker_url}/tasks/{job_id}")
+        response.raise_for_status()
+        task = response.json()
+        if not isinstance(task, dict) or task.get("job_id") != job_id:
+            return WorkerFailure("IdentityMismatch", "worker task is for another job")
+        if task.get("status") != "complete":
+            return WorkerFailure("IdentityMismatch", "worker task is not complete")
+        usage = task.get("usage")
+        if not isinstance(usage, dict):
+            # Missing usage is unknown, never zero tokens.
+            return WorkerFailure("UsageUnavailable", "worker task reported no usage")
+        input_tokens, output_tokens = usage.get("input_tokens"), usage.get("output_tokens")
+        if (
+            type(input_tokens) is not int
+            or type(output_tokens) is not int
+            or input_tokens < 0
+            or output_tokens < 0
+        ):
+            return WorkerFailure("UsageUnavailable", "worker task usage is malformed")
+        worker_model = usage.get("model")
+        if worker_model != self.configuration()["resolved_backend_tag"]:
+            return WorkerFailure(
+                "ResolvedTagIdentityMismatch", "worker attested a different model tag"
+            )
+        self._diagnostics["worker_model"] = worker_model
+        return SmithersCompletion(
+            job_id=job_id,
+            result=result,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            worker_model=worker_model,
+            queue_latency_seconds=timing["queue_latency_seconds"],
+            time_from_acceptance_seconds=timing["time_from_acceptance_seconds"],
         )
 
     async def complete(self, params: CompletionParams) -> LLMResponse:

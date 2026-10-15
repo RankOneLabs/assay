@@ -38,7 +38,12 @@ from typing import Any, Protocol
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import Accounting, WorkerFailure, WorkerResult, WorkerSuccess
 from assay.models import CellCoordinate
-from assay.pier_packaging import FORBIDDEN_SENTINELS, build_package, gate_package
+from assay.pier_packaging import (
+    FORBIDDEN_SENTINELS,
+    PackageLayout,
+    build_package,
+    gate_package,
+)
 from assay.pier_protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
@@ -257,10 +262,14 @@ def worker_configuration(
     max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES,
     forbidden_substrings: tuple[tuple[str, str], ...] = FORBIDDEN_SENTINELS,
     worker_id: str = "pier",
+    package_layout: PackageLayout = "submission-worktree",
 ) -> dict[str, Any]:
     """The arm-level configuration a plan pins -- shared by ``PierAdapter`` and
-    the investigation profiles that need it before any adapter is constructed."""
-    return {
+    the investigation profiles that need it before any adapter is constructed.
+
+    The default layout is left out so configurations pinned before it existed
+    keep their exact bytes."""
+    configuration: dict[str, Any] = {
         "id": worker_id,
         "version": binding.runtime_version,
         "runtime_id": binding.runtime_id,
@@ -272,6 +281,9 @@ def worker_configuration(
         "max_repository_bytes": max_repository_bytes,
         "forbidden_substrings": dict(forbidden_substrings),
     }
+    if package_layout != "submission-worktree":
+        configuration["package_layout"] = package_layout
+    return configuration
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +299,7 @@ class PierAdapter:
     max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES
     forbidden_substrings: tuple[tuple[str, str], ...] = FORBIDDEN_SENTINELS
     worker_id: str = "pier"
+    package_layout: PackageLayout = "submission-worktree"
     supports_cell_coordinates: bool = True
 
     def configuration(self, arm_id: str) -> dict[str, Any]:
@@ -298,6 +311,7 @@ class PierAdapter:
             max_repository_bytes=self.max_repository_bytes,
             forbidden_substrings=self.forbidden_substrings,
             worker_id=self.worker_id,
+            package_layout=self.package_layout,
         )
 
     async def _bounded_teardown(
@@ -381,6 +395,7 @@ class PierAdapter:
                     repository_root=repository_root,
                     max_repository_files=self.max_repository_files,
                     max_repository_bytes=self.max_repository_bytes,
+                    layout=self.package_layout,
                 )
             gate_package(
                 package,

@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.repository import (
@@ -47,7 +48,17 @@ SUBMISSION_CONTRACT = (
 )
 
 
-def render_instruction(task: str) -> str:
+PackageLayout = Literal["submission-worktree", "repository-agent"]
+
+REPOSITORY_AGENT_WORKSPACE = (
+    "## Workspace\n\n"
+    "The repository is your working directory, `/workspace`. Edit its files in "
+    "place; the file tree you leave there is your submission. Call "
+    "`submit_output` with a short summary when you are done.\n"
+)
+
+
+def render_instruction(task: str, layout: PackageLayout = "submission-worktree") -> str:
     """Deterministic instruction text: no arm id, digest, or object metadata.
 
     The workspace sentence describes the layout the model actually sees, not
@@ -60,6 +71,10 @@ def render_instruction(task: str) -> str:
     stripped = task.strip()
     if not stripped:
         raise ValueError("task instruction must be nonblank")
+    if layout == "repository-agent":
+        # The repository agent edits /workspace directly; there is no
+        # submission worktree or contract file in its package.
+        return f"# Task\n\n{stripped}\n\n{REPOSITORY_AGENT_WORKSPACE}"
     return (
         "# Task\n\n"
         f"{stripped}\n\n"
@@ -112,6 +127,7 @@ def build_package(
     repository_root: Path,
     max_repository_files: int = DEFAULT_MAX_REPOSITORY_FILES,
     max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES,
+    layout: PackageLayout = "submission-worktree",
 ) -> SealedPackage:
     """Build the sealed package for one cell from an on-disk realization.
 
@@ -123,10 +139,9 @@ def build_package(
     repository = validate_source_tree(
         repository_root, max_files=max_repository_files, max_total_bytes=max_repository_bytes
     )
-    files: dict[str, str] = {
-        INSTRUCTION_PATH: render_instruction(task),
-        SUBMISSION_CONTRACT_PATH: SUBMISSION_CONTRACT,
-    }
+    files: dict[str, str] = {INSTRUCTION_PATH: render_instruction(task, layout)}
+    if layout == "submission-worktree":
+        files[SUBMISSION_CONTRACT_PATH] = SUBMISSION_CONTRACT
     for path, content in repository.items():
         files[f"{WORKSPACE_PREFIX}/{path}"] = content
     files = validate_repository(

@@ -175,7 +175,7 @@ def test_workflow_toolchain_runs_offline_from_installed_tree(image: str) -> None
             "/bin/sh",
             image,
             "-c",
-            "node --version && tsc --version && "
+            "node --version && bun --version && tsc --version && "
             "test -f /opt/workflow_edit/node_modules/typescript/lib/typescript.js && "
             "! command -v npm",
         ],
@@ -185,7 +185,7 @@ def test_workflow_toolchain_runs_offline_from_installed_tree(image: str) -> None
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["v22.21.1", "Version 5.9.2"]
+    assert result.stdout.splitlines() == ["v22.21.1", "1.3.13", "Version 5.9.3"]
 
 
 def test_success_leaves_a_read_only_mount_and_zero_containers(image: str) -> None:

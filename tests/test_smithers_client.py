@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -15,60 +14,6 @@ from jig.core.types import CompletionParams, Message, Role
 from assay.adapters.smithers import SmithersFactory
 from assay.canonical import canonical_json
 from assay.execution import WorkerFailure
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments"))
-
-from workflow_edit.dispatch import SmithersBoundWorker  # noqa: E402
-
-
-async def test_execution_checks_smithers_bound_worker_configuration(tmp_path: Path) -> None:
-    from test_execution import execution_fixture
-
-    from assay.canonical import digest_bytes
-    from assay.execution import RunFailed, RunSucceeded, WorkerSuccess, execute_plan
-    from assay.planning import compile_plan
-    from assay.store import ObjectStore
-
-    class Delegate:
-        def configuration(self, arm_id: str) -> dict[str, str]:
-            return {"id": "smithers-fixture", "version": "1", "arm_id": arm_id}
-
-        async def run_cell(
-            self, *, input_value: Any, coordinate: Any, client: Any
-        ) -> WorkerSuccess:
-            return WorkerSuccess({"score": 1})
-
-    store = ObjectStore(tmp_path / "store")
-    fixture = execution_fixture(store, subject_ids=("ok",), worker_repeats=1)
-    routing = tmp_path / "routing_config.yaml"
-    _routing(routing)
-    factory = SmithersFactory("qwen", "mcbain", routing, "http://smithers.test")
-    worker = SmithersBoundWorker(Delegate(), factory, "run-1")
-    snapshot = fixture.snapshot.model_copy(update={
-        "arms": tuple(
-            arm.model_copy(update={"worker": worker.configuration(arm.id)})
-            for arm in fixture.snapshot.arms
-        )
-    })
-    snapshot_ref = str(store.publish_json(snapshot.model_dump(mode="json")))
-    plan = compile_plan(
-        snapshot, snapshot_ref=snapshot_ref, worker_repeats=1,
-        jig_revision="55081e8", concurrency=4,
-    )
-    plan_bytes = canonical_json(plan.model_dump(mode="json"))
-    args = fixture.arguments | {
-        "snapshot": snapshot,
-        "plan_bytes": plan_bytes,
-        "authorization": digest_bytes(plan_bytes),
-        "workers": {arm.id: worker for arm in snapshot.arms},
-    }
-    accepted = await execute_plan(**args)
-    assert isinstance(accepted, RunSucceeded), accepted
-
-    _routing(routing, "qwen:Q4")
-    rejected = await execute_plan(**args)
-    assert isinstance(rejected, RunFailed)
-    assert "worker configuration mismatch" in rejected.message
 
 
 def _routing(path: Path, tag: str = "qwen:Q8") -> None:
@@ -103,6 +48,22 @@ def _params() -> CompletionParams:
     return CompletionParams(messages=[Message(role=Role.USER, content="hello")])
 
 
+def _task(*, model: str = "qwen:Q8", usage: bool = True) -> dict[str, Any]:
+    task: dict[str, Any] = {"job_id": "job-1", "status": "complete"}
+    if usage:
+        task["usage"] = {"model": model, "input_tokens": 11, "output_tokens": 7}
+    return task
+
+
+def _transport(job: dict[str, Any], task: dict[str, Any] | None = None) -> httpx.MockTransport:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "mcbain":
+            return httpx.Response(200, json=task if task is not None else _task())
+        return httpx.Response(200, json={"job_id": "job-1"} if request.method == "POST" else job)
+
+    return httpx.MockTransport(respond)
+
+
 @pytest.mark.parametrize(
     ("job", "cause"),
     [
@@ -115,11 +76,7 @@ async def test_rejects_wrong_job_identity(
 ) -> None:
     factory = _factory(tmp_path)
     client = factory.create(idempotency_key="cell-1")
-    client._http = httpx.AsyncClient(transport=httpx.MockTransport(
-        lambda request: httpx.Response(
-            200, json={"job_id": "job-1"} if request.method == "POST" else job
-        )
-    ))
+    client._http = httpx.AsyncClient(transport=_transport(job))
     try:
         result = await client.complete_result(_params())
     finally:
@@ -135,11 +92,7 @@ async def test_routing_tag_is_authorized_and_rechecked(tmp_path: Path) -> None:
     assert canonical_json(client.configuration()) == authorized
     assert "idempotency_key" not in client.configuration()
     _routing(factory.routing_config, "qwen:Q4")
-    client._http = httpx.AsyncClient(transport=httpx.MockTransport(
-        lambda request: httpx.Response(
-            200, json={"job_id": "job-1"} if request.method == "POST" else _job()
-        )
-    ))
+    client._http = httpx.AsyncClient(transport=_transport(_job()))
     try:
         result = await client.complete_result(_params())
     finally:
@@ -152,11 +105,7 @@ async def test_reported_resolved_tag_must_match(tmp_path: Path) -> None:
     factory = _factory(tmp_path)
     client = factory.create(idempotency_key="cell-1")
     job = {**_job(), "resolved_backend_tag": "qwen:Q4"}
-    client._http = httpx.AsyncClient(transport=httpx.MockTransport(
-        lambda request: httpx.Response(
-            200, json={"job_id": "job-1"} if request.method == "POST" else job
-        )
-    ))
+    client._http = httpx.AsyncClient(transport=_transport(job))
     try:
         result = await client.complete_result(_params())
     finally:
@@ -172,6 +121,8 @@ async def test_dropped_response_retries_same_submission_and_reports_clock(tmp_pa
 
     def respond(request: httpx.Request) -> httpx.Response:
         nonlocal completions
+        if request.url.host == "mcbain":
+            return httpx.Response(200, json=_task())
         if request.method == "POST":
             seen.append(json.loads(request.content))
             if len(seen) == 1:
@@ -190,7 +141,11 @@ async def test_dropped_response_retries_same_submission_and_reports_clock(tmp_pa
     assert len(seen) == 2 and seen[0] == seen[1]
     assert seen[0]["idempotency_key"] == "cell-1"
     assert completions == 1
+    assert result.usage.input_tokens == 11 and result.usage.output_tokens == 7
+    assert result.model == "qwen:Q8"
     assert client.diagnostics() == {
+        "job_id": "job-1",
+        "worker_model": "qwen:Q8",
         "started_at": _job()["started_at"],
         "queue_latency_seconds": 120.0,
         "time_from_acceptance_seconds": 30.0,
@@ -203,6 +158,8 @@ async def test_changed_keyed_request_surfaces_409(tmp_path: Path) -> None:
 
     def respond(request: httpx.Request) -> httpx.Response:
         nonlocal first_body
+        if request.url.host == "mcbain":
+            return httpx.Response(200, json=_task())
         if request.method == "GET":
             return httpx.Response(200, json=_job())
         body = json.loads(request.content)
@@ -233,11 +190,7 @@ async def test_changed_keyed_request_surfaces_409(tmp_path: Path) -> None:
 async def test_acceptance_budget_excludes_queue_time(tmp_path: Path) -> None:
     factory = _factory(tmp_path)
     client = factory.create(idempotency_key="cell-1")
-    client._http = httpx.AsyncClient(transport=httpx.MockTransport(
-        lambda request: httpx.Response(
-            200, json={"job_id": "job-1"} if request.method == "POST" else _job(seconds=901)
-        )
-    ))
+    client._http = httpx.AsyncClient(transport=_transport(_job(seconds=901)))
     try:
         result = await client.complete_result(_params())
     finally:
@@ -254,6 +207,8 @@ async def test_running_job_uses_recorded_completion_clock(tmp_path: Path) -> Non
 
     def respond(request: httpx.Request) -> httpx.Response:
         nonlocal polls
+        if request.url.host == "mcbain":
+            return httpx.Response(200, json=_task())
         if request.method == "POST":
             return httpx.Response(200, json={"job_id": "job-1"})
         polls += 1
@@ -270,3 +225,50 @@ async def test_running_job_uses_recorded_completion_clock(tmp_path: Path) -> Non
         await client.aclose()
     assert not isinstance(result, WorkerFailure)
     assert polls == 2
+
+
+@pytest.mark.parametrize(
+    ("task", "cause"),
+    [
+        (_task(usage=False), "UsageUnavailable"),
+        (_task(model="qwen:Q4"), "ResolvedTagIdentityMismatch"),
+        ({**_task(), "job_id": "job-2"}, "IdentityMismatch"),
+    ],
+)
+async def test_worker_task_attests_usage_and_model(
+    tmp_path: Path, task: dict[str, Any], cause: str
+) -> None:
+    client = _factory(tmp_path).create(idempotency_key="cell-1")
+    client._http = httpx.AsyncClient(transport=_transport(_job(), task))
+    try:
+        result = await client.complete_result(_params())
+    finally:
+        await client.aclose()
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == cause
+
+
+async def test_raw_payload_is_submitted_verbatim(tmp_path: Path) -> None:
+    seen: list[dict[str, Any]] = []
+    job = {**_job(), "result": {"content": "", "tool_calls": [{"id": "c1"}]}}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "mcbain":
+            return httpx.Response(200, json=_task())
+        if request.method == "POST":
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, json={"job_id": "job-1"})
+        return httpx.Response(200, json=job)
+
+    client = _factory(tmp_path).create(idempotency_key="cell-1:t3")
+    client._http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    payload = {"messages": [{"role": "user", "content": "x"}], "tool_choice": "required"}
+    try:
+        completion = await client.complete_payload(payload)
+    finally:
+        await client.aclose()
+    assert not isinstance(completion, WorkerFailure)
+    assert seen[0]["payload"] == payload
+    assert seen[0]["idempotency_key"] == "cell-1:t3"
+    assert completion.result["tool_calls"] == [{"id": "c1"}]
+    assert (completion.input_tokens, completion.output_tokens) == (11, 7)
