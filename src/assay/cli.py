@@ -111,6 +111,7 @@ def _code_metrics_config(path: str | None) -> Any:
         "ruff_ignore",
         "components",
         "allow_unmatched_patterns",
+        "typescript_dependencies",
     }
     if set(raw) - allowed:
         raise ConfigurationError(f"unknown config keys: {sorted(set(raw) - allowed)}")
@@ -120,6 +121,7 @@ def _code_metrics_config(path: str | None) -> Any:
         "ruff_ignore": (),
         "components": (),
         "allow_unmatched_patterns": False,
+        "typescript_dependencies": None,
     }
     values.update(raw)
     for key in ("clone_min_lines", "clone_min_tokens"):
@@ -131,6 +133,16 @@ def _code_metrics_config(path: str | None) -> Any:
         raise ConfigurationError("ruff_ignore must be a list of strings")
     if type(values["allow_unmatched_patterns"]) is not bool:
         raise ConfigurationError("allow_unmatched_patterns must be a bool")
+    toolchain = None
+    if values["typescript_dependencies"] is not None:
+        if not isinstance(values["typescript_dependencies"], str):
+            raise ConfigurationError("typescript_dependencies must be a directory path")
+        from assay.code_metrics.toolchain import TypeScriptToolchain
+
+        # Relative to the config file, so a committed config names a stable tree.
+        toolchain = TypeScriptToolchain(
+            Path(path).parent / Path(values["typescript_dependencies"]).expanduser()
+        )
     if not isinstance(values["components"], list) and values["components"] != ():
         raise ConfigurationError("components must be a list")
     components = []
@@ -148,6 +160,7 @@ def _code_metrics_config(path: str | None) -> Any:
         ruff_ignore=tuple(values["ruff_ignore"]),
         components=tuple(components),
         allow_unmatched_patterns=values["allow_unmatched_patterns"],
+        typescript_toolchain=toolchain,
     )
 
 
@@ -224,6 +237,22 @@ def _handle_code_metrics_install_node_tools(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_code_metrics_install_typescript_dependencies(args: argparse.Namespace) -> int:
+    try:
+        from assay.code_metrics.toolchain import install_typescript_dependencies
+
+        directory = install_typescript_dependencies(
+            Path(args.manifests),
+            None if args.target is None else Path(args.target),
+            offline=args.offline,
+        )
+    except (ImportError, OSError, RuntimeError) as error:
+        print(f"code_metrics_install_typescript_dependencies_failed: {error}")
+        return 1
+    print(directory)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="assay")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -259,6 +288,20 @@ def main() -> int:
     install_node_tools = metrics_commands.add_parser("install-node-tools")
     install_node_tools.add_argument("--offline", action="store_true")
     install_node_tools.set_defaults(handler=_handle_code_metrics_install_node_tools)
+    install_dependencies = metrics_commands.add_parser(
+        "install-typescript-dependencies",
+        help="npm ci a project's lockfile for typechecking with its own toolchain",
+    )
+    install_dependencies.add_argument(
+        "manifests", metavar="DIR", help="directory with package.json and package-lock.json"
+    )
+    install_dependencies.add_argument(
+        "--target", metavar="DIR", help="install here instead of the per-user cache"
+    )
+    install_dependencies.add_argument("--offline", action="store_true")
+    install_dependencies.set_defaults(
+        handler=_handle_code_metrics_install_typescript_dependencies
+    )
     for command in (snapshot, comparison):
         command.add_argument("--config", metavar="FILE")
         command.add_argument("--exclude", metavar="GLOB", action="append", default=[])

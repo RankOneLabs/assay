@@ -140,7 +140,10 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: vendor/node-tools/package-lock.json
+          # The workflow-edit metric tests npm ci the fixture image's lock too.
+          cache-dependency-path: |
+            vendor/node-tools/package-lock.json
+            integrations/pier/workflow_edit/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: vendor/node-tools
       - name: Lint experiments with the root Ruff configuration

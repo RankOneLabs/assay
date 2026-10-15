@@ -52,3 +52,17 @@ uv run python -m workflow_edit.publish                          # rewrites SMOKE
 Each command writes a gzipped evidence file under `evidence/wf13/`, and
 `publish` recomputes [SMOKE.md](SMOKE.md) from those files alone. The Assay
 object store for a run defaults to `~/.assay-wf13/store`.
+
+## Metrics
+
+`metrics.py` is the metric step: `measure_patch` compares the fixture's tree
+with the same tree after a patch, typechecking with the fixture's own toolchain.
+Install that toolchain once (it is the only step that may fetch), from the
+repository root:
+
+```sh
+uv run assay code-metrics install-typescript-dependencies integrations/pier/workflow_edit
+```
+
+The default target is the per-user cache directory `metrics.metrics_config()`
+reads; measuring itself never installs or fetches anything.
