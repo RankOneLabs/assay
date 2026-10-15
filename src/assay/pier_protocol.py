@@ -35,7 +35,7 @@ ArtifactKind = Literal[
     "raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration", "transcript"
 ]
 NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
-TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.3.0"
+TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.4.0"
 _LAN_NETWORKS = (
     IPv4Network("10.0.0.0/8"),
     IPv4Network("172.16.0.0/12"),
@@ -66,7 +66,7 @@ class TrialLimits(WireModel):
 
 
 class TrialRequest(WireModel):
-    schema_version: Literal["assay-pier-trial/0.3.0"] = "assay-pier-trial/0.3.0"
+    schema_version: Literal["assay-pier-trial/0.4.0"] = "assay-pier-trial/0.4.0"
     cell_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*:w[0-9]+$")
     package_digest: Sha256Ref
     exchange: PierExchange
@@ -146,6 +146,10 @@ CandidateCause = Literal[
     "nonzero_exit",
     "storage_exhausted",
     "memory_limit",
+    # The cell's own budget ran out inside the agent loop. Distinct from the
+    # infrastructure ``harness_deadline``: running out of time is the
+    # candidate's outcome, not a lost coordinate.
+    "agent_deadline",
 ]
 InfrastructureCause = Literal[
     "harness_deadline",

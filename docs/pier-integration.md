@@ -4,14 +4,19 @@ Pier is the third-party (`datacurve-pier`) agent-execution provider Assay drives
 through the isolated [`integrations/pier`](../integrations/pier/README.md)
 bridge project. The bridge has its own lock and qualification script.
 
-The trial envelope is `assay-pier-trial/0.3.0`. `/scratch` is a bind mount of
+The trial envelope is `assay-pier-trial/0.4.0`. `/scratch` is a bind mount of
 an ext4 filesystem image kept under the host trial run directory. The image's
 filesystem capacity is the storage quota; Docker's memory cgroup is a separate,
 higher ceiling. The host running `DockerTrialClient` needs noninteractive root
 access for loop mounting and unmounting the image. A trial refuses to proceed
 when inspection does not confirm the bind mount, quota, read-only root and
-baseline, or declared network posture. The initial storage, memory, and PID
-bounds are provisional pending `experiments/workflow_edit/SMOKE.md`.
+baseline, or declared network posture. `TrialLimits` holds wire ranges only.
+The workflow-edit repository agent (`RepositoryAgentTrialClient`) does not use
+this ext4 image: its storage is Docker tmpfs (`/workspace`, `/cache` and
+`/tmp`, 256 MiB each) under a 1,536 MiB memory ceiling and 128 PIDs. Those
+bounds are qualified in
+[`experiments/workflow_edit/SMOKE.md`](../experiments/workflow_edit/SMOKE.md);
+`experiments/workflow_edit/DECISIONS.md` records why the ext4 quota is not.
 
 The `egress-openrouter-only` and `toolchain-only` postures both run the
 container with Docker networking disabled. `egress-lan-host-port` creates a

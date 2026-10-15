@@ -150,6 +150,9 @@ class FakeSandbox:
     def capture_workspace(self) -> dict[str, int]:
         return {}
 
+    def oom_kills(self) -> int | None:
+        return None
+
     def interrupt(self) -> None:
         pass
 

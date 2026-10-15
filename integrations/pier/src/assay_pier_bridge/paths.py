@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
+import re
 import subprocess
 import tarfile
 from collections.abc import Mapping
@@ -21,6 +23,12 @@ from tempfile import TemporaryDirectory
 MAX_ARTIFACT_BYTES = 8_000_000
 MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
 MAX_SUBMISSION_ENTRIES = 4_096
+# A path component Git reserves for its own metadata: ``.git`` in any ASCII
+# case and its NTFS spellings (``git~1``, trailing dots or spaces, a stream
+# suffix), all refused by Git's default ``verify_path``. At any depth Git
+# either drops such a path from the index silently or fails the whole ``add``,
+# so a tree containing one can never round-trip through a patch.
+_RESERVED_GIT_COMPONENT = re.compile(r"(?:\.git|git~1)[. ]*(?::.*)?", re.IGNORECASE | re.ASCII)
 
 
 class ArtifactCollectionRejected(ValueError):
@@ -116,7 +124,7 @@ def regular_tree(root: Path) -> dict[str, bytes]:
                 "traversal", str(error), artifacts=files,
                 rejected_path=raw_relative, origin="working_copy"
             ) from error
-        if relative.split("/", 1)[0] == ".git":
+        if any(_RESERVED_GIT_COMPONENT.fullmatch(part) for part in relative.split("/")):
             raise ArtifactCollectionRejected(
                 "out_of_scope_edit", f"reserved Git metadata path in submission: {relative}",
                 artifacts=files, rejected_path=relative, origin="working_copy",
@@ -306,15 +314,43 @@ def tree_digest(files: Mapping[str, bytes]) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
+def _git(checkout: Path, *args: str) -> bytes:
+    """Run Git with none of the host's configuration or ``GIT_*`` environment.
+
+    A global or system ``core.excludesFile``, a template's ``info/exclude``, or
+    an inherited ``GIT_DIR`` would otherwise decide which observed files reach
+    the patch, so capture would depend on whose machine ran it.
+    """
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    return subprocess.run(
+        [
+            "git",
+            "-c",
+            f"core.excludesFile={os.devnull}",
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "init.defaultBranch=main",
+            *args,
+        ],
+        cwd=checkout,
+        env=environment,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+
 def submission_patch(baseline: Path, final: Path) -> SubmissionPatch:
     """Build a deterministic Git patch from observed trees, never an edit claim."""
     before = regular_tree(baseline)
     after = regular_tree(final)
     with TemporaryDirectory(prefix="assay-patch-") as temporary:
         checkout = Path(temporary)
-        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        _git(checkout, "init", "-q", "--template=", ".")
         # The candidate can edit .gitattributes. Its text/filter rules must
         # never rewrite the bytes being observed or the patch cannot replay.
+        (checkout / ".git" / "info").mkdir(exist_ok=True)
         (checkout / ".git" / "info" / "attributes").write_text(
             "* -text -filter -ident diff\n", encoding="ascii"
         )
@@ -323,9 +359,9 @@ def submission_patch(baseline: Path, final: Path) -> SubmissionPatch:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             target.chmod(0o644)
-        subprocess.run(
-            ["git", "-c", "core.autocrlf=false", "add", "--all"], cwd=checkout, check=True
-        )
+        # ``-f`` on both adds: a .gitignore in the observed tree is content to
+        # capture, never a filter on what is captured.
+        _git(checkout, "add", "-f", "--all")
         for path in before:
             (checkout / path).unlink()
         for path, data in after.items():
@@ -335,32 +371,26 @@ def submission_patch(baseline: Path, final: Path) -> SubmissionPatch:
             target.chmod(0o644)
         new_paths = sorted(set(after) - set(before))
         if new_paths:
-            subprocess.run(
-                ["git", "-c", "core.autocrlf=false", "add", "-N", "--", *new_paths],
-                cwd=checkout,
-                check=True,
-            )
-        diff = subprocess.run(
-            [
-                "git",
-                "-c",
-                "core.autocrlf=false",
-                "-c",
-                "core.quotePath=false",
-                "-c",
-                "diff.algorithm=myers",
-                "diff",
-                "--binary",
-                "--full-index",
-                "--unified=3",
-                "--no-renames",
-                "--no-ext-diff",
-                "--no-textconv",
-            ],
-            cwd=checkout,
-            capture_output=True,
-            check=True,
-        ).stdout
+            _git(checkout, "add", "-f", "-N", "--", *new_paths)
+        # Every observed path must be indexed or the patch silently omits it;
+        # fail capture instead of publishing a patch that cannot replay.
+        indexed = {path for path in _git(checkout, "ls-files", "-z").split(b"\x00") if path}
+        if indexed != {path.encode("utf-8") for path in before.keys() | after.keys()}:
+            raise ValueError("patch_capture_incomplete")
+        diff = _git(
+            checkout,
+            "-c",
+            "core.quotePath=false",
+            "-c",
+            "diff.algorithm=myers",
+            "diff",
+            "--binary",
+            "--full-index",
+            "--unified=3",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
+        )
         # Git's patch carries no clock or checkout path; all source modes are fixed.
     return SubmissionPatch(diff, tree_digest(before), tree_digest(after))
 

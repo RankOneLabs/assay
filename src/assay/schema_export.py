@@ -25,7 +25,7 @@ from assay.code_metrics.models import (
     CodeMetricsReportV6,
     DetailedCodeMetricsComparison,
 )
-from assay.fixture_manifest import FixtureManifest
+from assay.fixture_manifest import FixtureManifest, FixtureManifestV2
 from assay.models import (
     Arm,
     EvaluationFailure,
@@ -46,7 +46,10 @@ SCHEMA_MODELS: dict[str, type[WireModel]] = {
     "assay-report-config": ReportConfig,
     "assay-run-manifest": RunManifest,
     "assay-study-snapshot": StudySnapshot,
+    # The unversioned name stays the 0.1.0 document byte for byte, so a reader
+    # pinned to it keeps validating; 0.2.0 is published beside it.
     "assay-fixture-manifest": FixtureManifest,
+    "assay-fixture-manifest-v0.2": FixtureManifestV2,
 }
 
 # Each execution-plan wire shape gets its own pinned
