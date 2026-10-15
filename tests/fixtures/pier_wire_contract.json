@@ -1,16 +1,16 @@
 {
   "comment": "Cross-project wire-contract fixture. assay computes these values with assay.pier_packaging.manifest_digest and assay.pier_protocol.trial_name_for; assay-pier-bridge reimplements both locally (no import edge back onto assay) as container.package_digest and pier_adapter.sanitized_trial_name. Both test suites assert against this file, so the two implementations cannot drift without a failure on at least one side.",
   "trial_envelope": {
-    "schema_version": "assay-pier-trial/0.3.0",
+    "schema_version": "assay-pier-trial/0.4.0",
     "result_outcomes": ["candidate", "candidate_failure", "infrastructure_failure"],
-    "candidate_causes": ["no_submission", "symlink_submission", "traversal", "escaping_symlink", "binary_payload", "oversized_artifact", "aggregate_artifact_limit", "entry_limit", "out_of_scope_edit", "tampering", "candidate_test_timeout", "nonzero_exit", "storage_exhausted", "memory_limit"],
+    "candidate_causes": ["no_submission", "symlink_submission", "traversal", "escaping_symlink", "binary_payload", "oversized_artifact", "aggregate_artifact_limit", "entry_limit", "out_of_scope_edit", "tampering", "candidate_test_timeout", "nonzero_exit", "storage_exhausted", "memory_limit", "agent_deadline"],
     "infrastructure_causes": ["harness_deadline", "cancelled", "container_start", "enforcement", "unexpected_exception", "mismatched_cell"],
     "network_policies": ["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"],
     "request_fields": ["schema_version", "cell_id", "package_digest", "exchange", "model_route", "limits", "verify", "network_policy", "egress_host", "egress_port"],
     "limit_fields": ["cpu", "memory_mb", "pids", "timeout_s", "storage_mb"],
     "effective_fields": ["uid", "gid", "workspace_read_only", "root_read_only", "submission_mount", "scratch_mount", "scratch_mount_kind", "scratch_quota_mb", "network_policy", "cpu_limit", "memory_limit_mb", "pids_limit", "storage_limit_mb", "containers_remaining", "child_processes_remaining", "teardown_completed"],
     "sample_request": {
-      "schema_version": "assay-pier-trial/0.3.0",
+      "schema_version": "assay-pier-trial/0.4.0",
       "cell_id": "s1:a1:w0",
       "package_digest": "sha256:faa0a2f3296650f9d0a17617641ef000d362b4c04b3f04d4f52bf8845d247360",
       "exchange": {

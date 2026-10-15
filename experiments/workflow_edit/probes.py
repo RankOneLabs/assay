@@ -96,7 +96,7 @@ REJECTION_PROBES: dict[str, tuple[tuple[tuple[str, dict[str, str]], ...], str, f
         "tampering", 900.0,
     ),
     "tool_timeout_recovered": ((command("sleep 600"),), "candidate", 900.0),
-    "agent_deadline": ((command("sleep 600"),), "harness_deadline", 30.0),
+    "agent_deadline": ((command("sleep 600"),), "agent_deadline", 30.0),
 }
 
 
