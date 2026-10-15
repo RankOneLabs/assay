@@ -7,12 +7,15 @@ import io
 import re
 import sys
 from collections.abc import Mapping
-from typing import Annotated, Literal, NamedTuple, Self
+from typing import TYPE_CHECKING, Annotated, Literal, NamedTuple, Self
 
 from pydantic import AfterValidator, Field, StringConstraints, model_validator
 
 from assay.models import Identifier, NonEmpty, WireModel
 from assay.repository import validate_repository
+
+if TYPE_CHECKING:
+    from .toolchain import ResolvedToolchain
 
 # Keep the promoted API's public metric order stable.
 DELTAS = (
@@ -70,6 +73,7 @@ class _Config(NamedTuple):
     clone_min_lines: int
     clone_min_tokens: int
     ruff_ignore: tuple[str, ...]
+    typescript_toolchain: ResolvedToolchain | None = None
 
 
 def is_module_name(value: str) -> bool:

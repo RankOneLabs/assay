@@ -60,23 +60,32 @@ def install_node_tools(*, offline: bool = False) -> Path:
                 shutil.copyfile(_BUNDLED_NODE_TOOLS / name, NODE_TOOLS / name)
     except OSError as error:
         raise ToolUnavailable("node-tools", f"cannot prepare {NODE_TOOLS}: {error}") from error
+    npm_ci(NODE_TOOLS, offline=offline)
+    assert_pinned_tools()
+    return NODE_TOOLS
+
+
+def npm_ci(directory: Path, *, offline: bool, include_dev: bool = False) -> None:
+    """Install exactly the lockfile in *directory*, running no package scripts."""
     npm = shutil.which("npm")
     if npm is None:
         raise ToolUnavailable("npm", "npm executable was not found")
     command = [npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"]
+    if include_dev:
+        # A project's compiler and types are usually devDependencies, which an
+        # inherited omit=dev or NODE_ENV=production would otherwise drop.
+        command.append("--include=dev")
     if offline:
         command.append("--offline")
     try:
-        subprocess.run(command, cwd=NODE_TOOLS, capture_output=True, text=True, check=True)
+        subprocess.run(command, cwd=directory, capture_output=True, text=True, check=True)
     except (OSError, subprocess.CalledProcessError) as error:
         detail = (
             (error.stderr or str(error)).strip()
             if isinstance(error, subprocess.CalledProcessError)
             else str(error)
         )
-        raise ToolUnavailable("npm", f"npm ci failed in {NODE_TOOLS}: {detail}") from error
-    assert_pinned_tools()
-    return NODE_TOOLS
+        raise ToolUnavailable("npm", f"npm ci failed in {directory}: {detail}") from error
 
 
 def node_tool_versions() -> dict[str, str]:

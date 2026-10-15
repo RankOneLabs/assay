@@ -12,6 +12,9 @@ from pydantic import TypeAdapter
 from .models import RepoPath, Snapshot, language_of
 
 _EXCLUDE_PATH = TypeAdapter(RepoPath)
+# Read beside the sources: Cargo targets decide the Rust graph, and a TypeScript
+# toolchain typechecks with the tree's own project file. No metric counts them.
+PROJECT_FILES = frozenset({"Cargo.toml", "tsconfig.json"})
 
 DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
     {
@@ -34,8 +37,8 @@ DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
 def snapshot_directory(
     path: str | Path, *, exclude: tuple[str, ...] = ()
 ) -> tuple[Snapshot, tuple[str, ...]]:
-    """Read the supported languages' files and Cargo manifests under *path*, pruning
-    named directories and globs.
+    """Read the supported languages' files, Cargo manifests and TypeScript project
+    files under *path*, pruning named directories and globs.
 
     Symlinks are skipped, files as well as directories, so every source read
     lies inside *path*.
@@ -60,7 +63,7 @@ def snapshot_directory(
             if not _excluded((relative / name).as_posix(), name, resolved)
         )
         for name in sorted(filenames):
-            if language_of(name) is None and name != "Cargo.toml":
+            if language_of(name) is None and name not in PROJECT_FILES:
                 continue
             key = (relative / name).as_posix()
             source = Path(directory) / name
