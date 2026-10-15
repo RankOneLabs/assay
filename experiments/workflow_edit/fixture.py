@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,18 @@ def read_tree(root: Path) -> dict[str, str]:
     return validate_repository(
         files, max_files=MAX_REPOSITORY_FILES, max_total_bytes=MAX_REPOSITORY_BYTES
     )
+
+
+def materialize(root: Path, repository: Mapping[str, str], patch: str | None = None) -> None:
+    """Write a repository under ``root``, then apply a candidate or reference patch."""
+    for path, text in repository.items():
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    if patch is not None:
+        subprocess.run(
+            ["patch", "-p1", "--quiet", "--batch"], cwd=root, input=patch.encode(), check=True
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -225,3 +225,74 @@ advance together to `assay-pier-trial/0.2.0`. The exact revised field set is:
   failed group in the same image, network-less and read-only, and records only
   failing test names or the first typecheck errors as `diagnosis.json.gz`. It
   never re-grades.
+
+## Part 2a — metrics on real TypeScript trees (Phase A item 9)
+
+- **Problem measured:** with the analyzers' own compiler (TypeScript 6.0.3) and
+  the synthetic strict `nodenext` project, the smoke-edit repository at the pin
+  reports 36 type errors. Its own `tsc --noEmit -p tsconfig.json` under the
+  image's lock reports none, and so does the tree with `reference.patch`
+  applied. The synthetic project also misses errors the tree's options create
+  (`noUnusedLocals`), so neither direction of a type-error delta was usable.
+- **Toolchain option, not a new pin:** `CodeMetricsConfig.typescript_toolchain`
+  names a directory where `npm ci` installed a project's own lockfile. The
+  workflow-edit metric step (`metrics.py`) points it at the image's manifests,
+  `integrations/pier/workflow_edit/` (TypeScript 5.9.3, zod 4.4.3, @types/bun
+  1.3.13), which the fixture repository carries byte-identical. The analyzers'
+  own pins (`vendor/node-tools`) are unchanged: dependency-cruiser still parses
+  with its TypeScript 6.0.3, and every other metric is computed as before. With
+  no toolchain configured, every report is byte-for-byte what it was.
+- **Install once, measure offline:** `assay code-metrics
+  install-typescript-dependencies DIR` copies the two manifests to a per-user
+  cache directory named by the lock's SHA-256 (or `--target`) and runs
+  `npm ci --ignore-scripts --include=dev` there, as `install-node-tools` does
+  for the analyzers; `--include=dev` because the compiler and bun types are
+  devDependencies. Installing is the only step that may fetch. At metric time
+  every locked package's installed `package.json` version is checked against
+  the lock (`ToolVersionMismatch` or `TypeScriptDependenciesUnavailable`
+  otherwise) and `node_modules/.bin/tsc` is run directly; npm and npx are never
+  invoked.
+- **The tree's own project:** the typecheck is `tsc --noEmit --pretty false -p
+  tsconfig.json`, the evaluator's bun-mode command, run in a temporary copy of
+  the snapshot's TypeScript files and its root `tsconfig.json`, beside a
+  `node_modules` link to the installed tree. Resolution walks up to it as it
+  walks up to `/node_modules` in the image, and the tree itself never contains
+  dependencies. `snapshot_directory` now keeps `tsconfig.json` files as it keeps
+  `Cargo.toml`; no metric counts them, so existing reports do not change. A
+  TypeScript snapshot without a root `tsconfig.json` is refused rather than
+  falling back to the synthetic project, and the snapshot's cache key includes
+  the project text.
+- **No schema change:** the toolchain's identity is recorded in the existing
+  free-form `versions.tools` map as `typecheck-typescript` (`5.9.3`) and
+  `typecheck-lock` (`sha256:<lock digest>`), present only when a toolchain
+  typechecked the snapshot. The project file is always the snapshot's root
+  `tsconfig.json`, which is in the snapshot, so nothing else is needed to
+  reproduce the number. `assay-code-metrics-report/0.6.0` and
+  `assay-code-metrics-comparison/0.7.0` are unchanged.
+- **Edges and cycles on real trees:** dependency-cruiser's graph of the pinned
+  slice was checked against the tree's own import statements: all 147 edges
+  match an independent resolution of every relative specifier (extensionless
+  ESM, `index.ts` directories), type-only imports are edges, and the only
+  externals are `bun:test`, `zod`, and `crypto` (dependency-cruiser reports
+  `node:crypto` without its scheme). The pin has one cyclic SCC
+  (`compiled-workflow`, `delegated-session`, `workflow`), formed by type-only
+  imports; it is kept, as type-only coupling always has been. The graph
+  resolves without the project file, so a project that sets `baseUrl`, `paths`
+  or `rootDirs` (read with `tsc --showConfig`) is refused rather than given
+  wrong edges. Oakridge sets none.
+- **Retained pair:** the committed smoke-edit repository (oakridge-dbos at
+  `f3b3ffca`) before and after `reference.patch` is measured twice with
+  network blocked for Node and Python and must be byte-identical. Pinned:
+  52 TypeScript modules on each side, 147 → 148 edges (the one added edge is
+  `slot-binding.ts → json-pointer.ts`, the patch's new import), 0 type errors
+  on both sides, 1 → 1 cyclic SCC and no new cycle, 29 added and 5 removed
+  lines over the five changed modules. A further case adds a type-only back
+  import and must report exactly that new cycle. The test lives in
+  `tests/test_workflow_edit_metrics.py`; its fixture installs the lock offline
+  from the npm cache and falls back to an online `npm ci` on a cold cache,
+  before network is blocked. CI's experiments job caches both lockfiles.
+- **Known limits:** the snapshot holds source and project files only, so a
+  tree whose typecheck needs another file (an imported JSON module, an
+  `extends` target) reports its absence as errors. Oakridge's slice needs
+  none. The typecheck covers the files the tree's `include` selects, not every
+  snapshot file, exactly as the tree's own typecheck does.
