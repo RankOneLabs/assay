@@ -4,7 +4,7 @@ Pier is the third-party (`datacurve-pier`) agent-execution provider Assay drives
 through the isolated [`integrations/pier`](../integrations/pier/README.md)
 bridge project. The bridge has its own lock and qualification script.
 
-The trial envelope is `assay-pier-trial/0.3.0`. `/scratch` is a bind mount of
+The trial envelope is `assay-pier-trial/0.4.0`. `/scratch` is a bind mount of
 an ext4 filesystem image kept under the host trial run directory. The image's
 filesystem capacity is the storage quota; Docker's memory cgroup is a separate,
 higher ceiling. The host running `DockerTrialClient` needs noninteractive root

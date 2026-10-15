@@ -344,3 +344,98 @@ repository; "spec" below means that document.
   authorized backend. Then Smithers must attest the backend (a field on the
   worker task's usage), and the client must compare the (backend, tag) pair
   against the authorized pair instead of the tag alone.
+
+## Part 2a — bridge loop (Phase A items 1, 3, 5)
+
+These change the bridge source, the system prompt, and `tools_sha256`, so they
+are a new image and a new fixture identity. Nothing here was run against
+Smithers; the Phase A requalification smoke qualifies them.
+
+- **Patch capture isolation:** Capture runs Git with `GIT_CONFIG_GLOBAL` set
+  to `/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, every inherited `GIT_*` variable
+  removed, `core.excludesFile=/dev/null`, and an empty init template. Both
+  adds use `-f`, so a `.gitignore` in the tree is captured content, never a
+  filter. After the adds, the index must hold exactly the observed paths;
+  otherwise capture stops as `patch_capture_incomplete` (a capture crash,
+  so infrastructure under section 8.0), never a short patch.
+- **Reserved Git paths:** A path component Git treats as its own metadata is
+  `out_of_scope_edit` at any depth. That means `.git` in any ASCII case, or
+  a spelling Git's default `verify_path` refuses as one (`git~1`, trailing
+  dots or spaces, a `:` stream suffix). Git either drops such a path from
+  the index without an error (`src/x/.git`) or fails the whole add, so no
+  patch could carry it. It is not `tampering`. That cause is kept for edits
+  that change what the evaluator runs: manifests, test configuration, and
+  tests. A top-level `.git` was already `out_of_scope_edit` in Part 1.
+  Names that only resemble it (`.gitx`, `git~2`) are captured normally.
+- **`agent_deadline` is a model failure:** When the cell budget runs out
+  inside the loop (between turns, during a turn, or as a tool's timeout), the
+  trial ends as a candidate failure with the new cause `agent_deadline`.
+  `harness_deadline` remains infrastructure. It covers a budget spent before
+  the trial handle runs and any other client's `TrialTimeoutError`.
+- **Trial envelope revision 2:** Adding `agent_deadline` to the closed
+  `CandidateCause` set is a wire change. The three copies (bridge protocol,
+  Assay protocol, shared fixture) advance together to
+  `assay-pier-trial/0.4.0`. No other field changes. The copies had been at
+  `0.3.0` since discriminated outcomes, which also changed only closed
+  literals. Revision 1 above names `0.2.0`, the version it introduced.
+- **`memory_limit` rule:** After every tool call that ran a command (a timed-out
+  one included), the loop reads the cgroup's `memory.events` `oom_kill`
+  count. Any increase is recorded as an `oom_kill` event (turn, tool, kills,
+  total). It is recovered: the kill happened inside a result the model saw.
+  The final check is `capture_workspace`'s observation at submission. The
+  submission is `memory_limit` exactly when that count exceeds the count
+  after the last tool result, which means the cgroup hit its ceiling after the
+  model last looked: during its final turn, through a process it left
+  running, or during the check itself. `memory.current` is not used, because
+  page cache makes "at the limit" ambiguous. An OOM kill is the kernel's own
+  statement that the ceiling was reached. `cgroup_peaks` records
+  `oom_kills_seen_by_tools` beside the final count. This replaces the Repository
+  agent rule that any OOM kill in the cell is `memory_limit`. The cost is one
+  extra `docker exec` per tool call. Bind-mount sandboxes observe no cgroup
+  counters, as before.
+- **Submission check order:** At submission the order is: capture, then the
+  captured tree's own typed rejections (`regular_tree`), then scope and
+  tampering, then the resource causes (`memory_limit`, then
+  `storage_exhausted`), then the patch. A tampering submission that also hit
+  a resource ceiling is `tampering`.
+- **Probes:** The memory probe splits in two. `memory_recovered` is a
+  foreground hog killed inside its own tool call, and settles as `candidate`.
+  `memory_limit` is a background loop that respawns the hog, with a scripted
+  10-second pause before the submission. In a local run against the image,
+  three kills landed in that window. The `agent_deadline` probe now expects
+  `agent_deadline`. SMOKE.md and the wf-13 evidence are unchanged, because the
+  probe table publishes the expectation recorded in the evidence.
+- **Tool set and order:** The tools are `read_file`, `write_file`,
+  `replace_in_file`, `run_command`, `submit_output`, in that fixed order.
+  Their schemas are 1,870 bytes, against the 16,384-byte cap, and a test pins
+  both. Optional arguments follow strict-mode convention: a nullable type,
+  still listed as required. The loop accepts them absent or `null`.
+  Whether vLLM's guided decoding accepts the `["integer", "null"]` type
+  is first shown by the requalification smoke.
+- **Paged reads:** Lines split on `\n` only, so a line number means the same
+  thing to `read_file`, to `replace_in_file`, and to an editor.
+  `start_line`/`end_line` are 1-based and inclusive, and `end_line` past the
+  end is clamped. A page ends at a whole line, with 256 bytes kept for its
+  note. The note names the lines shown, the total, the lines left in the
+  requested range, and the next `start_line`. A single line longer than a page
+  shows its first bytes and says so. Invalid UTF-8 is decoded with
+  replacement, so a read never refuses a file `cat` would have shown.
+- **Exact edits:** `replace_in_file` reads and writes bytes untranslated,
+  needs UTF-8, refuses an empty `old`, and applies `write_file`'s path rule:
+  a canonical relative path that resolves inside `/workspace`. Its script,
+  and `read_file`'s, refuse a call with exit status 3 and a one-line reason.
+  The loop returns that reason to the model as a `tool_error`. Zero or several
+  matches, a missing file, or an escaping path changes nothing and never ends
+  the cell.
+- **Truncation is visible:** Any other tool output cut at the tool cap ends
+  with a note giving the cap and the original size, inside the same cap.
+- **Cut-off turns are retained:** A turn whose `finish_reason` is `length`, or
+  whose completion reaches the output cap, is recorded as an `output_cut_off`
+  event with its text and raw tool calls. This holds whether or not the turn
+  ends the cell. Events are never dropped by conversation truncation, so the
+  text survives where the replayed messages may not. Truncation still removes
+  only whole exchanges (an assistant turn and all its tool results), and a
+  test checks every request for orphaned results.
+- **Publication of wf-13:** `publish.py` uses the 1,120-byte schema size of the
+  four tools the wf-13 image ran, not the current `TOOLS`. That way SMOKE.md
+  still reproduces exactly from its committed evidence.

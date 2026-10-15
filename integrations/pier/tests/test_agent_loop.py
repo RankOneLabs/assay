@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
+    TOOLS,
     AgentLoopError,
     ContainerStartError,
     DockerToolSandbox,
@@ -32,7 +33,7 @@ from assay_pier_bridge.provider import MODEL, PROVIDER_NAME
 LOCAL = ModelRoute(endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local")
 
 
-def _call(name: str, arguments: dict[str, str], turn: int) -> dict[str, Any]:
+def _call(name: str, arguments: dict[str, Any], turn: int) -> dict[str, Any]:
     return {
         "id": f"call-{turn}",
         "type": "function",
@@ -57,6 +58,10 @@ def _answer(name: str, arguments: dict[str, str], turn: int) -> dict[str, Any]:
 class FakeSandbox:
     created: list[FakeSandbox] = []
     peaks: dict[str, int] = {}
+    # ``oom`` is killed inside its own tool call; ``oom-later`` leaves a process
+    # behind that is killed after the tool result was observed.
+    oom_kill_count = 0
+    late_oom_kills = 0
 
     def __init__(self, workspace: Path, cache: Path, image: str) -> None:
         self.workspace = workspace
@@ -84,17 +89,27 @@ class FakeSandbox:
         self.timeouts.append(timeout_s)
         if argv[-1] == "hang":
             raise RuntimeError("tool_timeout")
-        if argv[0] == "cat":
-            relative = argv[-1].removeprefix("/workspace/")
-            output = "exit=0\n" + (self.workspace / relative).read_text()
-        elif argv[0] == "python":
-            target = self.workspace / argv[-1]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(input_text or "")
-            output = "exit=0\n"
+        if argv[-1] == "oom":
+            type(self).oom_kill_count += 1
+            return ToolOutput("exit=137\nKilled\n", 14, False)
+        if argv[-1] == "oom-later":
+            type(self).late_oom_kills += 1
+        if argv[0] == "python":
+            # The real in-container tool scripts, run against this cell's tree.
+            script = argv[2].replace("'/workspace'", repr(str(self.workspace)))
+            ran = subprocess.run(
+                [sys.executable, "-c", script, *argv[3:]],
+                input=(input_text or "").encode("utf-8"), capture_output=True, check=False,
+            )
+            output = f"exit={ran.returncode}\n" + (ran.stdout + ran.stderr).decode("utf-8")
         else:
             output = "exit=0\n" + "x" * 100
-        return ToolOutput(output, len(output.encode()), False)
+        encoded = output.encode("utf-8")
+        return ToolOutput(
+            encoded[:max_output_bytes].decode("utf-8", errors="ignore"),
+            len(encoded),
+            len(encoded) > max_output_bytes,
+        )
 
     def close(self) -> None:
         self.closed = True
@@ -103,7 +118,13 @@ class FakeSandbox:
         self.interrupted = True
 
     def capture_workspace(self) -> dict[str, int]:
-        return dict(self.peaks)
+        if not self.peaks:
+            return {}
+        total = self.peaks.get("oom_kills", 0) + self.oom_kill_count + self.late_oom_kills
+        return {**self.peaks, "oom_kills": total}
+
+    def oom_kills(self) -> int | None:
+        return self.peaks.get("oom_kills", 0) + self.oom_kill_count if self.peaks else None
 
 
 class FakeStorage:
@@ -124,6 +145,7 @@ class FakeStorage:
 def _reset_sandboxes() -> Iterator[None]:
     FakeSandbox.created.clear()
     FakeSandbox.peaks = {}
+    FakeSandbox.oom_kill_count = FakeSandbox.late_oom_kills = 0
     yield
 
 
@@ -144,9 +166,17 @@ def _client(tmp_path: Path, handler: Any, **kwargs: Any) -> RepositoryAgentClien
 class Scripted:
     """A local-route turn completion that replays fixed tool calls."""
 
-    def __init__(self, *turns: list[dict[str, Any]], finish: str = "tool_calls") -> None:
+    def __init__(
+        self,
+        *turns: list[dict[str, Any]],
+        finish: str = "tool_calls",
+        content: str | None = None,
+        completion_tokens: int = 3,
+    ) -> None:
         self.turns = list(turns)
         self.finish = finish
+        self.content = content
+        self.completion_tokens = completion_tokens
         self.seen: list[dict[str, Any]] = []
 
     def __call__(
@@ -161,10 +191,10 @@ class Scripted:
         self.seen.append({"messages": json.loads(json.dumps(messages)), "turn": turn})
         calls = self.turns[turn - 1] if turn <= len(self.turns) else self.turns[-1]
         return ModelTurn(
-            message={"role": "assistant", "content": None, "tool_calls": calls},
+            message={"role": "assistant", "content": self.content, "tool_calls": calls},
             finish_reason=self.finish,
             prompt_tokens=7,
-            completion_tokens=3,
+            completion_tokens=self.completion_tokens,
             cost_usd=None,
             observations={"smithers_job_id": f"job-{turn}"},
         )
@@ -189,12 +219,13 @@ def test_multiple_turns_and_two_cells_are_isolated(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         requests.append(body)
-        assert {tool["function"]["name"] for tool in body["tools"]} == {
+        assert [tool["function"]["name"] for tool in body["tools"]] == [
             "read_file",
             "write_file",
+            "replace_in_file",
             "run_command",
             "submit_output",
-        }
+        ]
         assert body["provider"]["allow_fallbacks"] is False
         if len(body["messages"]) == 2:
             return httpx.Response(200, json=_answer("read_file", {"path": "a.txt"}, len(requests)))
@@ -392,6 +423,80 @@ def test_exhausted_ceilings_fail_the_submission(
     assert failure.value.cause == cause
 
 
+HEALTHY = {"oom_kills": 0, "workspace_free_kb": 9999, "cache_free_kb": 9999}
+
+
+def test_recovered_oom_kill_is_recorded_but_keeps_the_submission(tmp_path: Path) -> None:
+    FakeSandbox.peaks = dict(HEALTHY)
+    completion = Scripted(
+        [_call("run_command", {"command": "oom"}, 1)],
+        [_call("write_file", {"path": "src/a.ts", "content": "fixed"}, 2)],
+        [_call("submit_output", {"summary": "s"}, 3)],
+    )
+    result = _local(tmp_path, completion, writable_prefixes=("src/",)).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "E", "workspace/src/a.ts": "one"}
+    )
+    assert b"+fixed" in result.patch
+    events = result.trajectory["events"]
+    assert [e for e in events if e["kind"] == "oom_kill"] == [
+        {"kind": "oom_kill", "turn": 1, "tool": "run_command", "oom_kills": 1, "total": 1}
+    ]
+    peaks = next(e for e in events if e["kind"] == "cgroup_peaks")
+    assert peaks["oom_kills"] == peaks["oom_kills_seen_by_tools"] == 1
+
+
+def test_oom_kill_after_the_last_tool_result_is_memory_limit(tmp_path: Path) -> None:
+    FakeSandbox.peaks = dict(HEALTHY)
+    completion = Scripted(
+        [_call("run_command", {"command": "oom"}, 1)],
+        [_call("run_command", {"command": "oom-later"}, 2)],
+        [_call("submit_output", {"summary": "s"}, 3)],
+    )
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion).run_cell(cell_id="s:a:w0", package={"instruction.md": "E"})
+    assert failure.value.cause == "memory_limit"
+    # The kill the model saw stays recorded; the one at submission voids the tree.
+    events = failure.value.trajectory["events"]
+    assert [e["total"] for e in events if e["kind"] == "oom_kill"] == [1]
+    assert "candidate.patch" in failure.value.evidence
+
+
+@pytest.mark.parametrize(
+    "peaks",
+    [
+        {"oom_kills": 1, "workspace_free_kb": 9999, "cache_free_kb": 9999},
+        {"oom_kills": 0, "workspace_free_kb": 9999, "cache_free_kb": 0},
+    ],
+)
+def test_scope_and_tampering_outrank_resource_causes(
+    tmp_path: Path, peaks: dict[str, int]
+) -> None:
+    FakeSandbox.peaks = peaks
+    completion = Scripted(
+        [_call("write_file", {"path": "package.json", "content": "{\"x\":1}"}, 1)],
+        [_call("submit_output", {"summary": "s"}, 2)],
+    )
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion, writable_prefixes=("src/",)).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "E", "workspace/package.json": "{}"}
+        )
+    assert failure.value.cause == "tampering"
+
+
+def test_nested_git_metadata_in_a_submission_is_out_of_scope(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("write_file", {"path": "src/x/.git", "content": "gitdir: /elsewhere"}, 1)],
+        [_call("submit_output", {"summary": "s"}, 2)],
+    )
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion, writable_prefixes=("src/",)).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "E", "workspace/src/a.ts": "one"}
+        )
+    assert failure.value.cause == "out_of_scope_edit"
+    assert failure.value.rejection is not None
+    assert failure.value.rejection.rejected_path == "src/x/.git"
+
+
 def test_final_submission_may_follow_a_tool_in_the_same_model_turn(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         answer = _answer("run_command", {"command": "true"}, 1)
@@ -448,6 +553,228 @@ def test_tool_and_conversation_truncation_are_recorded(tmp_path: Path) -> None:
     assert "tool_output_truncated" in kinds
     assert "conversation_truncated" in kinds
     assert result.requests == 5
+
+
+def test_tool_schemas_are_fixed_ordered_and_under_their_byte_cap() -> None:
+    encoded = json.dumps(TOOLS, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    assert [tool["function"]["name"] for tool in TOOLS] == [
+        "read_file", "write_file", "replace_in_file", "run_command", "submit_output"
+    ]
+    # Pinned: a schema change is a new image and is requalified, never drift.
+    assert len(encoded) == 1_870
+    assert len(encoded) <= LoopBounds().max_tool_schema_bytes
+    for tool in TOOLS:
+        parameters = tool["function"]["parameters"]
+        assert parameters["required"] == list(parameters["properties"])
+
+
+def _tool_results(result: Any) -> list[str]:
+    return [m["content"] for m in result.trajectory["messages"] if m["role"] == "tool"]
+
+
+def _read_pages(tmp_path: Path, text: str, cap: int, **arguments: Any) -> list[str]:
+    """Follow read_file's truncation notes until the requested range is exhausted."""
+    pages: list[str] = []
+    start = arguments.pop("start_line", None)
+    while len(pages) < 50:
+        completion = Scripted(
+            [_call("read_file", {"path": "big.ts", "start_line": start, **arguments}, 1)],
+            [_call("submit_output", {"summary": "s"}, 2)],
+        )
+        FakeSandbox.created.clear()
+        result = _local(
+            tmp_path / str(len(pages)), completion,
+            bounds=LoopBounds(max_tool_output_bytes=cap),
+        ).run_cell(cell_id="s:a:w0", package={"instruction.md": "E", "workspace/big.ts": text})
+        page = _tool_results(result)[0]
+        assert len(page.encode("utf-8")) <= cap
+        assert page.startswith("exit=0\n")
+        pages.append(page.removeprefix("exit=0\n"))
+        if "continue with start_line=" not in page:
+            return pages
+        start = int(page.rsplit("start_line=", 1)[1].rstrip("]"))
+    raise AssertionError("read_file never reached the end of the range")
+
+
+def test_read_file_pages_a_file_larger_than_the_tool_output_cap(tmp_path: Path) -> None:
+    text = "".join(f"export const line{n} = {n};\n" for n in range(1, 201))
+    pages = _read_pages(tmp_path, text, cap=1_024)
+    assert len(pages) > 1
+    first = pages[0]
+    assert "[truncated at the tool output limit: showed lines 1-" in first
+    assert "of 200;" in first and "lines of the requested range remain" in first
+    bodies = [page.split("[truncated", 1)[0] for page in pages]
+    assert "".join(bodies) == text
+
+
+def test_read_file_returns_an_inclusive_line_range(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("read_file", {"path": "a.ts", "start_line": 2, "end_line": 3}, 1),
+         _call("read_file", {"path": "a.ts", "start_line": 4, "end_line": None}, 1),
+         _call("read_file", {"path": "a.ts"}, 1)],
+        [_call("submit_output", {"summary": "s"}, 2)],
+    )
+    text = "one\ntwo\r\nthree\nfour"
+    result = _local(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "E", "workspace/a.ts": text}
+    )
+    assert _tool_results(result) == [
+        "exit=0\ntwo\r\nthree\n", "exit=0\nfour", f"exit=0\n{text}"
+    ]
+
+
+def test_read_file_cuts_a_single_overlong_line_and_says_so(tmp_path: Path) -> None:
+    text = "short\n" + "x" * 5_000 + "\ntail\n"
+    pages = _read_pages(tmp_path, text, cap=1_024, start_line=2)
+    assert "line 2 alone exceeds the tool output limit" in pages[0]
+    assert "continue with start_line=3" in pages[0]
+    assert pages[-1] == "tail\n"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "reason"),
+    [
+        ({"path": "a.ts", "start_line": 9}, "start_line 9 is past the end of a.ts (2 lines)"),
+        ({"path": "a.ts", "start_line": 2, "end_line": 1}, "end_line must not be before"),
+        ({"path": "a.ts", "start_line": 0}, "start_line must be a positive integer"),
+        ({"path": "a.ts", "end_line": "2"}, "end_line must be a positive integer"),
+        ({"path": "missing.ts"}, "No such file or directory: missing.ts"),
+        ({"path": "a.ts", "line": 1}, "unknown tool or argument fields"),
+    ],
+)
+def test_read_file_mistakes_are_tool_errors(
+    tmp_path: Path, arguments: dict[str, Any], reason: str
+) -> None:
+    completion = Scripted(
+        [_call("read_file", arguments, 1)], [_call("submit_output", {"summary": "s"}, 2)]
+    )
+    result = _local(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "E", "workspace/a.ts": "a\nb\n"}
+    )
+    (content,) = _tool_results(result)
+    assert content.startswith("error: ") and reason in content
+    assert [e["kind"] for e in result.trajectory["events"]].count("tool_error") == 1
+
+
+def test_replace_in_file_edits_exactly_one_occurrence(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("replace_in_file", {"path": "src/a.ts", "old": "b = 1", "new": "b = 2"}, 1)],
+        [_call("submit_output", {"summary": "s"}, 2)],
+    )
+    result = _local(tmp_path, completion, writable_prefixes=("src/",)).run_cell(
+        cell_id="s:a:w0",
+        package={"instruction.md": "E", "workspace/src/a.ts": "a = 1\r\nb = 1\r\nc = 1\r\n"},
+    )
+    assert _tool_results(result) == ["exit=0\nreplaced 1 occurrence in src/a.ts"]
+    assert result.files == {"src/a.ts": b"a = 1\r\nb = 2\r\nc = 1\r\n"}
+
+
+@pytest.mark.parametrize(
+    ("arguments", "reason"),
+    [
+        ({"path": "src/a.ts", "old": "absent", "new": "x"}, "old occurs 0 times in src/a.ts"),
+        ({"path": "src/a.ts", "old": "= 1", "new": "= 2"}, "old occurs 2 times in src/a.ts"),
+        ({"path": "src/a.ts", "old": "", "new": "x"}, "old must be a non-empty string"),
+        ({"path": "src/missing.ts", "old": "a", "new": "x"}, "No such file or directory"),
+        ({"path": "../a.ts", "old": "a", "new": "x"}, "unsafe path"),
+        ({"path": "src/link.ts", "old": "a", "new": "x"}, "path resolves outside /workspace"),
+        ({"path": "src/a.ts", "old": "a"}, "unknown tool or argument fields"),
+    ],
+)
+def test_replace_in_file_refusals_change_nothing_and_reach_the_model(
+    tmp_path: Path, arguments: dict[str, Any], reason: str
+) -> None:
+    outside = tmp_path / "outside.ts"
+    outside.write_text("a = 1\n")
+
+    class LinkingSandbox(FakeSandbox):
+        def __init__(self, workspace: Path, cache: Path, image: str) -> None:
+            super().__init__(workspace, cache, image)
+            (workspace / "src" / "link.ts").symlink_to(outside)
+
+    completion = Scripted(
+        [_call("replace_in_file", arguments, 1)], [_call("submit_output", {"summary": "s"}, 2)]
+    )
+    with pytest.raises(AgentLoopError) as failure:
+        # The planted link is itself an escaping symlink at capture, which
+        # proves the refusal left the cell running to its submission.
+        _local(
+            tmp_path / "runs", completion, sandbox_factory=LinkingSandbox,
+            writable_prefixes=("src/",),
+        ).run_cell(
+            cell_id="s:a:w0",
+            package={"instruction.md": "E", "workspace/src/a.ts": "a = 1\nb = 1\n"},
+        )
+    assert failure.value.cause == "escaping_symlink"
+    messages = failure.value.trajectory["messages"]
+    (content,) = [m["content"] for m in messages if m["role"] == "tool"]
+    assert content.startswith("error: ") and reason in content
+    assert outside.read_text() == "a = 1\n"
+    assert failure.value.rejection is not None
+    assert failure.value.rejection.artifacts["src/a.ts"] == b"a = 1\nb = 1\n"
+
+
+def test_truncated_tool_output_says_so_within_the_cap(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("run_command", {"command": "noisy"}, 1)],
+        [_call("submit_output", {"summary": "s"}, 2)],
+    )
+    result = _local(
+        tmp_path, completion, bounds=LoopBounds(max_tool_output_bytes=100)
+    ).run_cell(cell_id="s:a:w0", package={"instruction.md": "E"})
+    (content,) = _tool_results(result)
+    note = "[output truncated at the 100-byte tool output limit; 107 bytes in all]"
+    assert content.startswith("exit=0\nxx") and content.endswith(note)
+    assert len(content.encode("utf-8")) <= 100
+
+
+@pytest.mark.parametrize("calls", [[], [_call("run_command", {"command": "true"}, 1)]])
+def test_a_cut_off_turn_keeps_its_text(tmp_path: Path, calls: list[dict[str, Any]]) -> None:
+    runaway = "export function f() {\n" + "  // again\n" * 200
+    completion = Scripted(
+        calls, finish="length", content=runaway, completion_tokens=8_192
+    )
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion).run_cell(cell_id="s:a:w0", package={"instruction.md": "E"})
+    cut = [e for e in failure.value.trajectory["events"] if e["kind"] == "output_cut_off"]
+    assert cut and cut[0]["turn"] == 1 and cut[0]["content"] == runaway
+    assert cut[0]["tool_calls"] == calls
+    assert failure.value.cause == ("output_token_limit" if not calls else "turn_limit")
+
+
+def _assert_no_orphaned_tool_results(messages: list[dict[str, Any]]) -> None:
+    assert [m["role"] for m in messages[:2]] == ["system", "user"]
+    pending: set[str] = set()
+    for message in messages[2:]:
+        if message["role"] == "assistant":
+            assert not pending, "an exchange lost some of its tool results"
+            pending = {call["id"] for call in message["tool_calls"]}
+        else:
+            assert message["role"] == "tool"
+            assert message["tool_call_id"] in pending, "a tool result outlived its call"
+            pending.discard(message["tool_call_id"])
+
+
+def test_conversation_truncation_never_orphans_tool_results(tmp_path: Path) -> None:
+    def turn_calls(turn: int) -> list[dict[str, Any]]:
+        return [
+            {**_call("run_command", {"command": "echo"}, turn), "id": f"call-{turn}-{n}"}
+            for n in range(turn % 3 + 1)
+        ] + [{**_call("read_file", {"path": "a.ts", "start_line": 1}, turn),
+              "id": f"read-{turn}"}]
+
+    completion = Scripted(*(turn_calls(turn) for turn in range(1, 21)))
+    bounds = LoopBounds(max_conversation_bytes=2_500)
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion, bounds=bounds).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "E", "workspace/a.ts": "a\n" * 40}
+        )
+    assert failure.value.cause == "turn_limit"
+    events = failure.value.trajectory["events"]
+    assert any(e["kind"] == "conversation_truncated" for e in events)
+    for seen in completion.seen:
+        _assert_no_orphaned_tool_results(seen["messages"])
+        assert len(json.dumps(seen["messages"], separators=(",", ":")).encode()) <= 2_500
 
 
 def test_container_uid_can_write_materialized_repository_and_cache(tmp_path: Path) -> None:
@@ -688,6 +1015,33 @@ def test_tmpfs_capture_streams_the_tree_and_replaces_staging(
     }
     assert not (workspace / "deleted.txt").exists()
     assert (workspace / "src" / "new.txt").read_text() == "new"
+
+
+@pytest.mark.parametrize(
+    ("tmpfs", "stdout", "expected"),
+    [(True, "exit=0\n3\n", 3), (False, "unused", None),
+     (True, "exit=1\ngrep: no such file\n", "error"), (True, "exit=0\nmany\n", "error")],
+)
+def test_docker_sandbox_reads_the_cgroup_oom_kill_count(
+    tmpfs: bool, stdout: str, expected: int | str | None
+) -> None:
+    sandbox = DockerToolSandbox.__new__(DockerToolSandbox)
+    sandbox._tmpfs_storage = tmpfs
+    seen: list[list[str]] = []
+
+    def execute(argv: list[str], **kwargs: Any) -> ToolOutput:
+        seen.append(argv)
+        return ToolOutput(stdout, len(stdout), False)
+
+    sandbox.execute = execute  # type: ignore[method-assign]
+    if expected == "error":
+        with pytest.raises(RuntimeError, match="cgroup_peak_observation"):
+            sandbox.oom_kills()
+        return
+    assert sandbox.oom_kills() == expected
+    assert bool(seen) is tmpfs
+    if seen:
+        assert "/sys/fs/cgroup/memory.events" in seen[0][-1]
 
 
 @pytest.mark.parametrize(

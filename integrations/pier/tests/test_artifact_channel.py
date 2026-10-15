@@ -380,17 +380,86 @@ def test_regular_tree_rejects_a_symlinked_root_before_reading_host_files(tmp_pat
 
 
 @pytest.mark.parametrize("which", ["baseline", "final"])
-def test_patch_rejects_the_reserved_git_namespace(tmp_path: Path, which: str) -> None:
+@pytest.mark.parametrize("reserved", [".git", "src/x/.git", "src/.GIT", "src/git~1", "src/.git. "])
+def test_patch_rejects_the_reserved_git_namespace_at_any_depth(
+    tmp_path: Path, which: str, reserved: str
+) -> None:
     baseline = tmp_path / "baseline"
     final = tmp_path / "final"
     baseline.mkdir()
     final.mkdir()
-    (tmp_path / which / ".git").mkdir()
-    (tmp_path / which / ".git" / "config").write_bytes(b"[core]\n")
+    (tmp_path / which / reserved).mkdir(parents=True)
+    (tmp_path / which / reserved / "config").write_bytes(b"[core]\n")
     with pytest.raises(ArtifactCollectionRejected) as rejected:
         submission_patch(baseline, final)
     assert rejected.value.cause == "out_of_scope_edit"
-    assert rejected.value.rejected_path == ".git"
+    assert rejected.value.rejected_path == reserved
+
+
+def test_nested_git_file_is_rejected_not_dropped(tmp_path: Path) -> None:
+    """Git silently leaves a nested ``.git`` out of the index; capture refuses it."""
+    (tmp_path / "src" / "x").mkdir(parents=True)
+    (tmp_path / "src" / "x" / ".git").write_bytes(b"gitdir: /elsewhere\n")
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        regular_tree(tmp_path)
+    assert rejected.value.cause == "out_of_scope_edit"
+    assert rejected.value.rejected_path == "src/x/.git"
+
+
+@pytest.mark.parametrize("name", ["src/.gitx", "src/git~2", "src/.git~1", "src/a.git"])
+def test_names_that_only_resemble_git_metadata_are_captured(tmp_path: Path, name: str) -> None:
+    import subprocess
+
+    baseline, final, replay = (tmp_path / part for part in ("baseline", "final", "replay"))
+    for root in (baseline, final, replay):
+        root.mkdir()
+    (final / name).parent.mkdir(parents=True)
+    (final / name).write_bytes(b"kept\n")
+    captured = submission_patch(baseline, final)
+    subprocess.run(["git", "apply", "-"], input=captured.patch, cwd=replay, check=True)
+    assert tree_digest(regular_tree(replay)) == captured.final_tree_digest
+
+
+def test_ignore_rules_never_filter_the_captured_patch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In-tree, global, system, and XDG ignore rules all match; nothing is dropped."""
+    import subprocess
+
+    ignore_everything = tmp_path / "ignore-everything"
+    ignore_everything.write_text("*\n", encoding="ascii")
+    host_config = tmp_path / "host-gitconfig"
+    host_config.write_text(f"[core]\n\texcludesFile = {ignore_everything}\n", encoding="ascii")
+    (tmp_path / "xdg" / "git").mkdir(parents=True)
+    (tmp_path / "xdg" / "git" / "ignore").write_text("*\n", encoding="ascii")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(host_config))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(host_config))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    baseline, final, replay = (tmp_path / part for part in ("baseline", "final", "replay"))
+    for root in (baseline, final, replay):
+        (root / "src").mkdir(parents=True)
+        # The tree's own .gitignore matches the edited baseline file and the new one.
+        (root / ".gitignore").write_bytes(b"src/kept.ts\nsrc/new.ts\n")
+        (root / "src" / "kept.ts").write_bytes(b"export const a = 1;\n")
+    (final / "src" / "kept.ts").write_bytes(b"export const a = 2;\n")
+    (final / "src" / "new.ts").write_bytes(b"export const b = 1;\n")
+
+    captured = submission_patch(baseline, final)
+
+    diffed = sorted(
+        line.split(b" b/")[-1]
+        for line in captured.patch.splitlines()
+        if line.startswith(b"diff --git ")
+    )
+    assert diffed == [b"src/kept.ts", b"src/new.ts"]
+    # Replay outside the hostile environment, as the evaluator would.
+    for name in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "XDG_CONFIG_HOME"):
+        monkeypatch.delenv(name)
+    subprocess.run(["git", "apply", "-"], input=captured.patch, cwd=replay, check=True)
+    assert tree_digest(regular_tree(replay)) == captured.final_tree_digest
+    assert tree_digest(regular_tree(final)) == captured.final_tree_digest
 
 
 @pytest.mark.parametrize(

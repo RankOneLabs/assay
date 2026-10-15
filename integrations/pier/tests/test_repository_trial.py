@@ -48,6 +48,7 @@ class Scripted:
 def _reset() -> None:
     FakeSandbox.created.clear()
     FakeSandbox.peaks = {}
+    FakeSandbox.oom_kill_count = FakeSandbox.late_oom_kills = 0
 
 
 def _request(package: dict[str, str] = PACKAGE, **overrides: Any) -> TrialRequest:
@@ -113,6 +114,25 @@ def test_stopping_without_submission_is_a_typed_candidate_failure(tmp_path: Path
     assert "turn_limit" in result.outcome.detail
     assert "trajectory.json" in result.artifacts
     assert b"+half" in result.artifacts["stopped/candidate.patch"]
+
+
+def test_spent_cell_budget_is_the_candidates_own_failure(tmp_path: Path) -> None:
+    """``agent_deadline`` is a model failure, never the infrastructure harness deadline."""
+
+    class OutOfTime(Scripted):
+        def __call__(self, *, turn: int, **kwargs: Any) -> ModelTurn:
+            if turn == 2:
+                raise ValueError("agent_deadline")
+            return super().__call__(turn=turn, **kwargs)
+
+    completion = OutOfTime([_call("write_file", {"path": "src/a.ts", "content": "half"}, 1)])
+    result = _runtime(tmp_path, completion).run_cell(_request())
+    assert isinstance(result.outcome, CandidateFailure)
+    assert result.outcome.cause == "agent_deadline"
+    stopped = json.loads(result.artifacts["trajectory.json"])["events"][-1]
+    assert stopped == {"kind": "stopped", "cause": "agent_deadline", "requests": 2}
+    assert b"+half" in result.artifacts["stopped/candidate.patch"]
+    assert result.effective.teardown_completed
 
 
 def test_scope_rejection_retains_the_rejected_worktree(tmp_path: Path) -> None:

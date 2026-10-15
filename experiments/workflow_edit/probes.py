@@ -34,8 +34,14 @@ from workflow_edit.qualify import (
 )
 
 
-def scripted(*commands: tuple[str, dict[str, str]]) -> Callable[[str], TurnCompletion]:
-    """One tool call per turn, then ``submit_output`` once the script runs out."""
+def scripted(
+    *commands: tuple[str, dict[str, str]], pause_before_submit_s: float = 0.0
+) -> Callable[[str], TurnCompletion]:
+    """One tool call per turn, then ``submit_output`` once the script runs out.
+
+    ``pause_before_submit_s`` stands in for a model's think time before its
+    final turn, so a process left running can act after the last tool result.
+    """
 
     def for_cell(cell_key: str) -> TurnCompletion:
         def turn(
@@ -46,6 +52,8 @@ def scripted(*commands: tuple[str, dict[str, str]]) -> Callable[[str], TurnCompl
             turn: int,
             deadline: float | None,
         ) -> ModelTurn:
+            if turn > len(commands):
+                time.sleep(pause_before_submit_s)
             name, arguments = (
                 commands[turn - 1] if turn <= len(commands) else ("submit_output", {"summary": "s"})
             )
@@ -66,6 +74,8 @@ def command(text: str) -> tuple[str, dict[str, str]]:
     return ("run_command", {"command": text})
 
 
+_FILL_MEMORY = "const a = []; for (;;) a.push(Buffer.alloc(1 << 24, 1))"
+
 # probe name -> (scripted turns, expected settled outcome cause, cell budget seconds)
 REJECTION_PROBES: dict[str, tuple[tuple[tuple[str, dict[str, str]], ...], str, float]] = {
     "empty_patch": ((), "candidate", 900.0),
@@ -75,10 +85,18 @@ REJECTION_PROBES: dict[str, tuple[tuple[tuple[str, dict[str, str]], ...], str, f
         (command("head -c 400M /dev/zero > /cache/fill; df -k /cache"),),
         "storage_exhausted", 900.0,
     ),
-    "memory_limit": (
+    "memory_recovered": (
         # Filled buffers: untouched typed arrays hit bun's own allocation
-        # limit (a RangeError) long before the cgroup sees the memory.
-        (command("bun -e 'const a = []; for (;;) a.push(Buffer.alloc(1 << 24, 1))'"),),
+        # limit (a RangeError) long before the cgroup sees the memory. The
+        # kill lands inside the tool call, whose result the model sees, so the
+        # submission stands.
+        (command(f"bun -e '{_FILL_MEMORY}'"),),
+        "candidate", 900.0,
+    ),
+    "memory_limit": (
+        # A background loop keeps the cgroup at its ceiling, so the final
+        # check counts OOM kills after the last tool result.
+        (command(f"nohup sh -c \"while :; do bun -e '{_FILL_MEMORY}'; done\" >/dev/null 2>&1 &"),),
         "memory_limit", 900.0,
     ),
     "escaping_symlink": ((command("ln -s /etc/passwd src/link.ts"),), "escaping_symlink", 900.0),
@@ -96,8 +114,10 @@ REJECTION_PROBES: dict[str, tuple[tuple[tuple[str, dict[str, str]], ...], str, f
         "tampering", 900.0,
     ),
     "tool_timeout_recovered": ((command("sleep 600"),), "candidate", 900.0),
-    "agent_deadline": ((command("sleep 600"),), "harness_deadline", 30.0),
+    "agent_deadline": ((command("sleep 600"),), "agent_deadline", 30.0),
 }
+# Think time before the scripted submission, for probes that need one.
+SUBMIT_PAUSE_S = {"memory_limit": 10.0}
 
 
 async def rejection_probe(
@@ -105,7 +125,8 @@ async def rejection_probe(
 ) -> dict[str, Any]:
     fixture = load_fixture()
     probe = replace(
-        q, completion_for=scripted(*turns), run_label=f"{q.run_label}-{name}",
+        q, completion_for=scripted(*turns, pause_before_submit_s=SUBMIT_PAUSE_S.get(name, 0.0)),
+        run_label=f"{q.run_label}-{name}",
         cell_timeout_s=budget,
     )
     prepared = prepare(probe, repeats=1, ceiling=ExecutionCeiling(
