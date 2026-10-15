@@ -226,11 +226,13 @@ def _docker_daemon_reachable() -> bool:
     A bare ``subprocess.run(["docker", ...])`` raises ``FileNotFoundError``
     when the executable itself is absent, which would otherwise blow up
     collection instead of skipping -- exactly the credential-free-suite
-    contradiction this helper exists to prevent.
+    contradiction this helper exists to prevent. A daemon that does not answer
+    in time counts as unreachable for the same reason: this runs at import, so
+    an uncaught ``TimeoutExpired`` errors collection for the whole suite.
     """
     try:
-        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10, check=False)
-    except FileNotFoundError:
+        result = subprocess.run(["docker", "info"], capture_output=True, timeout=30, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
 
