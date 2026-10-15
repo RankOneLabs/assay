@@ -18,6 +18,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 from assay_pier_bridge.container import DockerTrialClient, docker_available, package_digest
@@ -59,21 +60,41 @@ def _request(
     )
 
 
+def _unsupported_host(reason: str) -> NoReturn:
+    """Skip on a host that cannot run these trials, unless it is meant to.
+
+    ``ASSAY_REQUIRE_DOCKER`` (set in CI) makes every such gap a failure, so a
+    runner that loses Docker, sudo, or its LAN address goes red instead of
+    quietly reporting a green suite that ran none of these tests.
+    """
+    if os.environ.get("ASSAY_REQUIRE_DOCKER"):
+        pytest.fail(f"ASSAY_REQUIRE_DOCKER is set but {reason}")
+    pytest.skip(reason)
+
+
 @pytest.fixture(scope="module")
 def image() -> str:
     if not docker_available():
-        pytest.skip("docker CLI is not available in this environment")
-    daemon_check = subprocess.run(
-        ["docker", "info"], capture_output=True, text=True, timeout=10, check=False
+        _unsupported_host("the docker CLI is not installed")
+    # A daemon that errors or hangs is a fault, not a missing capability: fail
+    # with its output rather than skip, which would report green.
+    try:
+        daemon_check = subprocess.run(
+            ["docker", "info"], capture_output=True, text=True, timeout=30, check=False
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("`docker info` did not answer within 30 s")
+    assert daemon_check.returncode == 0, (
+        f"docker daemon is not reachable:\n{daemon_check.stderr[-2000:]}"
     )
-    if daemon_check.returncode != 0:
-        pytest.skip(f"docker daemon is not reachable: {daemon_check.stderr[-500:]}")
     if os.geteuid() != 0:
         mount_check = subprocess.run(
             ["sudo", "-n", "true"], capture_output=True, text=True, timeout=10, check=False
         )
         if mount_check.returncode != 0:
-            pytest.skip("host lacks noninteractive loop-mount privileges for quota-backed trials")
+            _unsupported_host(
+                "the host lacks noninteractive loop-mount privileges for quota-backed trials"
+            )
     result = subprocess.run(
         ["docker", "build", "-t", IMAGE_TAG, str(BRIDGE_ROOT)],
         capture_output=True,
@@ -105,10 +126,10 @@ def _host_lan_ip() -> str:
             probe.connect(("192.0.2.1", 1))
             address = str(probe.getsockname()[0])
     except OSError as error:
-        pytest.skip(f"host has no routable LAN address: {error}")
+        _unsupported_host(f"the host has no routable LAN address: {error}")
     private_lans = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
     if not any(ipaddress.IPv4Address(address) in ipaddress.ip_network(net) for net in private_lans):
-        pytest.skip(f"host has no RFC1918 LAN address: {address}")
+        _unsupported_host(f"the host has no RFC1918 LAN address: {address}")
     return address
 
 
