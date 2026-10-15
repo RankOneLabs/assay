@@ -39,7 +39,6 @@ from assay_pier_bridge.runtime import (
     CandidateTestTimeoutError,
     CandidateTrialError,
     InfrastructureTrialError,
-    TrialTimeoutError,
     seal_observed_artifacts,
 )
 
@@ -169,7 +168,12 @@ class RepositoryAgentTrialHandle:
         if error.rejection is not None:
             return error.rejection
         if cause == "agent_deadline":
-            return TrialTimeoutError("the cell's acceptance budget expired in the agent loop")
+            # The candidate spent its own cell budget; the coordinate is an
+            # outcome. A deadline the harness hits outside the loop (before
+            # the trial starts) stays ``harness_deadline``.
+            return CandidateTrialError(
+                "agent_deadline", "the cell's budget expired in the agent loop"
+            )
         if cause in CANDIDATE_STOP_CAUSES:
             return CandidateTrialError(
                 "no_submission", f"agent stopped without submitting: {cause}"

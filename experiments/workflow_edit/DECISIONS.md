@@ -73,6 +73,16 @@ advance together to `assay-pier-trial/0.2.0`. The exact revised field set is:
   `scratch_quota_mb`. Its existing `storage_limit_mb` is the observed quota,
   and `network_policy` reports the inspected Docker network posture.
 
+## Trial envelope revision 2
+
+The same three copies then advanced to `assay-pier-trial/0.3.0` (commit
+`1898834`), the version the code carries today. Revision 1's request, limit and
+enforcement fields are unchanged. The bridge's `TrialResult.outcome` became a
+union discriminated on `kind`: `candidate` (patch, tree and baseline tree
+digests), `candidate_failure` or `infrastructure_failure`, each failure with a
+closed cause. This is the trial envelope; `assay-execution-plan/0.3.0` is an
+unrelated plan version.
+
 ## Packaging and fixture identity
 
 - **Arm-bound limits:** Each authorized Pier worker configuration records the
@@ -225,6 +235,210 @@ advance together to `assay-pier-trial/0.2.0`. The exact revised field set is:
   failed group in the same image, network-less and read-only, and records only
   failing test names or the first typecheck errors as `diagnosis.json.gz`. It
   never re-grades.
+
+## Part 2a — operator decisions (2026-10-15)
+
+Copied from section 12.1 of the Part 2 spec, which lives outside this
+repository; "spec" below means that document.
+
+- **Split:** Part 2 is 2a, a thin slice through one task, then 2b, the study.
+  2b is re-planned against 2a's report before it is built (spec 0.4).
+- **Populations:** Local and hosted are both in scope, each its own plan,
+  authorization and ceiling, never pooled. The hosted path is built in
+  Phase A. The hosted model is `qwen/qwen3.5-397b-a17b`.
+- **Local model:** Qwen3.6-27B (FP8) on mcbain, served before the
+  requalification smoke. Qwen2.5-Coder-32B remains the qualified fallback
+  (spec 7.1).
+- **2a task:** JSON pointer strictness, owned by `readJsonPointer`, dosed per
+  calling function with N = 5 (spec 4.2). The PR-identity task is the
+  alternate.
+- **Outcome classification:** As in spec 8.0. Model failures are scored
+  outcomes, not missing data. Infrastructure failures get one replacement
+  attempt.
+- **v1 slice:** Keeps the pure layers and excludes `storage/`, `http/`,
+  `adapters/`, `workflows/` and the composition root. Tasks observable only
+  through storage are deferred (spec 3.1).
+- **Agent tools:** Ranged `read_file`, exact-match `replace_in_file`, and
+  retention of cut-off turn text, in a new image and therefore a new fixture
+  version (spec 7.2).
+- **Review:** 2a has single-reviewer operator review, only where the automated
+  checks cannot decide (spec 8.2). In 2b, review records are a separate review
+  set bound to one run manifest, and reviewer identity is operator-held and
+  outside the closure. 2b tie-breaking is a report-time setting, defaulting to
+  `unavailable`, with `lower`/`higher` bounds and no reviewer-precedence rule.
+- **Hosted smoke:** Worth its 4 paid cells.
+- **Pilot (2b):** 4 subjects × 4 doses × 2 repeats. The capability gate is at
+  least one `correct` cell in at least two pilot subjects.
+- **Hosted admission:** Per turn. Run ceilings are $2 for the smoke, $5 for the
+  optional thin-slice run and $10 for the pilot. Venice is excluded from
+  routing (spec 10). Each paid plan is still its own spending decision.
+- **Fixtures:** Hand-assembled and committed. Dose arms derive from the
+  committed fixture, and dependencies arrive through the runtime image.
+- **Bounds:** Part 1's measured bounds (SMOKE.md) replace the draft's
+  placeholders (spec 7.2).
+- **Cell clock:** The 900 s budget runs from bridge entry, on condition that
+  Phase A stops a cancelled turn from occupying the GPU into the next cell
+  (spec 0.2 item 6, Phase A item 2).
+- **Component mapping:** Lives in `experiments/workflow_edit/`.
+  `oakridge_history` is on `main`; `oakridge_history_analysis` does not exist.
+- **Unpriced local cost:** A zero-cost local arm is reported as unpriced,
+  never as cheaper.
+- **Still open (spec 12.2):** Whether to run the optional hosted thin-slice run
+  (after the hosted smoke); the hosted model for 2b (in the 2a report); (2b)
+  the two reviewers and the adjudicator. Qwen3.6-27B's served context and
+  thinking mode are settled below.
+
+### Qwen3.6-27B on mcbain (Phase A item 0)
+
+- **Served:** Smithers PR #52 (RankOneLabs/smithers), merged and deployed at
+  `6086d5f`, adds fleet alias `qwen3.6-27b` on mcbain with backend tag
+  `/home/steve/models/Qwen3.6-27B-FP8` under vLLM 0.22.1. Its own flags:
+  `--max-model-len 131072`, `--max-num-seqs 16`, `--language-model-only`,
+  `--tool-call-parser qwen3_coder`, `--reasoning-parser qwen3`, and
+  `--default-chat-template-kwargs '{"enable_thinking": false}'`. Every other
+  model keeps its exact command line, including the 32,768 context.
+- **Context:** vLLM reports 12.1 GiB of KV cache, 193,158 tokens, so 131,072,
+  the larger of the two candidates in spec 7.1, fits beside the weights.
+  `--max-num-seqs 16` is what makes it fit: the linear-attention layers
+  reserve state per sequence slot, and vLLM's default of 256 slots ran out of
+  memory.
+- **Thinking:** Off by server default. A request can still turn it on, so the
+  authorized configuration records it explicitly when the route lands.
+- **Tool calls and attestation:** A Smithers job with `tool_choice: "required"`
+  returned a structured tool call, and the worker task attested model
+  `/home/steve/models/Qwen3.6-27B-FP8` with usage.
+- **Speed:** 39 tok/s decode, measured by hand (Qwen2.5-Coder-AWQ: 48.7 median
+  in SMOKE.md). Worker cold start 68 s; the manual launch took 144 s.
+- **Not yet switched:** Assay's route literal
+  (`assay_pier_bridge.protocol.ModelRoute`, with `workflow_edit.bridge.LOCAL_ROUTE`
+  and `qualify.MODEL_ALIAS`) still admits only `qwen-coder-32b`. Switching is a
+  later Phase A cohort, together with the hosted path's model route. The
+  conversation and request caps are re-derived from the served context in the
+  requalification smoke (spec 7.1).
+- **Re-binding:** PR #52 changed `routing_config.yaml`, so its digest changed.
+  Every authorized worker configuration and fixture identity binds that
+  digest, so each re-binds, including `qwen-coder-32b` configurations whose tag
+  did not change; `execute_plan` refuses a plan authorized against the old
+  digest. SMOKE.md's fixture identity is for the old digest.
+
+### Backend identity (spec 0.2 item 7)
+
+- **Inferred, not read:** Part 1 asked that a job reporting a different
+  machine, model or backend than declared fail its cell. Machine and model are
+  checked against reported fields; the backend is not, because no Smithers
+  field reports it. Neither `JobResponse` nor the worker task's
+  `usage` (`TaskUsage`: `model`, token counts, duration) names a backend.
+  `_routing_identity` (`src/assay/adapters/smithers.py:30-55`) infers it from
+  the routing file: machine → that machine's `backend` (default `ollama`) →
+  the alias's `backend_tags[backend]` (or `ollama_tag`). The routing digest
+  pins that mapping, and the worker-attested `usage.model` must equal the
+  selected tag (`smithers.py:323-327`).
+- **Why that suffices today:** The two backends' tags are distinct string
+  forms. vLLM tags are absolute weight paths (`/home/steve/models/...`);
+  Ollama tags are `name:tag` (`qwen2.5:72b-instruct-q8_0`). A tag match
+  therefore also identifies the backend.
+- **When it fails:** If two backends could carry the same tag string — one
+  alias with the same tag under both `backend_tags`, a vLLM model served under
+  an Ollama-form name, or a worker that routes a tag to a backend other than
+  the one its routing entry names — a matching tag no longer implies the
+  authorized backend. Then Smithers must attest the backend (a field on the
+  worker task's usage), and the client must compare the (backend, tag) pair
+  against the authorized pair instead of the tag alone.
+
+## Part 2a — bridge loop (Phase A items 1, 3, 5)
+
+These change the bridge source, the system prompt, and `tools_sha256`, so they
+are a new image and a new fixture identity. Nothing here was run against
+Smithers; the Phase A requalification smoke qualifies them.
+
+- **Patch capture isolation:** Capture runs Git with `GIT_CONFIG_GLOBAL` set
+  to `/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, every inherited `GIT_*` variable
+  removed, `core.excludesFile=/dev/null`, and an empty init template. Both
+  adds use `-f`, so a `.gitignore` in the tree is captured content, never a
+  filter. After the adds, the index must hold exactly the observed paths;
+  otherwise capture stops as `patch_capture_incomplete` (a capture crash,
+  so infrastructure under section 8.0), never a short patch.
+- **Reserved Git paths:** A path component Git treats as its own metadata is
+  `out_of_scope_edit` at any depth. That means `.git` in any ASCII case, or
+  a spelling Git's default `verify_path` refuses as one (`git~1`, trailing
+  dots or spaces, a `:` stream suffix). Git either drops such a path from
+  the index without an error (`src/x/.git`) or fails the whole add, so no
+  patch could carry it. It is not `tampering`. That cause is kept for edits
+  that change what the evaluator runs: manifests, test configuration, and
+  tests. A top-level `.git` was already `out_of_scope_edit` in Part 1.
+  Names that only resemble it (`.gitx`, `git~2`) are captured normally.
+- **`agent_deadline` is a model failure:** When the cell budget runs out
+  inside the loop (between turns, during a turn, or as a tool's timeout), the
+  trial ends as a candidate failure with the new cause `agent_deadline`.
+  `harness_deadline` remains infrastructure. It covers a budget spent before
+  the trial handle runs and any other client's `TrialTimeoutError`.
+- **Trial envelope revision 2:** Adding `agent_deadline` to the closed
+  `CandidateCause` set is a wire change. The three copies (bridge protocol,
+  Assay protocol, shared fixture) advance together to
+  `assay-pier-trial/0.4.0`. No other field changes. The copies had been at
+  `0.3.0` since discriminated outcomes, which also changed only closed
+  literals. Revision 1 above names `0.2.0`, the version it introduced.
+- **`memory_limit` rule:** After every tool call that ran a command (a timed-out
+  one included), the loop reads the cgroup's `memory.events` `oom_kill`
+  count. Any increase is recorded as an `oom_kill` event (turn, tool, kills,
+  total). It is recovered: the kill happened inside a result the model saw.
+  The final check is `capture_workspace`'s observation at submission. The
+  submission is `memory_limit` exactly when that count exceeds the count
+  after the last tool result, which means the cgroup hit its ceiling after the
+  model last looked: during its final turn, through a process it left
+  running, or during the check itself. `memory.current` is not used, because
+  page cache makes "at the limit" ambiguous. An OOM kill is the kernel's own
+  statement that the ceiling was reached. `cgroup_peaks` records
+  `oom_kills_seen_by_tools` beside the final count. This replaces the Repository
+  agent rule that any OOM kill in the cell is `memory_limit`. The cost is one
+  extra `docker exec` per tool call. Bind-mount sandboxes observe no cgroup
+  counters, as before.
+- **Submission check order:** At submission the order is: capture, then the
+  captured tree's own typed rejections (`regular_tree`), then scope and
+  tampering, then the resource causes (`memory_limit`, then
+  `storage_exhausted`), then the patch. A tampering submission that also hit
+  a resource ceiling is `tampering`.
+- **Probes:** The memory probe splits in two. `memory_recovered` is a
+  foreground hog killed inside its own tool call, and settles as `candidate`.
+  `memory_limit` is a background loop that respawns the hog, with a scripted
+  10-second pause before the submission. In a local run against the image,
+  three kills landed in that window. The `agent_deadline` probe now expects
+  `agent_deadline`. SMOKE.md and the wf-13 evidence are unchanged, because the
+  probe table publishes the expectation recorded in the evidence.
+- **Tool set and order:** The tools are `read_file`, `write_file`,
+  `replace_in_file`, `run_command`, `submit_output`, in that fixed order.
+  Their schemas are 1,870 bytes, against the 16,384-byte cap, and a test pins
+  both. Optional arguments follow strict-mode convention: a nullable type,
+  still listed as required. The loop accepts them absent or `null`.
+  Whether vLLM's guided decoding accepts the `["integer", "null"]` type
+  is first shown by the requalification smoke.
+- **Paged reads:** Lines split on `\n` only, so a line number means the same
+  thing to `read_file`, to `replace_in_file`, and to an editor.
+  `start_line`/`end_line` are 1-based and inclusive, and `end_line` past the
+  end is clamped. A page ends at a whole line, with 256 bytes kept for its
+  note. The note names the lines shown, the total, the lines left in the
+  requested range, and the next `start_line`. A single line longer than a page
+  shows its first bytes and says so. Invalid UTF-8 is decoded with
+  replacement, so a read never refuses a file `cat` would have shown.
+- **Exact edits:** `replace_in_file` reads and writes bytes untranslated,
+  needs UTF-8, refuses an empty `old`, and applies `write_file`'s path rule:
+  a canonical relative path that resolves inside `/workspace`. Its script,
+  and `read_file`'s, refuse a call with exit status 3 and a one-line reason.
+  The loop returns that reason to the model as a `tool_error`. Zero or several
+  matches, a missing file, or an escaping path changes nothing and never ends
+  the cell.
+- **Truncation is visible:** Any other tool output cut at the tool cap ends
+  with a note giving the cap and the original size, inside the same cap.
+- **Cut-off turns are retained:** A turn whose `finish_reason` is `length`, or
+  whose completion reaches the output cap, is recorded as an `output_cut_off`
+  event with its text and raw tool calls. This holds whether or not the turn
+  ends the cell. Events are never dropped by conversation truncation, so the
+  text survives where the replayed messages may not. Truncation still removes
+  only whole exchanges (an assistant turn and all its tool results), and a
+  test checks every request for orphaned results.
+- **Publication of wf-13:** `publish.py` uses the 1,120-byte schema size of the
+  four tools the wf-13 image ran, not the current `TOOLS`. That way SMOKE.md
+  still reproduces exactly from its committed evidence.
 
 ## Part 2a — fixture manifest 0.2.0 and multi-arm wiring (Phase A items 7, 8)
 

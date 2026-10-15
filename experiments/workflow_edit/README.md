@@ -8,6 +8,11 @@ those study choices are not fixed by this scaffold.
 Record implementation decisions in [DECISIONS.md](DECISIONS.md) before later
 cohorts depend on them.
 
+The study is now in Part 2a: a thin slice through one task, built against the
+Part 2 spec, which lives outside this repository. Its operator decisions of
+2026-10-15 are copied into DECISIONS.md. The wf-13 smoke below is Part 1's
+qualification.
+
 The fixture's dependency manifest and npm lockfile are committed under
 [`integrations/pier/workflow_edit`](../../integrations/pier/workflow_edit/) so
 the bridge image can install the locked tree at build time.
