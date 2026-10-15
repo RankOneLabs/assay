@@ -2,8 +2,9 @@
 
 The host owns the model connection. Only a fresh, network-disabled container
 touches the cell's repository copy. No evaluator or hidden-test mount is passed
-to that container. The fixed tool set is read_file, write_file, run_command,
-and submit_output; each result is returned to the same cell's conversation.
+to that container. The fixed tool set is read_file, write_file,
+replace_in_file, run_command, and submit_output; each result is returned to
+the same cell's conversation.
 
 The paid OpenRouter route is built in. Every other route is a ``TurnCompletion``
 the caller injects, so the backend that drives turns is the one whose identity
@@ -52,9 +53,9 @@ from assay_pier_bridge.provider import (
 
 SYSTEM_PROMPT = (
     "You are editing one repository copy in /workspace. Use read_file, write_file, "
-    "and run_command to inspect, edit, and check it. When the change is complete, "
-    "call submit_output with a one-paragraph summary; your edits to the files are "
-    "the submission. Only this cell's repository is available; hidden tests and "
+    "replace_in_file, and run_command to inspect, edit, and check it. When the change "
+    "is complete, call submit_output with a one-paragraph summary; your edits to the "
+    "files are the submission. Only this cell's repository is available; hidden tests and "
     "reference answers are never available. Do not seek network access or install "
     "packages."
 )
@@ -600,14 +601,37 @@ def _tool(name: str, description: str, properties: dict[str, Any]) -> dict[str, 
     }
 
 
+# Order is part of the authorized tool identity (``tools_sha256``); never reorder.
 TOOLS = [
-    _tool("read_file", "Read a repository file by relative path.", {"path": {"type": "string"}}),
+    _tool(
+        "read_file",
+        "Read a repository file by relative path. start_line and end_line (1-based, "
+        "inclusive; null for the file's first or last line) select a range of lines. "
+        "Output over the tool output limit ends at a whole line with a note giving the "
+        "next start_line.",
+        {
+            "path": {"type": "string"},
+            "start_line": {"type": ["integer", "null"]},
+            "end_line": {"type": ["integer", "null"]},
+        },
+    ),
     _tool(
         "write_file",
         "Write a repository file by relative path, replacing its whole content.",
         {
             "path": {"type": "string"},
             "content": {"type": "string"},
+        },
+    ),
+    _tool(
+        "replace_in_file",
+        "Replace the one exact occurrence of old with new in a repository file. Fails, "
+        "changing nothing, unless old occurs exactly once; include surrounding lines to "
+        "make it unique.",
+        {
+            "path": {"type": "string"},
+            "old": {"type": "string"},
+            "new": {"type": "string"},
         },
     ),
     _tool(
@@ -673,6 +697,106 @@ def _relative_path(arguments: dict[str, Any]) -> str:
         raise ToolArgumentError(str(error)) from error
 
 
+def _line_number(arguments: dict[str, Any], key: str) -> int | None:
+    value = arguments.get(key)
+    if value is None:
+        return None
+    if type(value) is not int or value < 1:
+        raise ToolArgumentError(f"{key} must be a positive integer or null")
+    return value
+
+
+# Exit status of a tool script that refuses the call as written. The loop
+# returns the script's one-line reason to the model as a tool error.
+TOOL_REFUSED_EXIT = 3
+# Room a paged read keeps for its truncation note inside the output cap.
+_READ_NOTE_BYTES = 256
+
+# Runs in the container. Lines split on "\n" only, so a line number means the
+# same thing to the model, to ``replace_in_file``, and to an editor. A page
+# ends at a whole line and says where the next one starts.
+_READ_FILE = """
+import sys
+from pathlib import Path
+
+def refuse(reason):
+    sys.stdout.buffer.write(reason.encode('utf-8'))
+    raise SystemExit(@REFUSED@)
+
+relative = sys.argv[1]
+start, end, budget = (int(value) for value in sys.argv[2:5])
+try:
+    data = (Path('/workspace') / relative).read_bytes()
+except OSError as error:
+    refuse(f'{error.strerror or error}: {relative}')
+parts = data.decode('utf-8', errors='replace').split('\\n')
+lines = [part + '\\n' for part in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
+total = len(lines)
+if start > max(total, 1):
+    refuse(f'start_line {start} is past the end of {relative} ({total} lines)')
+last = total if end == 0 else min(end, total)
+room = max(budget - @NOTE@, 1)
+shown, used = [], 0
+for line in lines[start - 1:last]:
+    size = len(line.encode('utf-8'))
+    if used + size > room:
+        break
+    shown.append(line)
+    used += size
+following = start + len(shown)
+out = ''.join(shown)
+if following <= last and shown:
+    out += (
+        f'[truncated at the tool output limit: showed lines {start}-{following - 1} of '
+        f'{total}; {last - following + 1} lines of the requested range remain; '
+        f'continue with start_line={following}]'
+    )
+elif following <= last:
+    head = lines[start - 1].encode('utf-8')[:room].decode('utf-8', errors='ignore')
+    rest = (
+        f'{last - start} lines of the requested range remain; continue with '
+        f'start_line={start + 1}' if last > start else 'no lines of the requested range remain'
+    )
+    out = head + (
+        f'\\n[truncated: line {start} alone exceeds the tool output limit and only its first '
+        f'{len(head.encode("utf-8"))} bytes are shown; {rest}]'
+    )
+sys.stdout.buffer.write(out.encode('utf-8'))
+""".replace("@REFUSED@", str(TOOL_REFUSED_EXIT)).replace("@NOTE@", str(_READ_NOTE_BYTES))
+
+# Runs in the container. The same path rule as write_file: the target must
+# resolve inside /workspace. Bytes are read and written untranslated.
+_REPLACE_IN_FILE = """
+import json
+import sys
+from pathlib import Path
+
+def refuse(reason):
+    sys.stdout.buffer.write(reason.encode('utf-8'))
+    raise SystemExit(@REFUSED@)
+
+relative = sys.argv[1]
+edit = json.loads(sys.stdin.buffer.read())
+target = Path('/workspace') / relative
+try:
+    if not target.resolve().is_relative_to(Path('/workspace').resolve()):
+        refuse(f'path resolves outside /workspace: {relative}')
+    text = target.read_bytes().decode('utf-8')
+except OSError as error:
+    refuse(f'{error.strerror or error}: {relative}')
+except UnicodeDecodeError:
+    refuse(f'{relative} is not UTF-8 text')
+count = text.count(edit['old'])
+if count != 1:
+    refuse(
+        f'old occurs {count} times in {relative}; it must occur exactly once, '
+        'so nothing was changed'
+    )
+target.write_bytes(text.replace(edit['old'], edit['new'], 1).encode('utf-8'))
+sys.stdout.buffer.write(f'replaced 1 occurrence in {relative}'.encode('utf-8'))
+""".replace("@REFUSED@", str(TOOL_REFUSED_EXIT))
+
+
 def _execute_tool(
     sandbox: ToolSandbox,
     name: str,
@@ -680,10 +804,29 @@ def _execute_tool(
     max_output_bytes: int,
     timeout_s: float,
 ) -> ToolOutput:
-    if name == "read_file" and set(arguments) == {"path"}:
+    if name == "read_file" and set(arguments) <= {"path", "start_line", "end_line"}:
+        start = _line_number(arguments, "start_line") or 1
+        end = _line_number(arguments, "end_line")
+        if end is not None and end < start:
+            raise ToolArgumentError("end_line must not be before start_line")
+        # The script's page budget leaves room for the sandbox's exit prefix.
+        budget = max_output_bytes - len(f"exit={TOOL_REFUSED_EXIT}\n")
         return sandbox.execute(
-            ["cat", "--", f"/workspace/{_relative_path(arguments)}"],
+            ["python", "-c", _READ_FILE, _relative_path(arguments), str(start), str(end or 0),
+             str(budget)],
             max_output_bytes=max_output_bytes,
+            timeout_s=timeout_s,
+        )
+    if name == "replace_in_file" and set(arguments) == {"path", "old", "new"}:
+        old, new = arguments["old"], arguments["new"]
+        if not isinstance(old, str) or not old:
+            raise ToolArgumentError("old must be a non-empty string")
+        if not isinstance(new, str):
+            raise ToolArgumentError("new must be a string")
+        return sandbox.execute(
+            ["python", "-c", _REPLACE_IN_FILE, _relative_path(arguments)],
+            max_output_bytes=max_output_bytes,
+            input_text=json.dumps({"old": old, "new": new}),
             timeout_s=timeout_s,
         )
     if name == "write_file" and set(arguments) == {"path", "content"}:
@@ -710,6 +853,10 @@ def _execute_tool(
             ["sh", "-lc", command], max_output_bytes=max_output_bytes, timeout_s=timeout_s
         )
     raise ToolArgumentError(f"unknown tool or argument fields for {name!r}")
+
+
+# Tools whose in-container script may refuse a call with ``TOOL_REFUSED_EXIT``.
+_SCRIPTED_TOOLS = frozenset({"read_file", "replace_in_file"})
 
 
 def _shrink_conversation(
@@ -1096,6 +1243,18 @@ class RepositoryAgentClient:
                     "billing": "uncertain" if answer.cost_usd is None else "measured",
                     **answer.observations,
                 })
+                if (
+                    answer.finish_reason == "length"
+                    or answer.completion_tokens >= self.bounds.max_output_tokens
+                ):
+                    # Kept whole, whatever happens next: it is what tells a
+                    # runaway generation from a legitimately long write.
+                    content = message.get("content")
+                    events.append({
+                        "kind": "output_cut_off", "turn": turn,
+                        "content": content if isinstance(content, str) else None,
+                        "tool_calls": calls,
+                    })
                 if answer.completion_tokens > self.bounds.max_output_tokens:
                     raise ValueError("output_token_limit")
                 if not isinstance(calls, list) or not calls:
@@ -1169,6 +1328,9 @@ class RepositoryAgentClient:
                             })
                             continue
                         observe_oom_kills(turn, name)
+                        refused = f"exit={TOOL_REFUSED_EXIT}\n"
+                        if name in _SCRIPTED_TOOLS and output.text.startswith(refused):
+                            raise ToolArgumentError(output.text.removeprefix(refused).strip())
                     except (ToolArgumentError, json.JSONDecodeError) as error:
                         # The call is the model's mistake, not the harness's:
                         # it sees why and may revise within its turn budget.
@@ -1181,10 +1343,17 @@ class RepositoryAgentClient:
                             {"role": "tool", "tool_call_id": call_id, "content": f"error: {reason}"}
                         )
                         continue
-                    bounded, bounded_truncated = _bounded_text(
-                        output.text, self.bounds.max_tool_output_bytes
-                    )
+                    cap = self.bounds.max_tool_output_bytes
+                    bounded, bounded_truncated = _bounded_text(output.text, cap)
                     if output.truncated or bounded_truncated:
+                        # The model is told its output was cut, within the same cap.
+                        note = (
+                            f"\n[output truncated at the {cap}-byte tool output limit; "
+                            f"{output.original_bytes} bytes in all]"
+                        )
+                        kept = cap - len(note.encode("utf-8"))
+                        if kept > 0:
+                            bounded = _bounded_text(output.text, kept)[0] + note
                         events.append(
                             {
                                 "kind": "tool_output_truncated",
