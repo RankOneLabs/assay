@@ -329,6 +329,25 @@ def test_fixture_must_be_qualified_and_bound_to_image_and_routing(tmp_path: Path
         check_fixture(unqualified, image=IMAGE, routing_digest=ROUTING)
 
 
+def test_fixture_must_declare_every_study_test_group(tmp_path: Path) -> None:
+    _store, fixture = _study(tmp_path)
+    wire = fixture.manifest.model_dump(mode="json")
+    task = wire["tasks"][0]
+    task["hidden_tests"] = [g for g in task["hidden_tests"] if g["name"] != "new_behavior"]
+    dropped = StudyFixture(FixtureManifestV2.model_validate(wire), fixture.subjects)
+    with pytest.raises(ValueError, match="lacks study test groups: new_behavior"):
+        check_fixture(dropped, image=IMAGE, routing_digest=ROUTING)
+    # A hidden group declared visible is missing as a hidden group.
+    wire = fixture.manifest.model_dump(mode="json")
+    task = wire["tasks"][0]
+    moved = [g for g in task["hidden_tests"] if g["name"] == "hidden_regression"]
+    task["visible_tests"] = [*task["visible_tests"], *moved]
+    task["hidden_tests"] = [g for g in task["hidden_tests"] if g not in moved]
+    exposed = StudyFixture(FixtureManifestV2.model_validate(wire), fixture.subjects)
+    with pytest.raises(ValueError, match="lacks study test groups: hidden_regression"):
+        check_fixture(exposed, image=IMAGE, routing_digest=ROUTING)
+
+
 @pytest.mark.asyncio
 async def test_execute_plan_grades_each_cell_against_its_own_arm(tmp_path: Path) -> None:
     store, fixture = _study(tmp_path)
