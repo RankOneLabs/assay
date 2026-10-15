@@ -400,3 +400,30 @@ def test_dockerfile_context_is_confined_to_the_named_allowlist() -> None:
         assert sources, f"COPY with no explicit source is not allowed: {line}"
         for source in sources:
             assert source in allowed_copy_sources, f"unlisted COPY source: {source}"
+
+
+def test_repository_agent_layout_has_no_submission_worktree(tmp_path: Path) -> None:
+    from assay.adapters.pier import worker_configuration
+    from assay.pier_packaging import build_package as build
+
+    root = _write_tree(tmp_path / "repo", {"src/a.ts": "export {};\n"})
+    package = build(cell_id="s:a:w0", task="Edit a.", repository_root=root,
+                    layout="repository-agent")
+    files = package.as_mapping()
+    assert "submission/CONTRACT.md" not in files
+    assert "/workspace" in files["instruction.md"]
+    assert "/submission" not in files["instruction.md"]
+    assert files["workspace/src/a.ts"] == "export {};\n"
+    default = build(cell_id="s:a:w0", task="Edit a.", repository_root=root)
+    assert "submission/CONTRACT.md" in default.as_mapping()
+
+    binding = RuntimeBinding(
+        runtime_version="v", image_digest="sha256:" + "1" * 64,
+        configuration_ref="sha256:" + "2" * 64, package_digest="sha256:" + "3" * 64,
+    )
+    legacy = worker_configuration(binding=binding, model_route={}, trial_limits={})
+    assert "package_layout" not in legacy
+    agent = worker_configuration(
+        binding=binding, model_route={}, trial_limits={}, package_layout="repository-agent"
+    )
+    assert agent["package_layout"] == "repository-agent"

@@ -51,7 +51,8 @@ class ModelRoute(WireModel):
 
 class TrialLimits(WireModel):
     cpu: float = Field(gt=0, le=8, allow_inf_nan=False)
-    # Provisional bounds: replace from experiments/workflow_edit/SMOKE.md in wf-12.
+    # Wire ranges only; the workflow-edit values are qualified in
+    # experiments/workflow_edit/SMOKE.md.
     memory_mb: int = Field(ge=64, le=8192)
     pids: int = Field(ge=1, le=256)
     timeout_s: float = Field(gt=0, le=1800, allow_inf_nan=False)

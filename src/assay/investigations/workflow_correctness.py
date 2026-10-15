@@ -36,6 +36,10 @@ def workflow_tree_digest(files: Mapping[str, str]) -> str:
 
 class WorkflowRunnerSettings(WireModel):
     image: Sha256Ref
+    toolchain: Literal["node-tsc", "bun"] = "node-tsc"
+    expected_versions: dict[str, str] = Field(
+        default_factory=lambda: {"tsc": "Version 5.9.3", "node": "v22.21.1", "bun": "1.3.13"}
+    )
     docker_client_version: str = "29.6.1"
     docker_server_version: str = "29.1.2"
     command_timeout_s: float = Field(default=5.0, gt=0)
@@ -45,11 +49,17 @@ class WorkflowRunnerSettings(WireModel):
 
 
 class WorkflowTestGroup(WireModel):
-    """Frozen tests copied in after the candidate patch has been applied."""
+    """Frozen tests copied in after the candidate patch has been applied.
+
+    A ``restores`` group holds the baseline's own visible tests: its files are
+    written back over whatever the candidate left at those paths, so editing a
+    visible test cannot weaken the regression it is graded against.
+    """
 
     name: GroupName
     files: dict[str, str]
     command: tuple[str, ...]
+    restores: bool = False
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -152,11 +162,23 @@ elif tree_digest(root) != payload['expected_tree_digest']:
     outcome = {'preflight': result('unavailable', 'candidate_tree_digest_mismatch'), 'groups': {}}
 else:
     test_paths = [root / name for group in payload['groups']
-                  for name in group['files']]
-    if any(target.exists() or any(parent.is_file() for parent in target.parents)
-           for target in test_paths):
-        outcome = {'preflight': result('failed', 'test_path_collision'), 'groups': {}}
-    else:
+                  if not group['restores'] for name in group['files']]
+    toolchain = payload['toolchain']
+    versions = [(['tsc', '--version'], payload['expected_versions']['tsc']),
+                (['node', '--version'], payload['expected_versions']['node'])]
+    if toolchain == 'bun':
+        versions.append((['bun', '--version'], payload['expected_versions']['bun']))
+    try:
+        locked = True
+        for argv, expected in versions:
+            observed = subprocess.run(argv, cwd=root, capture_output=True,
+                                      timeout=payload['candidate_timeout_s'], check=False)
+            locked = locked and observed.returncode == 0 and \
+                observed.stdout.strip() == expected.encode()
+    except (OSError, subprocess.TimeoutExpired):
+        locked = False
+
+    def copy_tests():
         for group in payload['groups']:
             for name, source in group['files'].items():
                 target = root / name
@@ -164,39 +186,58 @@ else:
                     raise ValueError('test path escapes sandbox')
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(source, encoding='utf-8')
-        try:
-            tsc_version = subprocess.run(['tsc', '--version'], cwd=root, capture_output=True,
-                                         timeout=payload['candidate_timeout_s'], check=False)
-            node_version = subprocess.run(['node', '--version'], cwd=root, capture_output=True,
-                                          timeout=payload['candidate_timeout_s'], check=False)
-            locked = (tsc_version.returncode == 0 and
-                      tsc_version.stdout.strip() == b'Version 5.9.2' and
-                      node_version.returncode == 0 and
-                      node_version.stdout.strip() == b'v22.21.1')
-        except (OSError, subprocess.TimeoutExpired):
-            locked = False
-        if not locked:
-            outcome = {'preflight': result('unavailable', 'toolchain_unavailable'), 'groups': {}}
+
+    def run_groups():
+        return {group['name']: run(group['command'], payload['candidate_timeout_s'])
+                for group in payload['groups']}
+
+    if any(target.exists() or any(parent.is_file() for parent in target.parents)
+           for target in test_paths):
+        outcome = {'preflight': result('failed', 'test_path_collision'), 'groups': {}}
+    elif not locked:
+        outcome = {'preflight': result('unavailable', 'toolchain_unavailable'), 'groups': {}}
+    elif toolchain == 'bun':
+        # The candidate tree alone is typechecked and built; frozen tests are
+        # copied in only afterwards, so a hidden test can never fail the
+        # candidate's own typecheck. bun executes TypeScript directly, and
+        # bundling every production module is its build check.
+        typecheck = run(['tsc', '--noEmit', '-p', 'tsconfig.json'],
+                        payload['candidate_timeout_s'])
+        sources = sorted(path.relative_to(root).as_posix() for path in root.rglob('*.ts')
+                         if path.relative_to(root).parts[0] == 'src'
+                         and not path.name.endswith('.test.ts'))
+        build = (run(['bun', 'build', '--target=bun', '--outdir', '/tmp/workflow-build',
+                      *sources], payload['candidate_timeout_s'])
+                 if typecheck['status'] == 'passed' and sources else typecheck)
+        if typecheck['status'] != 'passed':
+            outcome = {'preflight': result(typecheck['status'],
+                       'typecheck_' + str(typecheck['cause'])), 'groups': {}}
+        elif not sources:
+            outcome = {'preflight': result('failed', 'build_output_missing'), 'groups': {}}
+        elif build['status'] != 'passed':
+            outcome = {'preflight': result(build['status'],
+                       'build_' + str(build['cause'])), 'groups': {}}
         else:
-            typecheck = run(['tsc', '--noEmit'], payload['candidate_timeout_s'])
-            build_root = Path('/tmp/workflow-build')
-            build = (run(['tsc', '--noEmit', 'false', '--emitDeclarationOnly', 'false',
-                          '--outDir', str(build_root)], payload['candidate_timeout_s'])
-                     if typecheck['status'] == 'passed' else typecheck)
-            if typecheck['status'] != 'passed':
-                outcome = {'preflight': result(typecheck['status'],
-                           'typecheck_' + str(typecheck['cause'])), 'groups': {}}
-            elif build['status'] != 'passed':
-                outcome = {'preflight': result(build['status'],
-                           'build_' + str(build['cause'])), 'groups': {}}
-            elif not any(path.is_file() and path.suffix in ('.js', '.jsx', '.mjs', '.cjs')
-                         for path in build_root.rglob('*')):
-                outcome = {'preflight': result('failed', 'build_output_missing'), 'groups': {}}
-            else:
-                groups = {}
-                for group in payload['groups']:
-                    groups[group['name']] = run(group['command'], payload['candidate_timeout_s'])
-                outcome = {'preflight': result('passed'), 'groups': groups}
+            copy_tests()
+            outcome = {'preflight': result('passed'), 'groups': run_groups()}
+    else:
+        copy_tests()
+        typecheck = run(['tsc', '--noEmit'], payload['candidate_timeout_s'])
+        build_root = Path('/tmp/workflow-build')
+        build = (run(['tsc', '--noEmit', 'false', '--emitDeclarationOnly', 'false',
+                      '--outDir', str(build_root)], payload['candidate_timeout_s'])
+                 if typecheck['status'] == 'passed' else typecheck)
+        if typecheck['status'] != 'passed':
+            outcome = {'preflight': result(typecheck['status'],
+                       'typecheck_' + str(typecheck['cause'])), 'groups': {}}
+        elif build['status'] != 'passed':
+            outcome = {'preflight': result(build['status'],
+                       'build_' + str(build['cause'])), 'groups': {}}
+        elif not any(path.is_file() and path.suffix in ('.js', '.jsx', '.mjs', '.cjs')
+                     for path in build_root.rglob('*')):
+            outcome = {'preflight': result('failed', 'build_output_missing'), 'groups': {}}
+        else:
+            outcome = {'preflight': result('passed'), 'groups': run_groups()}
 sys.stdout.write(json.dumps(outcome, separators=(',', ':')))
 """
 
@@ -243,9 +284,14 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
                 return unavailable("invalid_test_groups")
             for group in groups:
                 validate_repository(group.files)
-                if not group.command or group.command[0] != "node":
+                runner = "bun" if self.settings.toolchain == "bun" else "node"
+                if not group.command or group.command[0] != runner:
                     return unavailable("invalid_test_command")
-                if any(path in tree for path in group.files):
+                if group.restores:
+                    # Restored files must be the baseline's own bytes.
+                    if any(tree.get(path) != text for path, text in group.files.items()):
+                        return unavailable("restored_test_mismatch")
+                elif any(path in tree for path in group.files):
                     return unavailable("test_path_collision")
             frozen_paths = [path for group in groups for path in group.files]
             if len(set(frozen_paths)) != len(frozen_paths):
@@ -265,6 +311,8 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
                 "groups": [group.model_dump(mode="json") for group in groups],
                 "candidate_timeout_s": self.settings.candidate_timeout_s,
                 "max_output_bytes": self.settings.max_output_bytes,
+                "toolchain": self.settings.toolchain,
+                "expected_versions": self.settings.expected_versions,
             }
         )
         name = "assay-workflow-correctness-" + uuid.uuid4().hex
@@ -289,6 +337,8 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
             "/tmp:rw,nosuid,nodev,size=128m",
             "--user",
             "65534:65534",
+            "--env",
+            "HOME=/tmp",
             "--workdir",
             "/tmp",
             "--entrypoint",

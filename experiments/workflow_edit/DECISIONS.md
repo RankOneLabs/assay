@@ -14,6 +14,7 @@ the provenance of measured qualification ceilings.
   checks the exact four arms and one cell per subject, arm, and worker repeat.
   Subject count and repeat count remain caller supplied. The DRY experiment's
   validator fixes a different population and grid, so this study does not use it.
+  Every qualification smoke subject (`settings.SMOKE_SUBJECT_IDS`) is refused.
 - **Project layout:** This package is registered in the existing `experiments`
   uv project alongside `oakridge_history` and the other experiment packages.
 
@@ -33,22 +34,27 @@ the provenance of measured qualification ceilings.
   cell gets a durable outcome. Evaluation records are created only for cells
   with execution outcomes; the remaining coordinates appear as missing in the
   incomplete manifest.
+
 ## Runtime image
 
 - **Image identity:** Bind `BridgeIdentity.bridge_image_digest` from
   `docker image inspect --format '{{.Id}}'` on the built bridge image. A
   manifest that declares another digest fails with
   `ImageDigestMismatchError`. Each rebuild is a new fixture, even when its
-  locked dependencies are unchanged.
-- **Toolchain timing:** Node and TypeScript belong in the image before a trial
-  starts. Study trials have no network and perform no dependency installation.
-  The throwaway wf-12 qualification fixture deliberately runs a real
-  `npm ci --offline --no-bin-links` against the image's local TypeScript
-  package so the measured install footprint includes that operation.
-  The fixture's Node `package.json` and `package-lock.json` live under
-  `integrations/pier/workflow_edit/`, the bridge Docker build context. `npm ci`
-  installs the locked tree in the Node build stage; the final image copies that
-  tree and Node, while omitting npm so trials cannot install dependencies.
+  locked dependencies are unchanged. The bridge source is copied into the
+  image, so a bridge code change is a rebuild too.
+- **Toolchain:** oakridge-dbos runs its tests under bun (`bun test`,
+  `bun:test`, extensionless ESM imports), so the image carries a digest-pinned
+  bun 1.3.13 beside Node v22.21.1, and the locked tree is the one the pinned
+  commit's own lock resolves: TypeScript 5.9.3, zod 4.4.3, @types/bun 1.3.13
+  (bun-types 1.3.13, @types/node 25.6.0, undici-types 7.19.2; the last two
+  pinned with npm `overrides`). The manifests live under
+  `integrations/pier/workflow_edit/`; `npm ci` installs them in the Node build
+  stage and the final image omits npm.
+- **No install in a trial:** The locked tree sits at `/opt/workflow_edit` and is
+  linked at `/node_modules`. Resolution from `/workspace` (agent) and
+  `/tmp/workflow` (evaluator) walks up to it, so no trial installs anything and
+  no candidate tree ever contains `node_modules` or a link to it.
 
 ## Trial envelope revision 1
 
@@ -67,37 +73,17 @@ advance together to `assay-pier-trial/0.2.0`. The exact revised field set is:
   `scratch_quota_mb`. Its existing `storage_limit_mb` is the observed quota,
   and `network_policy` reports the inspected Docker network posture.
 
-The wf-12 offline gate passed install, typecheck, and test in a container, and
-the harness sealed its observed artifacts. The final local Smithers/Pier gate
-completed 20 distinct cells with 40 model requests, zero paid cells, and
-successful install/typecheck/test output in each cell. `SMOKE.md` records the
-observed cgroup memory/PID peaks and the separately configured Docker ceilings.
-The Part 1 settings and bridge protocol no longer label their ceilings
-provisional; their defaults remain authorized caps, not claims that the
-observed peaks are worst-case maxima.
-
-**Zero-paid qualification route resolution (wf-12 follow-up):** The bridge
-protocol now admits exactly one local Smithers tuple,
-`http://willie:8900` / `qwen-coder-32b` / `smithers-local`, alongside the
-guarded production tuple. A local trial requires `toolchain-only` network
-posture; the OpenRouter host driver rejects it. The repository-agent loop
-dispatches each model turn to Smithers with no API key and zero retries, and
-reads token usage from the completed worker task because Smithers' dispatch
-`JobResponse` drops that usage. Its local cost remains unknown, never a
-measured zero. Tests assert the local client makes no OpenRouter request and
-that mixed route fields are rejected. The first Gate 3 attempt stopped before
-model dispatch at `QuotaCellStorage.prepare` because `sudo -n mount` requires
-a password. The completed run used Docker-enforced tmpfs quotas for the agent
-workspace and cache, with a read-only root and no container network. The two
-writable tmpfs mounts together match the configured storage cap; the separate
-memory cgroup ceiling exceeds that cap. Each cell's cgroup peak was read
-before teardown and the package snapshot was copied out for patch review.
-
 ## Packaging and fixture identity
 
 - **Arm-bound limits:** Each authorized Pier worker configuration records the
   maximum repository file count and byte count. Dispatch passes these values
-  explicitly to the package builder.
+  explicitly to the package builder. The wf-13 arm authorizes 200 files and
+  1,000,000 bytes; the smoke-edit repository is 62 files and 348,936 bytes.
+- **Package layout:** The repository agent edits `/workspace` in place, so its
+  package (`package_layout: repository-agent`, recorded in the worker
+  configuration) carries the instruction and repository only: no
+  `/submission/worktree` text and no `submission/CONTRACT.md`. The DRY layout
+  is the unrecorded default, so configurations pinned before it keep their bytes.
 - **Containment audit:** Six named synthetic markers cover private
   documentation, transcripts, credentials, other arms, hidden tests, and
   reference solutions. The final package gate rejects a planted marker with
@@ -106,56 +92,135 @@ before teardown and the package snapshot was copied out for patch review.
   is exported as a schema. Hidden tests, reference and negative patches, and
   the rubric are SHA-256 references only. The fixture identity includes the
   observed image digest and the Smithers `routing_config.yaml` digest.
+  `qualify.fixture_manifest` fills it for the smoke-edit fixture at run time;
+  the smoke has no rubric, and says so in the referenced object.
 
 ## Smithers dispatch
 
 - **Pinned model identity:** At authorization, read the exact routing file
   bytes and bind their digest, submitted alias, machine, and the backend tag
   selected by that machine's backend into each arm's worker configuration.
-  The client checks the routing file again before accepting a completion.
-  Smithers 9e305b6 reports the alias and machine in `JobResponse`, but does
-  not report the resolved worker tag; a worker-side tag attestation therefore
-  cannot be verified from that response alone. The optional response/result
-  tag checks in the client are forward-compatible with a future attesting
-  Smithers response, and do not strengthen the current guarantee.
-- **Idempotency topology:** Run one dispatch process against one persistent
-  SQLite database path for the entire qualification run. Smithers defaults to
-  `db_path="smithers.db"`, relative to the dispatch process working directory;
-  record its resolved absolute path with the run manifest before dispatch, and retain the
-  database between retries. A stable key derived from run ID and cell ID is
-  sent with every `JobSubmission`; repeat the same body when retrying a
-  dropped response. Exercise this in the live qualification run. A database
-  reset or a second process using another database path invalidates the gate.
-- **Clock:** Set Smithers `timeout_seconds` to 900. Its `started_at` is written
-  when the worker accepts a task. Report `started_at - created_at` as queue
-  latency and `completed_at - started_at` as time from acceptance; only the
-  latter is charged to the 15-minute cell budget. Smithers writes both
-  timestamps as naive wall-clock values on its own host, so their
-  *difference* is trustworthy but neither one is an instant this host can
-  read: treating `started_at` as UTC silently charges the cell a whole
-  timezone offset wherever the dispatch host is not on UTC. The concrete
-  workflow delegate therefore re-anchors acceptance locally, as
-  `now - time_from_acceptance - poll_interval`, and passes that into
-  `BridgeRuntime.run_cell`; no foreign absolute timestamp crosses the
-  boundary. The poll interval is subtracted because this host learns of a
-  completion only at the poll that observes it: the true completion lies
-  somewhere in the preceding interval, so charging the whole of it spends
-  the cell's budget rather than extending it. `BridgeRuntime` clamps the
-  result so an acceptance point in its own future cannot buy more than the
-  authorized limit. The bridge gives the handle an absolute monotonic
-  deadline before quota setup, network setup, and container launch; those
-  stages consume the same acceptance budget, as does every Docker call
-  made after the container exits, so evidence collection cannot overrun
-  the budget the trial was authorized with. `TrialHandle.set_deadline` is
-  part of the protocol, not an optional method — the budget is not
-  re-applied to `limits.timeout_s`, so a handle that ignored it would
-  enforce nothing. The guarded host route can only check the deadline
-  between steps, at entry and again immediately before its one OpenRouter
-  call: that call is bounded by `provider.TIMEOUT_S` and cannot be
-  interrupted in flight.
-- **Dispatch accounting:** Only the bridge leg of a workflow cell is
-  priced. Smithers reports no billing (`billing: unavailable` in the
-  pinned worker configuration), so a successful cell carries the bridge
-  trial's measured amount under `mixed` coverage, never `measured` — which
-  would assert the dispatch leg cost nothing. An attempt that reached the
-  bridge but returned no usage is `uncertain`, not zero.
+  The worker configuration re-reads the routing file, so `execute_plan`'s
+  configuration check before every cell refuses a routing change, and each
+  turn also compares its client against the identity captured at
+  authorization.
+- **Worker attestation:** Smithers 9e305b6's `JobResponse` carries neither the
+  resolved tag nor token usage. The completed task on the pinned machine's
+  worker (`GET <machine>:8901/tasks/<job>`) carries both in `usage`: its
+  `model` is the tag the worker ran and must equal the authorized tag
+  (`ResolvedTagIdentityMismatch` otherwise), and missing usage fails the turn
+  as `UsageUnavailable` instead of becoming zero tokens. Reading the task from
+  the pinned machine's own worker is also the machine check that the job ran
+  there.
+- **One job per turn:** Every agent turn is one Smithers job keyed
+  `<cell key>:t<turn>`, where the cell key is derived from the run label and
+  cell id. A re-dispatch after a lost response repeats the same body and key
+  and gets the same job. Model-call retries are zero; Smithers' own dispatch
+  retries are permitted because they re-offer a slot, not re-run inference.
+  Run one dispatch process against one persistent Smithers database for the
+  whole run; a database reset or a second database invalidates the key.
+- **Clock:** A cell's 900-second budget starts at bridge entry, before its
+  first Smithers job, and is enforced by the loop between turns and as every
+  tool's timeout. It therefore charges per-turn queue latency to the cell,
+  which spends budget rather than extending it; the run wakes mcbain first so
+  queue latency is small, and SMOKE.md reports it per turn. Smithers'
+  `completed_at - started_at` is still recorded per turn as time from worker
+  acceptance. A turn already in flight when the budget expires is cancelled
+  on the client side; the job finishes on the worker.
+- **Dispatch accounting:** Smithers reports no billing, so a local cell's cost
+  coverage is `unavailable`, with the worker-attested token counts carried as
+  usage. A cell that ended in a typed failure is `uncertain`; its token counts
+  remain in its retained trajectory.
+
+## Repository agent
+
+- **Topology:** The loop runs on the host. Model calls never enter the
+  sandbox; tool calls run in a fresh container per cell with no network,
+  a read-only root, all capabilities dropped, uid 1000, and Docker tmpfs
+  mounts for `/workspace` (256 MiB), `/cache` (256 MiB) and `/tmp` (256 MiB)
+  under a 1,536 MiB memory ceiling, 128 PIDs and one CPU. The container
+  posture is `toolchain-only`; the LAN-egress posture is not used.
+- **Storage:** Docker tmpfs quotas are the declared storage enforcement for the
+  local population. The ext4 loop quota (`QuotaCellStorage`) needs passwordless
+  `sudo mount` on the dispatch host and is not qualified. tmpfs pages are
+  charged to the memory cgroup, so memory is sized above the writable total;
+  a full mount surfaces as ENOSPC, and a submission with under 1 MiB free on a
+  mount is `storage_exhausted`. Any OOM kill in the cell is `memory_limit`.
+  The captured tree is checked before these resource causes, so a full
+  `/workspace` is reported as `oversized_artifact` (its own file and total
+  limits are far below the 256 MiB mount); `storage_exhausted` is reached
+  through `/cache`, which is never captured. `/tmp` free space is not
+  observed: a full `/tmp` reaches the model only as ENOSPC from its tools.
+- **Capture:** `docker cp` silently returns nothing from a tmpfs mount, so the
+  final tree is streamed out with `tar` and extracted as regular files only;
+  any link or special file is a typed rejection. (The wf-12 qualification's
+  capture used `docker cp` and could not have observed an edit.)
+- **Scope:** A submission may change `src/` and `tests/visible/` only. Any
+  change to a dependency manifest, test configuration, or other test is
+  `tampering`; any other stray path is `out_of_scope_edit`. The rejected tree
+  is retained as evidence.
+- **Model mistakes are the model's:** A malformed or unknown tool call is
+  returned to the model as a tool error. A command that outlives its timeout
+  has every process in the container but PID 1 killed and the timeout is
+  returned to the model. Only a turn with no tool call, a cut-off turn, or the
+  turn limit ends the cell, as `no_submission`, with the work the model left
+  behind retained as `stopped/candidate.patch`.
+
+## Correctness evaluation
+
+- **bun mode:** The evaluator's `bun` toolchain typechecks the candidate tree
+  alone (`tsc --noEmit -p tsconfig.json`), then bundles every production
+  module (`bun build --target=bun`) as the build check, and only then copies
+  the frozen tests in, so a hidden test can never fail the candidate's own
+  typecheck. Group commands must start with the toolchain's runner. Toolchain
+  versions are settings checked inside the sandbox.
+- **Frozen visible tests:** The visible regression group is the baseline's own
+  `tests/visible/` files, restored over the candidate's copies and run by
+  name, so editing or adding a visible test cannot change its regression
+  verdict.
+
+## wf-13 qualification
+
+- **What it supersedes:** The wf-12 smoke ran a task with no edit, two model
+  requests a cell, and a capture that could not see edits, so it measured no
+  token envelope and could only report a 0% failure rate. Its fixture, script,
+  and SMOKE.md are removed; its subject id stays refused.
+- **Fixture:** `fixtures/smoke-edit`, a 62-file slice of oakridge-dbos at the
+  proposed first pin with a four-module task off every Part 2 anchor. Its
+  README records provenance, exclusions, and adaptations.
+- **Path:** The smoke is an authorized 0.3.0 plan run by `execute_plan`
+  through `PierAdapter`, not a direct bridge dispatch. Probes use the same
+  path with scripted, model-free turns.
+- **Evidence:** Every number in SMOKE.md is recomputed by `publish.py` from the
+  committed `evidence/wf13/*.json.gz` files; a test fails if SMOKE.md drifts
+  from them.
+- **Bounds:** The served local context is 32,768 tokens, so prompt plus output
+  must stay under it: an 8,192-token output cap leaves 24,576 prompt tokens,
+  and the 81,920-byte conversation cap (98,304 bytes with tools) keeps the
+  prompt under that at any ratio above 3.33 bytes per token. The smoke's
+  smallest observed ratio was 4.15 and its largest prompt 19,543 tokens, so
+  the conversation cap, not the context, is what binds: it dropped old tool
+  exchanges 37 times and no request was refused. Two turns reached the
+  8,192-token output cap and ended their cells as `no_submission`; the next
+  largest completion was 5,966 tokens. The loop does not retain the text of
+  a cut-off turn, so whether those were runaway generations or legitimate
+  long writes is not recorded; retaining it changes the bridge source and
+  therefore the image, and is left to the next image revision. SMOKE.md
+  checks each bound against its observed maximum.
+- **Routing drift during the smoke:** The smoke process started before the
+  live worker configuration and the per-turn authorization check were added,
+  so its drift protection was the factory's per-turn re-read alone. The
+  worker-attested model is identical on every one of its turns, and
+  `routing_config.yaml` was not changed during the run.
+- **Correctness result:** 0 of 20 cells were correct. Every graded candidate
+  that typechecked failed the same pinned regression test: each applied the
+  absolute-pointer rule to every `context` binding, where the task restricts
+  only bindings that declare a default. The reference patch passes that test,
+  so this is the model's miss and the evaluator's discrimination working, not
+  a fixture defect. The smoke qualifies the envelope and the path; it was
+  never meant to estimate an arm's success rate.
+- **Failure diagnosis:** The evaluator keeps no test output, by design (it
+  returns a verdict and one cause per group). `qualify diagnose` replays each
+  failed group in the same image, network-less and read-only, and records only
+  failing test names or the first typecheck errors as `diagnosis.json.gz`. It
+  never re-grades.

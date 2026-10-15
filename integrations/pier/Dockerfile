@@ -3,7 +3,7 @@
 # container's entrypoint never installs or resolves dependencies: it starts
 # the bridge directly against the environment this image already froze.
 #
-# All three upstream images are pinned by digest, not just by tag: Node,
+# All four upstream images are pinned by digest, not just by tag: Node, bun,
 # Python, and astral-sh/uv tags are mutable pointers that can resolve to
 # different bytes on a later build. Re-pin deliberately; don't drop the digests.
 FROM node:22.21.1-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754fcd09536a3ae2c AS node_toolchain
@@ -21,10 +21,18 @@ RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin trial \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.10.2@sha256:94a23af2d50e97b87b522d3cea24aaf8a1faedec1344c952767434f69585cbf9 /uv /usr/local/bin/uv
 COPY --from=node_toolchain /usr/local/bin/node /usr/local/bin/node
+# oakridge-dbos runs its tests under bun (`bun test`, `bun:test`), at the
+# version its own lock pins for bun-types.
+COPY --from=oven/bun:1.3.13-slim@sha256:7e8ed3961db1cdedf17d516dda87948cfedbd294f53bf16462e5b57ed3fff0f1 /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=node_toolchain /opt/workflow_edit /opt/workflow_edit
+# A workspace never carries node_modules. Module and @types resolution walk
+# up from /workspace (agent) or /tmp/workflow (evaluator) and reach this
+# image-owned tree, so nothing is installed into, or linked from, a candidate.
 RUN ln -s /opt/workflow_edit/node_modules/typescript/bin/tsc /usr/local/bin/tsc \
+    && ln -s /opt/workflow_edit/node_modules /node_modules \
     && test "$(node --version)" = "v22.21.1" \
-    && test "$(tsc --version)" = "Version 5.9.2"
+    && test "$(bun --version)" = "1.3.13" \
+    && test "$(tsc --version)" = "Version 5.9.3"
 
 WORKDIR /bridge
 COPY pyproject.toml uv.lock ./

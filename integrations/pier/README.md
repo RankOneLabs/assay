@@ -29,13 +29,24 @@ while trials are being served:
   different digest. Rebuilds may have different image IDs, even with the same
   dependency locks, and therefore form different fixtures.
 
-The image adds Node v22.21.1 from a digest-pinned upstream image and installs
-the workflow edit fixture's TypeScript 5.9.2 dependency from
-[`workflow_edit/package.json`](workflow_edit/package.json) and
+The image adds Node v22.21.1 and bun 1.3.13 from digest-pinned upstream images
+and installs the workflow edit fixture's locked dependencies (TypeScript 5.9.3,
+zod 4.4.3, @types/bun 1.3.13, the versions oakridge-dbos locks at its pinned
+commit) from [`workflow_edit/package.json`](workflow_edit/package.json) and
 [`workflow_edit/package-lock.json`](workflow_edit/package-lock.json) during the
 build. The complete locked `node_modules` tree is copied into the final image
-at `/opt/workflow_edit`; `NODE_PATH` exposes it to fixture scripts. npm is
-omitted from the final image because dependency installation is a build step.
+at `/opt/workflow_edit` and linked at `/node_modules`, so module and `@types`
+resolution from `/workspace` (agent) or `/tmp/workflow` (evaluator) reaches it
+without anything being installed into, or linked from, a candidate tree. npm
+is omitted from the final image because dependency installation is a build
+step. Any rebuild, including one caused by a bridge source change, is a new
+fixture image; the shared Dockerfile means it is also a new image for the DRY
+Pier profile's pin.
+
+The repository agent (`agent_loop.py`, `repository_trial.py`) runs on the
+host and drives a network-disabled tool container from this image with
+Docker-enforced tmpfs quotas; `experiments/workflow_edit/bridge.py` is the one
+place it meets Assay.
 Build the image once with
 `docker build -t assay-pier-bridge:qualify-local integrations/pier`, then read
 its digest with `docker image inspect --format '{{.Id}}'

@@ -10,7 +10,9 @@ bridge project has no dependency edge back onto ``assay`` (see README.md).
 from __future__ import annotations
 
 import hashlib
+import io
 import subprocess
+import tarfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -185,6 +187,113 @@ def regular_tree(root: Path) -> dict[str, bytes]:
         files[relative] = data
         aggregate_bytes += len(data)
     return files
+
+
+def extract_workspace_archive(archive: bytes, root: Path) -> None:
+    """Materialize a candidate's tar stream as regular files only, within bounds.
+
+    Every member is checked before anything is written for it: a link of any
+    kind, a special file, a non-canonical or escaping path, or an entry past
+    the count and byte ceilings raises a typed working-copy rejection that
+    carries the files read so far. Nothing is ever followed or extracted
+    through Python's generic ``extractall``.
+    """
+    files: dict[str, bytes] = {}
+    entries = 0
+    aggregate_bytes = 0
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as stream:
+        for member in stream:
+            raw = member.name.removeprefix("./").rstrip("/")
+            if raw in ("", "."):
+                continue
+            entries += 1
+            if entries > MAX_SUBMISSION_ENTRIES:
+                raise ArtifactCollectionRejected(
+                    "entry_limit", "working copy exceeds the filesystem entry limit",
+                    artifacts=files, rejected_path=raw, origin="working_copy",
+                )
+            try:
+                relative = safe_relative_path(raw)
+            except ValueError as error:
+                raise ArtifactCollectionRejected(
+                    "traversal", str(error), artifacts=files, rejected_path=raw,
+                    origin="working_copy",
+                ) from error
+            if member.issym() or member.islnk():
+                raise ArtifactCollectionRejected(
+                    "escaping_symlink", f"link in submission: {raw}",
+                    artifacts=files, rejected_path=raw, origin="working_copy",
+                )
+            target = root / relative
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            if not member.isfile():
+                raise ArtifactCollectionRejected(
+                    "out_of_scope_edit", f"non-regular entry in submission: {raw}",
+                    artifacts=files, rejected_path=raw, origin="working_copy",
+                )
+            if member.size > MAX_ARTIFACT_BYTES:
+                raise ArtifactCollectionRejected(
+                    "oversized_artifact", f"working-copy file exceeds the byte limit: {raw}",
+                    artifacts=files, rejected_path=raw, origin="working_copy",
+                )
+            aggregate_bytes += member.size
+            if aggregate_bytes > MAX_AGGREGATE_ARTIFACT_BYTES:
+                raise ArtifactCollectionRejected(
+                    "aggregate_artifact_limit", "working copy exceeds the aggregate byte limit",
+                    artifacts=files, rejected_path=raw, origin="working_copy",
+                )
+            source = stream.extractfile(member)
+            data = source.read() if source is not None else b""
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            target.chmod(0o644)
+            files[raw] = data
+
+
+# Dependency manifests and test configuration a submission may never change.
+PROTECTED_NAMES = frozenset(
+    {"package.json", "package-lock.json", "bun.lock", "bun.lockb", "bunfig.toml", "tsconfig.json"}
+)
+
+
+def check_submission_scope(
+    before: Mapping[str, bytes],
+    after: Mapping[str, bytes],
+    *,
+    writable_prefixes: tuple[str, ...],
+) -> None:
+    """Reject any added, changed, or deleted path outside the declared scope.
+
+    An empty scope places no restriction. Otherwise a change to a dependency
+    manifest, test configuration, or a test outside the writable prefixes is
+    ``tampering``; any other stray path is ``out_of_scope_edit``. The changed
+    files are retained on the rejection as evidence.
+    """
+    if not writable_prefixes:
+        return
+    changed = sorted(
+        path
+        for path in set(before) | set(after)
+        if before.get(path) != after.get(path)
+    )
+    for path in changed:
+        if path.startswith(writable_prefixes):
+            continue
+        name = PurePosixPath(path).name
+        cause = (
+            "tampering"
+            if name in PROTECTED_NAMES or path.startswith("tests/")
+            else "out_of_scope_edit"
+        )
+        raise ArtifactCollectionRejected(
+            cause,
+            f"submission changes a path outside its declared scope: {path}",
+            artifacts={item: after[item] for item in changed if item in after},
+            rejected_path=path,
+            origin="working_copy",
+        )
 
 
 def tree_digest(files: Mapping[str, bytes]) -> str:
