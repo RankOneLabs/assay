@@ -166,6 +166,10 @@ jobs:
     # paid-profile and paid-marker test in pier_qualification/tests/test_pier_acceptance.py stays
     # gated and skipped, and qualify_local.py's own probes never dial out.
     runs-on: ubuntu-latest
+    env:
+      # Docker, sudo and a LAN address are part of this job, so their absence
+      # fails the Docker-backed tests instead of skipping them green.
+      ASSAY_REQUIRE_DOCKER: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
