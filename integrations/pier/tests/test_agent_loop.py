@@ -92,6 +92,24 @@ def test_haiku_turn_request_body_is_byte_identical(tmp_path: Path) -> None:
     ]
 
 
+def test_haiku_turn_uses_caller_loop_bounds(tmp_path: Path) -> None:
+    captured: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.content)
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "done"}, 1))
+
+    bounds = replace(
+        LoopBounds(), max_request_bytes=120_000, max_conversation_bytes=110_000,
+        max_output_tokens=9_000,
+    )
+    client = _client(tmp_path, handler, bounds=bounds)
+    client._openrouter_turn([{"role": "user", "content": "x" * 99_000}], HAIKU_TURN_ROUTE)
+    assert len(captured) == 1
+    assert len(captured[0]) > 98_304
+    assert json.loads(captured[0])["max_tokens"] == 9_000
+
+
 def test_turn_uses_route_limits_and_identity(tmp_path: Path) -> None:
     route = replace(
         HAIKU_TURN_ROUTE,

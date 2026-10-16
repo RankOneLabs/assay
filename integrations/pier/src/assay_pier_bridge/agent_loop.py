@@ -142,13 +142,15 @@ class OpenRouterTurnRoute:
     provider_name: str
     max_prompt_price_per_million: float
     max_completion_price_per_million: float
-    max_request_body_bytes: int
-    max_output_tokens: int
+    # None delegates to LoopBounds for the repository-agent Haiku profile.
+    # Explicit frontier limits are still enforced in addition to LoopBounds.
+    max_request_body_bytes: int | None
+    max_output_tokens: int | None
     tool_choice: Literal["auto", "forced"]
 
 
-# Preserve the existing repository-agent Haiku request while the frontier
-# model and price ceiling await the operator's choice.
+# The repository agent's Haiku limits come from LoopBounds. provider.py's
+# 65,536-byte / 2,048-token limits govern its separate single-request client.
 HAIKU_TURN_ROUTE = OpenRouterTurnRoute(
     endpoint="https://openrouter.ai/api/v1",
     model=MODEL,
@@ -156,8 +158,8 @@ HAIKU_TURN_ROUTE = OpenRouterTurnRoute(
     provider_name=PROVIDER_NAME,
     max_prompt_price_per_million=MAX_PROMPT_PRICE_PER_MILLION,
     max_completion_price_per_million=MAX_COMPLETION_PRICE_PER_MILLION,
-    max_request_body_bytes=98_304,
-    max_output_tokens=8_192,
+    max_request_body_bytes=None,
+    max_output_tokens=None,
     tool_choice="auto",
 )
 
@@ -1051,7 +1053,11 @@ class RepositoryAgentClient:
                 if route.tool_choice == "auto"
                 else {"type": "function", "function": {"name": "submit_output"}}
             ),
-            "max_tokens": min(self.bounds.max_output_tokens, route.max_output_tokens),
+            "max_tokens": (
+                self.bounds.max_output_tokens
+                if route.max_output_tokens is None
+                else min(self.bounds.max_output_tokens, route.max_output_tokens)
+            ),
             "stream": False,
             "provider": {
                 "data_collection": "deny",
@@ -1068,7 +1074,12 @@ class RepositoryAgentClient:
             },
         }
         payload = _json_bytes(body)
-        if len(payload) > min(self.bounds.max_request_bytes, route.max_request_body_bytes):
+        request_limit = (
+            self.bounds.max_request_bytes
+            if route.max_request_body_bytes is None
+            else min(self.bounds.max_request_bytes, route.max_request_body_bytes)
+        )
+        if len(payload) > request_limit:
             raise ValueError("request_limit")
         chat_completions_url = f"{route.endpoint}/chat/completions"
         with self._http_client() as client:
