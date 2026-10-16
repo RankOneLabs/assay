@@ -31,6 +31,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+PILOT_SUBJECT_IDS: frozenset[str] = frozenset({"oakridge-dbos-verification-pilot-edit"})
+
 
 class VerificationPilotSettings(BaseModel):
     """Frozen bounds for one verification-pilot repository-agent attempt."""
