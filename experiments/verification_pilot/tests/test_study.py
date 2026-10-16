@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from assay.canonical import canonical_json
-from assay.models import ExecutionOutcome, ExecutionPlanV3, RuntimeProfile
+from assay.models import ExecutionOutcome, ExecutionPlanV3, RuntimeProfile, StudySnapshot
 from assay.store import ObjectStore
 from verification_pilot.arms import ALL_ARMS, TIER_1_ARMS, TIER_2_ARMS
 from verification_pilot.study import FINAL_CEILING, compile_pilot_plan, pilot_subjects
@@ -28,7 +28,9 @@ def test_rotated_snapshot_and_all_tier_exclusions(tmp_path: Path) -> None:
                 and s.group == group} == {0, 1, 2}
                for migration, group in {(s.migration.name, s.group) for s in subjects})
     assert len(prepared.snapshot.realizations) == 48 * len(ALL_ARMS)
-    assert prepared.snapshot.consistent_grid() == prepared.snapshot
+    assert StudySnapshot.model_validate(prepared.snapshot.model_dump(mode="json")) == (
+        prepared.snapshot
+    )
     assert len({(r.subject_id, r.arm_id) for r in prepared.snapshot.realizations}) == 288
     assert len(plan.cells) == 48 * 2 * 1 == 96
     assert plan.worker_repeats == 1
@@ -47,7 +49,7 @@ def test_rotated_snapshot_and_all_tier_exclusions(tmp_path: Path) -> None:
         coordinate=cell, status="succeeded", input_ref=cell.realization_ref,
         output_ref=cell.realization_ref,
     )
-    assert outcome.consistent_status() == outcome
+    assert ExecutionOutcome.model_validate(outcome.model_dump(mode="json")) == outcome
 
 
 def test_tier_shards_keep_report_compatibility_fields(tmp_path: Path) -> None:
