@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import base64
 import json
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from verification_pilot.arms import ALL_ARMS
 from verification_pilot.bridge import (
     DockerTmpfsStagingStorage,
     DockerTmpfsToolSandbox,
+    ModelRoute,
     PilotBridgeClient,
     SandboxLimits,
     SmithersTurnCompletion,
@@ -41,27 +43,44 @@ from verification_pilot.settings import VerificationPilotSettings
 from verification_pilot.study import PilotSubject, PreparedPilot, compile_pilot_plan, pilot_subjects
 
 
-def measure_local_on_policy(
-    *, image: str, runs_root: Path, routing_config: Path
+def measure_on_policy(
+    *, image: str, runs_root: Path, routing_config: Path, route: str,
+    api_key: str | None = None,
 ) -> dict[str, Any]:
     """Generate one migration's four blocks outside the cell runtime."""
     fixture = load_fixture()
     subjects = [s for s in pilot_subjects(fixture)
                 if s.migration.name == "json_value" and s.rotation == 0]
-    factory = SmithersFactory(model="qwen-coder-32b", machine="mcbain",
-                              routing_config=routing_config, dispatch_url="http://willie:8900")
-    authorized = factory.configuration()
+    if route == "smithers-local":
+        if api_key is not None:
+            raise ValueError("local route cannot receive an OpenRouter credential")
+        local_factory = SmithersFactory(
+            model="qwen-coder-32b", machine="mcbain",
+            routing_config=routing_config, dispatch_url="http://willie:8900",
+        )
+        factory: SmithersFactory | None = local_factory
+        model_route = LOCAL_ROUTE
+        authorized = local_factory.configuration()
+    elif route == "openrouter":
+        if not api_key or any(char.isspace() for char in api_key):
+            raise ValueError("OPENROUTER_API_KEY is required for the paid route")
+        factory = None
+        model_route = ModelRoute()
+        authorized = None
+    else:
+        raise ValueError(f"unknown model route: {route}")
     results: list[dict[str, Any]] = []
     for subject in subjects:
         share = sorted(path for path, group in subject.migration.ownership_groups.items()
                        if group == subject.group)
         agent = create_pilot_agent(
             settings=VerificationPilotSettings(), image=image, runs_root=runs_root,
-            model_route=LOCAL_ROUTE,
-            completion=SmithersTurnCompletion(
+            model_route=model_route,
+            completion=(SmithersTurnCompletion(
                 factory, f"on-policy-v2:{runs_root.name}:{subject.id}",
-                                               authorized=authorized),
+                authorized=authorized) if factory is not None else None),
             next_user_turns=("Review the migration.", "Submit your final finding."),
+            api_key=api_key,
             sandbox_factory=partial(DockerTmpfsToolSandbox, limits=SandboxLimits()),
             storage_factory=DockerTmpfsStagingStorage,
         )
@@ -105,11 +124,19 @@ def measure_local_on_policy(
         except Exception as error:
             results.append({"subject_id": subject.id, "discard": True,
                             "error": f"{type(error).__name__}: {error}"})
-    return {"route": "smithers-local", "migration": "json_value",
+    return {"route": route, "model": model_route.model, "migration": "json_value",
             "discarded": sum(bool(item["discard"]) for item in results),
             "attempted": len(results),
             "submitted": sum("block" in item for item in results),
             "blocks": results}
+
+
+def measure_local_on_policy(
+    *, image: str, runs_root: Path, routing_config: Path
+) -> dict[str, Any]:
+    """Compatibility entry point for the local qualification command."""
+    return measure_on_policy(image=image, runs_root=runs_root,
+                             routing_config=routing_config, route="smithers-local")
 
 
 def subject_truth(subject: PilotSubject) -> GroundTruth:
@@ -206,17 +233,28 @@ async def run_scripted(store: ObjectStore) -> tuple[PreparedPilot, Any]:
 
 async def run_live(
     store: ObjectStore, *, image: str, runs_root: Path, routing_config: Path,
-    route: str, smoke: bool = False
+    route: str, smoke: bool = False, api_key: str | None = None
 ) -> tuple[PreparedPilot, Any]:
     subjects = pilot_subjects()
-    if route != "smithers-local":
-        raise ValueError("frontier route is supplied by the vp-frontier-route cohort")
-    factory = SmithersFactory(model="qwen-coder-32b", machine="mcbain",
-                              routing_config=routing_config, dispatch_url="http://willie:8900")
+    if route == "smithers-local":
+        if api_key is not None:
+            raise ValueError("local route cannot receive an OpenRouter credential")
+        factory: SmithersFactory | None = SmithersFactory(
+            model="qwen-coder-32b", machine="mcbain",
+            routing_config=routing_config, dispatch_url="http://willie:8900",
+        )
+        model_route = LOCAL_ROUTE
+    elif route == "openrouter":
+        if not api_key or any(char.isspace() for char in api_key):
+            raise ValueError("OPENROUTER_API_KEY is required for the paid route")
+        factory = None
+        model_route = ModelRoute()
+    else:
+        raise ValueError(f"unknown model route: {route}")
     bridge = PilotBridgeClient(
         image=image, runs_root=runs_root, run_label="verification-pilot-tier1",
-        model_route=LOCAL_ROUTE, subjects={s.id: s for s in subjects},
-        settings=VerificationPilotSettings(), factory=factory,
+        model_route=model_route, subjects={s.id: s for s in subjects},
+        settings=VerificationPilotSettings(), factory=factory, api_key=api_key,
     )
     worker, runtime = pilot_worker(store, bridge)
     smoke_ids = tuple(s.id for s in subjects if s.rotation == 0 and
@@ -242,20 +280,24 @@ async def run_live(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("scripted", "live", "live-smoke",
-                                            "on-policy-local"))
+                                            "on-policy-local", "on-policy-paid"))
     parser.add_argument("--store", type=Path, required=True)
     parser.add_argument("--image", default="")
     parser.add_argument("--runs-root", type=Path, default=Path("/tmp/verification-pilot-runs"))
     parser.add_argument("--routing-config", type=Path, default=Path("/tmp/routing.yaml"))
-    parser.add_argument("--route", default="smithers-local")
+    parser.add_argument("--route", choices=("smithers-local", "openrouter"),
+                        default="smithers-local")
     args = parser.parse_args()
     store = ObjectStore(args.store)
-    if args.command == "on-policy-local":
+    if args.command in {"on-policy-local", "on-policy-paid"}:
         if not args.image:
             parser.error("on-policy generation requires --image")
-        evidence = measure_local_on_policy(
+        probe_route = "openrouter" if args.command == "on-policy-paid" else "smithers-local"
+        evidence = measure_on_policy(
             image=args.image, runs_root=args.runs_root,
-            routing_config=args.routing_config)
+            routing_config=args.routing_config, route=probe_route,
+            api_key=os.environ.get("OPENROUTER_API_KEY") if probe_route == "openrouter" else None,
+        )
         evidence["evidence_ref"] = str(store.publish_json(evidence))
         print(json.dumps(evidence))
         return
@@ -268,6 +310,7 @@ def main() -> None:
             store, image=args.image, runs_root=args.runs_root,
             routing_config=args.routing_config, route=args.route,
             smoke=args.command == "live-smoke",
+            api_key=os.environ.get("OPENROUTER_API_KEY") if args.route == "openrouter" else None,
         ))
     print(json.dumps({"plan_ref": prepared.authorization,
                       "result": type(result).__name__,

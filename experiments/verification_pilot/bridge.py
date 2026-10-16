@@ -215,7 +215,7 @@ def pilot_worker(
 
 
 __all__ = [
-    "DockerTmpfsStagingStorage", "DockerTmpfsToolSandbox", "PilotBridgeClient",
+    "DockerTmpfsStagingStorage", "DockerTmpfsToolSandbox", "ModelRoute", "PilotBridgeClient",
     "PilotWorker", "SandboxLimits", "SmithersTurnCompletion", "create_pilot_agent",
     "pilot_worker",
 ]
