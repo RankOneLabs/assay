@@ -10,6 +10,8 @@ from assay.report_engine import ReportError, build_report
 from assay.store import ObjectStore
 from verification_pilot.report import (
     Observation,
+    cross_model_table,
+    first_inspection_is_wide_symbol_search,
     h1_ownership_gap,
     h4_own_vs_teammate,
     model_report,
@@ -22,7 +24,7 @@ from verification_pilot.study import compile_pilot_plan, pilot_subjects
 def test_h1_exact_one_sample_sign_test_against_zero() -> None:
     rows = [
         Observation("route", f"s{i}", "migration", "group_a", 0, 1,
-                    "t1-native", "t1_ownership_gap", value)
+                    "t1-native", "t1_ownership_gap", value, "group_a")
         for i, value in enumerate(("0.25", "0.50", "1.00", "0.00", "0.00"))
     ]
     result = h1_ownership_gap(rows, "t1-native")
@@ -37,7 +39,7 @@ def test_h1_exact_one_sample_sign_test_against_zero() -> None:
 def test_h4_is_between_subjects_within_one_arm() -> None:
     rows = [
         Observation("route", f"{migration}-{group}", migration, group, 0, 1,
-                    "t1-native", "t1_remnant_inspected", value)
+                    "t1-native", "t1_remnant_inspected", value, "group_a")
         for migration in ("a", "b", "c", "d")
         for group, value in (("group_a", "1"), ("group_b", "0"))
     ]
@@ -46,6 +48,40 @@ def test_h4_is_between_subjects_within_one_arm() -> None:
     assert result["mean_difference"] == 1
     assert result["p_value"] is None
     assert all(pair["own"] == 1 and pair["teammate"] == 0 for pair in result["pairs"])
+
+
+def test_h4_rejects_an_own_group_different_from_subject_assignment() -> None:
+    row = Observation("route", "s", "migration", "group_b", 0, 2,
+                      "t1-native", "t1_remnant_inspected", "1", "group_a")
+    with pytest.raises(ValueError, match="subject payload assignment"):
+        h4_own_vs_teammate((row,), "t1-native", own_group="group_b")
+
+
+def test_ceiling_uses_first_successful_inspection_of_old_symbol() -> None:
+    failed = {"name": "search_files", "arguments": {"scope": "./", "query": "oldName"},
+              "exit_code": 1}
+    wide = {"name": "search_files", "arguments": {"scope": ".", "query": "oldName"},
+            "exit_code": 0}
+    read = {"name": "read_file", "arguments": {"path": "src/a.ts"}, "exit_code": 0}
+    assert first_inspection_is_wide_symbol_search({"tool_calls": [failed, wide]}, "oldName")
+    assert not first_inspection_is_wide_symbol_search({"tool_calls": [read, wide]}, "oldName")
+    assert not first_inspection_is_wide_symbol_search(
+        {"tool_calls": [{**wide, "arguments": {"scope": "src", "query": "oldName"}}]},
+        "oldName",
+    )
+    assert not first_inspection_is_wide_symbol_search(
+        {"tool_calls": [{**wide, "arguments": {"scope": ".", "query": "newName"}}]},
+        "oldName",
+    )
+
+
+def test_cross_model_table_keeps_routes_separate() -> None:
+    first = {key: key for key in ("H1", "H2", "H3", "H4", "ceiling_effect", "cost")}
+    second = {**first, "H2": "second route"}
+    table = cross_model_table({"z-route": second, "a-route": first})
+    assert [row["model"] for row in table] == ["a-route", "z-route"]
+    assert table[0]["H2"] == "H2"
+    assert table[1]["H2"] == "second route"
 
 
 @pytest.mark.asyncio

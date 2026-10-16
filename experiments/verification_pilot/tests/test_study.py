@@ -13,7 +13,12 @@ from assay.models import (
 from assay.report_engine import _compatibility_fingerprint
 from assay.store import ObjectStore
 from verification_pilot.arms import ALL_ARMS, TIER_1_ARMS, TIER_2_ARMS
-from verification_pilot.study import FINAL_CEILING, compile_pilot_plan, pilot_subjects
+from verification_pilot.study import (
+    FINAL_CEILING,
+    VERIFIER_OWN_GROUP,
+    compile_pilot_plan,
+    pilot_subjects,
+)
 
 
 def _runtime(store: ObjectStore) -> RuntimeProfile:
@@ -48,6 +53,7 @@ def test_rotated_snapshot_and_all_tier_exclusions(tmp_path: Path) -> None:
     assert plan.ceiling == FINAL_CEILING
     payloads = [json.loads(store.read_bytes(s.payload_ref)) for s in prepared.snapshot.subjects]
     assert {p["rotation"] for p in payloads} == {0, 1, 2}
+    assert {p["own_group"] for p in payloads} == {VERIFIER_OWN_GROUP}
     cell = plan.cells[0]
     outcome = ExecutionOutcome(
         run_id="test", plan_ref=prepared.authorization,

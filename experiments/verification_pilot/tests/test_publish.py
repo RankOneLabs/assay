@@ -11,7 +11,7 @@ import pytest
 from assay.execution import RunSucceeded, execute_plan
 from assay.models import RuntimeProfile
 from assay.store import ObjectStore
-from verification_pilot.publish import publish_model
+from verification_pilot.publish import _write_review_export, publish_model
 from verification_pilot.report import h1_ownership_gap, h4_own_vs_teammate, verified_observations
 from verification_pilot.run import GridEvaluator, ScriptedWorker, subject_truth
 from verification_pilot.study import compile_pilot_plan, pilot_subjects
@@ -39,11 +39,29 @@ async def test_publish_bundle_verifies_with_assay_cli_offline(tmp_path: Path) ->
     )
     assert isinstance(run, RunSucceeded)
     destination = tmp_path / "published"
+    study_page = tmp_path / "study.md"
+    study_page.write_text(
+        "# Pilot\n<!-- ceiling-table:start -->\n"
+        "| Route | Native | Quoted | Status |\n| --- | ---: | ---: | --- |\n"
+        "| fixture | pending | pending | in progress |\n"
+        "<!-- ceiling-table:end -->\n", encoding="utf-8",
+    )
     report = publish_model(store, (str(run.manifest_ref),), destination,
-                           model="fixture", own_group="group_a")
+                           model="fixture", own_group="group_a", qualified=True,
+                           study_page=study_page)
     assert report["H2"]["comparison"]["n"] == 1
     assert (destination / "report.json").exists()
     assert (destination / "h2-review.txt").exists()
+    assert report["review_exports"]["H2"]["status"] == "over_cap"
+    assert report["review_exports"]["H2"]["cap_bytes"] == 64 * 1024 * 1024
+    assert "| fixture | 0/1 (0.0%) | 0/1 (0.0%) | qualified |" in study_page.read_text()
+    assert report["escalation_chart"]
+    assert {row["turn"] for row in report["escalation_chart"]} >= {"t1"}
+    assert "48 paired observations" in report["power"]["H1"]
+    assert "48 paired observations" in report["power"]["H2"]
+    assert "12 of 16" in report["power"]["H3"]
+    assert "4 migration-matched pairs" in report["power"]["H4"]
+    assert "No engine p-value" in report["power"]["H4"]
     for bundle, ref in ((destination / "manifest-1", str(run.manifest_ref)),
                         (destination / "h2", report["H2"]["report_ref"])):
         verified = subprocess.run(
@@ -65,3 +83,23 @@ def test_publish_rejects_nonempty_destination(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="destination must be empty"):
         publish_model(ObjectStore(tmp_path / "source"), (), destination,
                       model="fixture", own_group="group_a")
+
+
+def test_review_export_uses_html_when_closure_fits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    objects = tmp_path / "objects"
+    objects.mkdir()
+    (objects / "small").write_bytes(b"small closure")
+
+    def write_html(_store: ObjectStore, _ref: str, target: Path) -> Path:
+        target.write_text("<html>review</html>", encoding="utf-8")
+        return target
+
+    monkeypatch.setattr("verification_pilot.publish.export_review", write_html)
+    review = _write_review_export(ObjectStore(tmp_path / "store"), "ref", objects,
+                                  tmp_path, "H2")
+    assert review == {"closure_bytes": 13, "cap_bytes": 64 * 1024 * 1024,
+                      "status": "html"}
+    assert (tmp_path / "h2-review.html").exists()
+    assert not (tmp_path / "h2-review.txt").exists()

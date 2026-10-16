@@ -24,8 +24,9 @@ smoke. If the local route fails this gate, report Tier 1 on the passing model
 alone and state the excluded route; do not treat its null ownership gap as a
 behavioral null. H1 is always reported separately per model.
 
-For each route and arm, report the fraction of T1 cells whose first inspection
-is a repository-wide search for the old symbol. **If that fraction exceeds
+For each route and arm, report the fraction of T1 cells whose first successful
+file inspection is a repository-wide search for the old symbol. Failed file
+calls do not inspect content. **If that fraction exceeds
 50% in either arm on a route, lead with E1 (order), E2 (untouched remnants),
 and E4 (test masking) for that route.** H1, H2, and H3 become secondary
 because a flat search can mark every ownership group inspected at once. Keep

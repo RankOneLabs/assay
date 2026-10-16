@@ -23,9 +23,12 @@ tables are assembled from separate route reports. Both the Assay engine report
 and each source manifest have exact-closure export bundles. Run
 `assay verify <bundle-directory> <root-ref>` offline to check an exported root.
 The static HTML review export uses Assay's existing review path where its
-64 MiB budget allows it. This pilot's snapshot closure exceeds that budget;
-the exporter writes a notice to use the local Assay review server with the
-offline-verifiable bundle.
+64 MiB budget allows it. Each published report records the closure size, cap,
+and whether HTML was emitted. If a closure exceeds the cap, the exporter writes
+a notice to use the local Assay review server with the offline-verifiable
+bundle. A smaller future closure automatically takes the HTML path. Once a
+route passes manual smoke review, publishing it with `qualified=True` fills
+that route's two ceiling cells on the live page from verified counts.
 
 | Hypothesis | Comparison | Analysis and realized design n |
 | --- | --- | --- |
@@ -44,7 +47,10 @@ The shared `ReportConfig`, `StatisticalProfile`, and engine are unchanged.
 
 The [smoke rule](../../experiments/verification_pilot/SMOKE.md) requires manual
 review of both route smokes and records each arm's first-wide-search share.
-If that share exceeds 50% in either arm of a route, E1 escalation order, E2
+The share counts only cells whose first successful `read_file` or
+`search_files` inspection is a repository-wide search containing the
+migration's old symbol. Failed file calls do not establish an inspection. If
+that share exceeds 50% in either arm of a route, E1 escalation order, E2
 untouched remnants, and E4 test masking lead that route's results; H1–H3 become
 secondary. A repository-wide first search can inspect every ownership group
 at once, compressing ownership gap independently of the handoff presentation.
@@ -54,8 +60,9 @@ stays excluded after the local on-policy generation probe discarded 4 of 4
 attempts, and the paid route needs its own measured supply and budget gate.
 H4's four matched pairs cannot support the engine's inference floor of ten;
 the published H4 result carries its n and effect estimate without a p-value.
-The current subject payload identifies four contributor ownership groups but
-does not designate one as the verifier's own group. The H4 report therefore
-requires an explicit `own_group` input and is descriptive until that assignment
-is fixed by the study operator; a supplied group must not be inferred from the
-observed verdicts.
+The subject payload explicitly designates `group_a` as the verifier-owned
+contributor group across all rotations. The H4 report requires the caller's
+`own_group` to match that declared assignment; it never infers ownership from
+observed verdicts. The four matched pairs keep H4 descriptive, without an
+engine p-value. The assignment is analysis metadata; any behavioral claim
+about self-attribution also needs the visible handoff to carry that role.

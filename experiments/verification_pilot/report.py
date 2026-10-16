@@ -15,6 +15,7 @@ from statistics import fmean
 from typing import Any
 
 from assay.models import (
+    ExecutionPlanV2,
     ReportConfig,
     RunManifest,
     StatisticalProfile,
@@ -25,6 +26,7 @@ from assay.report_engine import build_report, exact_sign_test, persist_report
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
 from verification_pilot.evaluation import NOT_APPLICABLE, REPORT_CATEGORIES
+from verification_pilot.metrics import calls, scope_contains, successful
 from verification_pilot.migrations import GROUPS, MIGRATIONS
 
 
@@ -39,6 +41,7 @@ class Observation:
     arm: str
     evaluator_id: str
     value: str
+    own_group: str
 
 
 def _read(store: ObjectStore, ref: str) -> dict[str, Any]:
@@ -66,7 +69,9 @@ def verified_observations(
         manifest = RunManifest.model_validate(_read(store, ref))
         plan = parse_execution_plan(_read(store, manifest.plan_ref))
         snapshot = StudySnapshot.model_validate(_read(store, plan.snapshot_ref))
-        identity = json.dumps(plan.runtime.model_dump(mode="json"), sort_keys=True).encode()  # type: ignore[union-attr]
+        if not isinstance(plan, ExecutionPlanV2):
+            raise ValueError("pilot report requires a versioned runtime")
+        identity = json.dumps(plan.runtime.model_dump(mode="json"), sort_keys=True).encode()
         if runtime is not None and identity != runtime:
             raise ValueError("run compatibility drift across selected manifests")
         runtime = identity
@@ -89,11 +94,14 @@ def verified_observations(
                 raise ValueError("duplicate subject/arm/evaluator across manifests")
             seen.add(key)
             group = str(payload["ownership_group"])
+            own_group = str(payload["own_group"])
+            if own_group not in GROUPS:
+                raise ValueError("subject has no valid verifier-owned group")
             rotation = int(payload["rotation"])
             rows.append(Observation(
                 model, cell.subject_id, str(payload["migration"]), group,
                 rotation, _position(group, rotation), cell.arm_id,
-                coordinate.evaluator_id, value,
+                coordinate.evaluator_id, value, own_group,
             ))
     return tuple(rows)
 
@@ -121,12 +129,15 @@ def h4_own_vs_teammate(
 ) -> dict[str, Any]:
     """Compare different subjects within one arm, matched by migration.
 
-    Rotations are averaged within migration/group. The own group is supplied by
-    the caller's declared ownership assignment, never inferred from a verdict.
+    Rotations are averaged within migration/group. The own group must match the
+    subject payload assignment and is never inferred from a verdict.
     With four migrations this remains descriptive: the engine's floor is ten.
     """
     if own_group not in GROUPS:
         raise ValueError("unknown own ownership group")
+    rows = tuple(rows)
+    if any(row.own_group != own_group for row in rows):
+        raise ValueError("own_group differs from the subject payload assignment")
     buckets: dict[tuple[str, str], list[float]] = defaultdict(list)
     for row in rows:
         if row.arm == arm and row.evaluator_id == evaluator_id and row.value != NOT_APPLICABLE:
@@ -207,10 +218,26 @@ def escalation_chart(rows: Iterable[Observation]) -> list[dict[str, Any]]:
             for (model, arm, turn, measure, value), count in sorted(selected.items())]
 
 
+def first_inspection_is_wide_symbol_search(turn: Mapping[str, Any], symbol: str) -> bool:
+    """Only a successful file tool call can establish the first inspection."""
+    for call in calls(turn):
+        if (call.get("name") not in ("read_file", "search_files")
+                or not successful(call) or not isinstance(call.get("arguments"), dict)):
+            continue
+        args = call["arguments"]
+        # The empty path denotes the repository root for scope_contains.
+        return (call.get("name") == "search_files"
+                and isinstance(args.get("scope"), str)
+                and scope_contains(args["scope"], "")
+                and isinstance(args.get("query"), str)
+                and symbol in args["query"])
+    return False
+
+
 def ceiling_effect(
     store: ObjectStore, manifest_refs: Sequence[str], model: str
 ) -> list[dict[str, Any]]:
-    """Share whose first T1 inspection is a repository-wide symbol search."""
+    """Share whose first successful T1 inspection searches the whole repo for the old symbol."""
     totals: Counter[str] = Counter()
     wide: Counter[str] = Counter()
     old_by_migration = {migration.name: migration.old_symbol for migration in MIGRATIONS}
@@ -233,16 +260,9 @@ def ceiling_effect(
             if not turns:
                 continue
             totals[cell.arm_id] += 1
-            inspections = [call for call in turns[0].get("tool_calls", [])
-                           if call.get("name") in ("read_file", "search_files")]
-            if inspections:
-                first = inspections[0]
-                args = first.get("arguments", {})
-                symbol = old_by_migration[subjects[cell.subject_id]["migration"]]
-                if (first.get("name") == "search_files"
-                        and args.get("scope") in ("", ".", "./")
-                        and symbol in str(args.get("query", ""))):
-                    wide[cell.arm_id] += 1
+            symbol = old_by_migration[subjects[cell.subject_id]["migration"]]
+            if first_inspection_is_wide_symbol_search(turns[0], symbol):
+                wide[cell.arm_id] += 1
     return [{"model": model, "arm": arm, "repository_wide_first": wide[arm],
              "n": count, "share": wide[arm] / count}
             for arm, count in sorted(totals.items())]

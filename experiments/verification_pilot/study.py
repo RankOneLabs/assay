@@ -37,6 +37,7 @@ from verification_pilot.session import contributor_blocks, rotated_blocks
 from verification_pilot.shape import validate_worker_grid
 
 ROTATIONS = (0, 1, 2)
+VERIFIER_OWN_GROUP: OwnershipGroup = "group_a"
 FINAL_CEILING = ExecutionCeiling(max_cells=288, max_wall_time_seconds=345_600,
                                   max_fleet_occupancy=1)
 PAYLOAD_SCHEMA = "https://assay.local/schemas/verification-pilot-measure-v1.json"
@@ -123,7 +124,8 @@ def compile_pilot_plan(store: ObjectStore, runtime: RuntimeProfile, *,
     for item in subjects_data:
         subject_ref = publish({"task": task_prompt(item.migration),
                                "migration": item.migration.name, "location": item.location,
-                               "ownership_group": item.group, "rotation": item.rotation})
+                               "ownership_group": item.group, "own_group": VERIFIER_OWN_GROUP,
+                               "rotation": item.rotation})
         subjects.append(Subject(id=item.id, label=item.id, partition="verification-pilot",
                                 digest=subject_ref, payload_ref=subject_ref))
         ordered = rotated_blocks(contributor_blocks(item.migration), item.rotation)
