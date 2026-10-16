@@ -10,7 +10,6 @@ import argparse
 import asyncio
 import base64
 import json
-import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -207,7 +206,7 @@ async def run_scripted(store: ObjectStore) -> tuple[PreparedPilot, Any]:
 
 async def run_live(
     store: ObjectStore, *, image: str, runs_root: Path, routing_config: Path,
-    route: str, api_key: str | None, smoke: bool = False
+    route: str, smoke: bool = False
 ) -> tuple[PreparedPilot, Any]:
     subjects = pilot_subjects()
     if route != "smithers-local":
@@ -217,7 +216,7 @@ async def run_live(
     bridge = PilotBridgeClient(
         image=image, runs_root=runs_root, run_label="verification-pilot-tier1",
         model_route=LOCAL_ROUTE, subjects={s.id: s for s in subjects},
-        settings=VerificationPilotSettings(), factory=factory, api_key=api_key,
+        settings=VerificationPilotSettings(), factory=factory,
     )
     worker, runtime = pilot_worker(store, bridge)
     smoke_ids = tuple(s.id for s in subjects if s.rotation == 0 and
@@ -268,7 +267,7 @@ def main() -> None:
         prepared, result = asyncio.run(run_live(
             store, image=args.image, runs_root=args.runs_root,
             routing_config=args.routing_config, route=args.route,
-            api_key=os.getenv("OPENROUTER_API_KEY"), smoke=args.command == "live-smoke",
+            smoke=args.command == "live-smoke",
         ))
     print(json.dumps({"plan_ref": prepared.authorization,
                       "result": type(result).__name__,
