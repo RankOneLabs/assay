@@ -10,6 +10,8 @@ from typing import Any
 
 import httpx
 import pytest
+from assay_pier_bridge.agent_loop import LoopBounds, SandboxLimits
+from assay_pier_bridge.repository_trial import agent_configuration
 
 from assay.adapters.pier import PierAdapter
 from assay.adapters.smithers import SmithersFactory
@@ -19,6 +21,7 @@ from assay.pier_protocol import RuntimeBinding
 from assay.store import ObjectStore
 from workflow_edit.bridge import (
     LOCAL_ROUTE,
+    WRITABLE_PREFIXES,
     ModelDispatchError,
     ModelTurn,
     SmithersTurnCompletion,
@@ -32,6 +35,19 @@ ROUTING = (
     "models:\n  qwen-coder-32b:\n    machines: [mcbain]\n"
     "    backend_tags:\n      vllm: {tag}\n"
 )
+
+
+def test_workflow_edit_agent_identity_digests_are_stable() -> None:
+    configuration = agent_configuration(
+        bounds=LoopBounds(), limits=SandboxLimits(),
+        writable_prefixes=WRITABLE_PREFIXES, model_route=LOCAL_ROUTE,
+    )
+    assert configuration["tools_sha256"] == (
+        "sha256:0c99814308ccae7f60e1b3746f40053394e719dfbee07e81e5e9c302d258b45c"
+    )
+    assert configuration["system_prompt_sha256"] == (
+        "sha256:ce5624bdacced169592ba1bb129d0c8ff78c660f747a5b430aa01a55325e4fdf"
+    )
 
 
 def _factory(tmp_path: Path, tag: str = "/models/coder") -> SmithersFactory:
