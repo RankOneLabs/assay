@@ -7,6 +7,7 @@ import sys
 import tarfile
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,6 +16,7 @@ import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
     CANDIDATE_STOP_CAUSES,
+    HAIKU_TURN_ROUTE,
     PILOT_TOOLS_REVIEW,
     PILOT_TOOLS_T1,
     TOOLS,
@@ -59,6 +61,124 @@ def _answer(name: str, arguments: dict[str, str], turn: int) -> dict[str, Any]:
         ],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.001},
     }
+
+
+def test_haiku_turn_request_body_is_byte_identical(tmp_path: Path) -> None:
+    messages = [{"role": "user", "content": "hello"}]
+    captured: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.content)
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "done"}, 1))
+
+    client = _client(tmp_path, handler)
+    client._openrouter_turn(messages, HAIKU_TURN_ROUTE)
+    # Literal copy of the body before route parameterization, including key order.
+    prior_body = {
+        "model": MODEL,
+        "messages": messages,
+        "tools": client.tools,
+        "tool_choice": "auto",
+        "max_tokens": client.bounds.max_output_tokens,
+        "stream": False,
+        "provider": {
+            "data_collection": "deny",
+            "zdr": True,
+            "only": ["amazon-bedrock"],
+            "order": ["amazon-bedrock"],
+            "allow_fallbacks": False,
+            "require_parameters": True,
+            "max_price": {"prompt": 0.25, "completion": 1.25, "request": 0},
+        },
+    }
+    assert captured == [
+        json.dumps(prior_body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ]
+
+
+def test_paid_turn_uses_the_current_pilot_tool_schema(tmp_path: Path) -> None:
+    captured: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "done"}, 1))
+
+    _client(tmp_path, handler)._turn(
+        [{"role": "user", "content": "Review"}], 1, None, PILOT_TOOLS_REVIEW
+    )
+    assert captured[0]["tools"] == PILOT_TOOLS_REVIEW
+
+
+def test_haiku_turn_uses_caller_loop_bounds(tmp_path: Path) -> None:
+    captured: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.content)
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "done"}, 1))
+
+    bounds = replace(
+        LoopBounds(), max_request_bytes=120_000, max_conversation_bytes=110_000,
+        max_output_tokens=9_000,
+    )
+    client = _client(tmp_path, handler, bounds=bounds)
+    client._openrouter_turn([{"role": "user", "content": "x" * 99_000}], HAIKU_TURN_ROUTE)
+    assert len(captured) == 1
+    assert len(captured[0]) > 98_304
+    assert json.loads(captured[0])["max_tokens"] == 9_000
+
+
+def test_turn_uses_route_limits_and_identity(tmp_path: Path) -> None:
+    route = replace(
+        HAIKU_TURN_ROUTE,
+        model="example/test",
+        provider="example",
+        provider_name="Example",
+        max_prompt_price_per_million=2,
+        max_completion_price_per_million=10,
+        max_output_tokens=128,
+        tool_choice="forced",
+    )
+    dispatched = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal dispatched
+        dispatched += 1
+        body = json.loads(request.content)
+        assert body["model"] == route.model
+        assert body["provider"]["only"] == [route.provider]
+        assert body["provider"]["max_price"] == {
+            "prompt": 2,
+            "completion": 10,
+            "request": 0,
+        }
+        assert body["max_tokens"] == 128
+        assert body["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "submit_output"},
+        }
+        return httpx.Response(200, json={**_answer("submit_output", {"summary": "done"}, 1),
+                                         "model": route.model, "provider": route.provider_name})
+
+    client = _client(tmp_path, handler)
+    assert client._openrouter_turn([{"role": "user", "content": "hello"}], route).cost_usd == 0.001
+    assert dispatched == 1
+
+    for mismatch in ("model", "provider"):
+        def wrong_identity(request: httpx.Request, field: str = mismatch) -> httpx.Response:
+            response = _answer("submit_output", {"summary": "done"}, 1)
+            response.update(model=route.model, provider=route.provider_name)
+            response[field] = "wrong"
+            return httpx.Response(200, json=response)
+
+        with pytest.raises(ValueError, match="provider_identity"):
+            _client(tmp_path, wrong_identity)._openrouter_turn(
+                [{"role": "user", "content": "hello"}], route
+            )
+
+    too_small = replace(route, max_request_body_bytes=1)
+    with pytest.raises(ValueError, match="request_limit"):
+        client._openrouter_turn([{"role": "user", "content": "hello"}], too_small)
+    assert dispatched == 1
 
 
 class FakeSandbox:
