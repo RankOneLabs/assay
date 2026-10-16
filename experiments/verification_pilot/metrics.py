@@ -38,10 +38,23 @@ def inspected_path(turn: Mapping[str, Any], path: str) -> bool:
 
 
 def inspected_group(turn: Mapping[str, Any], migration: Migration, group: OwnershipGroup) -> bool:
-    return any(
+    if any(
         owner == group and inspected_path(turn, path)
         for path, owner in migration.ownership_groups.items()
-    )
+    ):
+        return True
+    for call in calls(turn):
+        if call.get("name") != "read_file" or not successful(call):
+            continue
+        args = call.get("arguments")
+        if not isinstance(args, dict) or not isinstance(args.get("path"), str):
+            continue
+        try:
+            if migration.ownership_group_for(args["path"]) == group:
+                return True
+        except ValueError:
+            pass
+    return False
 
 
 def ownership_gap(turn: Mapping[str, Any], migration: Migration) -> float:
@@ -80,10 +93,11 @@ def unclassifiable_command_rate(turn: Mapping[str, Any]) -> float | None:
     )
 
 
-def ran_tests(turn: Mapping[str, Any]) -> bool:
+def ran_tests(turn: Mapping[str, Any], *, require_success: bool = False) -> bool:
     return any(
         call.get("name") == "run_command"
-        and successful(call)
+        and type(call.get("exit_code")) is int
+        and (not require_success or successful(call))
         and isinstance(call.get("arguments"), dict)
         and bool(re.search(r"(?:^|\s)(?:bun|npm|npx|pnpm|yarn)\s+(?:run\s+)?test\b",
                            str(call["arguments"].get("command", ""))))
@@ -94,7 +108,19 @@ def ran_tests(turn: Mapping[str, Any]) -> bool:
 def changed_paths(diff: str | None) -> set[str]:
     if diff is None:
         return set()
-    return set(re.findall(r"^\+\+\+ b/(.+)$", diff, flags=re.MULTILINE))
+    return set(re.findall(r"^(?:\+\+\+ b/|--- a/)(.+)$", diff, flags=re.MULTILINE))
+
+
+def test_patch_snapshot(diff: str | None) -> dict[str, str]:
+    """Test-file patches in a cumulative workspace diff, keyed by old or new path."""
+    if not diff:
+        return {}
+    snapshot: dict[str, str] = {}
+    for patch in re.split(r"(?=^diff --git )", diff, flags=re.MULTILINE):
+        for path in changed_paths(patch):
+            if path.startswith("tests/"):
+                snapshot[path] = patch
+    return snapshot
 
 
 def changed_line(diff: str | None, path: str, line: int) -> bool:
@@ -104,7 +130,7 @@ def changed_line(diff: str | None, path: str, line: int) -> bool:
     current: str | None = None
     old_line = 0
     for text in diff.splitlines():
-        if text.startswith("+++ b/"):
+        if text.startswith("--- a/") or text.startswith("+++ b/"):
             current = text[6:]
         elif text.startswith("@@ "):
             match = re.search(r"@@ -(\d+)", text)
@@ -132,22 +158,41 @@ def remnant_repaired(diff: str | None, remnant: Remnant) -> bool:
     )
     current: str | None = None
     old_line = 0
-    removed = False
-    added = False
-    for text in diff.splitlines():
-        if text.startswith("+++ b/"):
+    removed: list[tuple[int, str]] = []
+    added: list[str] = []
+
+    def repaired_block() -> bool:
+        for offset, (line, source) in enumerate(removed):
+            if line == remnant.location.line and old_token.search(source):
+                return offset >= len(added) or not old_token.search(added[offset])
+        return False
+
+    for text in [*diff.splitlines(), ""]:
+        if text.startswith("--- a/"):
+            if repaired_block():
+                return True
+            removed, added = [], []
+            current = text[6:]
+        elif text.startswith("+++ b/"):
             current = text[6:]
         elif text.startswith("@@ "):
+            if repaired_block():
+                return True
+            removed, added = [], []
             match = re.search(r"@@ -(\d+)", text)
             if match:
                 old_line = int(match.group(1))
         elif text.startswith("-") and not text.startswith("---"):
-            if current == remnant.location.path and old_line == remnant.location.line:
-                removed = bool(old_token.search(text[1:]))
+            if current == remnant.location.path:
+                removed.append((old_line, text[1:]))
             old_line += 1
         elif text.startswith("+") and not text.startswith("+++"):
-            if current == remnant.location.path and old_token.search(text[1:]):
-                added = True
-        elif text.startswith(" "):
-            old_line += 1
-    return removed and not added
+            if current == remnant.location.path:
+                added.append(text[1:])
+        else:
+            if repaired_block():
+                return True
+            removed, added = [], []
+            if text.startswith(" "):
+                old_line += 1
+    return False
