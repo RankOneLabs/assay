@@ -108,7 +108,9 @@ def measure_local_on_policy(
                             "error": f"{type(error).__name__}: {error}"})
     return {"route": "smithers-local", "migration": "json_value",
             "discarded": sum(bool(item["discard"]) for item in results),
-            "generated": len(results), "blocks": results}
+            "attempted": len(results),
+            "submitted": sum("block" in item for item in results),
+            "blocks": results}
 
 
 def subject_truth(subject: PilotSubject) -> GroundTruth:

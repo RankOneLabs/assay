@@ -52,3 +52,47 @@ The Part 2 anchor list is not in this repository. The committed sample
 The test remains skipped until the 2b population is frozen. `DoseSite.symbol`
 is the caller being treated, not the delegated-to anchor, so this manifest
 cannot establish symbol-level overlap.
+
+## Study wiring and capacity
+
+Rotation is a subject attribute. The 16 migration/location base cases are
+rendered in three block orders, giving 48 subject digests, two Tier 1 arms,
+one worker repeat, and 96 cells per model. This removes within-cell sampling
+repeats. Remaining variance is between subjects. The brief's phrase “per
+subject, aggregated over the three rotations” now means 48 paired observations
+for H1 and H2, increasing the reported n from 16 to 48. The same subject and
+arm pair always has one realization, so `ExecutionOutcome.consistent_status`
+can bind every input to the plan.
+
+The snapshot declares Tier 1, Tier 2, and Tier 3 arms together. The Tier 1
+plan excludes all Tier 2 and Tier 3 pairs and binds the final capacity ceiling
+of 288 cells / 345,600 seconds / one active worker. A later shard changes only
+its exclusions or population to retain the 0.3.0 report fingerprint. On-policy
+generation remains outside the cell runtime. The local Tier 2 generation probe
+used `json_value` at rotation 0, one assigned location in each of four
+ownership groups, on `qwen-coder-32b` via Smithers. Each generator started
+from the otherwise complete rename with one old spelling in its share. It
+made four generation attempts, of which three submitted blocks, and
+**discarded 4/4 attempts (100%)**: groups A, B, and D submitted but left the old
+spelling in their shares; group C hit `turn_tool_call_limit`. All three
+submitted candidates passed 86 Bun tests after the pinned fixture dependencies
+were installed; no candidate edited outside its share. The generated block
+titles were “Attempt to repair JsonValue spelling” (A and B) and “Fix JsonValue
+Typo in dev-flow-stage-contracts.test.ts” (D). Their trajectory hashes were,
+respectively, `sha256:963a17734b1940a469f8009c92502c6ac87509e7a36aea6ecc1a070beb5a350e`,
+`sha256:bae657eb6647cc6be20835e0cbfa081d8f09ae24c76a656157f60e6eb10bc6bb`,
+and `sha256:6ea0bd2eb218f7b162701f2f55cdeb791a23ce351d8c922914c35867ffdb652f`.
+This is a measured local discard rate, but the observed acceptance count of
+zero gives no viable Tier 2 supply estimate.
+
+No OpenRouter credential is present in this build environment, so the paid
+route's discard rate and capacity estimate cannot be reported as observed.
+The 288-cell ceiling is the conservative full-grid bound pending that
+measurement, and the missing rate is an explicit gate before Tier 2 cells.
+The frontier model and paid dollar budget
+are owned with `vp-frontier-route`; if that route is dropped, the pilot ships
+single-model and excludes the frontier arm alongside deferred tiers.
+
+The T1 repository-wide search threshold and the per-route hand-review gate
+were precommitted in `SMOKE.md` before any live cell. H1 is reported separately
+per model, and a local route that fails the gate is excluded from interpretation.
