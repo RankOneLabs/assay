@@ -22,6 +22,7 @@ from verification_pilot.fixture import (
     load_fixture,
 )
 from verification_pilot.ground_truth import MASKING_TEST_PATH, build_specimens
+from verification_pilot.migrations import GROUPS, MIGRATIONS
 
 
 def test_pinned_tree_is_copied_bounded_and_digested() -> None:
@@ -38,6 +39,7 @@ def test_pinned_tree_is_copied_bounded_and_digested() -> None:
 
 def test_ground_truth_names_every_remnant_and_decoy() -> None:
     trees, truth = build_specimens(load_fixture())
+    by_name = {migration.name: migration for migration in MIGRATIONS}
     assert {remnant.kind for remnant in truth.remnants} == {
         "stale_type_reference",
         "stale_type_import",
@@ -50,11 +52,16 @@ def test_ground_truth_names_every_remnant_and_decoy() -> None:
     }
     for record in (*truth.remnants, *truth.decoys):
         location = record.location
+        migration = by_name[location.migration]
+        directory = str(Path(location.path).parent)
+        directories = sorted({str(Path(site).parent) for site in migration.use_sites})
+        assert directory in directories
+        expected_group = GROUPS[(directories.index(directory) + migration.rotation) % len(GROUPS)]
         assert (
             location.symbol
             in trees[location.migration][location.path].splitlines()[location.line - 1]
         )
-        assert location.ownership_group.startswith("group_")
+        assert location.ownership_group == expected_group
 
 
 def test_masking_test_passes_with_unmigrated_key(tmp_path: Path) -> None:

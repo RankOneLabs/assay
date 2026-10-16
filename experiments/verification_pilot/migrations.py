@@ -22,15 +22,18 @@ class Migration:
     use_sites: tuple[str, ...]
     rotation: int
 
+    def ownership_group_for(self, path: str) -> OwnershipGroup:
+        """Return the rotated group for a path in a participating directory."""
+        directory = path.rsplit("/", 1)[0]
+        directories = sorted({site.rsplit("/", 1)[0] for site in self.use_sites})
+        if directory not in directories:
+            raise ValueError(f"{self.name}: unassigned directory {directory}")
+        return GROUPS[(directories.index(directory) + self.rotation) % len(GROUPS)]
+
     @property
     def ownership_groups(self) -> dict[str, OwnershipGroup]:
         """Assign each touched file, rotating directory ownership per migration."""
-        directories = sorted({path.rsplit("/", 1)[0] for path in self.use_sites})
-        group_by_directory = {
-            directory: GROUPS[(position + self.rotation) % len(GROUPS)]
-            for position, directory in enumerate(directories)
-        }
-        return {path: group_by_directory[path.rsplit("/", 1)[0]] for path in self.use_sites}
+        return {path: self.ownership_group_for(path) for path in self.use_sites}
 
 
 MIGRATIONS: tuple[Migration, ...] = (

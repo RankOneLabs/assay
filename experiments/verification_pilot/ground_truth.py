@@ -129,7 +129,7 @@ def build_specimens(fixture: PilotFixture) -> tuple[dict[str, dict[str, str]], G
                 FALLBACK_PATH,
                 _line(FALLBACK_SOURCE, '["slot_bindings"]'),
                 key.old_symbol,
-                key.ownership_groups[key.defining_module],
+                key.ownership_group_for(FALLBACK_PATH),
             ),
         )
     )
@@ -157,15 +157,24 @@ def build_specimens(fixture: PilotFixture) -> tuple[dict[str, dict[str, str]], G
                 value.ownership_groups[discriminant_path],
             ),
         ),
-        Decoy("comment", Location(imported.name, note_path, 1, "StageInstanceId", "group_b")),
+        Decoy(
+            "comment",
+            Location(
+                imported.name,
+                note_path,
+                1,
+                imported.old_symbol,
+                imported.ownership_group_for(note_path),
+            ),
+        ),
         Decoy(
             "masking_test",
             Location(
                 key.name,
                 MASKING_TEST_PATH,
                 _line(MASKING_TEST, 'JSON.parse(\'{"slot_bindings"'),
-                "slot_bindings",
-                "group_c",
+                key.old_symbol,
+                key.ownership_group_for(MASKING_TEST_PATH),
             ),
         ),
     )
