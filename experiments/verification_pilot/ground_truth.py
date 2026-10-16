@@ -79,7 +79,7 @@ def build_specimens(fixture: PilotFixture) -> tuple[dict[str, dict[str, str]], G
     line_index = next(
         i
         for i, line in enumerate(source.splitlines())
-        if "PilotJsonValue" in line and "import" not in line
+        if line.startswith("export type RunContext =") and reference.new_symbol in line
     )
     lines = source.splitlines(keepends=True)
     lines[line_index] = lines[line_index].replace("PilotJsonValue", "JsonValue", 1)

@@ -50,6 +50,13 @@ def test_ground_truth_names_every_remnant_and_decoy() -> None:
         "comment",
         "masking_test",
     }
+    stale_type = next(r for r in truth.remnants if r.kind == "stale_type_reference")
+    stale_location = stale_type.location
+    stale_source = trees[stale_location.migration][stale_location.path]
+    assert stale_source.splitlines()[stale_location.line - 1] == (
+        "export type RunContext = { readonly [key: string]: JsonValue };"
+    )
+    assert "PilotJsonValue" in stale_source.splitlines()[5]
     for record in (*truth.remnants, *truth.decoys):
         location = record.location
         migration = by_name[location.migration]
