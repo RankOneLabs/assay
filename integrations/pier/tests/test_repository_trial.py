@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from assay_pier_bridge.agent_loop import (
+    PILOT_TOOL_SCHEMAS,
     LoopBounds,
     ModelTurn,
     RepositoryAgentClient,
@@ -101,6 +102,57 @@ def test_custom_agent_configuration_digests_tools_prompt_and_prefix(tmp_path: Pa
     assert configuration["tools_sha256"] == digest_bytes(canonical_json(tools))
     assert configuration["system_prompt_sha256"] == digest_bytes(b"Pilot prompt")
     assert configuration["message_prefix_sha256"] == digest_bytes(canonical_json(prefix))
+
+
+def test_pilot_configuration_and_sealed_per_turn_submissions(tmp_path: Path) -> None:
+    turns = ("Review the first change", "Check all remaining work")
+    completion = Scripted(
+        [_call("submit_output", {"title": "Change", "body": "Body"}, 1)],
+        [_call("submit_output", {"verdict": "incomplete", "remaining_v1": "one",
+                                  "checks_performed": "read"}, 2)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "test"}, 3)],
+    )
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=completion, pilot_mode=True, next_user_turns=turns,
+        writable_prefixes=("src/", "tests/"),
+        max_tool_calls_per_turn=15, max_tool_calls_per_cell=40,
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    configuration = agent_configuration(
+        bounds=agent.bounds, limits=LIMITS, writable_prefixes=agent.writable_prefixes,
+        model_route=LOCAL, pilot_mode=True, next_user_turns=turns,
+        max_tool_calls_per_turn=agent.max_tool_calls_per_turn,
+        max_tool_calls_per_cell=agent.max_tool_calls_per_cell,
+    )
+    assert configuration["tools_sha256"] == digest_bytes(canonical_json(PILOT_TOOL_SCHEMAS))
+    assert configuration["turn_prompts_sha256"] == digest_bytes(canonical_json(turns))
+    result = BridgeRuntime(RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration=configuration,
+    )).run_cell(_request())
+    assert isinstance(result.outcome, CandidateSubmission)
+    sealed = json.loads(result.artifacts["result.json"])
+    assert sealed["summary"] == "Change"
+    assert [entry["verdict"] for entry in sealed["submissions"][1:]] == [
+        "incomplete", "complete"
+    ]
+    trajectory = json.loads(result.artifacts["trajectory.json"])
+    assert len(trajectory["turns"]) == 3
+    assert all(turn["workspace_diff"] == "" for turn in trajectory["turns"])
+
+
+def test_timed_out_run_command_counts_as_unclassified(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("run_command", {"command": "hang"}, 1)],
+        [_call("submit_output", {"summary": "done"}, 2)],
+    )
+    result = _runtime(tmp_path, completion).run_cell(_request())
+    assert isinstance(result.outcome, CandidateSubmission)
+    sealed = json.loads(result.artifacts["result.json"])
+    assert sealed["run_command_calls"] == 1
+    assert sealed["run_command_scope_unclassified"] == 1
+    assert sealed["run_command_scope_unclassified_rate"] == 1.0
 
 
 def test_prefilled_conversation_limit_is_a_candidate_cause(tmp_path: Path) -> None:

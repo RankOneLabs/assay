@@ -2,9 +2,10 @@
 
 The host owns the model connection. Only a fresh, network-disabled container
 touches the cell's repository copy. No evaluator or hidden-test mount is passed
-to that container. The fixed tool set is read_file, write_file,
-replace_in_file, run_command, and submit_output; each result is returned to
-the same cell's conversation.
+to that container. The workflow-edit tool set is read_file, write_file,
+replace_in_file, run_command, and submit_output. The verification pilot adds
+search_files and turn-specific submit_output schemas; results return to the
+same cell's conversation.
 
 The paid OpenRouter route is built in. Every other route is a ``TurnCompletion``
 the caller injects, so the backend that drives turns is the one whose identity
@@ -17,6 +18,7 @@ import io
 import json
 import math
 import os
+import re
 import selectors
 import shutil
 import subprocess
@@ -58,6 +60,16 @@ SYSTEM_PROMPT = (
     "files are the submission. Only this cell's repository is available; hidden tests and "
     "reference answers are never available. Do not seek network access or install "
     "packages."
+)
+PILOT_SYSTEM_PROMPT = (
+    "You are editing one repository copy in /workspace across three user turns. "
+    "Use read_file, search_files, write_file, replace_in_file, and run_command "
+    "to inspect, edit, and check it. At T1 call submit_output with title and body. "
+    "After the next user turn, submit a verdict (complete, incomplete, or unsure), "
+    "remaining_v1, and checks_performed at T2 and again at T3. The repository "
+    "persists between turns. Only this cell's repository is available; hidden "
+    "tests and reference answers are never available. Do not seek network "
+    "access or install packages."
 )
 
 # A tool command may not outlive this, nor the cell's remaining budget.
@@ -242,6 +254,8 @@ class ToolOutput:
     text: str
     original_bytes: int
     truncated: bool
+    read_range: tuple[int, int] | None = None
+    page_truncated: bool = False
 
 
 class CellStorage(Protocol):
@@ -681,6 +695,30 @@ TOOLS = [
         },
     ),
 ]
+
+# The verification pilot has a separate, explicitly versioned tool surface.
+# Keeping TOOLS intact preserves the workflow-edit study's pinned identity.
+_SEARCH_FILES_TOOL = _tool(
+    "search_files",
+    "Search UTF-8 repository text for a literal query within an explicit relative "
+    "file or directory scope. Use '.' for the whole repository.",
+    {"scope": {"type": "string"}, "query": {"type": "string"}},
+)
+_T1_SUBMIT_TOOL = _tool(
+    "submit_output", "End T1 and submit the proposed change title and body.",
+    {"title": {"type": "string"}, "body": {"type": "string"}},
+)
+_REVIEW_SUBMIT_TOOL = _tool(
+    "submit_output", "End this review turn with a verdict and evidence.",
+    {
+        "verdict": {"type": "string", "enum": ["complete", "incomplete", "unsure"]},
+        "remaining_v1": {"type": "string"},
+        "checks_performed": {"type": "string"},
+    },
+)
+PILOT_TOOLS_T1 = [*deepcopy(TOOLS[:-1]), _SEARCH_FILES_TOOL, _T1_SUBMIT_TOOL]
+PILOT_TOOLS_REVIEW = [*deepcopy(TOOLS[:-1]), _SEARCH_FILES_TOOL, _REVIEW_SUBMIT_TOOL]
+PILOT_TOOL_SCHEMAS = {"T1": PILOT_TOOLS_T1, "T2_T3": PILOT_TOOLS_REVIEW}
 _FORBIDDEN_REPOSITORY_PARTS = frozenset({"hidden_tests", "hidden-tests", "reference_solutions"})
 # Causes that end a cell because of what the model did, not the harness.
 CANDIDATE_STOP_CAUSES = frozenset(
@@ -692,6 +730,8 @@ CANDIDATE_STOP_CAUSES = frozenset(
         "output_token_limit",
         "conversation_limit",
         "request_limit",
+        "turn_tool_call_limit",
+        "cell_tool_call_limit",
     }
 )
 
@@ -705,6 +745,37 @@ def _bounded_text(text: str, limit: int) -> tuple[str, bool]:
     if len(encoded) <= limit:
         return text, False
     return encoded[:limit].decode("utf-8", errors="ignore"), True
+
+
+def _submission(arguments: dict[str, Any], logical_turn: int, pilot_mode: bool) -> dict[str, str]:
+    """Validate exactly the schema advertised for this turn."""
+    if not pilot_mode:
+        if set(arguments) == {"summary"} and isinstance(arguments["summary"], str):
+            return {"summary": arguments["summary"]}
+        raise ToolArgumentError("submit_output takes only a summary")
+    fields = {"title", "body"} if logical_turn == 1 else {
+        "verdict", "remaining_v1", "checks_performed"
+    }
+    if set(arguments) != fields or any(not isinstance(value, str) for value in arguments.values()):
+        raise ToolArgumentError(f"submit_output requires {', '.join(sorted(fields))}")
+    if logical_turn > 1 and arguments["verdict"] not in {"complete", "incomplete", "unsure"}:
+        raise ToolArgumentError("verdict must be complete, incomplete, or unsure")
+    return arguments
+
+
+def _read_coverage(
+    arguments: dict[str, Any], output: ToolOutput, host_truncated: bool
+) -> dict[str, Any]:
+    """Only count source lines whose complete bytes reached the model."""
+    if not output.text.startswith("exit=0\n"):
+        return {}
+    start = arguments.get("start_line") or 1
+    end = (
+        output.read_range[1]
+        if output.read_range is not None and not host_truncated else start - 1
+    )
+    return {"path": arguments["path"], "start_line": start,
+            "end_line": end, "complete": not (host_truncated or output.page_truncated)}
 
 
 def _prepare_container_writes(workspace: Path, cache: Path) -> None:
@@ -743,6 +814,8 @@ def _line_number(arguments: dict[str, Any], key: str) -> int | None:
 TOOL_REFUSED_EXIT = 3
 # Room a paged read keeps for its truncation note inside the output cap.
 _READ_NOTE_BYTES = 256
+# Internal read metadata is stripped before the model sees the tool result.
+_READ_META_BYTES = 256
 
 # Runs in the container. Lines split on "\n" only, so a line number means the
 # same thing to the model, to ``replace_in_file``, and to an editor. A page
@@ -793,6 +866,9 @@ elif following <= last:
         f'\\n[truncated: line {start} alone exceeds the tool output limit and only its first '
         f'{len(head.encode("utf-8"))} bytes are shown; {rest}]'
     )
+sys.stdout.buffer.write(
+    f'@assay-read:{start}:{following - 1}:{int(following <= last)}\\n'.encode('ascii')
+)
 sys.stdout.buffer.write(out.encode('utf-8'))
 """.replace("@REFUSED@", str(TOOL_REFUSED_EXIT)).replace("@NOTE@", str(_READ_NOTE_BYTES))
 
@@ -828,6 +904,44 @@ target.write_bytes(text.replace(edit['old'], edit['new'], 1).encode('utf-8'))
 sys.stdout.buffer.write(f'replaced 1 occurrence in {relative}'.encode('utf-8'))
 """.replace("@REFUSED@", str(TOOL_REFUSED_EXIT))
 
+_SEARCH_FILES = """
+import os
+import sys
+from pathlib import Path
+
+root = Path('/workspace').resolve()
+scope, query = sys.argv[1:3]
+target = root if scope == '.' else root / scope
+if not target.resolve().is_relative_to(root):
+    sys.stdout.write('scope resolves outside /workspace')
+    raise SystemExit(@REFUSED@)
+if not target.exists():
+    sys.stdout.write(f'scope does not exist: {scope}')
+    raise SystemExit(@REFUSED@)
+def scoped_paths():
+    if target.is_file():
+        yield target
+        return
+    for directory_name, dirs, files in os.walk(target, followlinks=False):
+        dirs[:] = sorted(dirs)
+        directory = Path(directory_name)
+        for name in sorted(files):
+            yield directory / name
+
+paths = scoped_paths()
+for path in paths:
+    if path.is_symlink() or not path.is_file():
+        continue
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()
+    except (OSError, UnicodeDecodeError):
+        continue
+    relative = path.relative_to(root).as_posix()
+    for number, line in enumerate(lines, 1):
+        if query in line:
+            sys.stdout.write(f'{relative}:{number}:{line}\\n')
+""".replace("@REFUSED@", str(TOOL_REFUSED_EXIT))
+
 
 def _execute_tool(
     sandbox: ToolSandbox,
@@ -836,6 +950,19 @@ def _execute_tool(
     max_output_bytes: int,
     timeout_s: float,
 ) -> ToolOutput:
+    if name == "search_files" and set(arguments) == {"scope", "query"}:
+        scope, query = arguments["scope"], arguments["query"]
+        if not isinstance(scope, str) or not isinstance(query, str) or not query:
+            raise ToolArgumentError("scope and non-empty query must be strings")
+        if scope != ".":
+            try:
+                scope = safe_relative_path(scope).as_posix()
+            except ValueError as error:
+                raise ToolArgumentError(str(error)) from error
+        return sandbox.execute(
+            ["python", "-c", _SEARCH_FILES, scope, query],
+            max_output_bytes=max_output_bytes, timeout_s=timeout_s,
+        )
     if name == "read_file" and set(arguments) <= {"path", "start_line", "end_line"}:
         start = _line_number(arguments, "start_line") or 1
         end = _line_number(arguments, "end_line")
@@ -843,11 +970,24 @@ def _execute_tool(
             raise ToolArgumentError("end_line must not be before start_line")
         # The script's page budget leaves room for the sandbox's exit prefix.
         budget = max_output_bytes - len(f"exit={TOOL_REFUSED_EXIT}\n")
-        return sandbox.execute(
+        output = sandbox.execute(
             ["python", "-c", _READ_FILE, _relative_path(arguments), str(start), str(end or 0),
              str(budget)],
-            max_output_bytes=max_output_bytes,
+            max_output_bytes=max_output_bytes + _READ_META_BYTES,
             timeout_s=timeout_s,
+        )
+        if not output.text.startswith("exit=0\n"):
+            return output
+        header, separator, body = output.text.removeprefix("exit=0\n").partition("\n")
+        match = re.fullmatch(r"@assay-read:(\d+):(\d+):([01])", header)
+        if not separator or match is None:
+            raise RuntimeError("read_metadata")
+        return ToolOutput(
+            f"exit=0\n{body}",
+            output.original_bytes - len(header.encode("ascii")) - 1,
+            output.truncated,
+            read_range=(int(match.group(1)), int(match.group(2))),
+            page_truncated=match.group(3) == "1",
         )
     if name == "replace_in_file" and set(arguments) == {"path", "old", "new"}:
         old, new = arguments["old"], arguments["new"]
@@ -888,7 +1028,7 @@ def _execute_tool(
 
 
 # Tools whose in-container script may refuse a call with ``TOOL_REFUSED_EXIT``.
-_SCRIPTED_TOOLS = frozenset({"read_file", "replace_in_file"})
+_SCRIPTED_TOOLS = frozenset({"read_file", "replace_in_file", "search_files"})
 
 
 class ConversationLimitError(ValueError):
@@ -977,6 +1117,10 @@ class RepositoryAgentClient:
     system_prompt: str = SYSTEM_PROMPT
     message_prefix: tuple[dict[str, Any], ...] = ()
     writable_prefixes: tuple[str, ...] = ()
+    pilot_mode: bool = False
+    next_user_turns: tuple[str, ...] = ()
+    max_tool_calls_per_turn: int = 0
+    max_tool_calls_per_cell: int = 0
     transport: httpx.BaseTransport | None = None
     sandbox_factory: SandboxFactory = DockerToolSandbox
     storage_factory: Callable[[Path, int], CellStorage] = QuotaCellStorage
@@ -998,6 +1142,22 @@ class RepositoryAgentClient:
             raise ValueError("locked image identity required")
         if self.bounds.max_turns != 20 or min(asdict(self.bounds).values()) < 1:
             raise ValueError("invalid fixed loop bounds")
+        if self.pilot_mode:
+            if len(self.next_user_turns) != 2 or not all(
+                isinstance(prompt, str) and prompt.strip() for prompt in self.next_user_turns
+            ):
+                raise ValueError("pilot mode requires two next user turns")
+            self.tools = deepcopy(PILOT_TOOLS_T1)
+            if self.system_prompt == SYSTEM_PROMPT:
+                self.system_prompt = PILOT_SYSTEM_PROMPT
+            if not self.writable_prefixes:
+                raise ValueError("pilot mode requires writable prefixes")
+            if min(self.max_tool_calls_per_turn, self.max_tool_calls_per_cell) < 1:
+                raise ValueError("pilot mode requires positive tool call limits")
+        elif self.next_user_turns:
+            raise ValueError("next user turns require pilot mode")
+        if self.max_tool_calls_per_turn < 0 or self.max_tool_calls_per_cell < 0:
+            raise ValueError("tool call limits must not be negative")
         if len(_json_bytes(self.tools)) > self.bounds.max_tool_schema_bytes:
             raise ValueError("tool_schema_limit")
         for prefix in self.writable_prefixes:
@@ -1029,25 +1189,27 @@ class RepositoryAgentClient:
         raise ValueError("unverifiable_transport_retries")
 
     def _turn(
-        self, messages: list[dict[str, Any]], turn: int, deadline: float | None
+        self, messages: list[dict[str, Any]], turn: int, deadline: float | None,
+        tools: list[dict[str, Any]],
     ) -> ModelTurn:
         if self.completion is not None:
             return self.completion(
                 messages=messages,
-                tools=self.tools,
+                tools=tools,
                 max_tokens=self.bounds.max_output_tokens,
                 turn=turn,
                 deadline=deadline,
             )
-        return self._openrouter_turn(messages, HAIKU_TURN_ROUTE)
+        return self._openrouter_turn(messages, HAIKU_TURN_ROUTE, tools)
 
     def _openrouter_turn(
-        self, messages: list[dict[str, Any]], route: OpenRouterTurnRoute
+        self, messages: list[dict[str, Any]], route: OpenRouterTurnRoute = HAIKU_TURN_ROUTE,
+        tools: list[dict[str, Any]] | None = None,
     ) -> ModelTurn:
         body = {
             "model": route.model,
             "messages": messages,
-            "tools": self.tools,
+            "tools": self.tools if tools is None else tools,
             "tool_choice": (
                 "auto"
                 if route.tool_choice == "auto"
@@ -1169,6 +1331,7 @@ class RepositoryAgentClient:
         trajectory: dict[str, Any] = {
             "events": [],
             "messages": [],
+            "turns": [],
             "config": asdict(self.resolved_config),
         }
         events: list[dict[str, Any]] = trajectory["events"]
@@ -1206,6 +1369,16 @@ class RepositoryAgentClient:
         ]
         prefix_length = len(messages)
         prompt_tokens = completion_tokens = requests = 0
+        cell_tool_calls = 0
+        logical_turn = 1
+        turn_tool_calls = 0
+        turn_record: dict[str, Any] = {
+            "turn": "T1", "tool_calls": [], "submission": None,
+            "workspace_diff": None,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "requests": 0,
+                      "cost_usd": 0.0 if self.model_route.paid_route_reachable else None},
+        }
+        trajectory["turns"].append(turn_record)
         cost_usd: float | None = 0.0 if self.model_route.paid_route_reachable else None
         primary_failed = False
         captured = False
@@ -1271,18 +1444,23 @@ class RepositoryAgentClient:
             )
             for turn in range(1, self.bounds.max_turns + 1):
                 remaining()
+                turn_tools = (
+                    PILOT_TOOLS_T1 if logical_turn == 1 else PILOT_TOOLS_REVIEW
+                ) if self.pilot_mode else self.tools
                 _shrink_conversation(
                     messages, self.bounds.max_conversation_bytes, events, prefix_length
                 )
                 if len(_json_bytes(messages)) > self.bounds.max_conversation_bytes:
                     raise ValueError("conversation_limit")
-                if len(_json_bytes(messages)) + len(_json_bytes(self.tools)) > (
+                if len(_json_bytes(messages)) + len(_json_bytes(turn_tools)) > (
                     self.bounds.max_request_bytes
                 ):
                     raise ValueError("request_limit")
                 requests += 1  # Count a failed dispatch; never retry it.
+                turn_usage: dict[str, int | float | None] = turn_record["usage"]
+                turn_usage["requests"] = int(turn_usage["requests"] or 0) + 1
                 started = time.monotonic()
-                answer = self._turn(messages, turn, deadline)
+                answer = self._turn(messages, turn, deadline, turn_tools)
                 message = answer.message
                 if (
                     not isinstance(message, dict)
@@ -1301,6 +1479,14 @@ class RepositoryAgentClient:
                 completion_tokens += answer.completion_tokens
                 if cost_usd is not None and answer.cost_usd is not None:
                     cost_usd += answer.cost_usd
+                turn_usage["prompt_tokens"] = (
+                    int(turn_usage["prompt_tokens"] or 0) + answer.prompt_tokens
+                )
+                turn_usage["completion_tokens"] = (
+                    int(turn_usage["completion_tokens"] or 0) + answer.completion_tokens
+                )
+                if turn_usage["cost_usd"] is not None and answer.cost_usd is not None:
+                    turn_usage["cost_usd"] = float(turn_usage["cost_usd"]) + answer.cost_usd
                 calls = message.get("tool_calls") or []
                 events.append({
                     "kind": "model_request", "turn": turn,
@@ -1340,16 +1526,28 @@ class RepositoryAgentClient:
                     "tool_calls": replayed,
                 })
                 for call_index, call in enumerate(replayed):
+                    if self.pilot_mode and turn_tool_calls >= self.max_tool_calls_per_turn:
+                        raise ValueError("turn_tool_call_limit")
+                    if self.pilot_mode and cell_tool_calls >= self.max_tool_calls_per_cell:
+                        raise ValueError("cell_tool_call_limit")
+                    turn_tool_calls += 1
+                    cell_tool_calls += 1
                     call_id = call["id"]
                     name, raw = call["function"]["name"], call["function"]["arguments"]
+                    tool_started = time.monotonic()
+                    tool_trace: dict[str, Any] = {
+                        "id": call_id, "name": name, "arguments": None,
+                        "returned_text": None, "exit_code": None,
+                        "seconds": 0.0, "truncated": False,
+                    }
+                    turn_record["tool_calls"].append(tool_trace)
                     try:
                         arguments = json.loads(raw) if isinstance(raw, str) else raw
+                        tool_trace["arguments"] = arguments
                         if not isinstance(name, str) or not isinstance(arguments, dict):
                             raise ToolArgumentError("tool call needs a name and object arguments")
                         if name == "submit_output":
-                            summary = arguments.get("summary")
-                            if set(arguments) != {"summary"} or not isinstance(summary, str):
-                                raise ToolArgumentError("submit_output takes only a summary")
+                            submission = _submission(arguments, logical_turn, self.pilot_mode)
                             if call_index != len(calls) - 1:
                                 raise ToolArgumentError("submit_output must be the last call")
                             events.append({"kind": "submit_requested", "turn": turn})
@@ -1358,19 +1556,42 @@ class RepositoryAgentClient:
                                 baseline, workspace,
                                 resource_cause=_resource_cause(peaks, oom_kills_seen),
                             )
+                            tool_trace["returned_text"] = "submitted"
+                            tool_trace["exit_code"] = 0
+                            tool_trace["seconds"] = round(time.monotonic() - tool_started, 3)
+                            turn_record["submission"] = submission
+                            turn_record["workspace_diff"] = patch.decode("utf-8")
+                            turn_record["baseline_tree_digest"] = before_digest
+                            turn_record["tree_digest"] = after_digest
                             trajectory["messages"] = messages
                             events.append({"kind": "submitted", "turn": turn})
+                            if self.pilot_mode and logical_turn < 3:
+                                messages.append({
+                                    "role": "tool", "tool_call_id": call_id,
+                                    "content": "submission recorded",
+                                })
+                                messages.append({
+                                    "role": "user",
+                                    "content": self.next_user_turns[logical_turn - 1],
+                                })
+                                prefix_length = len(messages)
+                                logical_turn += 1
+                                turn_tool_calls = 0
+                                captured = False
+                                turn_record = {
+                                    "turn": f"T{logical_turn}", "tool_calls": [],
+                                    "submission": None, "workspace_diff": None,
+                                    "usage": {"prompt_tokens": 0, "completion_tokens": 0,
+                                              "requests": 0,
+                                              "cost_usd": 0.0 if cost_usd is not None else None},
+                                }
+                                trajectory["turns"].append(turn_record)
+                                break
                             return LoopResult(
-                                summary,
-                                patch,
-                                files,
-                                before_digest,
-                                after_digest,
-                                trajectory,
-                                prompt_tokens,
-                                completion_tokens,
-                                cost_usd,
-                                requests,
+                                (trajectory["turns"][0]["submission"]["title"]
+                                 if self.pilot_mode else submission["summary"]),
+                                patch, files, before_digest, after_digest, trajectory,
+                                prompt_tokens, completion_tokens, cost_usd, requests,
                             )
                         limit = remaining()
                         try:
@@ -1396,10 +1617,14 @@ class RepositoryAgentClient:
                                     "process it started was killed"
                                 ),
                             })
+                            tool_trace["returned_text"] = messages[-1]["content"]
+                            tool_trace["seconds"] = round(time.monotonic() - tool_started, 3)
                             continue
                         observe_oom_kills(turn, name)
                         refused = f"exit={TOOL_REFUSED_EXIT}\n"
                         if name in _SCRIPTED_TOOLS and output.text.startswith(refused):
+                            tool_trace["exit_code"] = TOOL_REFUSED_EXIT
+                            tool_trace["truncated"] = output.truncated
                             raise ToolArgumentError(output.text.removeprefix(refused).strip())
                     except (ToolArgumentError, json.JSONDecodeError) as error:
                         # The call is the model's mistake, not the harness's:
@@ -1412,9 +1637,12 @@ class RepositoryAgentClient:
                         messages.append(
                             {"role": "tool", "tool_call_id": call_id, "content": f"error: {reason}"}
                         )
+                        tool_trace["returned_text"] = messages[-1]["content"]
+                        tool_trace["seconds"] = round(time.monotonic() - tool_started, 3)
                         continue
                     cap = self.bounds.max_tool_output_bytes
                     bounded, bounded_truncated = _bounded_text(output.text, cap)
+                    page_truncated = output.page_truncated
                     if output.truncated or bounded_truncated:
                         # The model is told its output was cut, within the same cap.
                         note = (
@@ -1435,6 +1663,20 @@ class RepositoryAgentClient:
                     messages.append(
                         {"role": "tool", "tool_call_id": call_id, "content": bounded}
                     )
+                    exit_match = re.match(r"exit=(-?\d+)\n", bounded)
+                    tool_trace.update({
+                        "returned_text": bounded,
+                        "exit_code": int(exit_match.group(1)) if exit_match else None,
+                        "seconds": round(time.monotonic() - tool_started, 3),
+                        "truncated": output.truncated or bounded_truncated or page_truncated,
+                        "original_bytes": output.original_bytes,
+                    })
+                    if name == "read_file":
+                        tool_trace["returned_range"] = _read_coverage(
+                            arguments, output, output.truncated or bounded_truncated,
+                        )
+                    if name == "run_command":
+                        tool_trace["scope_classification"] = "unclassified"
                     events.append({
                         "kind": "tool_call", "turn": turn, "tool": name,
                         "exit_ok": output.text.startswith("exit=0\n"),
@@ -1475,6 +1717,7 @@ class RepositoryAgentClient:
                 cause = "transport_failure"
             else:
                 cause = "sandbox_failure"
+            turn_record["stop_cause"] = cause
             events.append({"kind": "stopped", "cause": cause, "requests": requests})
             evidence: dict[str, bytes] = {}
             if sandbox is not None and rejection is None:

@@ -25,6 +25,12 @@ The shared ``CandidateCause`` wire type does not yet contain
 ``no_submission`` with ``conversation_limit`` in the detail. Pilot reporting
 must distinguish that detail from other ``no_submission`` outcomes when
 counting cap hits, or use a future wire cause that makes the distinction.
+
+The pilot uses ``src/`` and ``tests/`` as writable prefixes. This allows phase 2
+to observe test edits and silent fixes while the protected-name guard still
+rejects changes to package.json and tsconfig.json. An empty tuple would allow
+all edits, including decoy-test and manifest changes, and would measure an
+unrestricted agent rather than guarded verification behavior.
 """
 
 from typing import Literal
@@ -32,6 +38,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 PILOT_SUBJECT_IDS: frozenset[str] = frozenset({"oakridge-dbos-verification-pilot-edit"})
+# Canonical JSON digest of PILOT_TOOL_SCHEMAS (T1 and T2/T3) in agent_loop.py.
+# The separate legacy TOOLS digest remains pinned by workflow_edit's identity test.
+PILOT_TOOLS_SHA256 = "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd"
 
 
 class VerificationPilotSettings(BaseModel):
@@ -51,3 +60,6 @@ class VerificationPilotSettings(BaseModel):
     max_response_bytes: int = Field(default=131_072, ge=1, le=1_000_000)
     max_output_tokens: int = Field(default=8_192, ge=1, le=32_768)
     max_storage_mb: int = Field(default=512, ge=1, le=4_096)
+    writable_prefixes: tuple[Literal["src/"], Literal["tests/"]] = ("src/", "tests/")
+    max_tool_calls_per_turn: Literal[15] = 15
+    max_tool_calls_per_cell: Literal[40] = 40
