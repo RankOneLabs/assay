@@ -1073,8 +1073,8 @@ class RepositoryAgentClient:
     writable_prefixes: tuple[str, ...] = ()
     pilot_mode: bool = False
     next_user_turns: tuple[str, ...] = ()
-    max_tool_calls_per_turn: int = 15
-    max_tool_calls_per_cell: int = 40
+    max_tool_calls_per_turn: int = 0
+    max_tool_calls_per_cell: int = 0
     transport: httpx.BaseTransport | None = None
     sandbox_factory: SandboxFactory = DockerToolSandbox
     storage_factory: Callable[[Path, int], CellStorage] = QuotaCellStorage
@@ -1104,14 +1104,14 @@ class RepositoryAgentClient:
             self.tools = deepcopy(PILOT_TOOLS_T1)
             if self.system_prompt == SYSTEM_PROMPT:
                 self.system_prompt = PILOT_SYSTEM_PROMPT
-            if self.writable_prefixes != ("src/", "tests/"):
-                raise ValueError("pilot mode requires src/ and tests/ writable prefixes")
-            if (self.max_tool_calls_per_turn, self.max_tool_calls_per_cell) != (15, 40):
-                raise ValueError("pilot mode requires 15/40 tool call limits")
+            if not self.writable_prefixes:
+                raise ValueError("pilot mode requires writable prefixes")
+            if min(self.max_tool_calls_per_turn, self.max_tool_calls_per_cell) < 1:
+                raise ValueError("pilot mode requires positive tool call limits")
         elif self.next_user_turns:
             raise ValueError("next user turns require pilot mode")
-        if self.max_tool_calls_per_turn < 1 or self.max_tool_calls_per_cell < 1:
-            raise ValueError("tool call limits must be positive")
+        if self.max_tool_calls_per_turn < 0 or self.max_tool_calls_per_cell < 0:
+            raise ValueError("tool call limits must not be negative")
         if len(_json_bytes(self.tools)) > self.bounds.max_tool_schema_bytes:
             raise ValueError("tool_schema_limit")
         for prefix in self.writable_prefixes:

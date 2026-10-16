@@ -225,7 +225,8 @@ def _pilot(tmp_path: Path, completion: Any, **kwargs: Any) -> RepositoryAgentCli
     return _local(
         tmp_path, completion, pilot_mode=True,
         next_user_turns=("Review your first submission", "Check the remaining v1 work"),
-        writable_prefixes=("src/", "tests/"), **kwargs,
+        writable_prefixes=("src/", "tests/"),
+        max_tool_calls_per_turn=15, max_tool_calls_per_cell=40, **kwargs,
     )
 
 
@@ -328,6 +329,7 @@ def test_pilot_tool_call_caps_have_typed_causes(tmp_path: Path) -> None:
         )
     assert per_turn.value.cause == "turn_tool_call_limit"
     assert len(per_turn.value.trajectory["turns"][0]["tool_calls"]) == 15
+    assert per_turn.value.trajectory["turns"][0]["workspace_diff"] is None
     assert per_turn.value.cause in CANDIDATE_STOP_CAUSES
 
     def commands(count: int, start: int) -> list[dict[str, Any]]:
@@ -347,6 +349,7 @@ def test_pilot_tool_call_caps_have_typed_causes(tmp_path: Path) -> None:
         )
     assert per_cell.value.cause == "cell_tool_call_limit"
     assert sum(len(turn["tool_calls"]) for turn in per_cell.value.trajectory["turns"]) == 40
+    assert per_cell.value.trajectory["turns"][-1]["workspace_diff"] is None
     assert per_cell.value.cause in CANDIDATE_STOP_CAUSES
 
 

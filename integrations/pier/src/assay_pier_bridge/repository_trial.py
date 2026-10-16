@@ -59,10 +59,14 @@ def agent_configuration(
     message_prefix: tuple[dict[str, Any], ...] = (),
     pilot_mode: bool = False,
     next_user_turns: tuple[str, ...] = (),
+    max_tool_calls_per_turn: int = 0,
+    max_tool_calls_per_cell: int = 0,
 ) -> dict[str, Any]:
     """The stable, authorizable description of how this loop runs a cell."""
     if pilot_mode and system_prompt == SYSTEM_PROMPT:
         system_prompt = PILOT_SYSTEM_PROMPT
+    if pilot_mode and min(max_tool_calls_per_turn, max_tool_calls_per_cell) < 1:
+        raise ValueError("pilot configuration requires positive tool call limits")
     return {
         "loop": "assay-repository-agent/1",
         "bounds": asdict(bounds),
@@ -81,8 +85,8 @@ def agent_configuration(
            if message_prefix else {}),
         **({
             "turn_prompts_sha256": digest_bytes(canonical_json(next_user_turns)),
-            "max_tool_calls_per_turn": 15,
-            "max_tool_calls_per_cell": 40,
+            "max_tool_calls_per_turn": max_tool_calls_per_turn,
+            "max_tool_calls_per_cell": max_tool_calls_per_cell,
             "turns": 3,
         } if pilot_mode else {}),
         **dict(extra or {}),
@@ -152,6 +156,8 @@ class RepositoryAgentTrialHandle:
                 next_user_turns=self._agent.next_user_turns,
                 system_prompt=self._agent.system_prompt,
                 message_prefix=self._agent.message_prefix,
+                max_tool_calls_per_turn=self._agent.max_tool_calls_per_turn,
+                max_tool_calls_per_cell=self._agent.max_tool_calls_per_cell,
             )
             pinned = (
                 "tools_sha256", "system_prompt_sha256", "turn_prompts_sha256",

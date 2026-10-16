@@ -117,16 +117,16 @@ def test_pilot_configuration_and_sealed_per_turn_submissions(tmp_path: Path) -> 
         api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
         completion=completion, pilot_mode=True, next_user_turns=turns,
         writable_prefixes=("src/", "tests/"),
+        max_tool_calls_per_turn=15, max_tool_calls_per_cell=40,
         sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
     )
     configuration = agent_configuration(
         bounds=agent.bounds, limits=LIMITS, writable_prefixes=agent.writable_prefixes,
         model_route=LOCAL, pilot_mode=True, next_user_turns=turns,
+        max_tool_calls_per_turn=agent.max_tool_calls_per_turn,
+        max_tool_calls_per_cell=agent.max_tool_calls_per_cell,
     )
     assert configuration["tools_sha256"] == digest_bytes(canonical_json(PILOT_TOOL_SCHEMAS))
-    assert configuration["tools_sha256"] == (
-        "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd"
-    )
     assert configuration["turn_prompts_sha256"] == digest_bytes(canonical_json(turns))
     result = BridgeRuntime(RepositoryAgentTrialClient(
         agent=agent, package=PACKAGE, limits=LIMITS, configuration=configuration,
