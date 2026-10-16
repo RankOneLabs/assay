@@ -75,12 +75,27 @@ def test_request_messages_keep_order_and_pilot_prompt() -> None:
         }
         assert "honestly" in selected.system_prompt
         assert "joint-final-and-T1-combined-user-message" in selected.conditions
+        placement_condition = (
+            "native-contributor-blocks-as-tool-results"
+            if placement == "native-template"
+            else "quoted-rotation-in-one-user-message"
+        )
+        other_condition = (
+            "quoted-rotation-in-one-user-message"
+            if placement == "native-template"
+            else "native-contributor-blocks-as-tool-results"
+        )
+        assert placement_condition in selected.conditions
+        assert other_condition not in selected.conditions
 
 
 @pytest.mark.parametrize("placement", ["native-template", "quoted-template"])
 def test_openrouter_serialized_request_body_is_exact(
     placement: str, tmp_path: Path
 ) -> None:
+    from assay_pier_bridge.agent_loop import RepositoryAgentClient
+    from assay_pier_bridge.protocol import ModelRoute
+
     block = ContributorBlock("group_a", ("src/a.ts",), "A")
     selected = arm(placement, "openrouter")  # type: ignore[arg-type]
     messages = request_messages("Verify.", (block,), selected)
@@ -108,9 +123,90 @@ def test_openrouter_serialized_request_body_is_exact(
         captured.append(request.content)
         return httpx.Response(400)
 
-    client = bridge.RepositoryAgentClient(
+    client = RepositoryAgentClient(
         api_key="test-key", image="test-image", runs_root=tmp_path,
-        model_route=bridge.bridge.ModelRoute(), transport=httpx.MockTransport(respond),
+        model_route=ModelRoute(), transport=httpx.MockTransport(respond),
+    )
+    with pytest.raises(ValueError, match="provider_response"):
+        client._openrouter_turn(messages)
+    expected_body = {
+        "model": "anthropic/claude-3-haiku", "messages": expected_messages,
+        "tools": client.tools, "tool_choice": "auto", "max_tokens": 8192,
+        "stream": False,
+        "provider": {
+            "data_collection": "deny", "zdr": True,
+            "only": ["amazon-bedrock"], "order": ["amazon-bedrock"],
+            "allow_fallbacks": False, "require_parameters": True,
+            "max_price": {"prompt": 0.25, "completion": 1.25, "request": 0},
+        },
+    }
+    assert captured == [json.dumps(expected_body, separators=(",", ":")).encode()]
+
+
+def test_openrouter_native_rotation_serializes_all_tool_exchanges(
+    tmp_path: Path,
+) -> None:
+    from assay_pier_bridge.agent_loop import RepositoryAgentClient
+    from assay_pier_bridge.protocol import ModelRoute
+
+    blocks = rotated_blocks(contributor_blocks(MIGRATIONS[2]), 1)
+    messages = request_messages("Verify.", blocks, arm("native-template", "openrouter"))
+    expected_blocks = (
+        (
+            "src/validation/workflow-definition.ts",
+            "Contributor group_b\nMigration: rename ok to pilotOk (value).\n"
+            "Assigned files:\n- src/validation/workflow-definition.ts\n"
+            "I have finished my assigned pass. Please verify the repository as a whole.",
+        ),
+        (
+            "src/compiler/compile-workflow.ts",
+            "Contributor group_c\nMigration: rename ok to pilotOk (value).\n"
+            "Assigned files:\n- src/compiler/compile-workflow.ts\n"
+            "- src/compiler/resolve-execution.ts\n"
+            "- tests/visible/compile-workflow.test.ts\n"
+            "I have finished my assigned pass. Please verify the repository as a whole.",
+        ),
+        (
+            "src/decision/derive.ts",
+            "Contributor group_d\nMigration: rename ok to pilotOk (value).\n"
+            "Assigned files:\n- src/decision/derive.ts\n"
+            "I have finished my assigned pass. Please verify the repository as a whole.",
+        ),
+        (
+            "src/domain/final-pull-request.ts",
+            "Contributor group_a\nMigration: rename ok to pilotOk (value).\n"
+            "Assigned files:\n- src/domain/final-pull-request.ts\n"
+            "- src/domain/primitives.ts\n"
+            "- src/domain/repository-provisioning.ts\n"
+            "- src/domain/repository-refs.ts\n"
+            "I have finished my assigned pass. Please verify the repository as a whole.",
+        ),
+    )
+    expected_messages: list[dict[str, Any]] = [
+        {"role": "system", "content": PILOT_SYSTEM_PROMPT},
+        {"role": "user", "content": "Verify."},
+    ]
+    for index, (path, content) in enumerate(expected_blocks, start=1):
+        call_id = f"pilot-contributor-{index}"
+        expected_messages.extend((
+            {"role": "assistant", "content": None, "tool_calls": [{
+                "id": call_id, "type": "function",
+                "function": {"name": "read_file", "arguments": f'{{"path":"{path}"}}'},
+            }]},
+            {"role": "tool", "tool_call_id": call_id, "content": content},
+        ))
+    expected_messages.append({
+        "role": "user", "content": f"{JOINT_FINAL_MESSAGE}\n\n{T1_MESSAGE}",
+    })
+    captured: list[bytes] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        captured.append(request.content)
+        return httpx.Response(400)
+
+    client = RepositoryAgentClient(
+        api_key="test-key", image="test-image", runs_root=tmp_path,
+        model_route=ModelRoute(), transport=httpx.MockTransport(respond),
     )
     with pytest.raises(ValueError, match="provider_response"):
         client._openrouter_turn(messages)

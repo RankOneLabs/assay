@@ -13,6 +13,8 @@ from verification_pilot.render import render_prefix
 from verification_pilot.session import contributor_blocks, rotated_blocks
 from verification_pilot.settings import PILOT_SUBJECT_IDS
 
+ARM_IDS = ("native-template", "quoted-template", "smithers-local", "openrouter")
+
 
 def test_no_hidden_identity_or_answer_in_any_rendered_block() -> None:
     _, truth = build_specimens(load_fixture())
@@ -25,7 +27,7 @@ def test_no_hidden_identity_or_answer_in_any_rendered_block() -> None:
             for placement in ("native-template", "quoted-template"):
                 for route in ("smithers-local", "openrouter"):
                     rendered = json.dumps(render_prefix(ordered, arm(placement, route)))
-                    for forbidden in (*PILOT_SUBJECT_IDS, *hidden_kinds, *answer_records):
+                    for forbidden in (*PILOT_SUBJECT_IDS, *ARM_IDS, *hidden_kinds, *answer_records):
                         assert forbidden not in rendered
                     assert "ground_truth" not in rendered
                     assert "remnant" not in rendered.lower()

@@ -23,12 +23,16 @@ class RenderArm:
 
 
 def arm(placement: Placement, route: Route) -> RenderArm:
+    placement_condition = (
+        "quoted-rotation-in-one-user-message"
+        if placement == "quoted-template"
+        else "native-contributor-blocks-as-tool-results"
+    )
     return RenderArm(
         placement=placement,
         route=route,
         conditions=(
-            "quoted-rotation-in-one-user-message",
-            "native-contributor-blocks-as-tool-results",
+            placement_condition,
             "joint-final-and-T1-combined-user-message",
             f"route={route}",
         ),
