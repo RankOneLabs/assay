@@ -52,7 +52,7 @@ def agent_configuration(
     writable_prefixes: tuple[str, ...],
     model_route: ModelRoute,
     extra: Mapping[str, Any] | None = None,
-    tools: list[dict[str, Any]] = TOOLS,
+    tools: list[dict[str, Any]] | None = None,
     system_prompt: str = SYSTEM_PROMPT,
     message_prefix: tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
@@ -64,7 +64,7 @@ def agent_configuration(
         "storage": "docker-tmpfs",
         "network": "none",
         "writable_prefixes": list(writable_prefixes),
-        "tools_sha256": digest_bytes(canonical_json(tools)),
+        "tools_sha256": digest_bytes(canonical_json(TOOLS if tools is None else tools)),
         "system_prompt_sha256": digest_bytes(system_prompt.encode("utf-8")),
         "model_route": model_route.model_dump(mode="json"),
         "attempts": 1,

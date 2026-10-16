@@ -10,8 +10,6 @@ from typing import Any
 
 import httpx
 import pytest
-from assay_pier_bridge.agent_loop import LoopBounds, SandboxLimits
-from assay_pier_bridge.repository_trial import agent_configuration
 
 from assay.adapters.pier import PierAdapter
 from assay.adapters.smithers import SmithersFactory
@@ -38,6 +36,10 @@ ROUTING = (
 
 
 def test_workflow_edit_agent_identity_digests_are_stable() -> None:
+    # Import after workflow_edit.bridge has added the isolated Pier source path.
+    from assay_pier_bridge.agent_loop import LoopBounds, SandboxLimits
+    from assay_pier_bridge.repository_trial import agent_configuration
+
     configuration = agent_configuration(
         bounds=LoopBounds(), limits=SandboxLimits(),
         writable_prefixes=WRITABLE_PREFIXES, model_route=LOCAL_ROUTE,

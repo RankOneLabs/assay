@@ -26,6 +26,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
@@ -941,7 +942,7 @@ class RepositoryAgentClient:
     model_route: ModelRoute = field(default_factory=ModelRoute)
     completion: TurnCompletion | None = None
     bounds: LoopBounds = field(default_factory=LoopBounds)
-    tools: list[dict[str, Any]] = field(default_factory=lambda: TOOLS)
+    tools: list[dict[str, Any]] = field(default_factory=lambda: deepcopy(TOOLS))
     system_prompt: str = SYSTEM_PROMPT
     message_prefix: tuple[dict[str, Any], ...] = ()
     writable_prefixes: tuple[str, ...] = ()

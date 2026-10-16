@@ -19,6 +19,12 @@ This is the pilot's prospective qualification record; the pilot runner must
 record observed use and report conversation-limit hits as numerator,
 denominator, and rate for every arm and model route. More use sites or larger
 prefilled components require a new qualification before authorization.
+
+The shared ``CandidateCause`` wire type does not yet contain
+``conversation_limit``. The bridge reports these typed loop stops as
+``no_submission`` with ``conversation_limit`` in the detail. Pilot reporting
+must distinguish that detail from other ``no_submission`` outcomes when
+counting cap hits, or use a future wire cause that makes the distinction.
 """
 
 from typing import Literal

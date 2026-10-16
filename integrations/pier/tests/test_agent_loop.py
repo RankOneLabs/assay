@@ -215,6 +215,15 @@ def _local(tmp_path: Path, completion: Any, **kwargs: Any) -> RepositoryAgentCli
     )
 
 
+def test_default_tools_are_independent_of_other_clients(tmp_path: Path) -> None:
+    first = _local(tmp_path, Scripted())
+    second = _local(tmp_path, Scripted())
+    assert first.tools == second.tools == TOOLS
+
+    first.tools[0]["function"]["name"] = "changed"
+    assert second.tools == TOOLS
+
+
 def test_multiple_turns_and_two_cells_are_isolated(tmp_path: Path) -> None:
     requests: list[dict[str, Any]] = []
 
