@@ -11,7 +11,7 @@ from assay_pier_bridge.agent_loop import (
     RepositoryAgentClient,
     SandboxLimits,
 )
-from assay_pier_bridge.identity import digest_bytes, package_digest
+from assay_pier_bridge.identity import canonical_json, digest_bytes, package_digest
 from assay_pier_bridge.protocol import (
     REQUIRED_SUCCESS_KINDS,
     ArtifactManifest,
@@ -82,6 +82,45 @@ def _runtime(tmp_path: Path, completion: Scripted, package: dict[str, str] = PAC
         agent=agent, package=package, limits=LIMITS, configuration=configuration
     )
     return BridgeRuntime(client)
+
+
+def test_custom_agent_configuration_digests_tools_prompt_and_prefix(tmp_path: Path) -> None:
+    tools = [{"type": "function", "function": {"name": "submit_output"}}]
+    prefix = ({"role": "user", "content": "Pinned pilot session"},)
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([_call("submit_output", {"summary": "done"}, 1)]),
+        tools=tools, system_prompt="Pilot prompt", message_prefix=prefix,
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    configuration = agent_configuration(
+        bounds=agent.bounds, limits=LIMITS, writable_prefixes=agent.writable_prefixes,
+        model_route=agent.model_route, tools=agent.tools, system_prompt=agent.system_prompt,
+        message_prefix=agent.message_prefix,
+    )
+    assert configuration["tools_sha256"] == digest_bytes(canonical_json(tools))
+    assert configuration["system_prompt_sha256"] == digest_bytes(b"Pilot prompt")
+    assert configuration["message_prefix_sha256"] == digest_bytes(canonical_json(prefix))
+
+
+def test_prefilled_conversation_limit_is_a_candidate_cause(tmp_path: Path) -> None:
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([_call("submit_output", {"summary": "done"}, 1)]),
+        message_prefix=({"role": "user", "content": "Pinned pilot session"},),
+        bounds=LoopBounds(max_conversation_bytes=1),
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    configuration = agent_configuration(
+        bounds=agent.bounds, limits=LIMITS, writable_prefixes=agent.writable_prefixes,
+        model_route=agent.model_route, message_prefix=agent.message_prefix,
+    )
+    result = BridgeRuntime(RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration=configuration,
+    )).run_cell(_request())
+    assert isinstance(result.outcome, CandidateFailure)
+    assert result.outcome.cause == "no_submission"
+    assert "conversation_limit" in result.outcome.detail
 
 
 def test_submission_is_sealed_against_the_exchange(tmp_path: Path) -> None:

@@ -859,20 +859,35 @@ def _execute_tool(
 _SCRIPTED_TOOLS = frozenset({"read_file", "replace_in_file"})
 
 
+class ConversationLimitError(ValueError):
+    """The pinned conversation cannot fit within the candidate's byte ceiling."""
+
+    cause = "conversation_limit"
+
+    def __init__(self) -> None:
+        super().__init__(self.cause)
+
+
 def _shrink_conversation(
-    messages: list[dict[str, Any]], limit: int, events: list[dict[str, Any]]
+    messages: list[dict[str, Any]], limit: int, events: list[dict[str, Any]],
+    prefix_length: int = 2,
 ) -> None:
-    """Remove oldest completed tool exchanges; retain system and task messages."""
-    while len(_json_bytes(messages)) > limit and len(messages) > 2:
+    """Remove oldest completed tool exchanges after the pinned prefix."""
+    if prefix_length < 0 or prefix_length > len(messages):
+        raise ValueError("invalid conversation prefix length")
+    while len(_json_bytes(messages)) > limit:
+        if len(messages) <= prefix_length:
+            raise ConversationLimitError
         # A completed exchange is an assistant tool-call message plus its tool results.
-        if messages[2].get("role") != "assistant":
-            raise ValueError("conversation has no removable tool exchange")
+        if messages[prefix_length].get("role") != "assistant":
+            raise ConversationLimitError
         removed = 1
-        while 2 + removed < len(messages) and messages[2 + removed].get("role") == "tool":
+        while (prefix_length + removed < len(messages)
+               and messages[prefix_length + removed].get("role") == "tool"):
             removed += 1
-        if 2 + removed == len(messages):
-            break  # The latest exchange must remain available to the model.
-        del messages[2 : 2 + removed]
+        if prefix_length + removed == len(messages):
+            raise ConversationLimitError  # Keep the latest exchange available to the model.
+        del messages[prefix_length : prefix_length + removed]
         events.append({"kind": "conversation_truncated", "messages_removed": removed})
 
 
@@ -926,6 +941,9 @@ class RepositoryAgentClient:
     model_route: ModelRoute = field(default_factory=ModelRoute)
     completion: TurnCompletion | None = None
     bounds: LoopBounds = field(default_factory=LoopBounds)
+    tools: list[dict[str, Any]] = field(default_factory=lambda: TOOLS)
+    system_prompt: str = SYSTEM_PROMPT
+    message_prefix: tuple[dict[str, Any], ...] = ()
     writable_prefixes: tuple[str, ...] = ()
     transport: httpx.BaseTransport | None = None
     sandbox_factory: SandboxFactory = DockerToolSandbox
@@ -948,7 +966,7 @@ class RepositoryAgentClient:
             raise ValueError("locked image identity required")
         if self.bounds.max_turns != 20 or min(asdict(self.bounds).values()) < 1:
             raise ValueError("invalid fixed loop bounds")
-        if len(_json_bytes(TOOLS)) > self.bounds.max_tool_schema_bytes:
+        if len(_json_bytes(self.tools)) > self.bounds.max_tool_schema_bytes:
             raise ValueError("tool_schema_limit")
         for prefix in self.writable_prefixes:
             if not prefix.endswith("/"):
@@ -984,7 +1002,7 @@ class RepositoryAgentClient:
         if self.completion is not None:
             return self.completion(
                 messages=messages,
-                tools=TOOLS,
+                tools=self.tools,
                 max_tokens=self.bounds.max_output_tokens,
                 turn=turn,
                 deadline=deadline,
@@ -995,7 +1013,7 @@ class RepositoryAgentClient:
         body = {
             "model": MODEL,
             "messages": messages,
-            "tools": TOOLS,
+            "tools": self.tools,
             "tool_choice": "auto",
             "max_tokens": self.bounds.max_output_tokens,
             "stream": False,
@@ -1134,9 +1152,11 @@ class RepositoryAgentClient:
         workspace, cache = storage.workspace, storage.cache
         sandbox: ToolSandbox | None = None
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": instruction},
+            *self.message_prefix,
         ]
+        prefix_length = len(messages)
         prompt_tokens = completion_tokens = requests = 0
         cost_usd: float | None = 0.0 if self.model_route.paid_route_reachable else None
         primary_failed = False
@@ -1203,10 +1223,12 @@ class RepositoryAgentClient:
             )
             for turn in range(1, self.bounds.max_turns + 1):
                 remaining()
-                _shrink_conversation(messages, self.bounds.max_conversation_bytes, events)
+                _shrink_conversation(
+                    messages, self.bounds.max_conversation_bytes, events, prefix_length
+                )
                 if len(_json_bytes(messages)) > self.bounds.max_conversation_bytes:
                     raise ValueError("conversation_limit")
-                if len(_json_bytes(messages)) + len(_json_bytes(TOOLS)) > (
+                if len(_json_bytes(messages)) + len(_json_bytes(self.tools)) > (
                     self.bounds.max_request_bytes
                 ):
                     raise ValueError("request_limit")
@@ -1370,7 +1392,9 @@ class RepositoryAgentClient:
                         "exit_ok": output.text.startswith("exit=0\n"),
                         "output_bytes": output.original_bytes,
                     })
-                _shrink_conversation(messages, self.bounds.max_conversation_bytes, events)
+                _shrink_conversation(
+                    messages, self.bounds.max_conversation_bytes, events, prefix_length
+                )
                 if len(_json_bytes(messages)) > self.bounds.max_conversation_bytes:
                     raise ValueError("conversation_limit")
             raise ValueError("turn_limit")
