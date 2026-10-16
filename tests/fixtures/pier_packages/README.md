@@ -18,3 +18,11 @@ every directory *except* `arm_a/` is absent from a package built from
 - `object_metadata/` — a stand-in for object-store bookkeeping
   (`SENTINEL_OBJECT_METADATA_9i0j`). Digests and store paths are Assay's
   concern, never the model's.
+
+The dispatch gate also carries six named, synthetic audit markers in the
+authorized worker configuration: `private_documentation`, `transcript`,
+`credential`, `other_arm`, `hidden_test`, and `reference_solution`. The secrecy
+test plants each marker in a selected-arm source file and requires the gate to
+reject it with its category named. The fixed path allowlist separately rejects
+entries outside `workspace/`, `instruction.md`, and `submission/CONTRACT.md`.
+These markers are audit fixtures, never real credentials or oracle contents.

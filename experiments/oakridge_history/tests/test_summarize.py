@@ -14,6 +14,18 @@ from oakridge_history.config import Ok
 from oakridge_history.model import ComponentSpec, ImplementationRoot, ScopeSpec, SnapshotSpec
 
 
+def test_summarize_accepts_retained_report_and_comparison_versions() -> None:
+    root = Path(__file__).resolve().parents[1]
+    report = summary_module.REPORT_ADAPTER.validate_json(
+        (root / "snapshots/s1-v2-introduced/code-metrics.json").read_bytes()
+    )
+    comparison = summary_module.COMPARISON_ADAPTER.validate_json(
+        (root / "comparisons/s1-v2-introduced__s2-pre-dbos.json").read_bytes()
+    )
+    assert report.schema_version == "assay-code-metrics-report/0.5.0"
+    assert comparison.schema_version == "assay-code-metrics-comparison/0.6.0"
+
+
 def _store(
     output: Path, specs: tuple[SnapshotSpec, ...], scope: ScopeSpec, config: CodeMetricsConfig,
     comparison_config: CodeMetricsConfig | None = None,

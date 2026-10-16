@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -27,6 +27,15 @@ from assay.pier_protocol import (
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
+    CandidateCause,
+    CandidateFailure,
+    CandidateSubmission,
+    EffectiveEnforcement,
+    InfrastructureCause,
+    InfrastructureFailure,
+    NetworkPolicy,
+    TrialLimits,
+    TrialRequest,
     trial_name_for,
 )
 from assay.store import ObjectStore
@@ -36,6 +45,47 @@ FIXTURE = Path(__file__).parent / "fixtures" / "pier_wire_contract.json"
 
 def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_trial_envelope_revision_matches_the_shared_fixture() -> None:
+    envelope = _fixture()["trial_envelope"]
+    assert set(TrialRequest.model_fields) == set(envelope["request_fields"])
+    assert set(TrialLimits.model_fields) == set(envelope["limit_fields"])
+    assert set(EffectiveEnforcement.model_fields) == set(envelope["effective_fields"])
+    assert set(get_args(NetworkPolicy)) == set(envelope["network_policies"])
+    request = TrialRequest.model_validate(envelope["sample_request"])
+    assert request.model_dump() == envelope["sample_request"]
+    assert request.schema_version == envelope["schema_version"]
+    assert set(get_args(CandidateCause)) == set(envelope["candidate_causes"])
+    assert set(get_args(InfrastructureCause)) == set(envelope["infrastructure_causes"])
+    assert {
+        kind
+        for outcome in (CandidateSubmission, CandidateFailure, InfrastructureFailure)
+        for kind in get_args(outcome.model_fields["kind"].annotation)
+    } == set(envelope["result_outcomes"])
+
+
+@pytest.mark.parametrize(
+    ("host", "allowed"),
+    [
+        ("10.0.0.1", True),
+        ("172.16.0.1", True),
+        ("192.168.1.10", True),
+        ("169.254.169.254", False),
+        ("127.0.0.1", False),
+        ("100.64.0.1", False),
+    ],
+)
+def test_lan_egress_host_requires_rfc1918_address(host: str, allowed: bool) -> None:
+    request = {
+        **_fixture()["trial_envelope"]["sample_request"],
+        "egress_host": host,
+    }
+    if allowed:
+        assert TrialRequest.model_validate(request).egress_host == host
+    else:
+        with pytest.raises(ValueError, match="LAN IPv4 address"):
+            TrialRequest.model_validate(request)
 
 
 def _coordinate(case: dict[str, Any]) -> CellCoordinate:

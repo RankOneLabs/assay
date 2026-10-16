@@ -17,7 +17,11 @@ type Edge = tuple[str, str]
 
 # Plan-referring fields never know in advance which wire version they point at;
 # the discriminator on the referenced document itself selects the concrete path set.
-_PLAN_VERSIONS = ("assay-execution-plan/0.1.0", "assay-execution-plan/0.2.0")
+_PLAN_VERSIONS = (
+    "assay-execution-plan/0.1.0",
+    "assay-execution-plan/0.2.0",
+    "assay-execution-plan/0.3.0",
+)
 
 # Paths are relative to a governed document. '*' visits collection values.
 # Roles come from the referring field, never from arbitrary artifact contents.
@@ -42,6 +46,13 @@ _PATHS: dict[str, dict[str, str]] = {
         "cells.*.realization_ref": "data",
     },
     "assay-execution-plan/0.2.0": {
+        "snapshot_ref": "assay-study-snapshot/0.1.0",
+        "declaration_hashes.*": "data",
+        "execution_conditions_ref": "data",
+        "cells.*.realization_ref": "data",
+        "runtime.configuration_ref": "data",
+    },
+    "assay-execution-plan/0.3.0": {
         "snapshot_ref": "assay-study-snapshot/0.1.0",
         "declaration_hashes.*": "data",
         "execution_conditions_ref": "data",
@@ -136,11 +147,7 @@ def _schema_edges(value: Any) -> set[Edge]:
         validator = validator_for(schema, default=default)
         for key in ("$ref", "$dynamicRef", "$recursiveRef"):
             ref = schema.get(key)
-            if (
-                key in validator.VALIDATORS
-                and isinstance(ref, str)
-                and ref.startswith("sha256:")
-            ):
+            if key in validator.VALIDATORS and isinstance(ref, str) and ref.startswith("sha256:"):
                 edges.add((str(ObjectRef(ref.split("#", 1)[0])), "schema"))
         # Use the same dialect-aware subresource rules as schema resolution.
         for child in resource.subresources():

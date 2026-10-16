@@ -2,17 +2,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from jig import AgentConfig
-from test_execution import FakeEvaluator, FakeWorker, execution_fixture
+from jig.core.types import CompletionParams, LLMResponse, Usage
+from test_execution import FakeEvaluator, FakeWorker, default_runtime, execution_fixture
 
+from assay.adapters.consistency import (
+    ChainWorker,
+    CompletionNotSent,
+    ConsistencyWorker,
+    PilotSettings,
+    _Admission,
+    _BoundedClient,
+)
 from assay.adapters.jig import JigWorker
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import (
     Accounting,
+    AdmissionHalt,
+    AdmissionLedger,
     EvaluationSuccess,
     RunFailed,
     RunSucceeded,
@@ -20,7 +33,456 @@ from assay.execution import (
     WorkerSuccess,
     execute_plan,
 )
+from assay.models import ExecutionPlanV3
+from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
+from assay.verify import verify_manifest
+
+
+def _ceiling_plan(
+    fixture: Any, *, max_cells: int, max_wall_time_seconds: float, max_fleet_occupancy: int
+) -> bytes:
+    plan = compile_plan_v2(
+        fixture.snapshot,
+        snapshot_ref=str(fixture.store.publish_json(fixture.snapshot.model_dump(mode="json"))),
+        worker_repeats=1,
+        runtime=default_runtime(fixture.store),
+        concurrency=fixture.arguments.get("concurrency", 4),
+    )
+    successor = ExecutionPlanV3.model_validate(
+        {
+            **plan.model_dump(mode="json"),
+            "schema_version": "assay-execution-plan/0.3.0",
+            "ceiling": {
+                "max_cells": max_cells,
+                "max_wall_time_seconds": max_wall_time_seconds,
+                "max_fleet_occupancy": max_fleet_occupancy,
+            },
+        }
+    )
+    return canonical_json(successor.model_dump(mode="json"))
+
+
+async def test_v3_cell_ceiling_halts_and_records_each_started_cell(tmp_path: Path) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a", "b"), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=1, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+    result = await execute_plan(
+        **{**fixture.arguments, "plan_bytes": plan_bytes, "authorization": digest_bytes(plan_bytes)}
+    )
+    assert isinstance(result, RunFailed) and result.error_type == "AdmissionHalt"
+    assert result.manifest is not None and result.manifest_ref is not None
+    assert len(result.manifest.execution_records) == 1
+    assert result.manifest.status == "incomplete"
+    verification_codes = [
+        failure.code for failure in verify_manifest(fixture.store, str(result.manifest_ref))
+    ]
+    assert verification_codes == ["incomplete_run"]
+
+
+async def test_run_binds_one_ledger_for_cell_and_request_reservations(tmp_path: Path) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+    bound_ledgers: list[AdmissionLedger] = []
+
+    class ReservingWorker(FakeWorker):
+        supports_run_admission = True
+
+        def __init__(self, ledger: AdmissionLedger | None = None) -> None:
+            self.ledger = ledger
+
+        def bind_admission(self, ledger: AdmissionLedger) -> ReservingWorker:
+            ledger.configure_requests(
+                max_requests=1, max_spend_usd=Decimal(0), request_cost_bound_usd=Decimal(0)
+            )
+            bound_ledgers.append(ledger)
+            return ReservingWorker(ledger)
+
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            assert self.ledger is not None
+            refused = self.ledger.reserve("request")
+            if refused is not None:
+                raise refused
+            return WorkerSuccess({"score": 1})
+
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "plan_bytes": plan_bytes,
+            "authorization": digest_bytes(plan_bytes),
+            "workers": {arm.id: ReservingWorker() for arm in fixture.snapshot.arms},
+        }
+    )
+    assert isinstance(result, RunFailed) and result.manifest is not None
+    assert len(bound_ledgers) == 2 and bound_ledgers[0] is bound_ledgers[1]
+    assert bound_ledgers[0].cells == 2 and bound_ledgers[0].requests == 1
+    assert bound_ledgers[0].active_cells == 0
+    outcomes = [
+        json.loads(fixture.store.read_bytes(ref))
+        for ref in result.manifest.execution_records.values()
+    ]
+    assert {item["status"] for item in outcomes} == {"succeeded", "failed"}
+    assert next(item for item in outcomes if item["status"] == "failed")["error_type"] == (
+        "ceiling_exhausted"
+    )
+
+
+def test_consistency_binding_uses_run_ledger_without_mutating_standalone_worker() -> None:
+    worker = ConsistencyWorker(SimpleNamespace(), PilotSettings(max_total_requests=2))  # type: ignore[arg-type]
+    ledger = AdmissionLedger()
+    bound = worker.bind_admission(ledger)
+    assert bound._admission.ledger is ledger
+    assert worker._admission.ledger is not ledger
+    assert ledger.max_requests == 2
+    assert bound._admission.reserve() is None and ledger.requests == 1
+    assert ChainWorker(worker).bind_admission(ledger).inner._admission.ledger is ledger
+
+
+async def test_v3_wall_time_and_fleet_occupancy_bound_dispatch(tmp_path: Path) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a", "b"), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=4, max_wall_time_seconds=0.01, max_fleet_occupancy=1
+    )
+    active = peak = 0
+
+    class SlowWorker(FakeWorker):
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            try:
+                await asyncio.sleep(0.1)
+            finally:
+                active -= 1
+            return WorkerSuccess({"score": 1})
+
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "plan_bytes": plan_bytes,
+            "authorization": digest_bytes(plan_bytes),
+            "workers": {arm.id: SlowWorker() for arm in fixture.snapshot.arms},
+        }
+    )
+    assert isinstance(result, RunFailed) and result.error_type == "AdmissionHalt"
+    assert peak == 1 and active == 0
+    assert result.manifest is not None and len(result.manifest.execution_records) == 1
+    outcome_ref = next(iter(result.manifest.execution_records.values()))
+    outcome = json.loads(fixture.store.read_bytes(outcome_ref))
+    assert outcome["status"] == "failed" and outcome["error_type"] == "ceiling_exhausted"
+
+
+async def test_worker_timeout_before_wall_deadline_remains_a_cell_failure(tmp_path: Path) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+
+    class TimedOutWorker(FakeWorker):
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            raise TimeoutError("provider timed out")
+
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "plan_bytes": plan_bytes,
+            "authorization": digest_bytes(plan_bytes),
+            "workers": {arm.id: TimedOutWorker() for arm in fixture.snapshot.arms},
+        }
+    )
+    assert isinstance(result, RunSucceeded), result
+    for ref in result.manifest.execution_records.values():
+        outcome = json.loads(fixture.store.read_bytes(ref))
+        assert outcome["error_type"] == "TimeoutError"
+        assert outcome["error_message"] == "provider timed out"
+
+
+async def test_evaluator_rechecks_wall_deadline_after_preparation(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+    expired = False
+    evaluations = 0
+    original_remaining = AdmissionLedger.remaining_seconds
+
+    class ExpiringEvaluator(FakeEvaluator):
+        configurations = 0
+
+        def configuration(self) -> dict[str, Any]:
+            nonlocal expired
+            self.configurations += 1
+            if self.configurations > 1:
+                expired = True
+            return super().configuration()
+
+        async def evaluate(self, **kwargs: Any) -> EvaluationSuccess:
+            nonlocal evaluations
+            evaluations += 1
+            return EvaluationSuccess(1.0)
+
+    def remaining(ledger: AdmissionLedger) -> float | None:
+        return -1 if expired else original_remaining(ledger)
+
+    monkeypatch.setattr(AdmissionLedger, "remaining_seconds", remaining)
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "plan_bytes": plan_bytes,
+            "authorization": digest_bytes(plan_bytes),
+            "evaluators": {"quality": ExpiringEvaluator()},
+        }
+    )
+    assert isinstance(result, RunFailed) and result.manifest is not None
+    assert evaluations == 0
+    record = json.loads(
+        fixture.store.read_bytes(next(iter(result.manifest.evaluation_records.values())))
+    )
+    assert record["error_type"] == "ceiling_exhausted"
+
+
+async def test_wall_expiry_after_complete_grid_keeps_verifiable_manifest(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    fixture = execution_fixture(
+        ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1, evaluator_repeats=1
+    )
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+    original_publish = fixture.store.publish_json
+    original_remaining = AdmissionLedger.remaining_seconds
+    completed = 0
+
+    def publish(value: Any) -> Any:
+        nonlocal completed
+        ref = original_publish(value)
+        if isinstance(value, dict) and ":evaluator:" in value.get("record_id", ""):
+            completed += 1
+        return ref
+
+    def remaining(ledger: AdmissionLedger) -> float | None:
+        return -1 if completed == 2 else original_remaining(ledger)
+
+    fixture.store.publish_json = publish  # type: ignore[method-assign]
+    monkeypatch.setattr(AdmissionLedger, "remaining_seconds", remaining)
+    result = await execute_plan(
+        **{**fixture.arguments, "plan_bytes": plan_bytes, "authorization": digest_bytes(plan_bytes)}
+    )
+    assert isinstance(result, RunFailed) and result.manifest is not None
+    assert completed == 2 and result.manifest.status == "complete"
+    assert result.manifest_ref is not None
+    assert verify_manifest(fixture.store, str(result.manifest_ref)) == ()
+
+
+async def test_v3_wall_time_also_bounds_evaluation(tmp_path: Path) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=0.5, max_fleet_occupancy=1
+    )
+
+    class SlowEvaluator(FakeEvaluator):
+        async def evaluate(self, **kwargs: Any) -> EvaluationSuccess:
+            await asyncio.sleep(2)
+            return EvaluationSuccess(1.0)
+
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "plan_bytes": plan_bytes,
+            "authorization": digest_bytes(plan_bytes),
+            "evaluators": {"quality": SlowEvaluator()},
+        }
+    )
+    assert isinstance(result, RunFailed) and result.error_type == "AdmissionHalt"
+    assert result.manifest is not None and result.manifest.evaluation_records
+    first_evaluation = next(iter(result.manifest.evaluation_records.values()))
+    record = json.loads(fixture.store.read_bytes(first_evaluation))
+    assert record["error_type"] == "ceiling_exhausted"
+
+
+async def test_dollar_ceiling_keeps_budget_halt_and_cell_outcome(tmp_path: Path) -> None:
+    ledger = AdmissionLedger(
+        max_requests=3, max_spend_usd=Decimal("1"), request_cost_bound_usd=Decimal("0.6")
+    )
+    assert ledger.reserve("request") is None
+    refused = ledger.reserve("request")
+    assert refused is not None and refused.code == "budget_exhausted" and ledger.requests == 1
+
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+
+    class DollarWorker(FakeWorker):
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            raise AdmissionHalt("budget_exhausted", "insufficient unreserved budget")
+
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "workers": {arm.id: DollarWorker() for arm in fixture.snapshot.arms},
+        }
+    )
+    assert isinstance(result, RunFailed) and result.error_type == "AdmissionHalt"
+    assert result.manifest is not None and result.manifest.execution_records
+    for ref in result.manifest.execution_records.values():
+        assert json.loads(fixture.store.read_bytes(ref))["error_type"] == "budget_exhausted"
+
+
+async def test_admission_halt_keeps_finished_worker_evidence(tmp_path: Path) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    trace = {
+        "provider_usage": [{"input_tokens": 7, "output_tokens": 3, "cost": None}],
+        "provider_diagnostics": {"status": 503},
+        "original_error": "ProviderUnavailable",
+    }
+
+    class HaltedWorker(FakeWorker):
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            raise AdmissionHalt(
+                "billing_uncertain",
+                "a previous request has uncertain billing",
+                accounting=Accounting(usage={"llm_calls": 1}, coverage="uncertain"),
+                trace=trace,
+            )
+
+    result = await execute_plan(
+        **{
+            **fixture.arguments,
+            "workers": {arm.id: HaltedWorker() for arm in fixture.snapshot.arms},
+        }
+    )
+    assert isinstance(result, RunFailed) and result.manifest is not None
+    outcome_ref = next(iter(result.manifest.execution_records.values()))
+    outcome = json.loads(fixture.store.read_bytes(outcome_ref))
+    assert outcome["error_type"] == "billing_uncertain"
+    assert json.loads(fixture.store.read_bytes(outcome["trace_ref"])) == trace
+
+
+async def test_chain_halt_keeps_prior_and_refusing_step_traces() -> None:
+    first_trace = {"provider_usage": [{"input_tokens": 2}]}
+    halt_trace = {"provider_diagnostics": {"status": 503}}
+
+    class Inner:
+        calls = 0
+
+        async def run(self, **kwargs: Any) -> WorkerSuccess:
+            self.calls += 1
+            if self.calls == 1:
+                return WorkerSuccess(
+                    {"source": "def implement(value):\n    return value\n"},
+                    trace=first_trace,
+                    accounting=Accounting(usage={"llm_calls": 1}),
+                )
+            raise AdmissionHalt(
+                "billing_uncertain",
+                "refused",
+                accounting=Accounting(usage={"llm_calls": 1}, coverage="uncertain"),
+                trace=halt_trace,
+            )
+
+    worker = ChainWorker(Inner())  # type: ignore[arg-type]
+    with pytest.raises(AdmissionHalt) as stopped:
+        await worker.run(
+            input_value={
+                "task": {
+                    "target_path": "module.py",
+                    "chain": [
+                        {"name": "first", "instruction": "first"},
+                        {"name": "second", "instruction": "second"},
+                    ],
+                },
+                "repository": {"module.py": ""},
+                "base_subject_ref": "unused",
+            },
+            arm_id="clean",
+        )
+    assert stopped.value.trace == {"steps": [first_trace, halt_trace]}
+    assert stopped.value.accounting.usage == {"llm_calls": 2}
+    assert stopped.value.accounting.coverage == "uncertain"
+
+
+async def test_v3_releases_fleet_occupancy_when_outcome_publication_fails(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("a",), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+    original_publish = fixture.store.publish_json
+    original_release = AdmissionLedger.release_cell
+    released = 0
+
+    def fail_outcome(value: Any) -> Any:
+        if (
+            isinstance(value, dict)
+            and value.get("schema_version") == "assay-execution-outcome/0.1.0"
+        ):
+            raise OSError("outcome publication failed")
+        return original_publish(value)
+
+    def track_release(ledger: AdmissionLedger) -> None:
+        nonlocal released
+        original_release(ledger)
+        released += 1
+        assert ledger.active_cells == 0
+
+    fixture.store.publish_json = fail_outcome  # type: ignore[method-assign]
+    monkeypatch.setattr(AdmissionLedger, "release_cell", track_release)
+    result = await execute_plan(
+        **{**fixture.arguments, "plan_bytes": plan_bytes, "authorization": digest_bytes(plan_bytes)}
+    )
+    assert isinstance(result, RunFailed) and result.error_type == "OSError"
+    assert released == 1
+
+
+@pytest.mark.parametrize("case", ["forced_retry", "lost_response", "missing_billing"])
+async def test_request_reservation_counts_retry_loss_and_unknown_billing(case: str) -> None:
+    settings = PilotSettings(
+        mode="paid",
+        max_total_requests=3,
+        max_spend_usd=Decimal("0.8"),
+        request_cost_bound_usd=Decimal("0.4"),
+        pricing_basis="test-rates",
+    )
+    admission = _Admission(settings)
+    response = LLMResponse("ok", None, Usage(1, 1, 0.2), 1, "test-model")
+    next_result: LLMResponse | WorkerFailure = (
+        CompletionNotSent("LocalReject", "retry")
+        if case == "forced_retry"
+        else WorkerFailure("LostResponse", "response disappeared")
+        if case == "lost_response"
+        else LLMResponse("ok", None, Usage(1, 1, None), 1, "test-model")
+    )
+
+    class Client:
+        async def complete_result(self, params: CompletionParams) -> LLMResponse | WorkerFailure:
+            nonlocal next_result
+            result = next_result
+            next_result = response
+            return result
+
+    bounded = _BoundedClient(Client(), admission, "test-model")  # type: ignore[arg-type]
+    first = await bounded.complete_result(CompletionParams(messages=[]))
+    assert admission.requests == 1
+    if case == "forced_retry":
+        assert isinstance(first, CompletionNotSent)
+        assert isinstance(await bounded.complete_result(CompletionParams(messages=[])), LLMResponse)
+        refused = await bounded.complete_result(CompletionParams(messages=[]))
+        assert isinstance(refused, WorkerFailure) and refused.error_type == "SpendLimit"
+        assert admission.halt is not None and admission.halt.code == "budget_exhausted"
+        assert admission.requests == 2
+    else:
+        assert isinstance(first, WorkerFailure)
+        assert bounded.accounting().amount is None
+        assert bounded.accounting().coverage == "uncertain"
+        assert admission.halt is not None and admission.halt.code == "billing_uncertain"
+        refused = await bounded.complete_result(CompletionParams(messages=[]))
+        assert isinstance(refused, WorkerFailure) and refused.error_type == "BudgetHalted"
+        assert admission.requests == 1
 
 
 @pytest.mark.parametrize("drift", ["worker", "evaluator", "concurrency", "preparation", "task"])

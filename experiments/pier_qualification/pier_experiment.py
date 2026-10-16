@@ -76,6 +76,7 @@ from assay.planning import (
     validate_plan_snapshot,
 )
 from assay.report_engine import persist_report
+from assay.repository import DEFAULT_MAX_REPOSITORY_BYTES, DEFAULT_MAX_REPOSITORY_FILES
 from assay.runtime_inventory import (
     QualificationInventory,
     QualificationRejected,
@@ -87,12 +88,13 @@ from assay.verify import export_bundle, reference_closure, verify_bundle, verify
 
 PIER_COST_PER_CELL_USD = Decimal("0.72")
 
-# The measured local build digest recorded in integrations/pier/README.md
-# ("Runtime identity"): the durable identity input is the lock digest, not
-# this image ID, but a fixed, documented value is still pinned here so every
-# profile's runtime binding is reproducible rather than invented per call.
+# The measured local build digest of assay-pier-bridge:qualify-local, built
+# from integrations/pier/Dockerfile with the committed workflow_edit Node
+# lockfile. The tag matters because BuildKit's attestation changes the image
+# ID. Reinspect each rebuild and update this pin before paid qualification;
+# qualify_local.py inspects the prebuilt image and never rebuilds it.
 PIER_BRIDGE_IMAGE_DIGEST = (
-    "sha256:b3e07726d3e92731c1ac1f934d27457a6545a52660af484fd67fb092cf09dc3f"
+    "sha256:cb7c69377b63319a256ac0e090274e560148708dc75efca74ea78c4785d6caab"
 )
 
 # The exact runtime identity every Pier profile in this cohort is qualified
@@ -235,13 +237,13 @@ PIER_TRIAL_LIMITS: Mapping[str, float | int] = {
     "memory_mb": 1024,
     "pids": 64,
     "timeout_s": 600,
-    # A size-capped tmpfs, not an unbounded scratch directory --
-    # integrations/pier's container.py enforces this exactly (a real
-    # ENOSPC past this ceiling, not merely a declared one); the local
-    # qualification script proves that enforcement before this constant is
-    # ever trusted for a paid run.
+    # A quota-backed host bind mount, independent of the higher memory
+    # ceiling. The local qualification script verifies trial ENOSPC before
+    # this constant is trusted for a paid run.
     "storage_mb": 512,
 }
+PIER_MAX_REPOSITORY_FILES = DEFAULT_MAX_REPOSITORY_FILES
+PIER_MAX_REPOSITORY_BYTES = DEFAULT_MAX_REPOSITORY_BYTES
 
 ARM_IDS = ("clean", "inconsistent")
 
@@ -376,7 +378,11 @@ def _materialize_pier_snapshot(
 
     binding, _ = _publish_runtime(store, profile=profile, inventory_ref=inventory_ref)
     arm_worker = worker_configuration(
-        binding=binding, model_route=PIER_MODEL_ROUTE, trial_limits=PIER_TRIAL_LIMITS
+        binding=binding,
+        model_route=PIER_MODEL_ROUTE,
+        trial_limits=PIER_TRIAL_LIMITS,
+        max_repository_files=PIER_MAX_REPOSITORY_FILES,
+        max_repository_bytes=PIER_MAX_REPOSITORY_BYTES,
     )
     arms = tuple(
         Arm(id=arm_id, worker=arm_worker, intervention={"repository": arm_id}) for arm_id in ARM_IDS
@@ -771,6 +777,8 @@ async def _run(
             binding=binding,
             model_route=PIER_MODEL_ROUTE,
             trial_limits=PIER_TRIAL_LIMITS,
+            max_repository_files=PIER_MAX_REPOSITORY_FILES,
+            max_repository_bytes=PIER_MAX_REPOSITORY_BYTES,
         )
         runner = runner or DockerPythonRunner()
         runtime_evaluators: dict[str, Evaluator] = {

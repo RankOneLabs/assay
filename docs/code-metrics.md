@@ -10,8 +10,8 @@ assay code-metrics compare BEFORE_PATH AFTER_PATH [--config FILE] [--exclude GLO
 ```
 
 Each path is a directory. The CLI reads its Python (`.py`), TypeScript (`.ts`,
-`.tsx`, `.mts`, `.cts`), and Rust (`.rs`) files, and every `Cargo.toml`, into a
-snapshot keyed by relative path. It decodes Python as Python does (a coding
+`.tsx`, `.mts`, `.cts`), and Rust (`.rs`) files, and every `Cargo.toml` and
+`tsconfig.json`, into a snapshot keyed by relative path. It decodes Python as Python does (a coding
 declaration or BOM, otherwise UTF-8) and the rest as UTF-8 without a BOM. It skips symlinks and the `.git`, `.venv`, `venv`,
 `node_modules`, `__pycache__`, `.assay`, `.claude`, `dist`, `build`,
 `.mypy_cache`, `.pytest_cache`, and `.ruff_cache` directories. Each `--exclude`
@@ -21,8 +21,9 @@ mapping directly and does not apply these exclusions.
 
 `--config` accepts JSON or YAML with `clone_min_lines`, `clone_min_tokens`,
 `ruff_ignore` (a list of rule names), `components` (a list of objects with
-`name` and `patterns`), and `allow_unmatched_patterns` (a boolean, default
-`false`). Every successful report lists the patterns that match no module in
+`name` and `patterns`), `allow_unmatched_patterns` (a boolean, default
+`false`), and `typescript_dependencies` (a directory, relative to the config
+file; see [Typechecking with a project's own toolchain](#typechecking-with-a-projects-own-toolchain)). Every successful report lists the patterns that match no module in
 that snapshot, with their components, in `configuration.unmatched_patterns`.
 By default, `analyze` rejects an unmatched pattern and `compare` rejects a
 pattern unmatched across both snapshots. Set `allow_unmatched_patterns: true`
@@ -38,15 +39,55 @@ components:
 allow_unmatched_patterns: false
 ```
 
-Clone detection uses pinned jscpd through `npx`, and a snapshot with
-TypeScript files is graphed by pinned dependency-cruiser and TypeScript through
-`npx`. Both need Node.js, npm, and network access for the first download;
-dependency-cruiser 18.4.0 needs Node.js 22, 24, or 26 and later.
+Install the locked Node analyzers once with `assay code-metrics install-node-tools`.
+Use `assay code-metrics install-node-tools --offline` when the npm cache is
+populated. In a source checkout the command installs into `vendor/node-tools`;
+from an installed wheel it copies the bundled package files into a writable
+user cache directory and installs there. Set `ASSAY_NODE_TOOLS` to choose another
+writable directory. The command prints the selected directory. Analysis launches
+`jscpd`, `dependency-cruiser`, and the TypeScript compiler directly from that
+tree; it never invokes npm or npx. Resolved versions are recorded from the
+installed `package-lock.json` and checked against the pins before analysis.
+Node.js 22.13 or newer on the 22.x line, or Node.js 24 or 26, is needed by the
+locked dependencies.
+
+### Typechecking with a project's own toolchain
+
+By default `typescript_metrics.type_errors` counts the analyzers' own compiler's
+errors over a synthetic strict `nodenext` project with none of the tree's
+dependencies. That is comparable across trees but not the tree's own verdict: a
+tree built for another compiler, other options, or installed types (`bun`, for
+example) shows errors its own typecheck does not have, and misses ones it does.
+
+To typecheck as the project does, install its lockfile once and name the
+installed directory:
+
+```sh
+assay code-metrics install-typescript-dependencies DIR [--target DIR] [--offline]
+```
+
+`DIR` holds the project's `package.json` and `package-lock.json`. The command
+copies them to the target (by default a per-user cache directory named by the
+lock's digest), runs `npm ci --ignore-scripts --include=dev`, checks every
+locked package is installed at its locked version, and prints the directory.
+Set `typescript_dependencies` in `--config` (or
+`CodeMetricsConfig(typescript_toolchain=TypeScriptToolchain(path))` in Python)
+to that directory. Analysis then runs that tree's `tsc --noEmit -p tsconfig.json`
+over the snapshot's root `tsconfig.json`, with the tree written beside a link
+to the installed `node_modules`. It still never invokes npm, and re-checks the
+installed versions against the lock first. The report's `versions.tools` adds
+`typecheck-typescript` (the project's compiler version) and `typecheck-lock`
+(the lockfile's SHA-256); `typescript` remains the compiler dependency-cruiser
+parses with. A snapshot with TypeScript but no root `tsconfig.json` is
+refused, as is a project that sets `baseUrl`, `paths`, or `rootDirs`, because
+the module graph resolves imports without the project file. The snapshot
+holds only source files and project files, so a tree whose typecheck needs
+other files, such as imported JSON, reports their absence as errors.
 
 ## Metric definitions
 
-`analyze` returns an `assay-code-metrics-report/0.5.0` report and `compare`
-an `assay-code-metrics-comparison/0.6.0` comparison. Earlier schema versions
+`analyze` returns an `assay-code-metrics-report/0.6.0` report and `compare`
+an `assay-code-metrics-comparison/0.7.0` comparison. Earlier schema versions
 stay in `schemas/`. Every graph count below is over first-party modules: the
 modules of top-level packages in the snapshot. Imports of anything else are
 listed in `graph.external_dependencies` and do not enter these counts.
@@ -90,14 +131,15 @@ counts the snapshot's files with that language's extensions, `files_analyzed`
 those an analyzer read, and `files_without_module` lists the files that
 produced no module. A language without an extractor lists every file it sees.
 
-The `existing_metrics` analyzers (radon, complexipy, grimp, ruff, mypy, and
-jscpd) read Python files only. Each value is `null`, and the maintainability
-index map empty, when the snapshot has no Python file, so a TypeScript or Rust
-codebase is not reported as zero lines. In a comparison, a legacy delta's side
-is `null` when that side has no Python file, and its `delta` is `null` when
-either side is. `new_code` counts added Python lines and is `null` when the
-after side has no Python file. The legacy `measure()` mapping is unchanged and
-still counts a side without Python as zero.
+Radon, complexipy, grimp, ruff, and mypy read Python files only; their values
+are `null` without Python files. jscpd scans Python and TypeScript files.
+`typescript_metrics` records physical source lines, clones, duplicated lines,
+and strict TypeScript compiler errors (with a toolchain, the project's own
+compiler errors); all four values are `null` without
+TypeScript files. A missing metric remains `null` in `typescript_deltas`, and
+its delta is `null` when either side is missing. `new_code` counts added Python
+and TypeScript lines; nesting depth remains `null` without Python. The legacy
+`measure()` mapping remains available.
 
 ### Coupling
 
@@ -156,6 +198,12 @@ propagation cost of `1 / N`.
 
 A comparison carries both absolute reports, the legacy metric `deltas`, and
 `architecture_deltas`, each entry a `before`, `after`, and `delta`:
+
+`patch` gives baseline, after, and difference for source lines, module count,
+cyclic SCC count, and propagation cost. It also lists added and removed
+nonblank source lines, changed modules, and new cycle membership. A missing
+propagation cost stays `null`, including its delta. Patch size is descriptive;
+no cleanliness or quality score is derived from it.
 
 - `system`: propagation cost, first-party and cross-component edge counts, and
   the cyclic SCC, cyclic module, and largest cyclic SCC counts.

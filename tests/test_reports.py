@@ -6,12 +6,12 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
-from test_execution import execution_fixture
+from test_execution import default_runtime, execution_fixture
 
-from assay.canonical import canonical_json
+from assay.canonical import canonical_json, digest_bytes
 from assay.execution import EvaluationSuccess, RunSucceeded, execute_plan
-from assay.models import ReportConfig, StatisticalProfile
-from assay.planning import compile_plan
+from assay.models import ExecutionPlanV3, ReportConfig, StatisticalProfile
+from assay.planning import compile_plan, compile_plan_v2
 from assay.report_engine import ReportError, build_report, exact_sign_test, persist_report
 from assay.reporting import bootstrap_paired, compare_scalar
 from assay.store import ObjectStore
@@ -99,6 +99,61 @@ async def test_report_requires_exact_selection_and_rejects_rerun_pooling(tmp_pat
     )
     with pytest.raises(ReportError, match="duplicate subject/arm"):
         build_report(fixture.store, merged)
+
+
+async def test_v3_report_rejects_ceiling_drift_between_shards(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path)
+    first_fixture = execution_fixture(store, subject_ids=("a",), worker_repeats=1)
+    second_fixture = execution_fixture(store, subject_ids=("b",), worker_repeats=1)
+
+    async def run_v3(fixture: Any, max_cells: int) -> RunSucceeded:
+        base = compile_plan_v2(
+            fixture.snapshot,
+            snapshot_ref=str(store.publish_json(fixture.snapshot.model_dump(mode="json"))),
+            worker_repeats=1,
+            runtime=default_runtime(store),
+        )
+        successor = ExecutionPlanV3.model_validate(
+            {
+                **base.model_dump(mode="json"),
+                "schema_version": "assay-execution-plan/0.3.0",
+                "ceiling": {
+                    "max_cells": max_cells,
+                    "max_wall_time_seconds": 30,
+                    "max_fleet_occupancy": 2,
+                },
+            }
+        )
+        plan_bytes = canonical_json(successor.model_dump(mode="json"))
+        result = await execute_plan(
+            **{
+                **fixture.arguments,
+                "plan_bytes": plan_bytes,
+                "authorization": digest_bytes(plan_bytes),
+            }
+        )
+        assert isinstance(result, RunSucceeded), result
+        return result
+
+    first = await run_v3(first_fixture, 2)
+    same = await run_v3(second_fixture, 2)
+    different = await run_v3(second_fixture, 3)
+
+    def combined(second: RunSucceeded) -> ReportConfig:
+        config = report_config(first)
+        return config.model_copy(
+            update={
+                "manifest_refs": (str(first.manifest_ref), str(second.manifest_ref)),
+                "record_refs": (
+                    *first.manifest.evaluation_records.values(),
+                    *second.manifest.evaluation_records.values(),
+                ),
+            }
+        )
+
+    assert build_report(store, combined(same))["comparisons"][0]["n"] == 2
+    with pytest.raises(ReportError, match="compatibility drift"):
+        build_report(store, combined(different))
 
 
 async def test_failures_are_reported_before_effects(tmp_path: Path) -> None:

@@ -16,19 +16,23 @@ from assay.code_metrics.models import (
     CodeMetricsComparisonV4,
     CodeMetricsComparisonV5,
     CodeMetricsComparisonV6,
+    CodeMetricsComparisonV7,
     CodeMetricsReport,
     CodeMetricsReportV2,
     CodeMetricsReportV3,
     CodeMetricsReportV4,
     CodeMetricsReportV5,
+    CodeMetricsReportV6,
     DetailedCodeMetricsComparison,
 )
+from assay.fixture_manifest import FixtureManifest, FixtureManifestV2
 from assay.models import (
     Arm,
     EvaluationFailure,
     ExecutionOutcome,
     ExecutionPlan,
     ExecutionPlanV2,
+    ExecutionPlanV3,
     ReportConfig,
     RunManifest,
     StudySnapshot,
@@ -42,14 +46,19 @@ SCHEMA_MODELS: dict[str, type[WireModel]] = {
     "assay-report-config": ReportConfig,
     "assay-run-manifest": RunManifest,
     "assay-study-snapshot": StudySnapshot,
+    # The unversioned name stays the 0.1.0 document byte for byte, so a reader
+    # pinned to it keeps validating; 0.2.0 is published beside it.
+    "assay-fixture-manifest": FixtureManifest,
+    "assay-fixture-manifest-v0.2": FixtureManifestV2,
 }
 
-# The execution plan is dual-versioned: each wire shape gets its own pinned
+# Each execution-plan wire shape gets its own pinned
 # schema document, and the unversioned name is a discriminator-selected oneOf
-# over both, so existing consumers of "assay-execution-plan" keep resolving.
+# over all versions, so existing consumers keep resolving.
 PLAN_SCHEMA_MODELS: dict[str, type[WireModel]] = {
     "assay-execution-plan-v0.1": ExecutionPlan,
     "assay-execution-plan-v0.2": ExecutionPlanV2,
+    "assay-execution-plan-v0.3": ExecutionPlanV3,
 }
 
 CODE_METRICS_SCHEMA_MODELS: dict[str, dict[str, type[WireModel]]] = {
@@ -59,6 +68,7 @@ CODE_METRICS_SCHEMA_MODELS: dict[str, dict[str, type[WireModel]]] = {
         "assay-code-metrics-report-v0.3": CodeMetricsReportV3,
         "assay-code-metrics-report-v0.4": CodeMetricsReportV4,
         "assay-code-metrics-report-v0.5": CodeMetricsReportV5,
+        "assay-code-metrics-report-v0.6": CodeMetricsReportV6,
     },
     "assay-code-metrics-comparison": {
         "assay-code-metrics-comparison-v0.1": CodeMetricsComparison,
@@ -67,6 +77,7 @@ CODE_METRICS_SCHEMA_MODELS: dict[str, dict[str, type[WireModel]]] = {
         "assay-code-metrics-comparison-v0.4": CodeMetricsComparisonV4,
         "assay-code-metrics-comparison-v0.5": CodeMetricsComparisonV5,
         "assay-code-metrics-comparison-v0.6": CodeMetricsComparisonV6,
+        "assay-code-metrics-comparison-v0.7": CodeMetricsComparisonV7,
     },
 }
 
@@ -123,7 +134,7 @@ def schema_documents() -> dict[str, bytes]:
 def plan_schema_registry() -> Registry[Any]:
     """A registry the root ``assay-execution-plan.schema.json`` oneOf resolves against.
 
-    The root document's ``$ref``s point at the pinned v0.1/v0.2 documents by their
+    The root document's ``$ref``s point at the pinned versioned documents by their
     declared ``$id``; a validator loading only the root document cannot resolve those
     references without the sibling schemas registered offline first.
     """

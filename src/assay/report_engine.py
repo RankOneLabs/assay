@@ -13,6 +13,7 @@ from assay._version import __version__
 from assay.canonical import canonical_json, digest_bytes
 from assay.models import (
     ExecutionPlanV2,
+    ExecutionPlanV3,
     ReportConfig,
     RunManifest,
     StudySnapshot,
@@ -143,6 +144,7 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
         # jig_revision) so historical reports never move; 0.2.0 binds the
         # generic runtime identity/configuration instead, so legacy and
         # generic (or cross-profile) shards can never pool by coincidence.
+        # 0.3.0 additionally binds its authorized run-wide ceiling.
         common_fingerprint = {
             "task_ref": snapshot.paa_task_ref,
             "scope": snapshot.paa_scope,
@@ -155,7 +157,17 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
             "preparation_mode": plan.preparation_mode,
             "concurrency": plan.concurrency,
         }
-        if isinstance(plan, ExecutionPlanV2):
+        if isinstance(plan, ExecutionPlanV3):
+            fingerprint = canonical_json(
+                {
+                    **common_fingerprint,
+                    "runtime": plan.runtime.model_dump(mode="json"),
+                    "assay_version": plan.assay_version,
+                    "schema_version": plan.schema_version,
+                    "ceiling": plan.ceiling.model_dump(mode="json"),
+                }
+            )
+        elif isinstance(plan, ExecutionPlanV2):
             fingerprint = canonical_json(
                 {
                     **common_fingerprint,
