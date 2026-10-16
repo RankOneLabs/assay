@@ -17,6 +17,7 @@ from assay_pier_bridge.agent_loop import (
     TOOLS,
     AgentLoopError,
     ContainerStartError,
+    ConversationLimitError,
     DockerToolSandbox,
     LoopBounds,
     ModelDispatchError,
@@ -25,6 +26,7 @@ from assay_pier_bridge.agent_loop import (
     RepositoryAgentClient,
     SandboxLimits,
     ToolOutput,
+    _shrink_conversation,
 )
 from assay_pier_bridge.paths import ArtifactCollectionRejected, extract_workspace_archive
 from assay_pier_bridge.protocol import ModelRoute
@@ -213,6 +215,15 @@ def _local(tmp_path: Path, completion: Any, **kwargs: Any) -> RepositoryAgentCli
     )
 
 
+def test_default_tools_are_independent_of_other_clients(tmp_path: Path) -> None:
+    first = _local(tmp_path, Scripted())
+    second = _local(tmp_path, Scripted())
+    assert first.tools == second.tools == TOOLS
+
+    first.tools[0]["function"]["name"] = "changed"
+    assert second.tools == TOOLS
+
+
 def test_multiple_turns_and_two_cells_are_isolated(tmp_path: Path) -> None:
     requests: list[dict[str, Any]] = []
 
@@ -248,6 +259,50 @@ def test_multiple_turns_and_two_cells_are_isolated(tmp_path: Path) -> None:
     assert not left.workspace.exists() and not right.workspace.exists()
     with pytest.raises(AgentLoopError, match="attempt_limit"):
         client.run_cell(cell_id="s:a:w0", package=package)
+
+
+def test_custom_agent_identity_reaches_paid_request(tmp_path: Path) -> None:
+    tools = [TOOLS[-1]]
+    prefix = ({"role": "user", "content": "Pinned pilot session"},)
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "done"}, 1))
+
+    _client(tmp_path, handler, tools=tools, system_prompt="Pilot prompt",
+            message_prefix=prefix).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit"}
+    )
+    assert bodies[0]["tools"] == tools
+    assert bodies[0]["messages"] == [
+        {"role": "system", "content": "Pilot prompt"},
+        {"role": "user", "content": "Edit"},
+        *prefix,
+    ]
+
+
+def test_shrink_keeps_declared_prefix_and_raises_typed_cause() -> None:
+    prefix = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "pinned example"},
+    ]
+    exchange = [
+        {"role": "assistant", "tool_calls": [{"id": "old"}]},
+        {"role": "tool", "tool_call_id": "old", "content": "old result"},
+        {"role": "assistant", "tool_calls": [{"id": "latest"}]},
+        {"role": "tool", "tool_call_id": "latest", "content": "latest result"},
+    ]
+    messages = [*prefix, *exchange]
+    events: list[dict[str, Any]] = []
+    _shrink_conversation(messages, 290, events, prefix_length=len(prefix))
+    assert messages[:len(prefix)] == prefix
+    assert messages[len(prefix):] == exchange[2:]
+    assert events == [{"kind": "conversation_truncated", "messages_removed": 2}]
+    with pytest.raises(ConversationLimitError) as failure:
+        _shrink_conversation(prefix.copy(), 1, [], prefix_length=len(prefix))
+    assert failure.value.cause == "conversation_limit"
 
 
 def test_local_route_requires_an_injected_completion_and_no_key(tmp_path: Path) -> None:
