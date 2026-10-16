@@ -254,6 +254,8 @@ class ToolOutput:
     text: str
     original_bytes: int
     truncated: bool
+    read_range: tuple[int, int] | None = None
+    page_truncated: bool = False
 
 
 class CellStorage(Protocol):
@@ -762,23 +764,18 @@ def _submission(arguments: dict[str, Any], logical_turn: int, pilot_mode: bool) 
 
 
 def _read_coverage(
-    arguments: dict[str, Any], returned_text: str, truncated: bool
+    arguments: dict[str, Any], output: ToolOutput, host_truncated: bool
 ) -> dict[str, Any]:
-    """Expose the lines actually returned, so a prefix read cannot count a remnant."""
-    if not returned_text.startswith("exit=0\n"):
+    """Only count source lines whose complete bytes reached the model."""
+    if not output.text.startswith("exit=0\n"):
         return {}
-    content = returned_text.removeprefix("exit=0\n")
     start = arguments.get("start_line") or 1
-    note = re.search(r"\[truncated(?: at the tool output limit)?:", content)
-    shown = content[:note.start()] if note else content
-    lines = len(shown.splitlines())
-    # An incomplete final line is not coverage of that line.
-    if note and re.search(r"\[truncated: line \d+", content):
-        lines = 0
-    elif (truncated or note) and shown and not shown.endswith("\n"):
-        lines -= 1
+    end = (
+        output.read_range[1]
+        if output.read_range is not None and not host_truncated else start - 1
+    )
     return {"path": arguments["path"], "start_line": start,
-            "end_line": start + lines - 1, "complete": not (truncated or note)}
+            "end_line": end, "complete": not (host_truncated or output.page_truncated)}
 
 
 def _prepare_container_writes(workspace: Path, cache: Path) -> None:
@@ -817,6 +814,8 @@ def _line_number(arguments: dict[str, Any], key: str) -> int | None:
 TOOL_REFUSED_EXIT = 3
 # Room a paged read keeps for its truncation note inside the output cap.
 _READ_NOTE_BYTES = 256
+# Internal read metadata is stripped before the model sees the tool result.
+_READ_META_BYTES = 256
 
 # Runs in the container. Lines split on "\n" only, so a line number means the
 # same thing to the model, to ``replace_in_file``, and to an editor. A page
@@ -867,6 +866,9 @@ elif following <= last:
         f'\\n[truncated: line {start} alone exceeds the tool output limit and only its first '
         f'{len(head.encode("utf-8"))} bytes are shown; {rest}]'
     )
+sys.stdout.buffer.write(
+    f'@assay-read:{start}:{following - 1}:{int(following <= last)}\\n'.encode('ascii')
+)
 sys.stdout.buffer.write(out.encode('utf-8'))
 """.replace("@REFUSED@", str(TOOL_REFUSED_EXIT)).replace("@NOTE@", str(_READ_NOTE_BYTES))
 
@@ -968,11 +970,24 @@ def _execute_tool(
             raise ToolArgumentError("end_line must not be before start_line")
         # The script's page budget leaves room for the sandbox's exit prefix.
         budget = max_output_bytes - len(f"exit={TOOL_REFUSED_EXIT}\n")
-        return sandbox.execute(
+        output = sandbox.execute(
             ["python", "-c", _READ_FILE, _relative_path(arguments), str(start), str(end or 0),
              str(budget)],
-            max_output_bytes=max_output_bytes,
+            max_output_bytes=max_output_bytes + _READ_META_BYTES,
             timeout_s=timeout_s,
+        )
+        if not output.text.startswith("exit=0\n"):
+            return output
+        header, separator, body = output.text.removeprefix("exit=0\n").partition("\n")
+        match = re.fullmatch(r"@assay-read:(\d+):(\d+):([01])", header)
+        if not separator or match is None:
+            raise RuntimeError("read_metadata")
+        return ToolOutput(
+            f"exit=0\n{body}",
+            output.original_bytes - len(header.encode("ascii")) - 1,
+            output.truncated,
+            read_range=(int(match.group(1)), int(match.group(2))),
+            page_truncated=match.group(3) == "1",
         )
     if name == "replace_in_file" and set(arguments) == {"path", "old", "new"}:
         old, new = arguments["old"], arguments["new"]
@@ -1442,6 +1457,8 @@ class RepositoryAgentClient:
                 ):
                     raise ValueError("request_limit")
                 requests += 1  # Count a failed dispatch; never retry it.
+                turn_usage: dict[str, int | float | None] = turn_record["usage"]
+                turn_usage["requests"] = int(turn_usage["requests"] or 0) + 1
                 started = time.monotonic()
                 answer = self._turn(messages, turn, deadline, turn_tools)
                 message = answer.message
@@ -1462,14 +1479,12 @@ class RepositoryAgentClient:
                 completion_tokens += answer.completion_tokens
                 if cost_usd is not None and answer.cost_usd is not None:
                     cost_usd += answer.cost_usd
-                turn_usage: dict[str, int | float | None] = turn_record["usage"]
                 turn_usage["prompt_tokens"] = (
                     int(turn_usage["prompt_tokens"] or 0) + answer.prompt_tokens
                 )
                 turn_usage["completion_tokens"] = (
                     int(turn_usage["completion_tokens"] or 0) + answer.completion_tokens
                 )
-                turn_usage["requests"] = int(turn_usage["requests"] or 0) + 1
                 if turn_usage["cost_usd"] is not None and answer.cost_usd is not None:
                     turn_usage["cost_usd"] = float(turn_usage["cost_usd"]) + answer.cost_usd
                 calls = message.get("tool_calls") or []
@@ -1562,6 +1577,7 @@ class RepositoryAgentClient:
                                 prefix_length = len(messages)
                                 logical_turn += 1
                                 turn_tool_calls = 0
+                                captured = False
                                 turn_record = {
                                     "turn": f"T{logical_turn}", "tool_calls": [],
                                     "submission": None, "workspace_diff": None,
@@ -1626,7 +1642,7 @@ class RepositoryAgentClient:
                         continue
                     cap = self.bounds.max_tool_output_bytes
                     bounded, bounded_truncated = _bounded_text(output.text, cap)
-                    page_truncated = name == "read_file" and "[truncated" in bounded
+                    page_truncated = output.page_truncated
                     if output.truncated or bounded_truncated:
                         # The model is told its output was cut, within the same cap.
                         note = (
@@ -1657,8 +1673,7 @@ class RepositoryAgentClient:
                     })
                     if name == "read_file":
                         tool_trace["returned_range"] = _read_coverage(
-                            arguments, bounded,
-                            output.truncated or bounded_truncated or page_truncated,
+                            arguments, output, output.truncated or bounded_truncated,
                         )
                     if name == "run_command":
                         tool_trace["scope_classification"] = "unclassified"

@@ -240,7 +240,8 @@ class RepositoryAgentTrialHandle:
         run_commands = [call for call in calls if call["name"] == "run_command"]
         reads = [call for call in calls if call["name"] == "read_file"]
         unclassified = sum(
-            call.get("scope_classification") == "unclassified" for call in run_commands
+            call.get("scope_classification", "unclassified") == "unclassified"
+            for call in run_commands
         )
         truncated_reads = sum(call["truncated"] for call in reads)
         artifacts = {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -395,6 +396,47 @@ def test_pilot_three_submissions_share_workspace_and_capture_each_diff(tmp_path:
     assert turns[2]["usage"]["requests"] == 2
 
 
+def test_failed_pilot_dispatch_counts_in_turn_usage(tmp_path: Path) -> None:
+    def failing(**kwargs: Any) -> ModelTurn:
+        raise ModelDispatchError("Unavailable", "failed before a response")
+
+    with pytest.raises(AgentLoopError) as failure:
+        _pilot(tmp_path, failing).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    assert failure.value.usage["requests"] == 1
+    assert failure.value.trajectory["turns"][0]["usage"]["requests"] == 1
+
+
+def test_stopped_later_turn_recaptures_tmpfs_workspace(tmp_path: Path) -> None:
+    class StagedSandbox(FakeSandbox):
+        def __init__(self, workspace: Path, cache: Path, image: str) -> None:
+            super().__init__(workspace, cache, image)
+            self.host_workspace = workspace
+            self.workspace = workspace.parent / "container_workspace"
+            shutil.copytree(workspace, self.workspace)
+
+        def capture_workspace(self) -> dict[str, int]:
+            shutil.rmtree(self.host_workspace)
+            shutil.copytree(self.workspace, self.host_workspace)
+            return {}
+
+    completion = Scripted(
+        [_call("write_file", {"path": "src/a.ts", "content": "first\n"}, 1)],
+        [_call("submit_output", {"title": "First", "body": "Done"}, 2)],
+        [_call("write_file", {"path": "src/a.ts", "content": "second\n"}, 3)],
+        [],
+    )
+    with pytest.raises(AgentLoopError) as failure:
+        _pilot(tmp_path, completion, sandbox_factory=StagedSandbox).run_cell(
+            cell_id="s:a:w0",
+            package={"instruction.md": "Edit", "workspace/src/a.ts": "original\n"},
+        )
+    assert failure.value.cause == "no_tool_call"
+    assert failure.value.trajectory["turns"][1]["workspace_diff"] is None
+    assert b"+second" in failure.value.evidence["candidate.patch"]
+
+
 def test_pilot_submit_shapes_reject_summary_and_invalid_verdict() -> None:
     with pytest.raises(ValueError, match="requires"):
         _submission({"summary": "old"}, 1, True)
@@ -497,6 +539,34 @@ def test_pilot_truncated_output_and_scope_evidence(tmp_path: Path) -> None:
     with pytest.raises(AgentLoopError) as failure:
         _pilot(tmp_path, tamper).run_cell(cell_id="s:b:w0", package={"instruction.md": "Edit"})
     assert failure.value.cause == "tampering"
+
+
+@pytest.mark.parametrize(
+    ("source", "cap", "truncated", "end_line"),
+    [
+        ("value [truncated: line 99 is just source text]\n", 1024, False, 1),
+        ("x" * 300, 80, True, 0),
+    ],
+)
+def test_pilot_read_metadata_is_separate_from_source_text(
+    tmp_path: Path, source: str, cap: int, truncated: bool, end_line: int
+) -> None:
+    completion = Scripted(
+        [_call("read_file", {"path": "src/a.ts", "start_line": 1, "end_line": None}, 1)],
+        [_call("submit_output", {"title": "A", "body": "B"}, 2)],
+        [_call("submit_output", {"verdict": "unsure", "remaining_v1": "",
+                                  "checks_performed": "read"}, 3)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "read"}, 4)],
+    )
+    result = _pilot(tmp_path, completion, bounds=LoopBounds(max_tool_output_bytes=cap)).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Read", "workspace/src/a.ts": source}
+    )
+    read = result.trajectory["turns"][0]["tool_calls"][0]
+    assert read["truncated"] is truncated
+    assert read["returned_range"]["end_line"] == end_line
+    if not truncated:
+        assert read["returned_text"] == f"exit=0\n{source}"
 
 
 def test_multiple_turns_and_two_cells_are_isolated(tmp_path: Path) -> None:

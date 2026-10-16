@@ -142,6 +142,19 @@ def test_pilot_configuration_and_sealed_per_turn_submissions(tmp_path: Path) -> 
     assert all(turn["workspace_diff"] == "" for turn in trajectory["turns"])
 
 
+def test_timed_out_run_command_counts_as_unclassified(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("run_command", {"command": "hang"}, 1)],
+        [_call("submit_output", {"summary": "done"}, 2)],
+    )
+    result = _runtime(tmp_path, completion).run_cell(_request())
+    assert isinstance(result.outcome, CandidateSubmission)
+    sealed = json.loads(result.artifacts["result.json"])
+    assert sealed["run_command_calls"] == 1
+    assert sealed["run_command_scope_unclassified"] == 1
+    assert sealed["run_command_scope_unclassified_rate"] == 1.0
+
+
 def test_prefilled_conversation_limit_is_a_candidate_cause(tmp_path: Path) -> None:
     agent = RepositoryAgentClient(
         api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
