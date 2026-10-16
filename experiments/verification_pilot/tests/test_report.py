@@ -54,7 +54,7 @@ async def test_scripted_grid_builds_paired_h2_and_separate_model_report(tmp_path
     _, run = await run_scripted(store)
     assert isinstance(run, RunSucceeded)
     ref = str(run.manifest_ref)
-    config = paired_config(store, (ref,), evaluator_id="t1_remnant_inspected",
+    config = paired_config(store, (ref,), evaluator_id="t1_ownership_gap",
                            reference_arm="t1-native", candidate_arm="t1-quoted")
     assert config.statistical_profile.name == "paired-v2"
     assert config.statistical_profile.alpha == 0.05
@@ -89,7 +89,7 @@ async def test_scripted_grid_builds_paired_h2_and_separate_model_report(tmp_path
     )
     assert isinstance(other, RunSucceeded)
     pooled = paired_config(store, (ref, str(other.manifest_ref)),
-                           evaluator_id="t1_remnant_inspected",
+                           evaluator_id="t1_ownership_gap",
                            reference_arm="t1-native", candidate_arm="t1-quoted")
     with pytest.raises(ReportError, match="run compatibility drift"):
         build_report(store, pooled)

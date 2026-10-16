@@ -25,7 +25,7 @@ from assay.report_engine import build_report, exact_sign_test, persist_report
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
 from verification_pilot.evaluation import NOT_APPLICABLE, REPORT_CATEGORIES
-from verification_pilot.migrations import GROUPS
+from verification_pilot.migrations import GROUPS, MIGRATIONS
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,12 +195,16 @@ def evaluator_tables(rows: Iterable[Observation]) -> list[dict[str, Any]]:
 
 
 def escalation_chart(rows: Iterable[Observation]) -> list[dict[str, Any]]:
-    selected: Counter[tuple[str, str, str, str]] = Counter(
-        (r.model, r.arm, r.evaluator_id.split("_", 1)[0], r.value)
-        for r in rows if r.evaluator_id.endswith("_saw_remnant_by")
+    measures = {"saw_remnant_by", "remnant_inspected", "ran_tests", "test_masked",
+                "silent_fix", "false_claim_case", "flip"}
+    selected: Counter[tuple[str, str, str, str, str]] = Counter(
+        (r.model, r.arm, r.evaluator_id.split("_", 1)[0],
+         r.evaluator_id.split("_", 1)[1], r.value)
+        for r in rows if r.evaluator_id.split("_", 1)[1] in measures
     )
-    return [{"model": model, "arm": arm, "turn": turn, "value": value, "count": count}
-            for (model, arm, turn, value), count in sorted(selected.items())]
+    return [{"model": model, "arm": arm, "turn": turn, "measure": measure,
+             "value": value, "count": count}
+            for (model, arm, turn, measure, value), count in sorted(selected.items())]
 
 
 def ceiling_effect(
@@ -209,9 +213,12 @@ def ceiling_effect(
     """Share whose first T1 inspection is a repository-wide symbol search."""
     totals: Counter[str] = Counter()
     wide: Counter[str] = Counter()
+    old_by_migration = {migration.name: migration.old_symbol for migration in MIGRATIONS}
     for ref in manifest_refs:
         manifest = RunManifest.model_validate(_read(store, ref))
         plan = parse_execution_plan(_read(store, manifest.plan_ref))
+        snapshot = StudySnapshot.model_validate(_read(store, plan.snapshot_ref))
+        subjects = {subject.id: _read(store, subject.payload_ref) for subject in snapshot.subjects}
         for cell in plan.cells:
             outcome_ref = manifest.execution_records.get(cell.id)
             if outcome_ref is None:
@@ -231,7 +238,10 @@ def ceiling_effect(
             if inspections:
                 first = inspections[0]
                 args = first.get("arguments", {})
-                if first.get("name") == "search_files" and args.get("scope") in ("", ".", "./"):
+                symbol = old_by_migration[subjects[cell.subject_id]["migration"]]
+                if (first.get("name") == "search_files"
+                        and args.get("scope") in ("", ".", "./")
+                        and symbol in str(args.get("query", ""))):
                     wide[cell.arm_id] += 1
     return [{"model": model, "arm": arm, "repository_wide_first": wide[arm],
              "n": count, "share": wide[arm] / count}
@@ -254,7 +264,7 @@ def model_report(
 ) -> dict[str, Any]:
     """Assemble per-model results; persist each engine comparison separately."""
     rows = verified_observations(store, manifest_refs, model)
-    h2_config = paired_config(store, manifest_refs, evaluator_id="t1_remnant_inspected",
+    h2_config = paired_config(store, manifest_refs, evaluator_id="t1_ownership_gap",
                               reference_arm="t1-native", candidate_arm="t1-quoted")
     h2 = build_report(store, h2_config)
     h2_ref = str(persist_report(store, h2_config))
