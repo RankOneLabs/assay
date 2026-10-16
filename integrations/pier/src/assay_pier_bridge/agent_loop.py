@@ -29,7 +29,7 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, NoReturn, Protocol
+from typing import Any, Literal, NoReturn, Protocol
 
 import httpx
 
@@ -44,7 +44,6 @@ from assay_pier_bridge.paths import (
 )
 from assay_pier_bridge.protocol import ModelRoute
 from assay_pier_bridge.provider import (
-    CHAT_COMPLETIONS_URL,
     MAX_COMPLETION_PRICE_PER_MILLION,
     MAX_PROMPT_PRICE_PER_MILLION,
     MODEL,
@@ -131,6 +130,38 @@ class ModelTurn:
     completion_tokens: int
     cost_usd: float | None
     observations: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class OpenRouterTurnRoute:
+    """Pinned settings for one authorized repository-agent OpenRouter route."""
+
+    endpoint: str
+    model: str
+    provider: str
+    provider_name: str
+    max_prompt_price_per_million: float
+    max_completion_price_per_million: float
+    # None delegates to LoopBounds for the repository-agent Haiku profile.
+    # Explicit frontier limits are still enforced in addition to LoopBounds.
+    max_request_body_bytes: int | None
+    max_output_tokens: int | None
+    tool_choice: Literal["auto", "forced"]
+
+
+# The repository agent's Haiku limits come from LoopBounds. provider.py's
+# 65,536-byte / 2,048-token limits govern its separate single-request client.
+HAIKU_TURN_ROUTE = OpenRouterTurnRoute(
+    endpoint="https://openrouter.ai/api/v1",
+    model=MODEL,
+    provider=PROVIDER,
+    provider_name=PROVIDER_NAME,
+    max_prompt_price_per_million=MAX_PROMPT_PRICE_PER_MILLION,
+    max_completion_price_per_million=MAX_COMPLETION_PRICE_PER_MILLION,
+    max_request_body_bytes=None,
+    max_output_tokens=None,
+    tool_choice="auto",
+)
 
 
 class TurnCompletion(Protocol):
@@ -1008,46 +1039,62 @@ class RepositoryAgentClient:
                 turn=turn,
                 deadline=deadline,
             )
-        return self._openrouter_turn(messages)
+        return self._openrouter_turn(messages, HAIKU_TURN_ROUTE)
 
-    def _openrouter_turn(self, messages: list[dict[str, Any]]) -> ModelTurn:
+    def _openrouter_turn(
+        self, messages: list[dict[str, Any]], route: OpenRouterTurnRoute
+    ) -> ModelTurn:
         body = {
-            "model": MODEL,
+            "model": route.model,
             "messages": messages,
             "tools": self.tools,
-            "tool_choice": "auto",
-            "max_tokens": self.bounds.max_output_tokens,
+            "tool_choice": (
+                "auto"
+                if route.tool_choice == "auto"
+                else {"type": "function", "function": {"name": "submit_output"}}
+            ),
+            "max_tokens": (
+                self.bounds.max_output_tokens
+                if route.max_output_tokens is None
+                else min(self.bounds.max_output_tokens, route.max_output_tokens)
+            ),
             "stream": False,
             "provider": {
                 "data_collection": "deny",
                 "zdr": True,
-                "only": [PROVIDER],
-                "order": [PROVIDER],
+                "only": [route.provider],
+                "order": [route.provider],
                 "allow_fallbacks": False,
                 "require_parameters": True,
                 "max_price": {
-                    "prompt": MAX_PROMPT_PRICE_PER_MILLION,
-                    "completion": MAX_COMPLETION_PRICE_PER_MILLION,
+                    "prompt": route.max_prompt_price_per_million,
+                    "completion": route.max_completion_price_per_million,
                     "request": 0,
                 },
             },
         }
         payload = _json_bytes(body)
-        if len(payload) > self.bounds.max_request_bytes:
+        request_limit = (
+            self.bounds.max_request_bytes
+            if route.max_request_body_bytes is None
+            else min(self.bounds.max_request_bytes, route.max_request_body_bytes)
+        )
+        if len(payload) > request_limit:
             raise ValueError("request_limit")
+        chat_completions_url = f"{route.endpoint}/chat/completions"
         with self._http_client() as client:
             if self._transport_retries(client) != 0:
                 raise ValueError("retry_config_violation")
             with client.stream(
                 "POST",
-                CHAT_COMPLETIONS_URL,
+                chat_completions_url,
                 content=payload,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
             ) as response:
-                if str(response.url) != CHAT_COMPLETIONS_URL or not response.is_success:
+                if str(response.url) != chat_completions_url or not response.is_success:
                     raise ValueError("provider_response")
                 chunks = bytearray()
                 for chunk in response.iter_bytes():
@@ -1057,8 +1104,8 @@ class RepositoryAgentClient:
         data = json.loads(chunks)
         if (
             not isinstance(data, dict)
-            or data.get("model") != MODEL
-            or data.get("provider") != PROVIDER_NAME
+            or data.get("model") != route.model
+            or data.get("provider") != route.provider_name
         ):
             raise ValueError("provider_identity")
         choices, usage = data.get("choices"), data.get("usage")
