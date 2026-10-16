@@ -85,6 +85,12 @@ and `sha256:6ea0bd2eb218f7b162701f2f55cdeb791a23ce351d8c922914c35867ffdb652f`.
 This is a measured local discard rate, but the observed acceptance count of
 zero gives no viable Tier 2 supply estimate.
 
+**Tier 2 stays excluded.** The observed 4/4 local discard result gives no
+empirical yield with which to budget on-policy generation. The plan's 288-cell
+ceiling is the full 48-subject × 6-arm grid bound, not a ceiling inferred from
+accepted blocks. Do not authorize a Tier 2 shard until a later generation
+probe produces usable blocks and the paid route's discard rate is measured.
+
 No OpenRouter credential is present in this build environment, so the paid
 route's discard rate and capacity estimate cannot be reported as observed.
 The 288-cell ceiling is the conservative full-grid bound pending that
