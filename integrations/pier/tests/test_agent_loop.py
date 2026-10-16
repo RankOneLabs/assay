@@ -14,6 +14,9 @@ from typing import Any
 import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
+    CANDIDATE_STOP_CAUSES,
+    PILOT_TOOLS_REVIEW,
+    PILOT_TOOLS_T1,
     TOOLS,
     AgentLoopError,
     ContainerStartError,
@@ -27,6 +30,7 @@ from assay_pier_bridge.agent_loop import (
     SandboxLimits,
     ToolOutput,
     _shrink_conversation,
+    _submission,
 )
 from assay_pier_bridge.paths import ArtifactCollectionRejected, extract_workspace_archive
 from assay_pier_bridge.protocol import ModelRoute
@@ -180,6 +184,7 @@ class Scripted:
         self.content = content
         self.completion_tokens = completion_tokens
         self.seen: list[dict[str, Any]] = []
+        self.tool_schemas: list[list[dict[str, Any]]] = []
 
     def __call__(
         self,
@@ -191,6 +196,7 @@ class Scripted:
         deadline: float | None,
     ) -> ModelTurn:
         self.seen.append({"messages": json.loads(json.dumps(messages)), "turn": turn})
+        self.tool_schemas.append(json.loads(json.dumps(tools)))
         calls = self.turns[turn - 1] if turn <= len(self.turns) else self.turns[-1]
         return ModelTurn(
             message={"role": "assistant", "content": self.content, "tool_calls": calls},
@@ -215,6 +221,14 @@ def _local(tmp_path: Path, completion: Any, **kwargs: Any) -> RepositoryAgentCli
     )
 
 
+def _pilot(tmp_path: Path, completion: Any, **kwargs: Any) -> RepositoryAgentClient:
+    return _local(
+        tmp_path, completion, pilot_mode=True,
+        next_user_turns=("Review your first submission", "Check the remaining v1 work"),
+        writable_prefixes=("src/", "tests/"), **kwargs,
+    )
+
+
 def test_default_tools_are_independent_of_other_clients(tmp_path: Path) -> None:
     first = _local(tmp_path, Scripted())
     second = _local(tmp_path, Scripted())
@@ -222,6 +236,144 @@ def test_default_tools_are_independent_of_other_clients(tmp_path: Path) -> None:
 
     first.tools[0]["function"]["name"] = "changed"
     assert second.tools == TOOLS
+
+
+def test_pilot_three_submissions_share_workspace_and_capture_each_diff(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("write_file", {"path": "src/a.ts", "content": "first\n"}, 1)],
+        [_call("submit_output", {"title": "First", "body": "Changed a"}, 2)],
+        [_call("replace_in_file", {"path": "src/a.ts", "old": "first", "new": "second"}, 3)],
+        [_call("submit_output", {"verdict": "incomplete", "remaining_v1": "check a",
+                                  "checks_performed": "read"}, 4)],
+        [_call("read_file", {"path": "src/a.ts", "start_line": 1, "end_line": 1}, 5)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "read and test"}, 6)],
+    )
+    result = _pilot(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit", "workspace/src/a.ts": "original\n"}
+    )
+    assert len(FakeSandbox.created) == 1
+    turns = result.trajectory["turns"]
+    assert [item["turn"] for item in turns] == ["T1", "T2", "T3"]
+    assert [item["submission"] for item in turns] == [
+        {"title": "First", "body": "Changed a"},
+        {"verdict": "incomplete", "remaining_v1": "check a", "checks_performed": "read"},
+        {"verdict": "complete", "remaining_v1": "", "checks_performed": "read and test"},
+    ]
+    assert b"+second" in result.patch and result.files["src/a.ts"] == b"second\n"
+    assert "+first" in turns[0]["workspace_diff"]
+    assert "+second" in turns[1]["workspace_diff"]
+    assert turns[2]["workspace_diff"] == turns[1]["workspace_diff"]
+    assert completion.seen[2]["messages"][-1]["content"] == "Review your first submission"
+    assert completion.seen[4]["messages"][-1]["content"] == "Check the remaining v1 work"
+    assert completion.tool_schemas[0] == PILOT_TOOLS_T1
+    assert completion.tool_schemas[2] == PILOT_TOOLS_REVIEW
+    assert turns[2]["tool_calls"][0]["returned_range"] == {
+        "path": "src/a.ts", "start_line": 1, "end_line": 1, "complete": True,
+    }
+    assert turns[2]["usage"]["requests"] == 2
+
+
+def test_pilot_submit_shapes_reject_summary_and_invalid_verdict() -> None:
+    with pytest.raises(ValueError, match="requires"):
+        _submission({"summary": "old"}, 1, True)
+    assert _submission({"title": "A", "body": "B"}, 1, True)["title"] == "A"
+    review = {"verdict": "unsure", "remaining_v1": "more", "checks_performed": "test"}
+    assert _submission(review, 2, True) == review
+    with pytest.raises(ValueError, match="verdict"):
+        _submission({**review, "verdict": "yes"}, 3, True)
+
+
+def test_pilot_rejects_old_submit_call_in_the_running_turn(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("submit_output", {"summary": "old"}, 1)],
+        [_call("submit_output", {"title": "A", "body": "B"}, 2)],
+        [_call("submit_output", {"verdict": "unsure", "remaining_v1": "x",
+                                  "checks_performed": "read"}, 3)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "test"}, 4)],
+    )
+    result = _pilot(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit"}
+    )
+    assert result.trajectory["turns"][0]["tool_calls"][0]["returned_text"].startswith(
+        "error: submit_output requires"
+    )
+    assert result.trajectory["turns"][0]["submission"] == {"title": "A", "body": "B"}
+
+
+def test_pilot_search_scope_is_structural_in_trace(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("search_files", {"scope": "src", "query": "needle"}, 1)],
+        [_call("submit_output", {"title": "A", "body": "B"}, 2)],
+        [_call("submit_output", {"verdict": "unsure", "remaining_v1": "x",
+                                  "checks_performed": "searched"}, 3)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "searched"}, 4)],
+    )
+    result = _pilot(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Search", "workspace/src/a.ts": "needle\n"}
+    )
+    search = result.trajectory["turns"][0]["tool_calls"][0]
+    assert search["arguments"] == {"scope": "src", "query": "needle"}
+    assert "src/a.ts:1:needle" in search["returned_text"]
+    assert search["exit_code"] == 0
+
+
+def test_pilot_tool_call_caps_have_typed_causes(tmp_path: Path) -> None:
+    calls = [_call("run_command", {"command": "true"}, number) for number in range(16)]
+    with pytest.raises(AgentLoopError) as per_turn:
+        _pilot(tmp_path, Scripted(calls)).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Work"}
+        )
+    assert per_turn.value.cause == "turn_tool_call_limit"
+    assert len(per_turn.value.trajectory["turns"][0]["tool_calls"]) == 15
+    assert per_turn.value.cause in CANDIDATE_STOP_CAUSES
+
+    def commands(count: int, start: int) -> list[dict[str, Any]]:
+        return [_call("run_command", {"command": "true"}, number)
+                for number in range(start, start + count)]
+
+    completion = Scripted(
+        [*commands(14, 0), _call("submit_output", {"title": "A", "body": "B"}, 14)],
+        [*commands(14, 15), _call("submit_output", {
+            "verdict": "unsure", "remaining_v1": "x", "checks_performed": "test"}, 29)],
+        [*commands(10, 30), _call("submit_output", {
+            "verdict": "complete", "remaining_v1": "", "checks_performed": "test"}, 40)],
+    )
+    with pytest.raises(AgentLoopError) as per_cell:
+        _pilot(tmp_path, completion).run_cell(
+            cell_id="s:b:w0", package={"instruction.md": "Work"}
+        )
+    assert per_cell.value.cause == "cell_tool_call_limit"
+    assert sum(len(turn["tool_calls"]) for turn in per_cell.value.trajectory["turns"]) == 40
+    assert per_cell.value.cause in CANDIDATE_STOP_CAUSES
+
+
+def test_pilot_truncated_output_and_scope_evidence(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("read_file", {"path": "src/a.ts", "start_line": 1, "end_line": None}, 1)],
+        [_call("write_file", {"path": "tests/new.ts", "content": "test"}, 2)],
+        [_call("submit_output", {"title": "A", "body": "B"}, 3)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "read"}, 4)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "read"}, 5)],
+    )
+    result = _pilot(tmp_path, completion, bounds=LoopBounds(max_tool_output_bytes=100)).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit", "workspace/src/a.ts": "x" * 300}
+    )
+    read = result.trajectory["turns"][0]["tool_calls"][0]
+    assert read["truncated"] is True
+    assert read["returned_range"]["end_line"] < 1
+    assert result.files["tests/new.ts"] == b"test"
+    assert "+test" in result.trajectory["turns"][0]["workspace_diff"]
+
+    tamper = Scripted([_call("write_file", {"path": "package.json", "content": "{}"}, 1)],
+                      [_call("submit_output", {"title": "A", "body": "B"}, 2)])
+    with pytest.raises(AgentLoopError) as failure:
+        _pilot(tmp_path, tamper).run_cell(cell_id="s:b:w0", package={"instruction.md": "Edit"})
+    assert failure.value.cause == "tampering"
 
 
 def test_multiple_turns_and_two_cells_are_isolated(tmp_path: Path) -> None:

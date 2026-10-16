@@ -18,6 +18,8 @@ from typing import Any
 
 from assay_pier_bridge.agent_loop import (
     CANDIDATE_STOP_CAUSES,
+    PILOT_SYSTEM_PROMPT,
+    PILOT_TOOL_SCHEMAS,
     SYSTEM_PROMPT,
     TOOLS,
     AgentLoopError,
@@ -55,8 +57,12 @@ def agent_configuration(
     tools: list[dict[str, Any]] | None = None,
     system_prompt: str = SYSTEM_PROMPT,
     message_prefix: tuple[dict[str, Any], ...] = (),
+    pilot_mode: bool = False,
+    next_user_turns: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """The stable, authorizable description of how this loop runs a cell."""
+    if pilot_mode and system_prompt == SYSTEM_PROMPT:
+        system_prompt = PILOT_SYSTEM_PROMPT
     return {
         "loop": "assay-repository-agent/1",
         "bounds": asdict(bounds),
@@ -64,13 +70,21 @@ def agent_configuration(
         "storage": "docker-tmpfs",
         "network": "none",
         "writable_prefixes": list(writable_prefixes),
-        "tools_sha256": digest_bytes(canonical_json(TOOLS if tools is None else tools)),
+        "tools_sha256": digest_bytes(canonical_json(
+            PILOT_TOOL_SCHEMAS if pilot_mode else (TOOLS if tools is None else tools)
+        )),
         "system_prompt_sha256": digest_bytes(system_prompt.encode("utf-8")),
         "model_route": model_route.model_dump(mode="json"),
         "attempts": 1,
         "provider_retries": 0,
         **({"message_prefix_sha256": digest_bytes(canonical_json(message_prefix))}
            if message_prefix else {}),
+        **({
+            "turn_prompts_sha256": digest_bytes(canonical_json(next_user_turns)),
+            "max_tool_calls_per_turn": 15,
+            "max_tool_calls_per_cell": 40,
+            "turns": 3,
+        } if pilot_mode else {}),
         **dict(extra or {}),
     }
 
@@ -130,6 +144,23 @@ class RepositoryAgentTrialHandle:
 
     def _check_request(self) -> None:
         request = self._request
+        if self._agent.pilot_mode:
+            expected = agent_configuration(
+                bounds=self._agent.bounds, limits=self._limits,
+                writable_prefixes=self._agent.writable_prefixes,
+                model_route=self._agent.model_route, pilot_mode=True,
+                next_user_turns=self._agent.next_user_turns,
+                system_prompt=self._agent.system_prompt,
+                message_prefix=self._agent.message_prefix,
+            )
+            pinned = (
+                "tools_sha256", "system_prompt_sha256", "turn_prompts_sha256",
+                "writable_prefixes", "max_tool_calls_per_turn", "max_tool_calls_per_cell",
+            )
+            if any(self._configuration.get(key) != expected[key] for key in pinned):
+                raise InfrastructureTrialError(
+                    "enforcement", "pilot configuration differs from the agent's tool surface"
+                )
         if package_digest(self._package) != request.package_digest:
             raise InfrastructureTrialError(
                 "enforcement", "package does not match the request's authorized package_digest"
@@ -199,6 +230,13 @@ class RepositoryAgentTrialHandle:
 
     def _sealed(self, result: LoopResult) -> TrialResult:
         self._trajectory = result.trajectory
+        calls = [call for turn in result.trajectory["turns"] for call in turn["tool_calls"]]
+        run_commands = [call for call in calls if call["name"] == "run_command"]
+        reads = [call for call in calls if call["name"] == "read_file"]
+        unclassified = sum(
+            call.get("scope_classification") == "unclassified" for call in run_commands
+        )
+        truncated_reads = sum(call["truncated"] for call in reads)
         artifacts = {
             "trajectory.json": canonical_json(result.trajectory),
             "candidate.patch": result.patch,
@@ -206,6 +244,16 @@ class RepositoryAgentTrialHandle:
                 {
                     "exit_status": SUBMITTED_EXIT_STATUS,
                     "summary": result.summary,
+                    "submissions": [turn["submission"] for turn in result.trajectory["turns"]
+                                    if turn["submission"] is not None],
+                    "run_command_scope_unclassified": unclassified,
+                    "run_command_calls": len(run_commands),
+                    "run_command_scope_unclassified_rate": (
+                        unclassified / len(run_commands) if run_commands else None
+                    ),
+                    "truncated_reads": truncated_reads,
+                    "read_calls": len(reads),
+                    "truncated_read_rate": truncated_reads / len(reads) if reads else None,
                     "requests": result.requests,
                     "baseline_tree_digest": result.baseline_tree_digest,
                     "tree_digest": result.final_tree_digest,
