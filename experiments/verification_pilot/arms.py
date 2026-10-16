@@ -9,6 +9,11 @@ from verification_pilot.prompts import PILOT_SYSTEM_PROMPT
 
 Placement = Literal["native-template", "quoted-template"]
 Route = Literal["smithers-local", "openrouter"]
+SCHEDULE = "subject-rotated-v1"
+TIER_1_ARMS = ("t1-native", "t1-quoted")
+TIER_2_ARMS = ("t2-native", "t2-quoted")
+TIER_3_ARMS = ("t3-native", "t3-quoted")
+ALL_ARMS = TIER_1_ARMS + TIER_2_ARMS + TIER_3_ARMS
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,3 +42,9 @@ def arm(placement: Placement, route: Route) -> RenderArm:
             f"route={route}",
         ),
     )
+
+
+def placement_for(arm_id: str) -> Placement:
+    if arm_id not in ALL_ARMS:
+        raise ValueError(f"unknown pilot arm: {arm_id}")
+    return "native-template" if arm_id.endswith("native") else "quoted-template"
