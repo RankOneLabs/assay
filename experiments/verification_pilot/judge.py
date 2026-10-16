@@ -11,9 +11,16 @@ from typing import Any, Literal
 
 from jig.core.types import CompletionParams, Message, Role
 
+from assay.adapters.consistency import CompletionNotSent
 from assay.adapters.openrouter import OpenRouterFactory, source_output_tool
 from assay.adapters.openrouter_policy import HAIKU_4_5_BEDROCK
-from assay.execution import EvaluationFailed, EvaluationResult, EvaluationSuccess, WorkerFailure
+from assay.execution import (
+    Accounting,
+    EvaluationFailed,
+    EvaluationResult,
+    EvaluationSuccess,
+    WorkerFailure,
+)
 from assay.models import EvaluationCoordinate, ReportConfig
 from assay.store import ObjectStore
 from verification_pilot.evaluation import NOT_APPLICABLE, SealedPilotTrace
@@ -94,6 +101,7 @@ class PilotJudge:
 
     async def evaluate(self, *, input_value: Any, output: Any,
                        coordinate: EvaluationCoordinate) -> EvaluationResult:
+        accounting = Accounting()
         if coordinate.evaluator_id not in JUDGE_ITEMS:
             return EvaluationFailed("UnknownJudgeItem", coordinate.evaluator_id)
         if coordinate.evaluator_repeat >= JUDGE_REPEAT_COUNT:
@@ -115,7 +123,19 @@ class PilotJudge:
             finally:
                 await client.aclose()
             if isinstance(response, WorkerFailure):
-                return EvaluationFailed(response.error_type, response.message)
+                failed_accounting = (response.accounting if isinstance(response, CompletionNotSent)
+                                     else Accounting(usage=response.accounting.usage,
+                                                     coverage="uncertain"))
+                return EvaluationFailed(response.error_type, response.message,
+                                        accounting=failed_accounting)
+            usage = response.usage
+            accounting = Accounting(
+                usage={"llm_calls": 1, "input_tokens": usage.input_tokens,
+                       "output_tokens": usage.output_tokens},
+                amount=usage.cost, currency="USD" if usage.cost is not None else None,
+                coverage="measured" if usage.cost is not None else "uncertain",
+                basis="openrouter-inline-usage-cost" if usage.cost is not None else None,
+            )
             submitted = next((call.arguments.get("source") for call in
                               response.tool_calls or () if call.name == "submit_output"), None)
             if not isinstance(submitted, str):
@@ -124,6 +144,6 @@ class PilotJudge:
             label = parsed.get("label")
             if type(label) is not int or label not in (0, 1):
                 raise ValueError("judge returned invalid label")
-            return EvaluationSuccess(str(label))
+            return EvaluationSuccess(str(label), accounting=accounting)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-            return EvaluationFailed("JudgeInputOrResponse", str(error))
+            return EvaluationFailed("JudgeInputOrResponse", str(error), accounting=accounting)

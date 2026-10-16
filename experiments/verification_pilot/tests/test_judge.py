@@ -9,7 +9,8 @@ from typing import Any, cast
 
 from jig.core.types import LLMResponse, ToolCall, Usage
 
-from assay.execution import EvaluationSuccess
+from assay.adapters.consistency import CompletionNotSent
+from assay.execution import EvaluationFailed, EvaluationSuccess, WorkerFailure
 from assay.models import EvaluationCoordinate
 from assay.store import ObjectStore
 from verification_pilot.evaluation import SealedPilotTrace
@@ -32,7 +33,7 @@ class FakeClient:
         self.params: list[Any] = []
         self.closed = False
 
-    async def complete_result(self, params: Any) -> LLMResponse:
+    async def complete_result(self, params: Any) -> LLMResponse | WorkerFailure:
         self.params.append(params)
         return LLMResponse("", [ToolCall("judge", "submit_output",
                                          {"source": '{"label":1}'})],
@@ -84,12 +85,52 @@ def test_judge_prompt_excludes_arm_and_truth_and_uses_governed_route(tmp_path: P
         assert isinstance(result, EvaluationSuccess)
         assert result.verdict == "1"
         assert result.verdict in JUDGE_CATEGORIES
+        assert result.accounting.usage == {"llm_calls": 1, "input_tokens": 1,
+                                           "output_tokens": 1}
+        assert result.accounting.amount == 0
+        assert result.accounting.coverage == "measured"
     assert factory.client.closed
     assert len(factory.client.params) == 2
     for params in factory.client.params:
         assert params.max_tokens == 256
         assert params.temperature == 0
         assert "ground_truth" not in params.messages[0].content
+
+
+def test_judge_retains_accounting_on_invalid_response_and_sent_failure(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path)
+    output = _sealed(store, {"turns": [
+        {"turn": "T1", "submission": {"title": "Review"}, "tool_calls": []},
+    ]})
+    coordinate = EvaluationCoordinate(cell_id="pilot:arm:w0", evaluator_id="t1_claim",
+                                      evaluator_repeat=0)
+
+    class ScriptedClient(FakeClient):
+        def __init__(self, result: LLMResponse | WorkerFailure) -> None:
+            super().__init__()
+            self.result = result
+
+        async def complete_result(self, params: Any) -> LLMResponse | WorkerFailure:
+            return self.result
+
+    for response, expected_coverage in (
+        (LLMResponse("", [ToolCall("judge", "submit_output",
+                                     {"source": '{"label":2}'})],
+                     Usage(3, 4, 0.25), 1, JUDGE_ROUTE.model), "measured"),
+        (WorkerFailure("Transport", "failed"), "uncertain"),
+        (CompletionNotSent("InvalidRequest", "not sent"), "unavailable"),
+    ):
+        factory = FakeFactory()
+        factory.client = ScriptedClient(response)
+        result = asyncio.run(PilotJudge(store, cast(Any, factory)).evaluate(
+            input_value={}, output=output, coordinate=coordinate))
+        assert isinstance(result, EvaluationFailed)
+        assert result.accounting.coverage == expected_coverage
+        if isinstance(response, LLMResponse):
+            assert result.accounting.usage == {"llm_calls": 1, "input_tokens": 3,
+                                               "output_tokens": 4}
+            assert result.accounting.amount == 0.25
+        assert factory.client.closed
 
 
 def test_seeded_twenty_percent_hand_audit_reports_agreement() -> None:
