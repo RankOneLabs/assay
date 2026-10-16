@@ -3,8 +3,14 @@
 import json
 from pathlib import Path
 
-from assay.canonical import canonical_json
-from assay.models import ExecutionOutcome, ExecutionPlanV3, RuntimeProfile, StudySnapshot
+from assay.models import (
+    ExecutionCeiling,
+    ExecutionOutcome,
+    ExecutionPlanV3,
+    RuntimeProfile,
+    StudySnapshot,
+)
+from assay.report_engine import _compatibility_fingerprint
 from assay.store import ObjectStore
 from verification_pilot.arms import ALL_ARMS, TIER_1_ARMS, TIER_2_ARMS
 from verification_pilot.study import FINAL_CEILING, compile_pilot_plan, pilot_subjects
@@ -74,23 +80,12 @@ def test_tier_shards_keep_report_compatibility_fields(tmp_path: Path) -> None:
     assert one.exclusions != two.exclusions
     assert {cell.arm_id for cell in two.cells} == set(TIER_2_ARMS)
 
-    def fingerprint(plan: ExecutionPlanV3) -> bytes:
-        snapshot = tier1.snapshot
-        return canonical_json({
-            "task_ref": snapshot.paa_task_ref,
-            "scope": snapshot.paa_scope,
-            "task_schema_ref": snapshot.task_schema_ref,
-            "evidence_schema_ref": snapshot.evidence_schema_ref,
-            "operating_schema_ref": snapshot.operating_schema_ref,
-            "pricing_catalog_ref": snapshot.pricing_catalog_ref,
-            "pricing_assumptions": snapshot.pricing_assumptions,
-            "worker_repeats": plan.worker_repeats,
-            "preparation_mode": plan.preparation_mode,
-            "concurrency": plan.concurrency,
-            "runtime": plan.runtime.model_dump(mode="json"),
-            "assay_version": plan.assay_version,
-            "schema_version": plan.schema_version,
-            "ceiling": plan.ceiling.model_dump(mode="json"),
-        })
-
-    assert fingerprint(one) == fingerprint(two)
+    assert _compatibility_fingerprint(one, tier1.snapshot) == (
+        _compatibility_fingerprint(two, tier2.snapshot)
+    )
+    raised_ceiling = ExecutionCeiling(max_cells=289, max_wall_time_seconds=345_600,
+                                      max_fleet_occupancy=1)
+    assert _compatibility_fingerprint(one, tier1.snapshot) != (
+        _compatibility_fingerprint(two.model_copy(update={"ceiling": raised_ceiling}),
+                                   tier2.snapshot)
+    )
