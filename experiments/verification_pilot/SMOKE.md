@@ -12,7 +12,7 @@ Run the local shard with `uv run --project experiments python -m
 verification_pilot.run live-smoke --store /tmp/vp-live-smoke --image <pinned-image>
 --routing-config <routing-file>`. The snapshot retains all 48 subjects and
 all tier arms while the plan excludes cells outside the 16-cell smoke shard.
-With an operator-provided `OPENROUTER_API_KEY`, run the paid shard using the
+After the operator fixes the dollar cap and provides `OPENROUTER_API_KEY`, run the paid shard using the
 same command and `--route openrouter --store /tmp/vp-paid-live-smoke`. The
 route identity is pinned by `assay_pier_bridge.protocol.ModelRoute`; record
 the exact model and provider supplied by `vp-frontier-route` before dispatch.
@@ -45,13 +45,15 @@ and trace refs. Do not execute Tier 2 cells during this qualification.
 Run local generation with `uv run --project experiments python -m
 verification_pilot.run on-policy-local --store /tmp/vp-on-policy --image
 <pinned-image> --routing-config <routing-file>`; it is outside the cell runtime.
-Use `on-policy-paid --store /tmp/vp-paid-on-policy --image <pinned-image>`
-with the operator-provided `OPENROUTER_API_KEY` for the same four locations on
+After the same cap decision, use `on-policy-paid --store /tmp/vp-paid-on-policy
+--image <pinned-image>` with the operator-provided `OPENROUTER_API_KEY` for the same four locations on
 the paid route. The current local probe discarded 4/4 attempts and accepted
 zero; Tier 2 remains excluded. The 288-cell ceiling is the full-grid bound,
 not an empirical supply estimate.
 
-The paid route's dollar cap is an operator gate carried in the runtime
+The proposed paid-route dollar cap is an operator gate carried in the runtime
 configuration and checked against `report_engine.summarize_operating` before
-dispatch; the `ExecutionCeiling` wire type has no dollar field. The frontier
-route cohort must supply the model identity and budget before a paid smoke.
+dispatch. The operator has not yet decided its location or value, so this
+check is not implemented or authorized. The `ExecutionCeiling` wire type has
+no dollar field. The frontier-route cohort must supply the model identity,
+credential, and cap decision before paid dispatch.
