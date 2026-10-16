@@ -5,20 +5,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS, SandboxLimits
-from assay_pier_bridge.identity import canonical_json, digest_bytes
-from assay_pier_bridge.protocol import ModelRoute
-from assay_pier_bridge.repository_trial import agent_configuration
-
 from verification_pilot.bridge import create_pilot_agent
 from verification_pilot.settings import PILOT_TOOLS_SHA256, VerificationPilotSettings
 
 
 def test_committed_pilot_tool_digest_matches_schema() -> None:
+    # Import after verification_pilot.bridge adds the isolated bridge source path.
+    from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS
+    from assay_pier_bridge.identity import canonical_json, digest_bytes
+
     assert digest_bytes(canonical_json(PILOT_TOOL_SCHEMAS)) == PILOT_TOOLS_SHA256
 
 
 def test_pilot_agent_and_configuration_consume_settings(tmp_path: Path) -> None:
+    from assay_pier_bridge.agent_loop import SandboxLimits
+    from assay_pier_bridge.protocol import ModelRoute
+    from assay_pier_bridge.repository_trial import agent_configuration
+
     # Different values expose a hard-coded bridge limit or scope immediately.
     settings = VerificationPilotSettings().model_copy(update={
         "writable_prefixes": ("src/",),
