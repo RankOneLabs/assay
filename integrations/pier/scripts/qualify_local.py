@@ -573,6 +573,10 @@ class _FakeBridgeHandle:
     exchange: PierExchange
     mode: Literal["success", "tampered", "cancel", "error"]
 
+    def cancel(self) -> None:
+        """Implement the same handle contract exercised by the adapter probe."""
+        self.mode = "cancel"
+
     def run(self) -> BridgeTrialResult:
         if self.mode == "cancel":
             raise asyncio.CancelledError()
