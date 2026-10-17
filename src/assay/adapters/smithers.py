@@ -246,15 +246,15 @@ class SmithersClient(DispatchClient, DescribedClient):
         return time.monotonic()
 
     async def _get(self, url: str) -> httpx.Response:
-        for attempt in range(2):
-            try:
-                response = await self._http.get(url)
-                response.raise_for_status()
-                return response
-            except httpx.HTTPError:
-                if attempt == 1:
-                    raise
-        raise AssertionError("bounded GET retry loop did not return")
+        async def request() -> httpx.Response:
+            response = await self._http.get(url)
+            response.raise_for_status()
+            return response
+
+        try:
+            return await request()
+        except httpx.HTTPError:
+            return await request()
 
     def _identity_failure(self, job: dict[str, Any]) -> WorkerFailure | None:
         if job.get("machine") != self._factory.machine:

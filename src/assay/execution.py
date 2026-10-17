@@ -235,7 +235,7 @@ class AdmissionLedger:
         if self.request_halt is not None:
             return self.request_halt
         remaining = self.remaining_seconds()
-        if self.ceiling is not None and (remaining is None or remaining <= 0):
+        if remaining is not None and remaining <= 0:
             self.request_halt = AdmissionHalt(
                 "ceiling_exhausted", "authorized wall time exhausted"
             )
