@@ -7,14 +7,17 @@ from typing import Any
 import pytest
 from assay_pier_bridge.agent_loop import (
     PILOT_TOOL_SCHEMAS,
+    AgentLoopError,
     DockerTmpfsStagingStorage,
     DockerTmpfsToolSandbox,
     LoopBounds,
     ModelTurn,
     RepositoryAgentClient,
     SandboxLimits,
+    ToolOutput,
 )
 from assay_pier_bridge.identity import canonical_json, digest_bytes, package_digest
+from assay_pier_bridge.paths import ArtifactCollectionRejected
 from assay_pier_bridge.protocol import (
     REQUIRED_SUCCESS_KINDS,
     ArtifactManifest,
@@ -128,6 +131,50 @@ def test_tmpfs_defaults_and_authorized_quota_match(tmp_path: Path) -> None:
             agent=agent, package=PACKAGE,
             limits=SandboxLimits(workspace_mb=128, cache_mb=128), configuration={},
         )
+
+
+def test_lone_surrogate_tool_output_is_a_typed_candidate_failure(tmp_path: Path) -> None:
+    class SurrogateSandbox(FakeSandbox):
+        def execute(self, argv: list[str], **kwargs: Any) -> ToolOutput:
+            return ToolOutput("exit=0\n\ud800", 10, False)
+
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([_call("run_command", {"command": "echo hi"}, 1)]),
+        sandbox_factory=SurrogateSandbox, storage_factory=FakeStorage,
+    )
+    result = BridgeRuntime(RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration={},
+    )).run_cell(_request())
+    assert isinstance(result.outcome, CandidateFailure)
+    assert result.outcome.cause == "invalid_tool_output_encoding"
+    json.loads(result.artifacts["trajectory.json"])
+
+
+def test_invalid_trajectory_unicode_does_not_mask_original_candidate_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([]), sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+
+    def broken_run(**kwargs: Any) -> Any:
+        raise AgentLoopError(
+            "invalid_tool_output_encoding",
+            {"events": [], "messages": [{"content": "\ud800"}], "turns": []},
+            rejection=ArtifactCollectionRejected(
+                "invalid_tool_output_encoding", "bad output", origin="working_copy"
+            ),
+        )
+
+    monkeypatch.setattr(agent, "run_cell", broken_run)
+    result = BridgeRuntime(RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration={},
+    )).run_cell(_request())
+    assert isinstance(result.outcome, CandidateFailure)
+    assert result.outcome.cause == "invalid_tool_output_encoding"
+    assert b"\\ud800" in result.artifacts["trajectory.json"]
 
 
 def test_teardown_counts_cell_label_and_refuses_failed_cleanup(

@@ -76,6 +76,11 @@ def _read_regular_nofollow(
                 "out_of_scope_edit", f"non-regular entry in submission: {relative}",
                 rejected_path=relative, origin=origin,
             )
+        if metadata.st_nlink > 1:
+            raise ArtifactCollectionRejected(
+                "hard_link_submission", f"hard link in submission: {relative}",
+                rejected_path=relative, origin=origin,
+            )
         if reject_size is not None and metadata.st_size > reject_size:
             return b"", metadata.st_size
         with os.fdopen(os.dup(leaf), "rb") as source:
@@ -115,6 +120,16 @@ def safe_relative_path(raw_path: str) -> PurePosixPath:
     ):
         raise ValueError(f"unsafe path: {raw_path}")
     return path
+
+
+def _utf8_path(path: str, *, origin: str) -> None:
+    try:
+        path.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ArtifactCollectionRejected(
+            "non_utf8_path", "submission path is not UTF-8 encodable",
+            rejected_path=path, origin=origin,
+        ) from error
 
 
 def materialize_under(root: Path, files: Mapping[str, str]) -> None:
@@ -162,6 +177,7 @@ def regular_tree(root: Path) -> dict[str, bytes]:
     aggregate_bytes = 0
     for path in sorted(paths):
         raw_relative = path.relative_to(root).as_posix()
+        _utf8_path(raw_relative, origin="working_copy")
         try:
             relative = safe_relative_path(raw_relative).as_posix()
         except ValueError as error:
@@ -258,7 +274,12 @@ def extract_workspace_archive(archive: bytes, root: Path) -> None:
                     "traversal", str(error), artifacts=files, rejected_path=raw,
                     origin="working_copy",
                 ) from error
-            if member.issym() or member.islnk():
+            if member.islnk():
+                raise ArtifactCollectionRejected(
+                    "hard_link_submission", f"hard link in submission: {raw}",
+                    artifacts=files, rejected_path=raw, origin="working_copy",
+                )
+            if member.issym():
                 raise ArtifactCollectionRejected(
                     "escaping_symlink", f"link in submission: {raw}",
                     artifacts=files, rejected_path=raw, origin="working_copy",
@@ -339,6 +360,8 @@ def check_submission_scope(
 
 def tree_digest(files: Mapping[str, bytes]) -> str:
     digest = hashlib.sha256()
+    for path in files:
+        _utf8_path(path, origin="working_copy")
     for path in sorted(files, key=lambda value: value.encode("utf-8")):
         safe_relative_path(path)
         digest.update(path.encode("utf-8") + b"\x00100644\x00" + files[path] + b"\x00")
@@ -397,9 +420,15 @@ def submission_patch(baseline: Path, final: Path) -> SubmissionPatch:
             (checkout / path).unlink()
         for path, data in after.items():
             target = checkout / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-            target.chmod(0o644)
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+                target.chmod(0o644)
+            except OSError as error:
+                raise ArtifactCollectionRejected(
+                    "patch_capture_conflict", f"cannot stage final file: {path}",
+                    artifacts=dict(after), rejected_path=path, origin="working_copy",
+                ) from error
         new_paths = sorted(set(after) - set(before))
         if new_paths:
             _git(checkout, "add", "-f", "-N", "--", *new_paths)
@@ -466,6 +495,7 @@ def collect_artifacts(
         if stat.S_ISDIR(path.lstat().st_mode):
             continue
         relative = path.relative_to(root).as_posix()
+        _utf8_path(relative, origin="submission")
         try:
             safe_relative_path(relative)
         except ValueError as error:

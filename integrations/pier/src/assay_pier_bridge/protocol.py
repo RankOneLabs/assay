@@ -296,6 +296,11 @@ CandidateCause = Literal[
     # infrastructure ``harness_deadline``: running out of time is the
     # candidate's outcome, not a lost coordinate.
     "agent_deadline",
+    "invalid_tool_output_encoding",
+    "patch_capture_conflict",
+    "non_utf8_path",
+    "workspace_capture_permission",
+    "hard_link_submission",
 ]
 InfrastructureCause = Literal[
     "harness_deadline",

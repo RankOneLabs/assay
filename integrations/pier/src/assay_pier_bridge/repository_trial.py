@@ -210,8 +210,14 @@ class RepositoryAgentTrialHandle:
             )
         except AgentLoopError as error:
             self._trajectory = error.trajectory
+            try:
+                trajectory_bytes = canonical_json(error.trajectory)
+            except UnicodeEncodeError:
+                trajectory_bytes = json.dumps(
+                    error.trajectory, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+                ).encode("utf-8")
             self._partial = {
-                "trajectory.json": canonical_json(error.trajectory),
+                "trajectory.json": trajectory_bytes,
                 **{f"stopped/{path}": data for path, data in error.evidence.items()},
             }
             raise self._typed(error) from error

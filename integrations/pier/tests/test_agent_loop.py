@@ -1406,7 +1406,7 @@ def test_tmpfs_capture_streams_the_tree_and_replaces_staging(
     archive = _tar([directory, info], {"./src/new.txt": content})
 
     def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        assert command[:3] == ["docker", "exec", "fake-container"]
+        assert command[:5] == ["docker", "exec", "-u", "0:0", "fake-container"]
         return subprocess.CompletedProcess(command, 0, archive, b"")
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
@@ -1558,3 +1558,33 @@ def test_docker_tool_output_is_streamed_with_a_host_memory_cap(
     assert output.original_bytes == len("exit=0\n") + 2_000_000
     assert len(output.text.encode()) <= 64
     assert output.text.startswith("exit=0\n")
+
+
+def test_tmpfs_capture_permission_failure_has_candidate_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sandbox = DockerToolSandbox.__new__(DockerToolSandbox)
+    sandbox.name = "fake-container"
+    sandbox._tmpfs_storage = True
+    sandbox._workspace = tmp_path
+    sandbox.execute = lambda *a, **k: ToolOutput(  # type: ignore[method-assign]
+        "exit=0\n1\n2\n0\n5000\n6000\n", 25, False
+    )
+    monkeypatch.setattr(
+        "assay_pier_bridge.agent_loop.subprocess.run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv, 1, b"", b"tar: Permission denied"
+        ),
+    )
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        sandbox.capture_workspace()
+    assert rejected.value.cause == "workspace_capture_permission"
+
+
+def test_archive_hard_link_has_distinct_candidate_cause(tmp_path: Path) -> None:
+    member = tarfile.TarInfo("linked.txt")
+    member.type = tarfile.LNKTYPE
+    member.linkname = "inside.txt"
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        extract_workspace_archive(_tar([member]), tmp_path)
+    assert rejected.value.cause == "hard_link_submission"

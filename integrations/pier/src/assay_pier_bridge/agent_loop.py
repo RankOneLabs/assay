@@ -494,10 +494,18 @@ class DockerToolSandbox:
         # ``docker cp`` reads the container's layered filesystem and silently
         # returns nothing from a tmpfs mount, so the tree is streamed out.
         archived = subprocess.run(
-            ["docker", "exec", self.name, "tar", "-c", "-f", "-", "-C", "/workspace", "."],
+            [
+                "docker", "exec", "-u", "0:0", self.name, "tar", "-c", "-f", "-",
+                "-C", "/workspace", ".",
+            ],
             capture_output=True, timeout=60, check=False,
         )
         if archived.returncode:
+            if b"permission denied" in archived.stderr.lower():
+                raise ArtifactCollectionRejected(
+                    "workspace_capture_permission", "cannot read candidate workspace",
+                    origin="working_copy",
+                )
             raise RuntimeError("workspace_capture")
         for path in self._workspace.iterdir():
             if path.is_dir() and not path.is_symlink():
@@ -741,11 +749,23 @@ CANDIDATE_STOP_CAUSES = frozenset(
 
 
 def _json_bytes(value: Any) -> bytes:
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    try:
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ArtifactCollectionRejected(
+            "invalid_tool_output_encoding", "tool output is not UTF-8 encodable",
+            origin="working_copy",
+        ) from error
 
 
 def _bounded_text(text: str, limit: int) -> tuple[str, bool]:
-    encoded = text.encode("utf-8")
+    try:
+        encoded = text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ArtifactCollectionRejected(
+            "invalid_tool_output_encoding", "tool output is not UTF-8 encodable",
+            origin="working_copy",
+        ) from error
     if len(encoded) <= limit:
         return text, False
     return encoded[:limit].decode("utf-8", errors="ignore"), True

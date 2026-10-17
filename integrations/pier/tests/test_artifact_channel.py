@@ -601,14 +601,31 @@ def test_nofollow_readers_enforce_entry_type_in_both_storage_modes(
         expected = "out_of_scope_edit"
     else:
         os.link(root / "source.txt", root / "entry")
-        expected = None
+        expected = "hard_link_submission"
     for reader in (regular_tree, _collect):
-        if expected is None:
-            assert reader(root)["entry"] == b"safe"
-        else:
-            with pytest.raises(ArtifactCollectionRejected) as rejected:
-                reader(root)
-            assert rejected.value.cause == expected
+        with pytest.raises(ArtifactCollectionRejected) as rejected:
+            reader(root)
+        assert rejected.value.cause == expected
+
+
+def test_patch_capture_reports_file_replacing_former_directory(tmp_path: Path) -> None:
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    (before / "folder").mkdir(parents=True)
+    after.mkdir()
+    (before / "folder" / "old.txt").write_text("old")
+    (after / "folder").write_text("new")
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        submission_patch(before, after)
+    assert rejected.value.cause == "patch_capture_conflict"
+
+
+def test_non_utf8_candidate_name_has_its_own_cause(tmp_path: Path) -> None:
+    raw_name = os.fsdecode(b"\xff.txt")
+    (tmp_path / raw_name).write_text("bad name")
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        regular_tree(tmp_path)
+    assert rejected.value.cause == "non_utf8_path"
 
 
 def test_observed_patch_is_repeatable_and_applies_to_baseline(tmp_path: Path) -> None:
