@@ -245,11 +245,28 @@ def _require_docker_daemon() -> None:
     assert result.returncode == 0, f"docker daemon is not reachable:\n{result.stderr[-2000:]}"
 
 
+def _require_passwordless_mount() -> None:
+    """The real trial needs a host mount, which must work without a prompt."""
+    if os.geteuid() == 0:
+        return
+    mount = shutil.which("mount")
+    sudo = shutil.which("sudo")
+    if mount is None or sudo is None:
+        pytest.skip("passwordless sudo mount is unavailable: mount or sudo is not installed")
+    result = subprocess.run(
+        [sudo, "-n", "-l", mount], capture_output=True, text=True, timeout=10, check=False
+    )
+    if result.returncode != 0:
+        reason = result.stderr.strip() or result.stdout.strip()
+        pytest.skip(f"passwordless sudo mount is unavailable: {reason}")
+
+
 def test_qualify_local_emits_an_inventory_after_every_probe_passes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qualify_local: ModuleType
 ) -> None:
     """Qualify an actual prebuilt image and require every probe to pass."""
     _require_docker_daemon()
+    _require_passwordless_mount()
     image_tag = "assay-pier-bridge:test-acceptance"
     build = subprocess.run(
         ["docker", "build", "-t", image_tag, str(ROOT / "integrations" / "pier")],

@@ -28,8 +28,7 @@ skip when no daemon is reachable.
 The acceptance case
 `test_qualify_local_emits_an_inventory_after_every_probe_passes` requires
 passwordless `sudo mount` for host envelope setup. On a host where `sudo mount`
-prompts for a password, that case fails and the full experiments suite cannot
-be demonstrated green.
+prompts for a password, that case skips with the host prerequisite as its reason.
 
 ## Qualify the local runtime
 
