@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from verification_pilot.bridge import create_pilot_agent
+from verification_pilot.inputs import (
+    T1_SUBMISSION_SCHEMA,
+    T2_SUBMISSION_SCHEMA,
+    T3_SUBMISSION_SCHEMA,
+)
 from verification_pilot.settings import PILOT_TOOLS_SHA256, VerificationPilotSettings
 
 
@@ -15,6 +20,20 @@ def test_committed_pilot_tool_digest_matches_schema() -> None:
     from assay_pier_bridge.identity import canonical_json, digest_bytes
 
     assert digest_bytes(canonical_json(PILOT_TOOL_SCHEMAS)) == PILOT_TOOLS_SHA256
+    for name, schema in (("T1", T1_SUBMISSION_SCHEMA),
+                         ("T2_T3", T2_SUBMISSION_SCHEMA),
+                         ("T2_T3", T3_SUBMISSION_SCHEMA)):
+        submit = next(tool for tool in PILOT_TOOL_SCHEMAS[name]
+                      if tool["function"]["name"] == "submit_output")
+        parameters = submit["function"]["parameters"]
+        assert tuple(parameters["properties"]) == schema.required
+        assert tuple(parameters["required"]) == schema.required
+        assert parameters["additionalProperties"] is schema.additional_properties
+        for field in schema.fields:
+            actual = parameters["properties"][field.name]
+            assert actual["type"] == field.value_type
+            if field.allowed_values:
+                assert tuple(actual["enum"]) == field.allowed_values
 
 
 def test_pilot_agent_and_configuration_consume_settings(tmp_path: Path) -> None:

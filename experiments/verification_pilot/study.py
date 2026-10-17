@@ -7,7 +7,6 @@ ceiling, validate the grid, then return canonical bytes for authorization.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -30,15 +29,15 @@ from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 from verification_pilot.arms import ALL_ARMS, SCHEDULE, TIER_1_ARMS, placement_for
 from verification_pilot.evaluation import EVALUATOR_IDS, REPORT_CATEGORIES
-from verification_pilot.fixture import PilotFixture, load_fixture
-from verification_pilot.migrations import GROUPS, MIGRATIONS, Migration, OwnershipGroup
+from verification_pilot.fixture import PilotFixture, load_fixture, subject_repository
+from verification_pilot.fixtures import base_subjects, pilot_sessions
+from verification_pilot.migrations import MIGRATIONS, Migration, OwnershipGroup
 from verification_pilot.prompts import task_prompt
 from verification_pilot.session import contributor_blocks, rotated_blocks
 from verification_pilot.shape import validate_worker_grid
 
-ROTATIONS = (0, 1, 2)
 VERIFIER_OWN_GROUP: OwnershipGroup = "group_a"
-FINAL_CEILING = ExecutionCeiling(max_cells=288, max_wall_time_seconds=345_600,
+FINAL_CEILING = ExecutionCeiling(max_cells=96, max_wall_time_seconds=345_600,
                                   max_fleet_occupancy=1)
 PAYLOAD_SCHEMA = "https://assay.local/schemas/verification-pilot-measure-v1.json"
 
@@ -47,8 +46,8 @@ PAYLOAD_SCHEMA = "https://assay.local/schemas/verification-pilot-measure-v1.json
 class PilotSubject:
     id: str
     migration: Migration
-    location: str
-    group: OwnershipGroup
+    location: str | None
+    group: OwnershipGroup | None
     rotation: int
     repository: dict[str, str]
 
@@ -62,44 +61,36 @@ class PreparedPilot:
 
 
 def pilot_subjects(fixture: PilotFixture | None = None) -> tuple[PilotSubject, ...]:
-    """Four locations per migration, each rendered in three block orders."""
+    """Materialize the 16 base subjects defined by the raw slice."""
     fixture = fixture or load_fixture()
-    result: list[PilotSubject] = []
-    for migration in MIGRATIONS:
-        base = fixture.renamed[migration.name]
-        for group in GROUPS:
-            locations = sorted(path for path in migration.use_sites
-                               if migration.ownership_group_for(path) == group
-                               and migration.new_symbol in base[path])
-            if not locations:
-                raise ValueError(f"{migration.name} has no location in {group}")
-            location = locations[0]
-            repository = dict(base)
-            repository[location], count = re.subn(
-                r"(?<![\w$])" + re.escape(migration.new_symbol) + r"(?![\w$])",
-                migration.old_symbol, repository[location], count=1,
-            )
-            if count != 1:
-                raise ValueError(f"failed to inject {migration.name} at {location}")
-            for rotation in ROTATIONS:
-                result.append(PilotSubject(
-                    id=f"{migration.name}-{group}-r{rotation}", migration=migration,
-                    location=location, group=group, rotation=rotation, repository=repository,
-                ))
-    if len(result) != 48:
-        raise ValueError("pilot must have 16 base subjects and three rotations")
+    result = [PilotSubject(
+        id=subject.id, migration=subject.migration, location=subject.location,
+        group=subject.owner, rotation=0,
+        repository=subject_repository(subject, fixture),
+    ) for subject in base_subjects(MIGRATIONS)]
+    if len(result) != 16:
+        raise ValueError("pilot must have 16 base subjects")
     return tuple(result)
 
 
 def _exclusions(
     subjects: tuple[Subject, ...], active_arms: tuple[str, ...],
-    active_subject_ids: tuple[str, ...]
+    active_subject_ids: tuple[str, ...], session_pairs: frozenset[tuple[str, str]],
 ) -> tuple[Exclusion, ...]:
-    return tuple(Exclusion(subject_id=subject.id, arm_id=arm_id,
-                           classification="deferred_tier",
-                           reason="Tier cells await the Tier 1 smoke and on-policy qualification")
-                 for subject in subjects for arm_id in ALL_ARMS
-                 if arm_id not in active_arms or subject.id not in active_subject_ids)
+    exclusions: list[Exclusion] = []
+    for subject in subjects:
+        for arm_id in ALL_ARMS:
+            if (arm_id in active_arms and subject.id in active_subject_ids
+                    and (subject.id, arm_id) in session_pairs):
+                continue
+            classification = ("clean_control" if subject.id.endswith("-clean")
+                              else "deferred_tier" if arm_id not in active_arms
+                              else "qualification_smoke")
+            exclusions.append(Exclusion(
+                subject_id=subject.id, arm_id=arm_id, classification=classification,
+                reason="Coordinate excluded from this fixture-derived shard",
+            ))
+    return tuple(exclusions)
 
 
 def compile_pilot_plan(store: ObjectStore, runtime: RuntimeProfile, *,
@@ -111,9 +102,18 @@ def compile_pilot_plan(store: ObjectStore, runtime: RuntimeProfile, *,
                        ceiling: ExecutionCeiling = FINAL_CEILING) -> PreparedPilot:
     """Build one full snapshot and one shard; check before returning authorization."""
     subjects_data = subjects_data or pilot_subjects()
-    if len(subjects_data) != 48 or len({s.id for s in subjects_data}) != 48:
-        raise ValueError("pilot requires exactly 48 unique rotated subjects")
-    active_subject_ids = (tuple(s.id for s in subjects_data) if active_subject_ids is None
+    if len(subjects_data) != 16 or len({s.id for s in subjects_data}) != 16:
+        raise ValueError("pilot requires exactly 16 unique base subjects")
+    sessions = pilot_sessions(base_subjects(MIGRATIONS))
+    fixture_pairs = frozenset((session.subject_id, session.arm_id) for session in sessions)
+    if len(fixture_pairs) != 24:
+        raise ValueError("pilot requires 24 unique fixture-derived sessions")
+    session_pairs = frozenset(
+        (session.subject_id, arm_id) for session in sessions for arm_id in active_arms
+        if arm_id.endswith(session.arm_id.split("-", 1)[1])
+    )
+    session_subject_ids = tuple(dict.fromkeys(session.subject_id for session in sessions))
+    active_subject_ids = (session_subject_ids if active_subject_ids is None
                           else active_subject_ids)
 
     def publish(value: Any) -> str:
@@ -144,7 +144,7 @@ def compile_pilot_plan(store: ObjectStore, runtime: RuntimeProfile, *,
                      intervention={"tier": arm_id[:2], "placement": placement_for(arm_id)},
                      conditions={"assay_execution_schedule": SCHEDULE}) for arm_id in ALL_ARMS)
     identity_basis = publish({"definition":
-                              "Sealed trajectory and operator-held remnant locations"})
+                              "Sealed first-turn trajectory and derived ownership map"})
     evaluators = []
     for evaluator_id in EVALUATOR_IDS:
         schema_id = PAYLOAD_SCHEMA.removesuffix(".json") + f"-{evaluator_id}.json"
@@ -162,7 +162,7 @@ def compile_pilot_plan(store: ObjectStore, runtime: RuntimeProfile, *,
                       "epistemic_status": "proxy", "version": "1", "authority": "advisory"},
             payload_schema=schema_id, payload_schema_ref=publish(schema),
             basis_ref=identity_basis,
-            configuration={"id_set": list(EVALUATOR_IDS), "version": "section-10-v1"},
+            configuration={"id_set": list(EVALUATOR_IDS), "version": "fixture-derived-v2"},
             repeats=1,
         ))
     task_declaration = {
@@ -191,7 +191,7 @@ def compile_pilot_plan(store: ObjectStore, runtime: RuntimeProfile, *,
     publish([arm.conditions for arm in snapshot.arms])
     base = compile_plan_v2(snapshot, snapshot_ref=snapshot_ref, worker_repeats=1,
                            exclusions=_exclusions(snapshot.subjects, active_arms,
-                                                  active_subject_ids),
+                                                  active_subject_ids, session_pairs),
                            runtime=runtime, concurrency=1)
     plan = ExecutionPlanV3.model_validate({**base.model_dump(mode="json"),
                                             "schema_version": "assay-execution-plan/0.3.0",

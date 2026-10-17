@@ -1,97 +1,39 @@
-"""The declared snapshot covers rotations, tiers, and compatible shards."""
+"""The study plan is constructed from the derived fixture population."""
 
 import json
 from pathlib import Path
 
-from assay.models import (
-    ExecutionCeiling,
-    ExecutionOutcome,
-    ExecutionPlanV3,
-    RuntimeProfile,
-    StudySnapshot,
-)
-from assay.report_engine import _compatibility_fingerprint
+from assay.models import ExecutionPlanV3, RuntimeProfile, StudySnapshot
 from assay.store import ObjectStore
-from verification_pilot.arms import ALL_ARMS, TIER_1_ARMS, TIER_2_ARMS
-from verification_pilot.study import (
-    FINAL_CEILING,
-    VERIFIER_OWN_GROUP,
-    compile_pilot_plan,
-    pilot_subjects,
-)
+from verification_pilot.arms import ALL_ARMS, TIER_1_ARMS
+from verification_pilot.fixtures import base_subjects, pilot_sessions
+from verification_pilot.study import FINAL_CEILING, compile_pilot_plan, pilot_subjects
 
 
-def _runtime(store: ObjectStore) -> RuntimeProfile:
-    return RuntimeProfile(id="scripted", version="1",
-                          configuration_ref=str(store.publish_json({"scripted": True})))
-
-
-def test_rotated_snapshot_and_all_tier_exclusions(tmp_path: Path) -> None:
+def test_study_plan_uses_fixture_subjects_and_sessions(tmp_path: Path) -> None:
     store = ObjectStore(tmp_path)
-    subjects = pilot_subjects()
-    prepared = compile_pilot_plan(store, _runtime(store),
-                                  worker_configuration={"id": "scripted", "version": "1"},
-                                  subjects_data=subjects)
+    runtime = RuntimeProfile(id="scripted", version="1",
+                             configuration_ref=str(store.publish_json({"scripted": True})))
+    prepared = compile_pilot_plan(store, runtime,
+                                  worker_configuration={"id": "scripted", "version": "1"})
     plan = ExecutionPlanV3.model_validate_json(prepared.plan_bytes)
-    assert len(subjects) == 48
-    assert len({(s.migration.name, s.group) for s in subjects}) == 16
-    assert all({s.rotation for s in subjects if s.migration.name == migration
-                and s.group == group} == {0, 1, 2}
-               for migration, group in {(s.migration.name, s.group) for s in subjects})
-    assert len(prepared.snapshot.realizations) == 48 * len(ALL_ARMS)
-    assert StudySnapshot.model_validate(prepared.snapshot.model_dump(mode="json")) == (
-        prepared.snapshot
-    )
-    assert len({(r.subject_id, r.arm_id) for r in prepared.snapshot.realizations}) == 288
-    assert len(plan.cells) == 48 * 2 * 1 == 96
+    fixture_subjects = base_subjects()
+    sessions = pilot_sessions(fixture_subjects)
+    assert len(fixture_subjects) == len(prepared.subjects) == 16
+    assert tuple(subject.id for subject in prepared.subjects) == tuple(
+        subject.id for subject in fixture_subjects)
+    assert len(sessions) == len(plan.cells) == 24
+    assert {(cell.subject_id, cell.arm_id) for cell in plan.cells} == {
+        (session.subject_id, session.arm_id) for session in sessions}
+    assert len(prepared.snapshot.realizations) == 16 * len(ALL_ARMS)
+    assert len(plan.exclusions) == 16 * len(ALL_ARMS) - 24
     assert plan.worker_repeats == 1
-    assert set(a.id for a in prepared.snapshot.arms) == set(ALL_ARMS)
-    assert len(plan.exclusions) == 48 * 4
-    assert {e.arm_id for e in plan.exclusions} == set(ALL_ARMS) - set(TIER_1_ARMS)
-    assert all(a.conditions["assay_execution_schedule"] == "subject-rotated-v1"
-               for a in prepared.snapshot.arms)
     assert plan.ceiling == FINAL_CEILING
-    payloads = [json.loads(store.read_bytes(s.payload_ref)) for s in prepared.snapshot.subjects]
-    assert {p["rotation"] for p in payloads} == {0, 1, 2}
-    assert {p["own_group"] for p in payloads} == {VERIFIER_OWN_GROUP}
-    cell = plan.cells[0]
-    outcome = ExecutionOutcome(
-        run_id="test", plan_ref=prepared.authorization,
-        started_at="2026-01-01T00:00:00Z", completed_at="2026-01-01T00:00:01Z",
-        coordinate=cell, status="succeeded", input_ref=cell.realization_ref,
-        output_ref=cell.realization_ref,
-    )
-    assert ExecutionOutcome.model_validate(outcome.model_dump(mode="json")) == outcome
-
-
-def test_tier_shards_keep_report_compatibility_fields(tmp_path: Path) -> None:
-    store = ObjectStore(tmp_path)
-    runtime = _runtime(store)
-    worker = {"id": "scripted", "version": "1"}
-    subjects = pilot_subjects()
-    tier1 = compile_pilot_plan(store, runtime, worker_configuration=worker,
-                               subjects_data=subjects)
-    tier2 = compile_pilot_plan(store, runtime, worker_configuration=worker,
-                               subjects_data=subjects, active_arms=TIER_2_ARMS)
-    one = ExecutionPlanV3.model_validate_json(tier1.plan_bytes)
-    two = ExecutionPlanV3.model_validate_json(tier2.plan_bytes)
-    assert tier1.snapshot == tier2.snapshot
-    assert one.snapshot_ref == two.snapshot_ref
-    assert one.runtime == two.runtime
-    assert one.worker_repeats == two.worker_repeats
-    assert one.concurrency == two.concurrency
-    assert one.ceiling == two.ceiling
-    assert one.schema_version == two.schema_version
-    assert one.assay_version == two.assay_version
-    assert one.exclusions != two.exclusions
-    assert {cell.arm_id for cell in two.cells} == set(TIER_2_ARMS)
-
-    assert _compatibility_fingerprint(one, tier1.snapshot) == (
-        _compatibility_fingerprint(two, tier2.snapshot)
-    )
-    raised_ceiling = ExecutionCeiling(max_cells=289, max_wall_time_seconds=345_600,
-                                      max_fleet_occupancy=1)
-    assert _compatibility_fingerprint(one, tier1.snapshot) != (
-        _compatibility_fingerprint(two.model_copy(update={"ceiling": raised_ceiling}),
-                                   tier2.snapshot)
-    )
+    assert {cell.arm_id for cell in plan.cells} == set(TIER_1_ARMS)
+    assert len(prepared.snapshot.evaluators) == 1
+    assert StudySnapshot.model_validate(prepared.snapshot.model_dump(mode="json")) == (
+        prepared.snapshot)
+    payloads = [json.loads(store.read_bytes(subject.payload_ref))
+                for subject in prepared.snapshot.subjects]
+    assert {payload["migration"] for payload in payloads} == {
+        subject.migration.name for subject in pilot_subjects()}

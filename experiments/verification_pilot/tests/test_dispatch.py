@@ -58,7 +58,7 @@ def test_paid_smoke_compiles_the_guarded_route_without_dispatch(
     ))
     assert result == "no-dispatch"
     plan = json.loads(prepared.plan_bytes)
-    assert len(plan["cells"]) == 16
+    assert len(plan["cells"]) == 12
     configuration = json.loads(store.read_bytes(plan["runtime"]["configuration_ref"]))
     assert configuration["model_route"]["provider"] == "amazon-bedrock"
     assert configuration["turns"]["backend"] == "openrouter"
