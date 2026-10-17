@@ -161,6 +161,12 @@ if patch.returncode:
     outcome = {'preflight': result('failed', 'patch_rejected'), 'groups': {}}
 elif tree_digest(root) != payload['expected_tree_digest']:
     outcome = {'preflight': result('unavailable', 'candidate_tree_digest_mismatch'), 'groups': {}}
+elif any(group['restores'] for group in payload['groups']) and (
+    (root / 'tests' / 'visible').is_file()
+    or any(parent.is_file() for group in payload['groups'] if group['restores']
+           for name in group['files'] for parent in (root / name).parents)
+):
+    outcome = {'preflight': result('failed', 'test_path_collision'), 'groups': {}}
 else:
     def copy_tests(restores):
         for group in payload['groups']:

@@ -326,6 +326,44 @@ new file mode 100644
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("blocked", ["tests", "tests/visible"])
+async def test_candidate_file_blocking_visible_restoration_is_a_collision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked: str
+) -> None:
+    frozen_path = "tests/visible/frozen.test.ts"
+    baseline = {**BASELINE, frozen_path: "// frozen\n"}
+    patch = (
+        f"diff --git a/{frozen_path} b/{frozen_path}\n"
+        "deleted file mode 100644\n"
+        f"--- a/{frozen_path}\n+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n-// frozen\n"
+        f"diff --git a/{blocked} b/{blocked}\n"
+        "new file mode 100644\n"
+        f"--- /dev/null\n+++ b/{blocked}\n"
+        "@@ -0,0 +1 @@\n+blocked\n"
+    )
+    visible = WorkflowTestGroup(
+        name="visible_regression", files={frozen_path: "// frozen\n"},
+        command=("node", "--version"), restores=True,
+    )
+    hidden = tuple(
+        WorkflowTestGroup(
+            name=name, files={f"tests/hidden/{name}.ts": "// test\n"},
+            command=("node", "--version"),
+        )
+        for name in ("hidden_regression", "new_behavior")
+    )
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", baseline=baseline, patch=patch,
+        expected_tree_digest=workflow_tree_digest({**BASELINE, blocked: "blocked\n"}),
+        groups_to_run=(visible, *hidden),
+    )
+    assert result.verdict == "incorrect", result
+    assert result.cause == "test_path_collision"
+
+
+@pytest.mark.asyncio
 async def test_build_requires_emitted_javascript(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
