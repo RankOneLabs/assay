@@ -236,7 +236,7 @@ def save_run_trace(store: ObjectStore, result: RunResult, archive_root: Path) ->
         raw_ref = output.get("raw_trajectory_ref") if output is not None else None
         if raw_ref is None and trace_ref is not None:
             worker_trace = json.loads(store.read_bytes(trace_ref))
-            raw_ref = worker_trace.get("artifact_refs", {}).get("raw_trajectory")
+            raw_ref = worker_trace.get("artifact_refs", {}).get("trajectory.json")
         if raw_ref is not None:
             envelope = json.loads(store.read_bytes(raw_ref))
             trajectory = base64.b64decode(envelope["content_base64"], validate=True)

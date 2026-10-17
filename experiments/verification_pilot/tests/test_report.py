@@ -1,11 +1,13 @@
 """Pilot-specific inference is checked independently of the shared report engine."""
 
+import base64
+import json
 from pathlib import Path
 
 import pytest
 
-from assay.execution import RunSucceeded, execute_plan
-from assay.models import RuntimeProfile
+from assay.execution import RunFailed, RunSucceeded, execute_plan
+from assay.models import RunManifest, RuntimeProfile
 from assay.report_engine import ReportError, build_report
 from assay.store import ObjectStore
 from verification_pilot.report import (
@@ -17,7 +19,13 @@ from verification_pilot.report import (
     model_report,
     paired_config,
 )
-from verification_pilot.run import GridEvaluator, ScriptedWorker, run_scripted, subject_truth
+from verification_pilot.run import (
+    GridEvaluator,
+    ScriptedWorker,
+    run_scripted,
+    save_run_trace,
+    subject_truth,
+)
 from verification_pilot.study import compile_pilot_plan, pilot_subjects
 
 
@@ -82,6 +90,38 @@ def test_cross_model_table_keeps_routes_separate() -> None:
     assert [row["model"] for row in table] == ["a-route", "z-route"]
     assert table[0]["H2"] == "H2"
     assert table[1]["H2"] == "second route"
+
+
+def test_failed_cell_archive_keeps_partial_trajectory(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / "store")
+    trajectory = {"turns": [{
+        "turn": "T1", "stop_cause": "deadline", "patch_ref": "sha256:partial",
+        "tree_digest": "observed-tree", "baseline_tree_digest": "baseline-tree",
+    }]}
+    trajectory_bytes = json.dumps(trajectory).encode()
+    raw_ref = store.publish_json({
+        "content_base64": base64.b64encode(trajectory_bytes).decode("ascii"),
+    })
+    trace_ref = store.publish_json({"artifact_refs": {"trajectory.json": str(raw_ref)}})
+    cell_id = "subject:t1-native:w0"
+    record_ref = store.publish_json({
+        "status": "failed", "output_ref": None, "trace_ref": str(trace_ref),
+    })
+    manifest = RunManifest(
+        run_id="failed-cell", plan_ref=str(store.publish_json({"plan": "test"})),
+        status="complete", execution_records={cell_id: str(record_ref)},
+        evaluation_records={}, missing_coordinates=(),
+    )
+    manifest_ref = store.publish_json(manifest.model_dump(mode="json"))
+    result = RunFailed("DeadlineExceeded", "deadline", manifest, manifest_ref)
+
+    archive = save_run_trace(store, result, tmp_path / "raw" / "runs")
+
+    assert archive is not None
+    index = json.loads((archive / "index.json").read_text())
+    assert index[cell_id]["status"] == "failed"
+    assert index[cell_id]["trajectory"] == "001-trajectory.json"
+    assert json.loads((archive / "traces" / "001-trajectory.json").read_bytes()) == trajectory
 
 
 @pytest.mark.asyncio
