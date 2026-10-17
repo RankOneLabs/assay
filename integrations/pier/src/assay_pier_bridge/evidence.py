@@ -22,9 +22,10 @@ def worker_usage_from_result_bytes(result_bytes: bytes | None) -> TrialUsage | N
     """Best-effort token counts from the worker's own ``result.json``.
 
     Mirrors ``assay.pier_protocol.mini_exit_status_from_result_bytes``: the
-    worker's result artifact is untrusted input read defensively, so anything
-    but clean nonnegative integer counts yields ``None`` -- which Assay
-    reports as ``uncertain`` coverage rather than inventing a number.
+    worker's result artifact is untrusted input read defensively. Invalid
+    token counts yield ``None``; an absent or invalid request count becomes
+    ``TrialUsage.requests=None`` so the measured tokens survive without an
+    invented request count.
 
     ``cost_usd`` is always ``None``. A worker behind no pricing model cannot
     observe a cost, and reporting 0.0 would be recorded downstream as a
@@ -45,7 +46,7 @@ def worker_usage_from_result_bytes(result_bytes: bytes | None) -> TrialUsage | N
     prompt = _nonnegative_int(usage.get("prompt_tokens"))
     completion = _nonnegative_int(usage.get("completion_tokens"))
     requests = _nonnegative_int(usage.get("requests"))
-    if prompt is None or completion is None or requests is None:
+    if prompt is None or completion is None:
         return None
     return TrialUsage(
         prompt_tokens=prompt, completion_tokens=completion, cost_usd=None, requests=requests

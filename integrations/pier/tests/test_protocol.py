@@ -26,6 +26,12 @@ def test_local_usage_can_report_tokens_without_a_price() -> None:
     assert usage.cost_usd is None
 
 
+def test_trial_usage_represents_unknown_requests_explicitly() -> None:
+    usage = TrialUsage(prompt_tokens=12, completion_tokens=7)
+    assert usage.requests is None
+    assert usage.model_dump()["requests"] is None
+
+
 def effective(**overrides: object) -> EffectiveEnforcement:
     base = dict(
         uid=1000,

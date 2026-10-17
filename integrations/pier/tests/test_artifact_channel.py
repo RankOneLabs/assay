@@ -804,6 +804,14 @@ def test_worker_reported_counts_become_usage_without_a_cost() -> None:
     assert usage.cost_usd is None
 
 
+def test_worker_tokens_survive_an_absent_request_count() -> None:
+    usage = worker_usage_from_result_bytes(canonical_json({
+        "usage": {"prompt_tokens": 12, "completion_tokens": 7},
+    }))
+    assert usage is not None
+    assert (usage.prompt_tokens, usage.completion_tokens, usage.requests) == (12, 7, None)
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -813,13 +821,11 @@ def test_worker_reported_counts_become_usage_without_a_cost() -> None:
         b'{"exit_status":"Submitted","usage":{"prompt_tokens":-1,"completion_tokens":1}}',
         b'{"exit_status":"Submitted","usage":{"prompt_tokens":1.5,"completion_tokens":1}}',
         b'{"exit_status":"Submitted","usage":{"completion_tokens":1}}',
-        b'{"exit_status":"Submitted","usage":{"prompt_tokens":1,"completion_tokens":1}}',
         b"not json",
         b"[]",
         None,
     ],
 )
 def test_unusable_worker_counts_report_no_usage_at_all(payload: bytes | None) -> None:
-    """``None`` here is what Assay turns into ``uncertain`` coverage; a
-    fabricated zero would become a confident measured zero instead."""
+    """Unusable token counts cannot be replaced with plausible zeroes."""
     assert worker_usage_from_result_bytes(payload) is None
