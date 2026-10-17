@@ -11,7 +11,7 @@ import pytest
 from review_fixture import ReviewFixture, materialize_review_fixture
 from test_execution import execution_fixture
 
-from assay.models import RuntimeProfile
+from assay.models import ExecutionPlanV3, RuntimeProfile
 from assay.planning import compile_plan_v2
 from assay.review import index as review_index
 from assay.review.index import (
@@ -59,6 +59,29 @@ def test_unknown_non_json_and_non_object_json_are_opaque() -> None:
     ref = "sha256:" + "0" * 64
     for raw in (b"not json", b"[]", b'{"schema_version":"future/9"}'):
         assert isinstance(classify_object(ref, raw), IndexedOpaque)
+
+
+def test_v3_execution_plan_is_indexed_as_a_plan(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path)
+    fixture = execution_fixture(store)
+    plan = compile_plan_v2(
+        fixture.snapshot,
+        snapshot_ref=str(store.publish_json(fixture.snapshot.model_dump(mode="json"))),
+        worker_repeats=1,
+        runtime=RuntimeProfile(
+            id="pier", version="1.0.0",
+            configuration_ref=str(store.publish_json({"id": "pier"})),
+        ),
+    )
+    v3 = ExecutionPlanV3.model_validate({
+        **plan.model_dump(mode="json"),
+        "schema_version": "assay-execution-plan/0.3.0",
+        "ceiling": {"max_cells": 2, "max_wall_time_seconds": 30, "max_fleet_occupancy": 1},
+    })
+    ref = str(store.publish_json(v3.model_dump(mode="json")))
+    indexed = build_index(store)
+    assert any(isinstance(item, IndexedPlan) and item.ref == ref for item in indexed.objects)
+    assert not any(issue.ref == ref for issue in indexed.issues)
 
 
 @pytest.mark.parametrize("damage", ["value", "omission", "duplicate", "source"])
