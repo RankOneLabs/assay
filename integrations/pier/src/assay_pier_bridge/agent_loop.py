@@ -366,6 +366,7 @@ class DockerToolSandbox:
         workspace: Path,
         cache: Path,
         image: str,
+        cell_id: str,
         *,
         tmpfs_storage: bool = False,
         limits: SandboxLimits | None = None,
@@ -389,6 +390,8 @@ class DockerToolSandbox:
             "-d",
             "--name",
             self.name,
+            "--label",
+            f"assay-cell={cell_id}",
             "--network",
             "none",
             "--read-only",
@@ -622,12 +625,13 @@ class DockerTmpfsToolSandbox(DockerToolSandbox):
     """The declared local sandbox: Docker-enforced tmpfs quotas, no host privileges."""
 
     def __init__(
-        self, workspace: Path, cache: Path, image: str, *, limits: SandboxLimits | None = None
+        self, workspace: Path, cache: Path, image: str, cell_id: str,
+        *, limits: SandboxLimits | None = None
     ) -> None:
-        super().__init__(workspace, cache, image, tmpfs_storage=True, limits=limits)
+        super().__init__(workspace, cache, image, cell_id, tmpfs_storage=True, limits=limits)
 
 
-SandboxFactory = Callable[[Path, Path, str], ToolSandbox]
+SandboxFactory = Callable[[Path, Path, str, str], ToolSandbox]
 
 
 def _tool(name: str, description: str, properties: dict[str, Any]) -> dict[str, Any]:
@@ -1122,8 +1126,9 @@ class RepositoryAgentClient:
     max_tool_calls_per_turn: int = 0
     max_tool_calls_per_cell: int = 0
     transport: httpx.BaseTransport | None = None
-    sandbox_factory: SandboxFactory = DockerToolSandbox
-    storage_factory: Callable[[Path, int], CellStorage] = QuotaCellStorage
+    sandbox_factory: SandboxFactory = DockerTmpfsToolSandbox
+    storage_factory: Callable[[Path, int], CellStorage] = DockerTmpfsStagingStorage
+    sandbox_limits: SandboxLimits = field(default_factory=SandboxLimits)
     _used_cells: set[str] = field(default_factory=set, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
@@ -1142,6 +1147,8 @@ class RepositoryAgentClient:
             raise ValueError("locked image identity required")
         if self.bounds.max_turns != 20 or min(asdict(self.bounds).values()) < 1:
             raise ValueError("invalid fixed loop bounds")
+        if self.sandbox_limits.storage_mb != self.bounds.max_storage_mb:
+            raise ValueError("sandbox storage quota differs from loop storage bound")
         if self.pilot_mode:
             if len(self.next_user_turns) != 2 or not all(
                 isinstance(prompt, str) and prompt.strip() for prompt in self.next_user_turns
@@ -1304,7 +1311,7 @@ class RepositoryAgentClient:
             if cell_id in self._used_cells:
                 raise AgentLoopError("attempt_limit", {"events": []})
             self._used_cells.add(cell_id)
-            return self._run_once(package=package, deadline=deadline)
+            return self._run_once(cell_id=cell_id, package=package, deadline=deadline)
         finally:
             self._lock.release()
 
@@ -1327,7 +1334,9 @@ class RepositoryAgentClient:
         captured = submission_patch(baseline, workspace)
         return captured.patch, after, captured.baseline_tree_digest, captured.final_tree_digest
 
-    def _run_once(self, *, package: Mapping[str, str], deadline: float | None) -> LoopResult:
+    def _run_once(
+        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None
+    ) -> LoopResult:
         trajectory: dict[str, Any] = {
             "events": [],
             "messages": [],
@@ -1432,7 +1441,12 @@ class RepositoryAgentClient:
             materialize_under(workspace, repository)
             materialize_under(baseline, repository)
             _prepare_container_writes(workspace, cache)
-            sandbox = self.sandbox_factory(workspace, cache, self.image)
+            if self.sandbox_factory is DockerTmpfsToolSandbox:
+                sandbox = DockerTmpfsToolSandbox(
+                    workspace, cache, self.image, cell_id, limits=self.sandbox_limits
+                )
+            else:
+                sandbox = self.sandbox_factory(workspace, cache, self.image, cell_id)
             events.append(
                 {
                     "kind": "sandbox_created",

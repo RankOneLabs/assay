@@ -60,7 +60,7 @@ class Storage:
 
 
 class Sandbox:
-    def __init__(self, workspace: Path, cache: Path, image: str) -> None:
+    def __init__(self, workspace: Path, cache: Path, image: str, cell_id: str) -> None:
         self.workspace = workspace
         self.name = "fake"
 

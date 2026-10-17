@@ -7,6 +7,8 @@ from typing import Any
 import pytest
 from assay_pier_bridge.agent_loop import (
     PILOT_TOOL_SCHEMAS,
+    DockerTmpfsStagingStorage,
+    DockerTmpfsToolSandbox,
     LoopBounds,
     ModelTurn,
     RepositoryAgentClient,
@@ -26,6 +28,7 @@ from assay_pier_bridge.protocol import (
 from assay_pier_bridge.repository_trial import (
     RepositoryAgentTrialClient,
     RepositoryAgentTrialHandle,
+    _container_count,
     agent_configuration,
 )
 from assay_pier_bridge.runtime import BridgeRuntime
@@ -111,6 +114,56 @@ def test_enforcement_is_unverified_without_a_sandbox_observation(tmp_path: Path)
     assert (enforced.cpu_limit, enforced.memory_limit_mb, enforced.pids_limit) == (2, 512, 32)
     assert enforced.storage_limit_mb == 64
     assert enforced.teardown_completed is True
+
+
+def test_tmpfs_defaults_and_authorized_quota_match(tmp_path: Path) -> None:
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([]),
+    )
+    assert agent.sandbox_factory is DockerTmpfsToolSandbox
+    assert agent.storage_factory is DockerTmpfsStagingStorage
+    with pytest.raises(ValueError, match="authorized trial storage_mb"):
+        RepositoryAgentTrialClient(
+            agent=agent, package=PACKAGE,
+            limits=SandboxLimits(workspace_mb=128, cache_mb=128), configuration={},
+        )
+
+
+def test_teardown_counts_cell_label_and_refuses_failed_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def listed(argv: list[str], **kwargs: Any) -> Any:
+        calls.append(argv)
+        return type("Result", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr("assay_pier_bridge.repository_trial.subprocess.run", listed)
+    assert _container_count("s1:mess-00:w0") == 0
+    assert calls[0][-1] == "label=assay-cell=s1:mess-00:w0"
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([]), sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    handle = RepositoryAgentTrialHandle(
+        request=_request(), agent=agent, package=PACKAGE, limits=LIMITS, configuration={},
+    )
+    handle._trajectory = {"events": [
+        {"kind": "sandbox_created", "container": "any", "observed": {
+            "user": "1000:1000", "tmpfs": {"/workspace": "size=256m"},
+        }},
+        {"kind": "cleanup_failed", "cause": "container_cleanup"},
+    ]}
+    assert not handle.teardown().teardown_completed
+    monkeypatch.setattr("assay_pier_bridge.repository_trial.subprocess.run", lambda *a, **k: (
+        type("Result", (), {"returncode": 1, "stdout": ""})()
+    ))
+    second = RepositoryAgentTrialHandle(
+        request=_request(), agent=agent, package=PACKAGE, limits=LIMITS, configuration={},
+    )
+    second._trajectory = {"events": handle._trajectory["events"][:1]}
+    assert not second.teardown().teardown_completed
 
 
 def test_custom_agent_configuration_digests_tools_prompt_and_prefix(tmp_path: Path) -> None:

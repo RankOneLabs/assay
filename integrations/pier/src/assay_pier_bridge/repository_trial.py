@@ -107,10 +107,10 @@ def _tmpfs_mb(option: object) -> int:
     return 0
 
 
-def _container_count(name: str) -> int | None:
+def _container_count(cell_id: str) -> int | None:
     try:
         listed = subprocess.run(
-            ["docker", "ps", "-aq", "--filter", f"name=^{name}$"],
+            ["docker", "ps", "-aq", "--filter", f"label=assay-cell={cell_id}"],
             capture_output=True, text=True, timeout=30, check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -328,9 +328,14 @@ class RepositoryAgentTrialHandle:
     def teardown(self) -> EffectiveEnforcement:
         """The loop removes its own container; this verifies it is really gone."""
         if self._torn_down is None:
-            name, _ = self._observed()
-            remaining = _container_count(name) if name is not None else 0
-            self._torn_down = self.effective_enforcement(remaining=remaining)
+            remaining = _container_count(self._request.cell_id)
+            cleanup_failed = any(
+                event.get("kind") == "cleanup_failed"
+                for event in self._trajectory.get("events", [])
+            )
+            self._torn_down = self.effective_enforcement(
+                remaining=remaining if not cleanup_failed else None
+            )
         return self._torn_down
 
 
@@ -348,6 +353,8 @@ class RepositoryAgentTrialClient:
         self._agent = agent
         self._package = dict(package)
         self._limits = limits
+        if agent.sandbox_limits.storage_mb != limits.storage_mb:
+            raise ValueError("sandbox quota differs from authorized trial storage_mb")
         self._configuration = json.loads(canonical_json(dict(configuration)))
 
     def create(self, request: TrialRequest) -> RepositoryAgentTrialHandle:

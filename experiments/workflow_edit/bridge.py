@@ -260,6 +260,7 @@ class WorkflowEditBridgeClient:
             sandbox_factory=self.sandbox_factory
             or partial(DockerTmpfsToolSandbox, limits=self.limits),
             storage_factory=DockerTmpfsStagingStorage,
+            sandbox_limits=self.limits,
         )
         trial_client = RepositoryAgentTrialClient(
             agent=agent, package=package, limits=self.limits, configuration=self.configuration()
