@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import cast
 
 from assay.adapters.pier import BridgeTrialResult, PierAdapter, PierBridgeClient
-from assay.canonical import digest_bytes
+from assay.canonical import canonical_json, digest_bytes
 from assay.execution import WorkerSuccess
 from assay.models import CellCoordinate
 from assay.pier_protocol import CandidateSubmission, RuntimeBinding, bind_exchange
@@ -24,6 +24,11 @@ from assay_pier_bridge.runtime import seal_observed_artifacts  # noqa: E402
 
 
 def test_bridge_manifest_and_empty_patch_settle_a_success(tmp_path: Path) -> None:
+    local_route = {
+        "endpoint": "http://willie:8900",
+        "model": "qwen-coder-32b",
+        "provider": "smithers-local",
+    }
     binding = RuntimeBinding(
         runtime_version="test-lock",
         image_digest="sha256:" + "1" * 64,
@@ -43,7 +48,7 @@ def test_bridge_manifest_and_empty_patch_settle_a_success(tmp_path: Path) -> Non
             "trajectory.json": b'{"messages":[]}',
             "candidate.patch": b"",
             "result.json": b'{"exit_status":"Submitted"}',
-            "configuration.json": b'{"model_route":{}}',
+            "configuration.json": canonical_json({"model_route": local_route}),
         },
         {},
         tree_digest({}),
@@ -62,7 +67,7 @@ def test_bridge_manifest_and_empty_patch_settle_a_success(tmp_path: Path) -> Non
         store=ObjectStore(tmp_path / ".assay"),
         bridge=cast(PierBridgeClient, object()),
         binding=binding,
-        model_route={},
+        model_route=local_route,
         trial_limits={},
     )
     settled = adapter._settle(exchange, result, cleanup_incomplete=False)
