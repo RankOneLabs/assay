@@ -623,14 +623,17 @@ def test_nofollow_readers_reject_entries_in_real_sandbox_storage(
     sandbox = factory(workspace, cache, image, f"test:{storage_mode}:{entry}")
     try:
         inspected = subprocess.run(
-            ["docker", "inspect", "--format", "{{json .Mounts}}", sandbox.name],
+            ["docker", "inspect", sandbox.name],
             capture_output=True, text=True, check=True, timeout=15,
         )
-        mounts = json.loads(inspected.stdout)
-        workspace_kind = next(
-            mount["Type"] for mount in mounts if mount["Destination"] == "/workspace"
-        )
-        assert workspace_kind == storage_mode
+        (container_info,) = json.loads(inspected.stdout)
+        if storage_mode == "bind":
+            assert any(
+                mount["Type"] == "bind" and mount["Destination"] == "/workspace"
+                for mount in container_info["Mounts"]
+            )
+        else:
+            assert "/workspace" in container_info["HostConfig"]["Tmpfs"]
         script = """
 import json
 import os
@@ -668,8 +671,9 @@ print(json.dumps(causes))
 """
         checked = subprocess.run(
             ["docker", "exec", "-u", "0:0", sandbox.name, "python", "-c", script, entry],
-            capture_output=True, text=True, check=True, timeout=30,
+            capture_output=True, text=True, check=False, timeout=30,
         )
+        assert checked.returncode == 0, checked.stderr
         expected = {
             "leaf_link": "escaping_symlink",
             "directory_link": "escaping_symlink",
