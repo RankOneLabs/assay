@@ -415,6 +415,7 @@ class DockerTrialHandle:
         self._cancel = threading.Event()
         self._started = False
         self._deadline: float | None = None
+        self._enforced_observation: ContainerObservation | None = None
 
     def set_deadline(self, deadline: float) -> None:
         """Receive the absolute monotonic acceptance deadline before setup."""
@@ -554,6 +555,9 @@ class DockerTrialHandle:
             raise NetworkPolicyMismatchError(
                 "inspected Docker network differs from the declared posture"
             )
+        # Cancellation removes the container before teardown can inspect it.
+        # Keep the controls Docker already confirmed for the final report.
+        self._enforced_observation = observation
 
     def _docker_run_args(self, limits: TrialLimits) -> list[str]:
         args = [
@@ -793,6 +797,7 @@ class DockerTrialHandle:
             observation = _usable_observation(_inspect(self._name))
         except Exception:
             observation = None
+        observation = observation or self._enforced_observation
         try:
             count = _container_count(self._name)
         except Exception:
@@ -837,6 +842,7 @@ class DockerTrialHandle:
             observation = _usable_observation(_inspect(self._name))
         except Exception:
             observation = None
+        observation = observation or self._enforced_observation
         with contextlib.suppress(Exception):
             _force_remove(self._name)
         failed_rules: list[tuple[str, list[str]]] = []
