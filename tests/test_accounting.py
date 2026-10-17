@@ -5,9 +5,12 @@ from typing import Any
 
 import pytest
 from test_execution import FakeEvaluator, FakeWorker, execution_fixture
+from test_execution_safety import _ceiling_plan
 
+from assay.canonical import digest_bytes
 from assay.execution import (
     Accounting,
+    AdmissionLedger,
     EvaluationFailed,
     RunSucceeded,
     WorkerFailure,
@@ -131,3 +134,70 @@ def test_worker_failure_default_accounting_is_unavailable() -> None:
 
 def test_evaluation_failed_default_accounting_is_unavailable() -> None:
     assert EvaluationFailed("SomeError", "message").accounting.coverage == "unavailable"
+
+
+def _operating_coverages(store: ObjectStore, record_ref: str) -> set[str]:
+    record = json.loads(store.read_bytes(record_ref))
+    return {
+        detail["coverage"]
+        for source in record["source_references"]
+        if "coverage" in (detail := json.loads(store.read_bytes(source)))
+    }
+
+
+async def test_pre_dispatch_wall_refusal_has_unavailable_accounting(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = execution_fixture(ObjectStore(tmp_path), subject_ids=("ok",), worker_repeats=1)
+    plan_bytes = _ceiling_plan(
+        fixture, max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1
+    )
+    expired = False
+    original_remaining = AdmissionLedger.remaining_seconds
+
+    class ExpiringWorker(FakeWorker):
+        calls = 0
+
+        def configuration(self, arm_id: str) -> dict[str, Any]:
+            nonlocal expired
+            self.calls += 1
+            if self.calls > 1:
+                expired = True
+            return super().configuration(arm_id)
+
+    def remaining(ledger: AdmissionLedger) -> float | None:
+        return -1 if expired else original_remaining(ledger)
+
+    monkeypatch.setattr(AdmissionLedger, "remaining_seconds", remaining)
+    result = await execute_plan(**{
+        **fixture.arguments,
+        "plan_bytes": plan_bytes,
+        "authorization": digest_bytes(plan_bytes),
+        "workers": {arm.id: ExpiringWorker() for arm in fixture.snapshot.arms},
+    })
+    assert result.manifest is not None
+    worker_records = [ref for key, ref in result.manifest.operating_records.items()
+                      if key.startswith("worker:")]
+    assert worker_records
+    assert all(_operating_coverages(fixture.store, ref) == {"unavailable"}
+               for ref in worker_records)
+
+
+async def test_dispatched_evaluation_timeout_has_uncertain_accounting(tmp_path: Any) -> None:
+    fixture = execution_fixture(
+        ObjectStore(tmp_path), subject_ids=("ok",), worker_repeats=1, evaluator_repeats=1
+    )
+
+    class TimedOutEvaluator(FakeEvaluator):
+        async def evaluate(self, **kwargs: Any) -> Any:
+            raise TimeoutError("evaluation timed out")
+
+    result = await execute_plan(**{
+        **fixture.arguments, "evaluators": {"quality": TimedOutEvaluator()}
+    })
+    assert result.manifest is not None
+    evaluator_records = [ref for key, ref in result.manifest.operating_records.items()
+                         if key.startswith("evaluator:")]
+    assert evaluator_records
+    assert all(_operating_coverages(fixture.store, ref) == {"uncertain"}
+               for ref in evaluator_records)

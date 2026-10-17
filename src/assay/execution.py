@@ -511,7 +511,10 @@ async def execute_plan(
             remaining = admission.remaining_seconds()
             if remaining is not None:
                 if remaining <= 0:
-                    raise AdmissionHalt("ceiling_exhausted", "authorized wall time exhausted")
+                    raise AdmissionHalt(
+                        "ceiling_exhausted", "authorized wall time exhausted",
+                        accounting=Accounting(coverage="unavailable"),
+                    )
                 try:
                     async with asyncio.timeout(remaining):
                         result = await _dispatch_worker(
@@ -641,17 +644,20 @@ async def execute_plan(
                     raise TypeError("evaluator returned an invalid Result")
                 canonical_json(result.detail)
             except TimeoutError as error:
+                timeout_accounting = Accounting(
+                    coverage="uncertain" if called else "unavailable"
+                )
                 if wall_expired():
                     if halt is None:
                         halt = AdmissionHalt("ceiling_exhausted", "authorized wall time exhausted")
                     result = EvaluationFailed(
-                        halt.code, halt.message, accounting=Accounting(coverage="uncertain")
+                        halt.code, halt.message, accounting=timeout_accounting
                     )
                 else:
                     result = EvaluationFailed(
                         type(error).__name__,
                         str(error),
-                        accounting=Accounting(coverage="uncertain"),
+                        accounting=timeout_accounting,
                     )
             except Exception as error:
                 if returned and isinstance(result, EvaluationSuccess | EvaluationFailed):
