@@ -123,6 +123,21 @@ def test_preflight_diagnosis_never_reports_failing_tests(
     }
 
 
+@pytest.mark.parametrize("cause", ["patch_rejected", "test_path_collision"])
+def test_diagnosis_returns_recorded_failure_before_replaying_patch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cause: str
+) -> None:
+    def unexpected_setup(*args: object, **kwargs: object) -> None:
+        raise AssertionError("recorded failure must not replay candidate setup")
+
+    monkeypatch.setattr(diagnosis, "materialize", unexpected_setup)
+    monkeypatch.setattr(diagnosis, "_reset_visible_tests", unexpected_setup)
+    groups = {"visible_regression": {"status": "failed", "cause": cause}}
+    assert diagnosis.diagnose_candidate(
+        "image", load_fixture(), "invalid patch", groups, scratch=tmp_path
+    ) == {"preflight_cause": cause}
+
+
 def test_empty_patch_materializes_the_baseline(tmp_path: Path) -> None:
     fixture = load_fixture()
     materialize(tmp_path / "candidate", fixture.repository, "")

@@ -83,8 +83,6 @@ def diagnose_candidate(
     # mkdtemp is 0700; the container user must be able to traverse the mount.
     root.chmod(0o755)
     try:
-        materialize(root, fixture.repository, patch)
-        _reset_visible_tests(root, fixture)
         preflight_causes = {
             g["cause"]
             for g in groups.values()
@@ -101,18 +99,20 @@ def diagnose_candidate(
                 }
             )
         }
-        if preflight_causes:
-            cause = sorted(preflight_causes)[0]
-            if cause == "typecheck_nonzero_exit":
-                errors = _TS_ERROR.findall(_run(image, root, TYPECHECK))
-                return {
-                    "preflight_cause": cause,
-                    "typecheck_errors": [
-                        {"file": file, "code": code, "message": message}
-                        for file, code, message in errors[:5]
-                    ],
-                }
+        cause = min(preflight_causes) if preflight_causes else None
+        if cause is not None and cause != "typecheck_nonzero_exit":
             return {"preflight_cause": cause}
+        materialize(root, fixture.repository, patch)
+        _reset_visible_tests(root, fixture)
+        if cause == "typecheck_nonzero_exit":
+            errors = _TS_ERROR.findall(_run(image, root, TYPECHECK))
+            return {
+                "preflight_cause": cause,
+                "typecheck_errors": [
+                    {"file": file, "code": code, "message": message}
+                    for file, code, message in errors[:5]
+                ],
+            }
         _install_tests(root, fixture)
         commands: dict[str, tuple[str, ...]] = {
             group.name: group.command for group in fixture.groups
