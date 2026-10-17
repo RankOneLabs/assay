@@ -43,6 +43,19 @@ _LAN_NETWORKS = (
 )
 
 
+def _canonical_relative_path(raw_path: str) -> bool:
+    """Mirror the bridge's safe_relative_path wire spelling rule."""
+    path = PurePosixPath(raw_path)
+    return bool(
+        raw_path
+        and "\\" not in raw_path
+        and not path.is_absolute()
+        and path.parts
+        and ".." not in path.parts
+        and path.as_posix() == raw_path
+    )
+
+
 class ModelRoute(WireModel):
     endpoint: Literal["https://openrouter.ai/api/v1"] = "https://openrouter.ai/api/v1"
     model: Literal["anthropic/claude-3-haiku"] = "anthropic/claude-3-haiku"
@@ -278,8 +291,7 @@ class ArtifactEntry(WireModel):
 
     @model_validator(mode="after")
     def safe_path(self) -> ArtifactEntry:
-        parts = PurePosixPath(self.path).parts
-        if PurePosixPath(self.path).is_absolute() or any(part in {"", ".", ".."} for part in parts):
+        if not _canonical_relative_path(self.path):
             raise ValueError(f"artifact path is unsafe: {self.path}")
         if self.path == MANIFEST_PATH:
             # Not merely redundant: an entry here would be checked against
@@ -435,12 +447,7 @@ def candidate_tree_digest(manifest: ArtifactManifest, *, artifact_bytes: dict[st
         raise ManifestRejected("candidate has an unexpected path")
     digest = hashlib.sha256()
     for path in sorted(files, key=lambda value: value.encode("utf-8")):
-        parts = PurePosixPath(path).parts
-        if (
-            not path
-            or PurePosixPath(path).is_absolute()
-            or any(part in {"", ".", ".."} for part in parts)
-        ):
+        if not _canonical_relative_path(path):
             raise ManifestRejected(f"candidate file path is unsafe: {path}")
         digest.update(path.encode("utf-8") + b"\x00100644\x00" + files[path] + b"\x00")
     return f"sha256:{digest.hexdigest()}"
