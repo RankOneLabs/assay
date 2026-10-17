@@ -89,6 +89,9 @@ async def test_scripted_grid_builds_paired_h2_and_separate_model_report(tmp_path
     store = ObjectStore(tmp_path / "store")
     _, run = await run_scripted(store)
     assert isinstance(run, RunSucceeded)
+    archive = tmp_path / "runs" / run.manifest.run_id
+    assert (archive / "manifest.json").read_bytes() == store.read_bytes(run.manifest_ref)
+    assert list((archive / "traces").glob("*-trajectory.json"))
     ref = str(run.manifest_ref)
     config = paired_config(store, (ref,), evaluator_id="pilot_judge",
                            reference_arm="t1-native", candidate_arm="t1-quoted")

@@ -1,11 +1,14 @@
 """Frozen repository-agent bounds for the verification pilot.
 
-The tool digest and limits remain pinned while the raw slice and fixture
-population are rebuilt. Live qualification must record actual conversation
-usage and limit hits for the new 24-session design before interpreting a
-route. The bridge reports a conversation-limit stop as ``no_submission`` with
-``conversation_limit`` in its detail because the shared ``CandidateCause``
-wire type has no dedicated member.
+The pinned envelope is sized against the rendered fixture, rather than a
+per-use-site tool-output projection: the largest rendered request message
+array is 2,843 bytes, the StageInstanceId use-site lines total 9,512 bytes,
+and the whole 62-file source slice is 348,936 bytes. The 3,670,016-byte
+conversation ceiling leaves room for repeated inspection of that real slice;
+the 3,932,160-byte request ceiling adds room for the tool schema. Live
+qualification still records actual usage and limit hits, since arbitrary
+tool outputs can exceed either ceiling. The bridge records a typed
+``conversation_limit`` stop in the partial trace.
 
 Only ``src/`` and ``tests/`` are writable in generated workspaces. Historical
 G6 decoy carriers are read-only documents; the protected-name guard also
