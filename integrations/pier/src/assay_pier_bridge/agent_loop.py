@@ -1152,8 +1152,11 @@ class RepositoryAgentClient:
     _used_cells: set[str] = field(default_factory=set, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
     _active_sandbox: ToolSandbox | None = field(default=None, init=False)
+    _active_cell_id: str | None = field(default=None, init=False)
 
-    def cancel_active(self) -> None:
+    def cancel_active(self, cell_id: str) -> None:
+        if self._active_cell_id != cell_id:
+            return
         sandbox = self._active_sandbox
         if sandbox is not None:
             sandbox.close()
@@ -1482,6 +1485,7 @@ class RepositoryAgentClient:
             else:
                 sandbox = self.sandbox_factory(workspace, cache, self.image, cell_id)
             self._active_sandbox = sandbox
+            self._active_cell_id = cell_id
             events.append(
                 {
                     "kind": "sandbox_created",
@@ -1792,6 +1796,7 @@ class RepositoryAgentClient:
                 events.append({"kind": "cleanup_failed", "cause": "container_cleanup"})
                 cleanup_cause = "container_cleanup"
             self._active_sandbox = None
+            self._active_cell_id = None
             try:
                 storage.close()
             except (RuntimeError, OSError, subprocess.SubprocessError):

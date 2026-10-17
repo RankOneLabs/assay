@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import assay_pier_bridge.repository_trial as repository_trial
 import pytest
 from assay_pier_bridge.agent_loop import (
     PILOT_TOOL_SCHEMAS,
@@ -131,6 +132,40 @@ def test_tmpfs_defaults_and_authorized_quota_match(tmp_path: Path) -> None:
             agent=agent, package=PACKAGE,
             limits=SandboxLimits(workspace_mb=128, cache_mb=128), configuration={},
         )
+
+
+def test_rejected_overlapping_cell_does_not_cancel_the_active_cell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([]), sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    active = FakeSandbox(tmp_path, tmp_path, "img", "s1:first:w0")
+    agent._active_sandbox = active
+    agent._active_cell_id = "s1:first:w0"
+    client = RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration={},
+    )
+    monkeypatch.setattr(repository_trial, "_container_count", lambda cell_id: 0)
+    digest = package_digest(PACKAGE)
+    rejected = _request(
+        cell_id="s1:second:w0", exchange=exchange_for("s1:second:w0", digest)
+    )
+    agent._lock.acquire()
+    try:
+        result = BridgeRuntime(client).run_cell(rejected)
+    finally:
+        agent._lock.release()
+    assert isinstance(result.outcome, InfrastructureFailure)
+    assert "concurrency_limit" in result.outcome.detail
+    assert not active.closed
+
+    first = client.create(_request(
+        cell_id="s1:first:w0", exchange=exchange_for("s1:first:w0", digest)
+    ))
+    first.cancel()
+    assert active.closed
 
 
 def test_lone_surrogate_tool_output_is_a_typed_candidate_failure(tmp_path: Path) -> None:

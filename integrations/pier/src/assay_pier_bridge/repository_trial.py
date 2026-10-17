@@ -148,7 +148,7 @@ class RepositoryAgentTrialHandle:
 
     def cancel(self) -> None:
         self._cancelled.set()
-        self._agent.cancel_active()
+        self._agent.cancel_active(self._request.cell_id)
 
     def partial_artifacts(self) -> dict[str, bytes]:
         return dict(self._partial)
