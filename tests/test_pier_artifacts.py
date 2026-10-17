@@ -20,6 +20,7 @@ from assay.pier_protocol import (
     ManifestRejected,
     RuntimeBinding,
     bind_exchange,
+    candidate_tree_digest,
     verify_artifact_bytes,
 )
 from assay.references import reference_closure
@@ -83,6 +84,53 @@ def test_an_entry_cannot_claim_the_manifests_own_path() -> None:
     where the manifest belongs."""
     with pytest.raises(ValidationError, match="cannot declare itself"):
         _entry(MANIFEST_PATH, b"{}", kind="result")
+
+
+@pytest.mark.parametrize(
+    ("path", "accepted"),
+    [
+        ("candidate_files/x", True),
+        ("candidate_files/nested/x", True),
+        ("candidate_files/./x", False),
+        ("candidate_files//x", False),
+        ("candidate_files/../x", False),
+        ("candidate_files/x/", False),
+        ("candidate_files\\x", False),
+        ("./candidate_files/x", False),
+        ("/candidate_files/x", False),
+    ],
+)
+def test_core_artifact_paths_match_bridge_and_digest(
+    path: str, accepted: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bridge_src = Path(__file__).resolve().parents[1] / "integrations/pier/src"
+    monkeypatch.syspath_prepend(str(bridge_src))
+    from assay_pier_bridge.paths import safe_relative_path
+
+    if accepted:
+        assert safe_relative_path(path).as_posix() == path
+        entry = _entry(path, b"x")
+    else:
+        with pytest.raises(ValueError):
+            safe_relative_path(path)
+        with pytest.raises(ValidationError):
+            _entry(path, b"x")
+        entry = ArtifactEntry.model_construct(
+            path=path, kind="candidate", size_bytes=1,
+            checksum=digest_bytes(b"x"), utf8=True,
+        )
+    index_bytes = json.dumps([path.removeprefix("candidate_files/")]).encode()
+    index = _entry("candidate-index.json", index_bytes)
+    exchange = bind_exchange(coordinate=_coordinate(), binding=RuntimeBinding(**_binding()))
+    manifest = ArtifactManifest.model_construct(
+        exchange=exchange, entries=(index, entry), aggregate_bytes=len(index_bytes) + 1
+    )
+    artifact_bytes = {index.path: index_bytes, path: b"x"}
+    if accepted:
+        assert candidate_tree_digest(manifest, artifact_bytes=artifact_bytes).startswith("sha256:")
+    else:
+        with pytest.raises(ManifestRejected):
+            candidate_tree_digest(manifest, artifact_bytes=artifact_bytes)
 
 
 def test_manifest_kind_is_no_longer_a_declarable_kind() -> None:

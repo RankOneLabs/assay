@@ -22,6 +22,7 @@ from assay_pier_bridge.agent_loop import (
     HAIKU_TURN_ROUTE,
     PILOT_TOOLS_REVIEW,
     PILOT_TOOLS_T1,
+    SYSTEM_PROMPT,
     TOOLS,
     AgentLoopError,
     ContainerStartError,
@@ -110,6 +111,24 @@ def test_paid_turn_uses_the_current_pilot_tool_schema(tmp_path: Path) -> None:
         [{"role": "user", "content": "Review"}], 1, None, PILOT_TOOLS_REVIEW
     )
     assert captured[0]["tools"] == PILOT_TOOLS_REVIEW
+
+
+def test_paid_turn_forwards_deadline_to_openrouter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client(tmp_path, lambda request: httpx.Response(500))
+    seen: list[float | None] = []
+
+    def fake_openrouter(*args: Any, deadline: float | None = None,
+                        on_dispatch: Any = None) -> ModelTurn:
+        seen.append(deadline)
+        return ModelTurn(message={}, finish_reason="stop", prompt_tokens=0,
+                         completion_tokens=0, cost_usd=0.0)
+
+    monkeypatch.setattr(client, "_openrouter_turn", fake_openrouter)
+    deadline = time.monotonic() + 20
+    client._turn([], 1, deadline, TOOLS)
+    assert seen == [deadline]
 
 
 def test_haiku_turn_uses_caller_loop_bounds(tmp_path: Path) -> None:
@@ -652,6 +671,26 @@ def test_shrink_keeps_declared_prefix_and_raises_typed_cause() -> None:
     assert failure.value.cause == "conversation_limit"
 
 
+def test_mid_cell_shrink_preserves_recorded_transcript(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("run_command", {"command": "true"}, 1)],
+        [_call("run_command", {"command": "true"}, 2)],
+        [_call("submit_output", {"summary": "done"}, 3)],
+    )
+    client = _local(
+        tmp_path, completion, system_prompt="S",
+        bounds=replace(LoopBounds(), max_conversation_bytes=450),
+    )
+    result = client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert any(e["kind"] == "conversation_truncated" for e in result.trajectory["events"])
+    recorded = result.trajectory["messages"]
+    assert [m["tool_call_id"] for m in recorded if m["role"] == "tool"] == [
+        "call-1", "call-2"
+    ]
+    assert all(m["tool_call_id"] != "call-1" for m in completion.seen[2]["messages"]
+               if m["role"] == "tool")
+
+
 def test_local_route_requires_an_injected_completion_and_no_key(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="injected turn completion"):
         _local(tmp_path, None)
@@ -677,11 +716,29 @@ def test_local_turns_record_observations_and_uncertain_billing(tmp_path: Path) -
     assert b"+two" in result.patch
     assert result.baseline_tree_digest != result.final_tree_digest
     model_events = [e for e in result.trajectory["events"] if e["kind"] == "model_request"]
-    assert [e["smithers_job_id"] for e in model_events] == ["job-1", "job-2"]
+    assert [e["observations"]["smithers_job_id"] for e in model_events] == ["job-1", "job-2"]
     assert all(e["billing"] == "uncertain" for e in model_events)
     # The replayed assistant turn carries exactly the portable tool-call fields.
     replayed = completion.seen[1]["messages"][2]
     assert replayed["tool_calls"][0].keys() == {"id", "type", "function"}
+
+
+def test_observations_cannot_replace_model_event_fields(tmp_path: Path) -> None:
+    def completion(**kwargs: Any) -> ModelTurn:
+        return ModelTurn(
+            message={
+                "role": "assistant", "tool_calls": [_call("submit_output", {"summary": "ok"}, 1)]
+            },
+            finish_reason="tool_calls", prompt_tokens=7, completion_tokens=3,
+            cost_usd=None, observations={"kind": "forged", "prompt_tokens": 999},
+        )
+
+    result = _local(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit"}
+    )
+    event = next(e for e in result.trajectory["events"] if e["kind"] == "model_request")
+    assert event["prompt_tokens"] == 7
+    assert event["observations"] == {"kind": "forged", "prompt_tokens": 999}
 
 
 def test_tool_call_mistakes_go_back_to_the_model(tmp_path: Path) -> None:
@@ -1239,7 +1296,130 @@ def test_resolved_config_observes_constructed_transport_retries(tmp_path: Path) 
     with pytest.raises(AgentLoopError, match="retry_config_violation") as failure:
         client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
     assert failure.value.trajectory["config"]["transport_retries"] == 2
-    assert failure.value.trajectory["events"][-1]["requests"] == 1
+    assert failure.value.trajectory["events"][-1]["requests"] == 0
+
+
+def test_full_provider_envelope_limit_does_not_count_a_request(tmp_path: Path) -> None:
+    dispatched = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal dispatched
+        dispatched += 1
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "ok"}, 1))
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "Edit"},
+    ]
+    compact_size = sum(len(json.dumps(value, separators=(",", ":")).encode())
+                       for value in (messages, TOOLS))
+    client = _client(tmp_path, handler, bounds=replace(LoopBounds(),
+                                                      max_request_bytes=compact_size + 1))
+    with pytest.raises(AgentLoopError, match="request_limit") as failure:
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.usage["requests"] == 0
+    assert failure.value.usage["cost_usd"] == 0.0
+    assert failure.value.trajectory["turns"][0]["usage"]["requests"] == 0
+    assert dispatched == 0
+
+
+@pytest.mark.parametrize("failure_kind", ["shape", "identity", "response_limit", "cost"])
+def test_billed_200_failure_keeps_turn_and_cell_usage(
+    tmp_path: Path, failure_kind: str
+) -> None:
+    body = _answer("submit_output", {"summary": "ok"}, 1)
+    bounds = LoopBounds()
+    if failure_kind == "shape":
+        body["choices"] = []
+    elif failure_kind == "identity":
+        body["model"] = "wrong/model"
+    elif failure_kind == "response_limit":
+        bounds = replace(bounds, max_response_bytes=1)
+    else:
+        del body["usage"]["cost"]
+
+    client = _client(tmp_path, lambda request: httpx.Response(200, json=body), bounds=bounds)
+    with pytest.raises(AgentLoopError) as failure:
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.cause == {
+        "shape": "provider_response", "identity": "provider_identity",
+        "response_limit": "response_limit", "cost": "provider_usage",
+    }[failure_kind]
+    expected_cost = None if failure_kind == "cost" else 0.001
+    assert failure.value.usage == {
+        "prompt_tokens": 10, "completion_tokens": 5, "requests": 1,
+        "cost_usd": expected_cost,
+    }
+    assert failure.value.trajectory["turns"][0]["usage"] == failure.value.usage
+
+
+@pytest.mark.parametrize(("missing_field", "bad_value"), [
+    ("completion_tokens", None), ("prompt_tokens", "not-a-count"),
+])
+@pytest.mark.parametrize("earlier_response", [False, True])
+def test_billed_200_unknown_token_count_keeps_readable_usage(
+    tmp_path: Path, missing_field: str, bad_value: object, earlier_response: bool,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if earlier_response and calls == 1:
+            return httpx.Response(200, json=_answer("run_command", {"command": "true"}, 1))
+        body = _answer("submit_output", {"summary": "ok"}, calls)
+        if bad_value is None:
+            del body["usage"][missing_field]
+        else:
+            body["usage"][missing_field] = bad_value
+        return httpx.Response(200, json=body)
+
+    with pytest.raises(AgentLoopError, match="provider_usage") as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    expected = {
+        "prompt_tokens": None if missing_field == "prompt_tokens" else 10 * calls,
+        "completion_tokens": None if missing_field == "completion_tokens" else 5 * calls,
+        "requests": calls,
+        "cost_usd": 0.001 * calls,
+    }
+    assert failure.value.usage == expected
+    assert failure.value.trajectory["turns"][0]["usage"] == expected
+
+
+@pytest.mark.parametrize("read_error", [httpx.ReadError, httpx.ReadTimeout])
+@pytest.mark.parametrize("earlier_response", [False, True])
+def test_read_failure_after_dispatch_marks_cost_unknown(
+    tmp_path: Path, read_error: type[httpx.RequestError], earlier_response: bool,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if earlier_response and calls == 1:
+            return httpx.Response(200, json=_answer("run_command", {"command": "true"}, 1))
+
+        class BrokenStream(httpx.SyncByteStream):
+            def __iter__(self) -> Iterator[bytes]:
+                yield b'{"partial":'
+                raise read_error("response read failed", request=request)
+
+        return httpx.Response(200, stream=BrokenStream())
+
+    with pytest.raises(AgentLoopError, match="transport_failure") as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    expected = {
+        "prompt_tokens": 10 if earlier_response else 0,
+        "completion_tokens": 5 if earlier_response else 0,
+        "requests": calls,
+        "cost_usd": None,
+    }
+    assert failure.value.usage == expected
+    assert failure.value.trajectory["turns"][0]["usage"] == expected
 
 
 @pytest.mark.parametrize(

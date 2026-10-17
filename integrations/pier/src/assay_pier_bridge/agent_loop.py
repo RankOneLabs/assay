@@ -206,8 +206,8 @@ class LoopResult:
     baseline_tree_digest: str
     final_tree_digest: str
     trajectory: dict[str, Any]
-    prompt_tokens: int
-    completion_tokens: int
+    prompt_tokens: int | None
+    completion_tokens: int | None
     cost_usd: float | None
     requests: int
 
@@ -230,6 +230,30 @@ class AgentLoopError(RuntimeError):
         self.rejection = rejection
         self.usage = dict(usage or {})
         super().__init__(cause)
+
+
+class BilledResponseError(ValueError):
+    """A successful HTTP response failed validation after billing was possible."""
+
+    def __init__(self, cause: str, usage: Mapping[str, int | float | None]) -> None:
+        self.usage = dict(usage)
+        super().__init__(cause)
+
+
+def _read_billed_usage(data: Any) -> dict[str, int | float | None]:
+    raw = data.get("usage") if isinstance(data, dict) else None
+    usage = raw if isinstance(raw, dict) else {}
+    cost = usage.get("cost")
+    measured_cost = (
+        float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool)
+        and math.isfinite(cost) and cost >= 0 else None
+    )
+    counts = {
+        key: value if type(value) is int and value >= 0 else None
+        for key in ("prompt_tokens", "completion_tokens")
+        for value in (usage.get(key),)
+    }
+    return {**counts, "cost_usd": measured_cost}
 
 
 class ToolSandbox(Protocol):
@@ -1229,9 +1253,11 @@ class RepositoryAgentClient:
 
     def _turn(
         self, messages: list[dict[str, Any]], turn: int, deadline: float | None,
-        tools: list[dict[str, Any]],
+        tools: list[dict[str, Any]], on_dispatch: Callable[[], None] | None = None,
     ) -> ModelTurn:
         if self.completion is not None:
+            if on_dispatch is not None:
+                on_dispatch()
             return self.completion(
                 messages=messages,
                 tools=tools,
@@ -1239,12 +1265,18 @@ class RepositoryAgentClient:
                 turn=turn,
                 deadline=deadline,
             )
-        return self._openrouter_turn(messages, HAIKU_TURN_ROUTE, tools)
+        return self._openrouter_turn(
+            messages, HAIKU_TURN_ROUTE, tools, deadline=deadline, on_dispatch=on_dispatch
+        )
 
     def _openrouter_turn(
         self, messages: list[dict[str, Any]], route: OpenRouterTurnRoute = HAIKU_TURN_ROUTE,
         tools: list[dict[str, Any]] | None = None,
+        *, deadline: float | None = None,
+        on_dispatch: Callable[[], None] | None = None,
     ) -> ModelTurn:
+        if deadline is not None and deadline <= time.monotonic():
+            raise ValueError("agent_deadline")
         body = {
             "model": route.model,
             "messages": messages,
@@ -1286,6 +1318,11 @@ class RepositoryAgentClient:
         with self._http_client() as client:
             if self._transport_retries(client) != 0:
                 raise ValueError("retry_config_violation")
+            timeout_s = 30.0 if deadline is None else min(30.0, deadline - time.monotonic())
+            if timeout_s <= 0:
+                raise ValueError("agent_deadline")
+            if on_dispatch is not None:
+                on_dispatch()
             with client.stream(
                 "POST",
                 chat_completions_url,
@@ -1294,43 +1331,51 @@ class RepositoryAgentClient:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
+                timeout=timeout_s,
             ) as response:
                 if str(response.url) != chat_completions_url or not response.is_success:
                     raise ValueError("provider_response")
                 chunks = bytearray()
+                over_limit = False
                 for chunk in response.iter_bytes():
+                    if deadline is not None and deadline <= time.monotonic():
+                        raise ValueError("agent_deadline")
                     chunks.extend(chunk)
                     if len(chunks) > self.bounds.max_response_bytes:
-                        raise ValueError("response_limit")
-        data = json.loads(chunks)
+                        over_limit = True
+                        break
+        try:
+            data = json.loads(chunks)
+        except (ValueError, UnicodeError) as error:
+            cause = "response_limit" if over_limit else "provider_response"
+            raise BilledResponseError(cause, _read_billed_usage(None)) from error
+        billed_usage = _read_billed_usage(data)
+        if over_limit:
+            raise BilledResponseError("response_limit", billed_usage)
         if (
             not isinstance(data, dict)
             or data.get("model") != route.model
             or data.get("provider") != route.provider_name
         ):
-            raise ValueError("provider_identity")
+            raise BilledResponseError("provider_identity", billed_usage)
         choices, usage = data.get("choices"), data.get("usage")
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(usage, dict):
-            raise ValueError("provider_response")
+            raise BilledResponseError("provider_response", billed_usage)
         choice = choices[0]
         if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
-            raise ValueError("provider_response")
-        cost = usage.get("cost")
-        if (
-            isinstance(cost, bool)
-            or not isinstance(cost, (int, float))
-            or not math.isfinite(cost)
-            or cost < 0
-        ):
-            raise ValueError("provider_usage")
-        for key in ("prompt_tokens", "completion_tokens"):
-            if type(usage.get(key)) is not int or usage[key] < 0:
-                raise ValueError("provider_usage")
+            raise BilledResponseError("provider_response", billed_usage)
+        cost = billed_usage["cost_usd"]
+        if cost is None:
+            raise BilledResponseError("provider_usage", billed_usage)
+        prompt_count = billed_usage["prompt_tokens"]
+        completion_count = billed_usage["completion_tokens"]
+        if type(prompt_count) is not int or type(completion_count) is not int:
+            raise BilledResponseError("provider_usage", billed_usage)
         return ModelTurn(
             message=choice["message"],
             finish_reason=str(choice.get("finish_reason")),
-            prompt_tokens=usage["prompt_tokens"],
-            completion_tokens=usage["completion_tokens"],
+            prompt_tokens=prompt_count,
+            completion_tokens=completion_count,
             cost_usd=float(cost),
         )
 
@@ -1413,8 +1458,16 @@ class RepositoryAgentClient:
             {"role": "user", "content": instruction},
             *self.message_prefix,
         ]
+        trajectory["messages"] = deepcopy(messages)
+
+        def record_message(message: dict[str, Any]) -> None:
+            messages.append(message)
+            trajectory["messages"].append(deepcopy(message))
+
         prefix_length = len(messages)
-        prompt_tokens = completion_tokens = requests = 0
+        prompt_tokens: int | None = 0
+        completion_tokens: int | None = 0
+        requests = 0
         cell_tool_calls = 0
         logical_turn = 1
         turn_tool_calls = 0
@@ -1438,6 +1491,48 @@ class RepositoryAgentClient:
                 "requests": requests,
                 "cost_usd": cost_usd,
             }
+
+        def count_dispatch() -> None:
+            nonlocal requests
+            requests += 1
+            turn_usage: dict[str, int | float | None] = turn_record["usage"]
+            turn_usage["requests"] = int(turn_usage["requests"] or 0) + 1
+
+        def accrue_billed(reading: Mapping[str, int | float | None]) -> None:
+            nonlocal prompt_tokens, completion_tokens, cost_usd
+            turn_usage: dict[str, int | float | None] = turn_record["usage"]
+            for key in ("prompt_tokens", "completion_tokens"):
+                value = reading.get(key)
+                if type(value) is int and value >= 0:
+                    if key == "prompt_tokens":
+                        if prompt_tokens is not None:
+                            prompt_tokens += value
+                    else:
+                        if completion_tokens is not None:
+                            completion_tokens += value
+                    turn_count = turn_usage[key]
+                    if turn_count is not None:
+                        turn_usage[key] = int(turn_count) + value
+                else:
+                    if key == "prompt_tokens":
+                        prompt_tokens = None
+                    else:
+                        completion_tokens = None
+                    turn_usage[key] = None
+            billed_cost = reading.get("cost_usd")
+            if billed_cost is None:
+                cost_usd = None
+                turn_usage["cost_usd"] = None
+            elif cost_usd is not None:
+                cost_usd += float(billed_cost)
+                if turn_usage["cost_usd"] is not None:
+                    turn_usage["cost_usd"] = float(turn_usage["cost_usd"]) + float(billed_cost)
+
+        def mark_cost_unknown() -> None:
+            nonlocal cost_usd
+            cost_usd = None
+            turn_usage: dict[str, int | float | None] = turn_record["usage"]
+            turn_usage["cost_usd"] = None
 
         def remaining() -> float:
             if cancel_event is not None and cancel_event.is_set():
@@ -1509,15 +1604,23 @@ class RepositoryAgentClient:
                 )
                 if len(_json_bytes(messages)) > self.bounds.max_conversation_bytes:
                     raise ValueError("conversation_limit")
-                if len(_json_bytes(messages)) + len(_json_bytes(turn_tools)) > (
-                    self.bounds.max_request_bytes
+                if self.completion is not None and (
+                    len(_json_bytes(messages)) + len(_json_bytes(turn_tools))
+                    > self.bounds.max_request_bytes
                 ):
                     raise ValueError("request_limit")
-                requests += 1  # Count a failed dispatch; never retry it.
                 turn_usage: dict[str, int | float | None] = turn_record["usage"]
-                turn_usage["requests"] = int(turn_usage["requests"] or 0) + 1
                 started = time.monotonic()
-                answer = self._turn(messages, turn, deadline, turn_tools)
+                requests_before = requests
+                try:
+                    answer = self._turn(messages, turn, deadline, turn_tools, count_dispatch)
+                except BilledResponseError as error:
+                    accrue_billed(error.usage)
+                    raise
+                except (ValueError, RuntimeError, OSError, httpx.HTTPError):
+                    if self.model_route.paid_route_reachable and requests > requests_before:
+                        mark_cost_unknown()
+                    raise
                 message = answer.message
                 if (
                     not isinstance(message, dict)
@@ -1532,18 +1635,25 @@ class RepositoryAgentClient:
                         raise ValueError("provider_usage")
                 elif answer.cost_usd is not None:
                     raise ValueError("local_billing_must_be_uncertain")
-                prompt_tokens += answer.prompt_tokens
-                completion_tokens += answer.completion_tokens
-                if cost_usd is not None and answer.cost_usd is not None:
-                    cost_usd += answer.cost_usd
-                turn_usage["prompt_tokens"] = (
-                    int(turn_usage["prompt_tokens"] or 0) + answer.prompt_tokens
-                )
-                turn_usage["completion_tokens"] = (
-                    int(turn_usage["completion_tokens"] or 0) + answer.completion_tokens
-                )
-                if turn_usage["cost_usd"] is not None and answer.cost_usd is not None:
-                    turn_usage["cost_usd"] = float(turn_usage["cost_usd"]) + answer.cost_usd
+                if answer.cost_usd is not None:
+                    accrue_billed({
+                        "prompt_tokens": answer.prompt_tokens,
+                        "completion_tokens": answer.completion_tokens,
+                        "cost_usd": answer.cost_usd,
+                    })
+                else:
+                    if prompt_tokens is not None:
+                        prompt_tokens += answer.prompt_tokens
+                    if completion_tokens is not None:
+                        completion_tokens += answer.completion_tokens
+                    if turn_usage["prompt_tokens"] is not None:
+                        turn_usage["prompt_tokens"] = (
+                            int(turn_usage["prompt_tokens"]) + answer.prompt_tokens
+                        )
+                    if turn_usage["completion_tokens"] is not None:
+                        turn_usage["completion_tokens"] = (
+                            int(turn_usage["completion_tokens"]) + answer.completion_tokens
+                        )
                 calls = message.get("tool_calls") or []
                 events.append({
                     "kind": "model_request", "turn": turn,
@@ -1554,7 +1664,7 @@ class RepositoryAgentClient:
                     "request_bytes": len(_json_bytes(messages)),
                     "seconds": round(time.monotonic() - started, 3),
                     "billing": "uncertain" if answer.cost_usd is None else "measured",
-                    **answer.observations,
+                    "observations": dict(answer.observations),
                 })
                 if (
                     answer.finish_reason == "length"
@@ -1577,7 +1687,7 @@ class RepositoryAgentClient:
                     )
                 replayed = [_replayable_call(call) for call in calls]
                 content = message.get("content")
-                messages.append({
+                record_message({
                     "role": "assistant",
                     "content": content if isinstance(content, str) else None,
                     "tool_calls": replayed,
@@ -1621,14 +1731,13 @@ class RepositoryAgentClient:
                             turn_record["workspace_diff"] = patch.decode("utf-8")
                             turn_record["baseline_tree_digest"] = before_digest
                             turn_record["tree_digest"] = after_digest
-                            trajectory["messages"] = messages
                             events.append({"kind": "submitted", "turn": turn})
                             if self.pilot_mode and logical_turn < 3:
-                                messages.append({
+                                record_message({
                                     "role": "tool", "tool_call_id": call_id,
                                     "content": "submission recorded",
                                 })
-                                messages.append({
+                                record_message({
                                     "role": "user",
                                     "content": self.next_user_turns[logical_turn - 1],
                                 })
@@ -1668,7 +1777,7 @@ class RepositoryAgentClient:
                                 "limit_seconds": round(limit, 3),
                             })
                             observe_oom_kills(turn, name)
-                            messages.append({
+                            record_message({
                                 "role": "tool", "tool_call_id": call_id,
                                 "content": (
                                     f"error: command exceeded its {limit:.0f}s limit and every "
@@ -1692,7 +1801,7 @@ class RepositoryAgentClient:
                             "kind": "tool_error", "turn": turn,
                             "tool": name if isinstance(name, str) else None, "reason": reason,
                         })
-                        messages.append(
+                        record_message(
                             {"role": "tool", "tool_call_id": call_id, "content": f"error: {reason}"}
                         )
                         tool_trace["returned_text"] = messages[-1]["content"]
@@ -1718,7 +1827,7 @@ class RepositoryAgentClient:
                                 "original_bytes": output.original_bytes,
                             }
                         )
-                    messages.append(
+                    record_message(
                         {"role": "tool", "tool_call_id": call_id, "content": bounded}
                     )
                     exit_match = re.match(r"exit=(-?\d+)\n", bounded)
@@ -1754,7 +1863,6 @@ class RepositoryAgentClient:
             subprocess.SubprocessError,
         ) as error:
             primary_failed = True
-            trajectory["messages"] = messages
             rejection: ArtifactCollectionRejected | None = None
             if isinstance(error, ArtifactCollectionRejected):
                 rejection = error

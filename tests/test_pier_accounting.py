@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -33,9 +34,11 @@ from assay.models import (
 from assay.pier_protocol import (
     ArtifactEntry,
     ArtifactManifest,
+    CandidateFailure,
     CandidateSubmission,
     PierExchange,
     RuntimeBinding,
+    bind_exchange,
     candidate_tree_digest,
 )
 from assay.planning import compile_plan_v2
@@ -209,14 +212,45 @@ async def test_uncertain_accounting_when_dispatched_without_usage(tmp_path: Path
     assert result.accounting.amount is None
 
 
-def test_local_token_usage_has_unavailable_cost() -> None:
+def test_paid_unreadable_cost_is_uncertain_while_local_cost_is_unavailable() -> None:
     from assay.adapters.pier import _accounting_from_usage
 
     local = _accounting_from_usage({"prompt_tokens": 12, "completion_tokens": 7, "cost_usd": None})
     assert local.usage == {"prompt_tokens": 12, "completion_tokens": 7}
     assert local.amount is None
     assert local.coverage == "unavailable"
+    assert _accounting_from_usage(
+        {"prompt_tokens": 12, "completion_tokens": 7, "cost_usd": None},
+        paid_route=True,
+    ).coverage == "uncertain"
     assert _accounting_from_usage({"prompt_tokens": 12}).coverage == "uncertain"
+
+
+@pytest.mark.parametrize(
+    ("route", "coverage"),
+    [
+        ({"endpoint": "https://openrouter.ai/api/v1", "model": "anthropic/claude-3-haiku",
+          "provider": "amazon-bedrock"}, "uncertain"),
+        ({"endpoint": "http://willie:8900", "model": "qwen-coder-32b",
+          "provider": "smithers-local"}, "unavailable"),
+    ],
+)
+def test_adapter_uses_model_route_contract_for_cost_coverage(
+    tmp_path: Path, route: dict[str, str], coverage: str,
+) -> None:
+    adapter = replace(_adapter(tmp_path, _FixedBridge(usage=None)), model_route=route)
+    exchange = bind_exchange(coordinate=_coordinate(), binding=adapter.binding)
+    result = adapter._settle(
+        exchange,
+        BridgeTrialResult(
+            exchange=exchange,
+            outcome=CandidateFailure(cause="no_submission"),
+            usage={"prompt_tokens": 12, "cost_usd": None},
+            artifacts={},
+        ),
+        cleanup_incomplete=False,
+    )
+    assert result.accounting.coverage == coverage
 
 
 async def test_nonnumeric_cost_usd_is_uncertain_not_a_raised_error(tmp_path: Path) -> None:

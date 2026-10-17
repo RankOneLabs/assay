@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import assay_pier_bridge.repository_trial as repository_trial
+import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
     PILOT_TOOL_SCHEMAS,
@@ -210,6 +211,64 @@ def test_invalid_trajectory_unicode_does_not_mask_original_candidate_cause(
     assert isinstance(result.outcome, CandidateFailure)
     assert result.outcome.cause == "invalid_tool_output_encoding"
     assert b"\\ud800" in result.artifacts["trajectory.json"]
+
+
+def test_billed_shape_failure_reaches_failed_trial_usage(tmp_path: Path) -> None:
+    response = {
+        "model": "anthropic/claude-3-haiku", "provider": "Amazon Bedrock",
+        "choices": [],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.001},
+    }
+    agent = RepositoryAgentClient(
+        api_key="test", image="img", runs_root=tmp_path,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response)),
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    result = BridgeRuntime(RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration={},
+    )).run_cell(_request(model_route=ModelRoute()))
+    assert isinstance(result.outcome, InfrastructureFailure)
+    assert result.usage is not None, result.outcome
+    assert (result.usage.prompt_tokens, result.usage.completion_tokens,
+            result.usage.requests, result.usage.cost_usd) == (10, 5, 1, 0.001)
+
+
+def test_billed_unknown_token_count_reaches_failed_trial_usage(tmp_path: Path) -> None:
+    response = {
+        "model": "anthropic/claude-3-haiku", "provider": "Amazon Bedrock",
+        "choices": [],
+        "usage": {"prompt_tokens": 10, "cost": 0.001},
+    }
+    agent = RepositoryAgentClient(
+        api_key="test", image="img", runs_root=tmp_path,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response)),
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    result = BridgeRuntime(RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration={},
+    )).run_cell(_request(model_route=ModelRoute()))
+    assert isinstance(result.outcome, InfrastructureFailure)
+    assert result.usage is not None
+    assert (result.usage.prompt_tokens, result.usage.completion_tokens,
+            result.usage.requests, result.usage.cost_usd) == (10, None, 1, 0.001)
+
+
+def test_read_failure_after_dispatch_has_unknown_failed_trial_cost(tmp_path: Path) -> None:
+    def fail_read(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError("response read failed", request=request)
+
+    agent = RepositoryAgentClient(
+        api_key="test", image="img", runs_root=tmp_path,
+        transport=httpx.MockTransport(fail_read),
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    result = BridgeRuntime(RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration={},
+    )).run_cell(_request(model_route=ModelRoute()))
+    assert isinstance(result.outcome, InfrastructureFailure)
+    assert result.usage is not None
+    assert (result.usage.prompt_tokens, result.usage.completion_tokens,
+            result.usage.requests, result.usage.cost_usd) == (0, 0, 1, None)
 
 
 def test_teardown_counts_cell_label_and_refuses_failed_cleanup(
