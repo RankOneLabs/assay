@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import base64
 import json
@@ -18,7 +19,13 @@ from verification_pilot.fixture import load_fixture
 from verification_pilot.fixtures import base_subjects
 from verification_pilot.ground_truth import subject_truth
 from verification_pilot.metrics import remnant_read, remnant_repaired
-from verification_pilot.observations import RecordedToolCall, RecordedTrace, RecordedTurn, observe
+from verification_pilot.observations import (
+    RecordedToolCall,
+    RecordedTrace,
+    RecordedTurn,
+    RecordedUsage,
+    observe,
+)
 
 
 def _sealed(store: ObjectStore, trajectory: dict[str, Any]) -> dict[str, Any]:
@@ -96,6 +103,59 @@ def _recorded_turn(
 def _measures(trace: RecordedTrace) -> dict[tuple[str, str], Any]:
     subject = base_subjects()[0]
     return {(item.turn, item.name): item.result for item in observe(trace, subject)}
+
+
+def test_recorded_trace_contract_matches_agent_loop_recorded_keys() -> None:
+    """Keep the transform's declared input pinned to both recorder turn constructors."""
+    source = Path(__file__).resolve().parents[3] / (
+        "integrations/pier/src/assay_pier_bridge/agent_loop.py"
+    )
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+
+    def assigned_dicts(name: str) -> list[ast.Dict]:
+        values: list[ast.Dict] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+                value = node.value
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+                value = node.value
+            else:
+                continue
+            if any(isinstance(target, ast.Name) and target.id == name
+                   for target in targets):
+                assert isinstance(value, ast.Dict)
+                values.append(value)
+        return values
+
+    def fields(record: ast.Dict) -> dict[str, ast.expr]:
+        return {key.value: value for key, value in zip(record.keys, record.values,
+                                                       strict=True)
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)}
+
+    turns = assigned_dicts("turn_record")
+    assert len(turns) == 2  # initial T1 and every advanced pilot turn
+    for turn in turns:
+        recorded = fields(turn)
+        assert RecordedTurn.__required_keys__ - {"stop_cause"} <= recorded.keys()
+        assert isinstance(recorded["usage"], ast.Dict)
+        assert RecordedUsage.__required_keys__ <= fields(recorded["usage"]).keys()
+
+    tools = assigned_dicts("tool_trace")
+    assert len(tools) == 1
+    assert {"name", "arguments", "returned_text", "exit_code", "truncated"} <= (
+        fields(tools[0]).keys()
+    )
+    assert any(
+        isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "turn_record"
+                and isinstance(target.slice, ast.Constant)
+                and target.slice.value == "stop_cause" for target in node.targets)
+        for node in ast.walk(tree)
+    )
 
 
 def test_cap_stopped_t1_keeps_inspection_without_claim_or_verdict() -> None:
