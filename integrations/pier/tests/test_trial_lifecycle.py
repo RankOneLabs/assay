@@ -242,3 +242,4 @@ def test_failure_merge_stays_within_the_wire_budget() -> None:
     assert result.outcome.cause == "entry_limit"
     assert len(result.artifacts) == 1_024
     assert result.artifacts["rejected_worktree/z.txt"] == b"rejected"
+    assert result.artifacts["failure-artifacts-truncated.json"] == b'{"truncated":true}'

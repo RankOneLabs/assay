@@ -185,6 +185,7 @@ def _bounded_failure_artifacts(
     bounded: dict[str, bytes] = {}
     aggregate_bytes = 0
     artifact_count = 0
+    truncated = False
     for source in (primary, partial):
         for path in sorted(source):
             data = source[path]
@@ -195,17 +196,31 @@ def _bounded_failure_artifacts(
             except ValueError:
                 continue
             if path != MANIFEST_PATH and artifact_count >= MAX_ARTIFACT_COUNT:
+                truncated = True
                 continue
             if path == MANIFEST_PATH:
                 retained = data[:MAX_ARTIFACT_BYTES]
             else:
                 remaining = MAX_AGGREGATE_ARTIFACT_BYTES - aggregate_bytes
                 if remaining == 0 and data:
+                    truncated = True
                     continue
                 retained = data[: min(MAX_ARTIFACT_BYTES, remaining)]
                 aggregate_bytes += len(retained)
                 artifact_count += 1
             bounded[path] = retained
+            truncated |= len(retained) != len(data)
+    if truncated:
+        marker = "failure-artifacts-truncated.json"
+        marker_bytes = b'{"truncated":true}'
+        while (
+            artifact_count >= MAX_ARTIFACT_COUNT
+            or aggregate_bytes + len(marker_bytes) > MAX_AGGREGATE_ARTIFACT_BYTES
+        ):
+            discarded = next(path for path in reversed(bounded) if path != MANIFEST_PATH)
+            aggregate_bytes -= len(bounded.pop(discarded))
+            artifact_count -= 1
+        bounded[marker] = marker_bytes
     return bounded
 
 
