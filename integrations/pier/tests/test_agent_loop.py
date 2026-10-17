@@ -1318,6 +1318,7 @@ def test_full_provider_envelope_limit_does_not_count_a_request(tmp_path: Path) -
     with pytest.raises(AgentLoopError, match="request_limit") as failure:
         client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
     assert failure.value.usage["requests"] == 0
+    assert failure.value.usage["cost_usd"] == 0.0
     assert failure.value.trajectory["turns"][0]["usage"]["requests"] == 0
     assert dispatched == 0
 
@@ -1350,6 +1351,75 @@ def test_billed_200_failure_keeps_turn_and_cell_usage(
         "cost_usd": expected_cost,
     }
     assert failure.value.trajectory["turns"][0]["usage"] == failure.value.usage
+
+
+@pytest.mark.parametrize(("missing_field", "bad_value"), [
+    ("completion_tokens", None), ("prompt_tokens", "not-a-count"),
+])
+@pytest.mark.parametrize("earlier_response", [False, True])
+def test_billed_200_unknown_token_count_keeps_readable_usage(
+    tmp_path: Path, missing_field: str, bad_value: object, earlier_response: bool,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if earlier_response and calls == 1:
+            return httpx.Response(200, json=_answer("run_command", {"command": "true"}, 1))
+        body = _answer("submit_output", {"summary": "ok"}, calls)
+        if bad_value is None:
+            del body["usage"][missing_field]
+        else:
+            body["usage"][missing_field] = bad_value
+        return httpx.Response(200, json=body)
+
+    with pytest.raises(AgentLoopError, match="provider_usage") as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    expected = {
+        "prompt_tokens": None if missing_field == "prompt_tokens" else 10 * calls,
+        "completion_tokens": None if missing_field == "completion_tokens" else 5 * calls,
+        "requests": calls,
+        "cost_usd": 0.001 * calls,
+    }
+    assert failure.value.usage == expected
+    assert failure.value.trajectory["turns"][0]["usage"] == expected
+
+
+@pytest.mark.parametrize("read_error", [httpx.ReadError, httpx.ReadTimeout])
+@pytest.mark.parametrize("earlier_response", [False, True])
+def test_read_failure_after_dispatch_marks_cost_unknown(
+    tmp_path: Path, read_error: type[httpx.RequestError], earlier_response: bool,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if earlier_response and calls == 1:
+            return httpx.Response(200, json=_answer("run_command", {"command": "true"}, 1))
+
+        class BrokenStream(httpx.SyncByteStream):
+            def __iter__(self) -> Iterator[bytes]:
+                yield b'{"partial":'
+                raise read_error("response read failed", request=request)
+
+        return httpx.Response(200, stream=BrokenStream())
+
+    with pytest.raises(AgentLoopError, match="transport_failure") as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    expected = {
+        "prompt_tokens": 10 if earlier_response else 0,
+        "completion_tokens": 5 if earlier_response else 0,
+        "requests": calls,
+        "cost_usd": None,
+    }
+    assert failure.value.usage == expected
+    assert failure.value.trajectory["turns"][0]["usage"] == expected
 
 
 @pytest.mark.parametrize(

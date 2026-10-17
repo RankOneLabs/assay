@@ -32,6 +32,13 @@ def test_trial_usage_represents_unknown_requests_explicitly() -> None:
     assert usage.model_dump()["requests"] is None
 
 
+def test_trial_usage_represents_unknown_billed_token_count() -> None:
+    usage = TrialUsage(prompt_tokens=12, completion_tokens=None, requests=1, cost_usd=0.001)
+    assert usage.model_dump() == {
+        "prompt_tokens": 12, "completion_tokens": None, "cost_usd": 0.001, "requests": 1,
+    }
+
+
 def effective(**overrides: object) -> EffectiveEnforcement:
     base = dict(
         uid=1000,

@@ -235,8 +235,8 @@ class TrialRequest(ClosedModel):
 
 
 class TrialUsage(ClosedModel):
-    prompt_tokens: int = Field(ge=0)
-    completion_tokens: int = Field(ge=0)
+    prompt_tokens: int | None = Field(ge=0)
+    completion_tokens: int | None = Field(ge=0)
     cost_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     # Worker evidence may report tokens without an observed request count.
     requests: int | None = Field(default=None, ge=0)

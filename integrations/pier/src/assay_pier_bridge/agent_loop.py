@@ -206,8 +206,8 @@ class LoopResult:
     baseline_tree_digest: str
     final_tree_digest: str
     trajectory: dict[str, Any]
-    prompt_tokens: int
-    completion_tokens: int
+    prompt_tokens: int | None
+    completion_tokens: int | None
     cost_usd: float | None
     requests: int
 
@@ -1465,7 +1465,9 @@ class RepositoryAgentClient:
             trajectory["messages"].append(deepcopy(message))
 
         prefix_length = len(messages)
-        prompt_tokens = completion_tokens = requests = 0
+        prompt_tokens: int | None = 0
+        completion_tokens: int | None = 0
+        requests = 0
         cell_tool_calls = 0
         logical_turn = 1
         turn_tool_calls = 0
@@ -1503,10 +1505,20 @@ class RepositoryAgentClient:
                 value = reading.get(key)
                 if type(value) is int and value >= 0:
                     if key == "prompt_tokens":
-                        prompt_tokens += value
+                        if prompt_tokens is not None:
+                            prompt_tokens += value
                     else:
-                        completion_tokens += value
-                    turn_usage[key] = int(turn_usage[key] or 0) + value
+                        if completion_tokens is not None:
+                            completion_tokens += value
+                    turn_count = turn_usage[key]
+                    if turn_count is not None:
+                        turn_usage[key] = int(turn_count) + value
+                else:
+                    if key == "prompt_tokens":
+                        prompt_tokens = None
+                    else:
+                        completion_tokens = None
+                    turn_usage[key] = None
             billed_cost = reading.get("cost_usd")
             if billed_cost is None:
                 cost_usd = None
@@ -1515,6 +1527,12 @@ class RepositoryAgentClient:
                 cost_usd += float(billed_cost)
                 if turn_usage["cost_usd"] is not None:
                     turn_usage["cost_usd"] = float(turn_usage["cost_usd"]) + float(billed_cost)
+
+        def mark_cost_unknown() -> None:
+            nonlocal cost_usd
+            cost_usd = None
+            turn_usage: dict[str, int | float | None] = turn_record["usage"]
+            turn_usage["cost_usd"] = None
 
         def remaining() -> float:
             if cancel_event is not None and cancel_event.is_set():
@@ -1593,10 +1611,15 @@ class RepositoryAgentClient:
                     raise ValueError("request_limit")
                 turn_usage: dict[str, int | float | None] = turn_record["usage"]
                 started = time.monotonic()
+                requests_before = requests
                 try:
                     answer = self._turn(messages, turn, deadline, turn_tools, count_dispatch)
                 except BilledResponseError as error:
                     accrue_billed(error.usage)
+                    raise
+                except (ValueError, RuntimeError, OSError, httpx.HTTPError):
+                    if self.model_route.paid_route_reachable and requests > requests_before:
+                        mark_cost_unknown()
                     raise
                 message = answer.message
                 if (
@@ -1619,14 +1642,18 @@ class RepositoryAgentClient:
                         "cost_usd": answer.cost_usd,
                     })
                 else:
-                    prompt_tokens += answer.prompt_tokens
-                    completion_tokens += answer.completion_tokens
-                    turn_usage["prompt_tokens"] = (
-                        int(turn_usage["prompt_tokens"] or 0) + answer.prompt_tokens
-                    )
-                    turn_usage["completion_tokens"] = (
-                        int(turn_usage["completion_tokens"] or 0) + answer.completion_tokens
-                    )
+                    if prompt_tokens is not None:
+                        prompt_tokens += answer.prompt_tokens
+                    if completion_tokens is not None:
+                        completion_tokens += answer.completion_tokens
+                    if turn_usage["prompt_tokens"] is not None:
+                        turn_usage["prompt_tokens"] = (
+                            int(turn_usage["prompt_tokens"]) + answer.prompt_tokens
+                        )
+                    if turn_usage["completion_tokens"] is not None:
+                        turn_usage["completion_tokens"] = (
+                            int(turn_usage["completion_tokens"]) + answer.completion_tokens
+                        )
                 calls = message.get("tool_calls") or []
                 events.append({
                     "kind": "model_request", "turn": turn,
