@@ -42,7 +42,7 @@ def materialize(root: Path, repository: Mapping[str, str], patch: str | None = N
         target.write_text(text, encoding="utf-8")
     if patch is not None:
         subprocess.run(
-            ["patch", "-p1", "--quiet", "--batch"], cwd=root, input=patch.encode(), check=True
+            ["git", "apply", "--allow-empty", "-"], cwd=root, input=patch.encode(), check=True
         )
 
 

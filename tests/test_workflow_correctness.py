@@ -68,9 +68,13 @@ def prepare_fake_toolchain(
         "    log.write(' '.join(args) + '\\n')\n"
         "if args == ['--version']:\n"
         "    print('Version 5.9.3')\n"
+        "elif '--noEmit' in args and '--outDir' not in args "
+        "and os.environ.get('ASSAY_CHECK_VISIBLE') == '1':\n"
+        "    if any('INVALID' in p.read_text() for p in Path('tests/visible').rglob('*.ts')):\n"
+        "        sys.exit(1)\n"
         "elif '--outDir' in args and os.environ['ASSAY_EMIT_BUILD'] == '1':\n"
         "    output = Path(args[args.index('--outDir') + 1])\n"
-        "    output.mkdir(parents=True)\n"
+        "    output.mkdir(parents=True, exist_ok=True)\n"
         "    (output / 'src.js').write_text('compiled')\n"
     )
     tsc.chmod(0o755)
@@ -322,6 +326,44 @@ new file mode 100644
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("blocked", ["tests", "tests/visible"])
+async def test_candidate_file_blocking_visible_restoration_is_a_collision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked: str
+) -> None:
+    frozen_path = "tests/visible/frozen.test.ts"
+    baseline = {**BASELINE, frozen_path: "// frozen\n"}
+    patch = (
+        f"diff --git a/{frozen_path} b/{frozen_path}\n"
+        "deleted file mode 100644\n"
+        f"--- a/{frozen_path}\n+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n-// frozen\n"
+        f"diff --git a/{blocked} b/{blocked}\n"
+        "new file mode 100644\n"
+        f"--- /dev/null\n+++ b/{blocked}\n"
+        "@@ -0,0 +1 @@\n+blocked\n"
+    )
+    visible = WorkflowTestGroup(
+        name="visible_regression", files={frozen_path: "// frozen\n"},
+        command=("node", "--version"), restores=True,
+    )
+    hidden = tuple(
+        WorkflowTestGroup(
+            name=name, files={f"tests/hidden/{name}.ts": "// test\n"},
+            command=("node", "--version"),
+        )
+        for name in ("hidden_regression", "new_behavior")
+    )
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", baseline=baseline, patch=patch,
+        expected_tree_digest=workflow_tree_digest({**BASELINE, blocked: "blocked\n"}),
+        groups_to_run=(visible, *hidden),
+    )
+    assert result.verdict == "incorrect", result
+    assert result.cause == "test_path_collision"
+
+
+@pytest.mark.asyncio
 async def test_build_requires_emitted_javascript(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -422,6 +464,61 @@ async def test_restored_visible_tests_undo_a_candidates_edit(
     # unimplemented change fail instead.
     assert result.verdict == "incorrect", result
     assert result.groups[0].status == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("toolchain", ["bun", "node-tsc"])
+async def test_visible_test_edits_cannot_change_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, toolchain: str
+) -> None:
+    prepare_fake_bun(tmp_path, monkeypatch)
+    monkeypatch.setenv("ASSAY_CHECK_VISIBLE", "1")
+    frozen = "// frozen\n"
+    path = "tests/visible/frozen.test.ts"
+    baseline = {**BASELINE, "src/lib.ts": "export {};\n", path: frozen}
+    visible = WorkflowTestGroup(
+        name="visible_regression",
+        files={path: frozen},
+        command=(("bun" if toolchain == "bun" else "node"), "--version"),
+        restores=True,
+    )
+    hidden = tuple(
+        WorkflowTestGroup(
+            name=name,
+            files={f"tests/hidden/{name}.ts": "// test\n"},
+            command=(("bun" if toolchain == "bun" else "node"), "--version"),
+        )
+        for name in ("hidden_regression", "new_behavior")
+    )
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE, toolchain=toolchain))
+    unchanged = await run_fake_docker(
+        monkeypatch,
+        runner,
+        tmp_path / "unchanged",
+        baseline=baseline,
+        patch="",
+        expected_tree_digest=workflow_tree_digest(baseline),
+        groups_to_run=(visible, *hidden),
+    )
+    edit = (
+        f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+        "@@ -1 +1 @@\n-// frozen\n+// INVALID\n"
+        "diff --git a/tests/visible/added.test.ts b/tests/visible/added.test.ts\n"
+        "new file mode 100644\n--- /dev/null\n+++ b/tests/visible/added.test.ts\n"
+        "@@ -0,0 +1 @@\n+// INVALID\n"
+    )
+    edited = {**baseline, path: "// INVALID\n", "tests/visible/added.test.ts": "// INVALID\n"}
+    result = await run_fake_docker(
+        monkeypatch,
+        runner,
+        tmp_path / "edited",
+        baseline=baseline,
+        patch=edit,
+        expected_tree_digest=workflow_tree_digest(edited),
+        groups_to_run=(visible, *hidden),
+    )
+    assert result == unchanged
+    assert result.verdict == "correct"
 
 
 @pytest.mark.asyncio
