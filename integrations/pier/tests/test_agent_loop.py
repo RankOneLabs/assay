@@ -1322,6 +1322,36 @@ def test_full_provider_envelope_limit_does_not_count_a_request(tmp_path: Path) -
     assert dispatched == 0
 
 
+@pytest.mark.parametrize("failure_kind", ["shape", "identity", "response_limit", "cost"])
+def test_billed_200_failure_keeps_turn_and_cell_usage(
+    tmp_path: Path, failure_kind: str
+) -> None:
+    body = _answer("submit_output", {"summary": "ok"}, 1)
+    bounds = LoopBounds()
+    if failure_kind == "shape":
+        body["choices"] = []
+    elif failure_kind == "identity":
+        body["model"] = "wrong/model"
+    elif failure_kind == "response_limit":
+        bounds = replace(bounds, max_response_bytes=1)
+    else:
+        del body["usage"]["cost"]
+
+    client = _client(tmp_path, lambda request: httpx.Response(200, json=body), bounds=bounds)
+    with pytest.raises(AgentLoopError) as failure:
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.cause == {
+        "shape": "provider_response", "identity": "provider_identity",
+        "response_limit": "response_limit", "cost": "provider_usage",
+    }[failure_kind]
+    expected_cost = None if failure_kind == "cost" else 0.001
+    assert failure.value.usage == {
+        "prompt_tokens": 10, "completion_tokens": 5, "requests": 1,
+        "cost_usd": expected_cost,
+    }
+    assert failure.value.trajectory["turns"][0]["usage"] == failure.value.usage
+
+
 @pytest.mark.parametrize(
     ("bounds", "cause"),
     [

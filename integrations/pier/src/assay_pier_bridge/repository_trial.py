@@ -218,7 +218,10 @@ class RepositoryAgentTrialHandle:
                 "trajectory.json": trajectory_bytes,
                 **{f"stopped/{path}": data for path, data in error.evidence.items()},
             }
-            raise self._typed(error) from error
+            typed = self._typed(error)
+            if error.usage.get("requests"):
+                setattr(typed, "usage", TrialUsage.model_validate(error.usage))  # noqa: B010
+            raise typed from error
         return self._sealed(result)
 
     def _typed(self, error: AgentLoopError) -> Exception:

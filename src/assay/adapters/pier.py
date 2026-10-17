@@ -502,7 +502,10 @@ class PierAdapter:
             bridge_result.artifacts,
             priority=_declared_paths(bridge_result.artifacts.get(MANIFEST_PATH)),
         )
-        dispatched_accounting = _accounting_from_usage(bridge_result.usage)
+        dispatched_accounting = _accounting_from_usage(
+            bridge_result.usage,
+            paid_route=self.model_route.get("provider") == "amazon-bedrock",
+        )
 
         if bridge_result.exchange != exchange:
             return WorkerFailure(
@@ -675,7 +678,9 @@ def _bytes_for(
     return artifacts.get(path) if path is not None else None
 
 
-def _accounting_from_usage(usage: Mapping[str, float | None] | None) -> Accounting:
+def _accounting_from_usage(
+    usage: Mapping[str, float | None] | None, *, paid_route: bool = False
+) -> Accounting:
     """Convert a bridge-reported usage mapping into ``Accounting``.
 
     ``BridgeTrialResult`` is a local dataclass with no runtime validation of
@@ -690,7 +695,7 @@ def _accounting_from_usage(usage: Mapping[str, float | None] | None) -> Accounti
     if cost is None:
         return Accounting(
             usage={key: value for key, value in usage.items() if key != "cost_usd"} or None,
-            coverage="unavailable" if "cost_usd" in usage else "uncertain",
+            coverage="uncertain" if paid_route or "cost_usd" not in usage else "unavailable",
         )
     try:
         amount = float(cost)

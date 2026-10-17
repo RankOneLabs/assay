@@ -209,13 +209,17 @@ async def test_uncertain_accounting_when_dispatched_without_usage(tmp_path: Path
     assert result.accounting.amount is None
 
 
-def test_local_token_usage_has_unavailable_cost() -> None:
+def test_paid_unreadable_cost_is_uncertain_while_local_cost_is_unavailable() -> None:
     from assay.adapters.pier import _accounting_from_usage
 
     local = _accounting_from_usage({"prompt_tokens": 12, "completion_tokens": 7, "cost_usd": None})
     assert local.usage == {"prompt_tokens": 12, "completion_tokens": 7}
     assert local.amount is None
     assert local.coverage == "unavailable"
+    assert _accounting_from_usage(
+        {"prompt_tokens": 12, "completion_tokens": 7, "cost_usd": None},
+        paid_route=True,
+    ).coverage == "uncertain"
     assert _accounting_from_usage({"prompt_tokens": 12}).coverage == "uncertain"
 
 

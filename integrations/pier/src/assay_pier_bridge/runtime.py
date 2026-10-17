@@ -37,6 +37,7 @@ from assay_pier_bridge.protocol import (
     TrialHandle,
     TrialRequest,
     TrialResult,
+    TrialUsage,
 )
 
 
@@ -367,7 +368,9 @@ class BridgeRuntime:
         return TrialResult(
             cell_id=request.cell_id,
             outcome=outcome,
-            usage=None,
+            usage=(observed_usage if isinstance(
+                observed_usage := getattr(error, "usage", None), TrialUsage
+            ) else None),
             effective=effective,
             artifacts=artifacts,
         )

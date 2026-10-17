@@ -232,6 +232,30 @@ class AgentLoopError(RuntimeError):
         super().__init__(cause)
 
 
+class BilledResponseError(ValueError):
+    """A successful HTTP response failed validation after billing was possible."""
+
+    def __init__(self, cause: str, usage: Mapping[str, int | float | None]) -> None:
+        self.usage = dict(usage)
+        super().__init__(cause)
+
+
+def _read_billed_usage(data: Any) -> dict[str, int | float | None]:
+    raw = data.get("usage") if isinstance(data, dict) else None
+    usage = raw if isinstance(raw, dict) else {}
+    cost = usage.get("cost")
+    measured_cost = (
+        float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool)
+        and math.isfinite(cost) and cost >= 0 else None
+    )
+    counts = {
+        key: value if type(value) is int and value >= 0 else None
+        for key in ("prompt_tokens", "completion_tokens")
+        for value in (usage.get(key),)
+    }
+    return {**counts, "cost_usd": measured_cost}
+
+
 class ToolSandbox(Protocol):
     name: str
 
@@ -1312,41 +1336,46 @@ class RepositoryAgentClient:
                 if str(response.url) != chat_completions_url or not response.is_success:
                     raise ValueError("provider_response")
                 chunks = bytearray()
+                over_limit = False
                 for chunk in response.iter_bytes():
                     if deadline is not None and deadline <= time.monotonic():
                         raise ValueError("agent_deadline")
                     chunks.extend(chunk)
                     if len(chunks) > self.bounds.max_response_bytes:
-                        raise ValueError("response_limit")
-        data = json.loads(chunks)
+                        over_limit = True
+                        break
+        try:
+            data = json.loads(chunks)
+        except (ValueError, UnicodeError) as error:
+            cause = "response_limit" if over_limit else "provider_response"
+            raise BilledResponseError(cause, _read_billed_usage(None)) from error
+        billed_usage = _read_billed_usage(data)
+        if over_limit:
+            raise BilledResponseError("response_limit", billed_usage)
         if (
             not isinstance(data, dict)
             or data.get("model") != route.model
             or data.get("provider") != route.provider_name
         ):
-            raise ValueError("provider_identity")
+            raise BilledResponseError("provider_identity", billed_usage)
         choices, usage = data.get("choices"), data.get("usage")
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(usage, dict):
-            raise ValueError("provider_response")
+            raise BilledResponseError("provider_response", billed_usage)
         choice = choices[0]
         if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
-            raise ValueError("provider_response")
-        cost = usage.get("cost")
-        if (
-            isinstance(cost, bool)
-            or not isinstance(cost, (int, float))
-            or not math.isfinite(cost)
-            or cost < 0
-        ):
-            raise ValueError("provider_usage")
-        for key in ("prompt_tokens", "completion_tokens"):
-            if type(usage.get(key)) is not int or usage[key] < 0:
-                raise ValueError("provider_usage")
+            raise BilledResponseError("provider_response", billed_usage)
+        cost = billed_usage["cost_usd"]
+        if cost is None:
+            raise BilledResponseError("provider_usage", billed_usage)
+        prompt_count = billed_usage["prompt_tokens"]
+        completion_count = billed_usage["completion_tokens"]
+        if type(prompt_count) is not int or type(completion_count) is not int:
+            raise BilledResponseError("provider_usage", billed_usage)
         return ModelTurn(
             message=choice["message"],
             finish_reason=str(choice.get("finish_reason")),
-            prompt_tokens=usage["prompt_tokens"],
-            completion_tokens=usage["completion_tokens"],
+            prompt_tokens=prompt_count,
+            completion_tokens=completion_count,
             cost_usd=float(cost),
         )
 
@@ -1467,6 +1496,26 @@ class RepositoryAgentClient:
             turn_usage: dict[str, int | float | None] = turn_record["usage"]
             turn_usage["requests"] = int(turn_usage["requests"] or 0) + 1
 
+        def accrue_billed(reading: Mapping[str, int | float | None]) -> None:
+            nonlocal prompt_tokens, completion_tokens, cost_usd
+            turn_usage: dict[str, int | float | None] = turn_record["usage"]
+            for key in ("prompt_tokens", "completion_tokens"):
+                value = reading.get(key)
+                if type(value) is int and value >= 0:
+                    if key == "prompt_tokens":
+                        prompt_tokens += value
+                    else:
+                        completion_tokens += value
+                    turn_usage[key] = int(turn_usage[key] or 0) + value
+            billed_cost = reading.get("cost_usd")
+            if billed_cost is None:
+                cost_usd = None
+                turn_usage["cost_usd"] = None
+            elif cost_usd is not None:
+                cost_usd += float(billed_cost)
+                if turn_usage["cost_usd"] is not None:
+                    turn_usage["cost_usd"] = float(turn_usage["cost_usd"]) + float(billed_cost)
+
         def remaining() -> float:
             if cancel_event is not None and cancel_event.is_set():
                 raise ValueError("cancelled")
@@ -1544,7 +1593,11 @@ class RepositoryAgentClient:
                     raise ValueError("request_limit")
                 turn_usage: dict[str, int | float | None] = turn_record["usage"]
                 started = time.monotonic()
-                answer = self._turn(messages, turn, deadline, turn_tools, count_dispatch)
+                try:
+                    answer = self._turn(messages, turn, deadline, turn_tools, count_dispatch)
+                except BilledResponseError as error:
+                    accrue_billed(error.usage)
+                    raise
                 message = answer.message
                 if (
                     not isinstance(message, dict)
@@ -1559,18 +1612,21 @@ class RepositoryAgentClient:
                         raise ValueError("provider_usage")
                 elif answer.cost_usd is not None:
                     raise ValueError("local_billing_must_be_uncertain")
-                prompt_tokens += answer.prompt_tokens
-                completion_tokens += answer.completion_tokens
-                if cost_usd is not None and answer.cost_usd is not None:
-                    cost_usd += answer.cost_usd
-                turn_usage["prompt_tokens"] = (
-                    int(turn_usage["prompt_tokens"] or 0) + answer.prompt_tokens
-                )
-                turn_usage["completion_tokens"] = (
-                    int(turn_usage["completion_tokens"] or 0) + answer.completion_tokens
-                )
-                if turn_usage["cost_usd"] is not None and answer.cost_usd is not None:
-                    turn_usage["cost_usd"] = float(turn_usage["cost_usd"]) + answer.cost_usd
+                if answer.cost_usd is not None:
+                    accrue_billed({
+                        "prompt_tokens": answer.prompt_tokens,
+                        "completion_tokens": answer.completion_tokens,
+                        "cost_usd": answer.cost_usd,
+                    })
+                else:
+                    prompt_tokens += answer.prompt_tokens
+                    completion_tokens += answer.completion_tokens
+                    turn_usage["prompt_tokens"] = (
+                        int(turn_usage["prompt_tokens"] or 0) + answer.prompt_tokens
+                    )
+                    turn_usage["completion_tokens"] = (
+                        int(turn_usage["completion_tokens"] or 0) + answer.completion_tokens
+                    )
                 calls = message.get("tool_calls") or []
                 events.append({
                     "kind": "model_request", "turn": turn,
