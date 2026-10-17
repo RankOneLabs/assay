@@ -183,6 +183,7 @@ def _bounded_failure_artifacts(
     primary: Mapping[str, bytes], partial: Mapping[str, bytes]
 ) -> dict[str, bytes]:
     """Retain rejected bytes first, then partials, within the result wire budget."""
+    marker = "failure-artifacts-truncated.json"
     bounded: dict[str, bytes] = {}
     aggregate_bytes = 0
     artifact_count = 0
@@ -190,7 +191,10 @@ def _bounded_failure_artifacts(
     for source in (primary, partial):
         for path in sorted(source):
             data = source[path]
-            if not isinstance(path, str) or not isinstance(data, bytes) or path in bounded:
+            if (
+                not isinstance(path, str) or not isinstance(data, bytes)
+                or path in bounded or path == marker
+            ):
                 continue
             try:
                 safe_relative_path(path)
@@ -212,7 +216,6 @@ def _bounded_failure_artifacts(
             bounded[path] = retained
             truncated |= len(retained) != len(data)
     if truncated:
-        marker = "failure-artifacts-truncated.json"
         marker_bytes = b'{"truncated":true}'
         while (
             artifact_count >= MAX_ARTIFACT_COUNT

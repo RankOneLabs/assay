@@ -257,6 +257,14 @@ def test_failure_merge_stays_within_the_wire_budget() -> None:
     assert result.artifacts["failure-artifacts-truncated.json"] == b'{"truncated":true}'
 
 
+def test_candidate_cannot_supply_bridge_truncation_marker() -> None:
+    from assay_pier_bridge.runtime import _bounded_failure_artifacts
+
+    assert _bounded_failure_artifacts(
+        {}, {"failure-artifacts-truncated.json": b'{"truncated":false}'}
+    ) == {}
+
+
 def test_client_create_failure_runs_its_cleanup_and_propagates() -> None:
     class FailingClient:
         cleaned = False
