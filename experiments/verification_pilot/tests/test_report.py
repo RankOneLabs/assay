@@ -24,7 +24,7 @@ from verification_pilot.study import compile_pilot_plan, pilot_subjects
 def test_h1_exact_one_sample_sign_test_against_zero() -> None:
     rows = [
         Observation("route", f"s{i}", "migration", "group_a", 0, 1,
-                    "t1-native", "t1_ownership_gap", value, "group_a")
+                    "t1-native", "pilot_judge", value, "group_a")
         for i, value in enumerate(("0.25", "0.50", "1.00", "0.00", "0.00"))
     ]
     result = h1_ownership_gap(rows, "t1-native")
@@ -90,19 +90,22 @@ async def test_scripted_grid_builds_paired_h2_and_separate_model_report(tmp_path
     _, run = await run_scripted(store)
     assert isinstance(run, RunSucceeded)
     ref = str(run.manifest_ref)
-    config = paired_config(store, (ref,), evaluator_id="t1_ownership_gap",
+    config = paired_config(store, (ref,), evaluator_id="pilot_judge",
                            reference_arm="t1-native", candidate_arm="t1-quoted")
     assert config.statistical_profile.name == "paired-v2"
     assert config.statistical_profile.alpha == 0.05
     engine = build_report(store, config)
-    assert engine["comparisons"][0]["n"] == 48
+    assert engine["comparisons"][0]["n"] == 12
     report = model_report(store, (ref,), model="scripted", own_group="group_a")
-    assert report["H1"]["t1-native"]["n"] == 48
-    assert report["H4"]["t1-native"]["n"] == 4
-    assert report["H2"]["comparison"]["n"] == 48
+    assert report["H1"]["t1-native"]["n"] == 12
+    assert report["H4"]["t1-native"]["n"] == 0
+    assert report["H2"]["comparison"]["n"] == 12
     assert report["H3"]["status"] == "in_progress"
     assert len(report["ceiling_effect"]) == 2
     assert report["tables"]
+    assert {row["turn"] for row in report["tables"] if row["evaluator_id"] == "pilot_judge"} == {
+        "t1"
+    }
 
     # A changed route is a changed runtime configuration, even when its
     # subject grid and evaluator are identical. The engine rejects pooling.
@@ -125,7 +128,7 @@ async def test_scripted_grid_builds_paired_h2_and_separate_model_report(tmp_path
     )
     assert isinstance(other, RunSucceeded)
     pooled = paired_config(store, (ref, str(other.manifest_ref)),
-                           evaluator_id="t1_ownership_gap",
+                           evaluator_id="pilot_judge",
                            reference_arm="t1-native", candidate_arm="t1-quoted")
     with pytest.raises(ReportError, match="run compatibility drift"):
         build_report(store, pooled)

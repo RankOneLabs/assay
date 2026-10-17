@@ -43,6 +43,7 @@ from assay.pier_protocol import PierExchange, RuntimeBinding  # noqa: E402
 from assay.store import ObjectStore  # noqa: E402
 from verification_pilot.arms import arm, placement_for  # noqa: E402
 from verification_pilot.dispatch import cell_idempotency_key  # noqa: E402
+from verification_pilot.inputs import T2_TEXT, T3_TEXT  # noqa: E402
 from verification_pilot.prompts import task_prompt  # noqa: E402
 from verification_pilot.render import render_prefix  # noqa: E402
 from verification_pilot.session import contributor_blocks, rotated_blocks  # noqa: E402
@@ -119,7 +120,7 @@ class PilotBridgeClient:
             model_route=self.model_route,
             completion=(cast(TurnCompletion, lambda **_: None)
                         if self.factory is not None else None),
-            next_user_turns=("T2: Review your first finding.", "T3: Check again and submit."),
+            next_user_turns=(T2_TEXT, T3_TEXT),
             api_key=self.api_key,
         )
         configuration: dict[str, Any] = agent_configuration(
@@ -153,7 +154,7 @@ class PilotBridgeClient:
         agent = create_pilot_agent(
             settings=self.settings, image=self.image, runs_root=self.runs_root,
             model_route=self.model_route, completion=completion,
-            next_user_turns=("T2: Review your first finding.", "T3: Check again and submit."),
+            next_user_turns=(T2_TEXT, T3_TEXT),
             api_key=self.api_key, message_prefix=prefix,
             sandbox_factory=partial(DockerTmpfsToolSandbox, limits=SandboxLimits()),
             storage_factory=DockerTmpfsStagingStorage,

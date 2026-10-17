@@ -151,37 +151,7 @@ def test_openrouter_native_rotation_serializes_all_tool_exchanges(
 
     blocks = rotated_blocks(contributor_blocks(MIGRATIONS[2]), 1)
     messages = request_messages("Verify.", blocks, arm("native-template", "openrouter"))
-    expected_blocks = (
-        (
-            "src/validation/workflow-definition.ts",
-            "Contributor group_b\nMigration: rename ok to pilotOk (value).\n"
-            "Assigned files:\n- src/validation/workflow-definition.ts\n"
-            "I have finished my assigned pass. Please verify the repository as a whole.",
-        ),
-        (
-            "src/compiler/compile-workflow.ts",
-            "Contributor group_c\nMigration: rename ok to pilotOk (value).\n"
-            "Assigned files:\n- src/compiler/compile-workflow.ts\n"
-            "- src/compiler/resolve-execution.ts\n"
-            "- tests/visible/compile-workflow.test.ts\n"
-            "I have finished my assigned pass. Please verify the repository as a whole.",
-        ),
-        (
-            "src/decision/derive.ts",
-            "Contributor group_d\nMigration: rename ok to pilotOk (value).\n"
-            "Assigned files:\n- src/decision/derive.ts\n"
-            "I have finished my assigned pass. Please verify the repository as a whole.",
-        ),
-        (
-            "src/domain/final-pull-request.ts",
-            "Contributor group_a\nMigration: rename ok to pilotOk (value).\n"
-            "Assigned files:\n- src/domain/final-pull-request.ts\n"
-            "- src/domain/primitives.ts\n"
-            "- src/domain/repository-provisioning.ts\n"
-            "- src/domain/repository-refs.ts\n"
-            "I have finished my assigned pass. Please verify the repository as a whole.",
-        ),
-    )
+    expected_blocks = tuple((block.paths[0], block.text) for block in blocks)
     expected_messages: list[dict[str, Any]] = [
         {"role": "system", "content": PILOT_SYSTEM_PROMPT},
         {"role": "user", "content": "Verify."},

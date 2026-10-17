@@ -58,7 +58,9 @@ def _snapshot(
         sorted(
             (path, text)
             for path, text in snapshot.items()
-            if language_of(path) in ("python", "typescript")
+            if language_of(path) == "python" or (
+                not config.legacy_python_only and language_of(path) == "typescript"
+            )
         )
     )
     python_files = _python(files)
@@ -72,7 +74,11 @@ def _snapshot(
                 f"snapshot path must be relative and inside the repository: {path}"
             )
     if not files:
-        return _empty()
+        empty = _empty()
+        if config.legacy_python_only:
+            with tempfile.TemporaryDirectory() as directory:
+                empty["mypy.errors"] = _mypy(Path(directory))
+        return empty
     toolchain = config.typescript_toolchain if typescript_files else None
     # The project file is not a metric language, but it decides the typecheck.
     project = None if toolchain is None else _project(snapshot)
@@ -101,7 +107,7 @@ def _snapshot(
                 if python_files
                 else {"ruff.violations": 0, "ruff.magic_values": 0}
             ),
-            "mypy.errors": _mypy(root) if python_files else None,
+            "mypy.errors": _mypy(root) if python_files or config.legacy_python_only else None,
             **_jscpd(root, config),
             "functions": sorted(_functions(root)) if python_files else [],
             "typescript.lines": sum(len(text.splitlines()) for text in typescript_files.values()),
@@ -232,6 +238,7 @@ def _jscpd(root: Path, config: _Config) -> dict[str, Any]:
             [command, "--silent", "--reporters", "json",
              "--min-lines", str(config.clone_min_lines),
              "--min-tokens", str(config.clone_min_tokens),
+             *(["--format", "python"] if config.legacy_python_only else []),
              "--output", output, "."],
             cwd=root, capture_output=True, text=True, check=False,
         )  # fmt: skip

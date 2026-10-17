@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from workflow_edit.bridge import LOCAL_ROUTE
 
@@ -38,7 +38,10 @@ from verification_pilot.bridge import (
 )
 from verification_pilot.evaluation import PilotEvaluator
 from verification_pilot.fixture import load_fixture
-from verification_pilot.ground_truth import GroundTruth, Location, Remnant, build_specimens
+from verification_pilot.fixtures import base_subjects
+from verification_pilot.ground_truth import GroundTruth
+from verification_pilot.ground_truth import subject_truth as fixture_subject_truth
+from verification_pilot.inputs import T2_TEXT, T3_TEXT
 from verification_pilot.settings import VerificationPilotSettings
 from verification_pilot.study import PilotSubject, PreparedPilot, compile_pilot_plan, pilot_subjects
 
@@ -47,10 +50,10 @@ def measure_on_policy(
     *, image: str, runs_root: Path, routing_config: Path, route: str,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """Generate one migration's four blocks outside the cell runtime."""
+    """Generate one migration's three ownership blocks outside the cell runtime."""
     fixture = load_fixture()
     subjects = [s for s in pilot_subjects(fixture)
-                if s.migration.name == "json_value" and s.rotation == 0]
+                if s.migration.name == "stage_run_id" and s.group is not None]
     if route == "smithers-local":
         if api_key is not None:
             raise ValueError("local route cannot receive an OpenRouter credential")
@@ -79,7 +82,7 @@ def measure_on_policy(
             completion=(SmithersTurnCompletion(
                 factory, f"on-policy-v2:{runs_root.name}:{subject.id}",
                 authorized=authorized) if factory is not None else None),
-            next_user_turns=("Review the migration.", "Submit your final finding."),
+            next_user_turns=(T2_TEXT, T3_TEXT),
             api_key=api_key,
             sandbox_factory=partial(DockerTmpfsToolSandbox, limits=SandboxLimits()),
             storage_factory=DockerTmpfsStagingStorage,
@@ -124,7 +127,7 @@ def measure_on_policy(
         except Exception as error:
             results.append({"subject_id": subject.id, "discard": True,
                             "error": f"{type(error).__name__}: {error}"})
-    return {"route": route, "model": model_route.model, "migration": "json_value",
+    return {"route": route, "model": model_route.model, "migration": "stage_run_id",
             "discarded": sum(bool(item["discard"]) for item in results),
             "attempted": len(results),
             "submitted": sum("block" in item for item in results),
@@ -140,20 +143,10 @@ def measure_local_on_policy(
 
 
 def subject_truth(subject: PilotSubject) -> GroundTruth:
-    """Locate the single injected old spelling by comparing against the renamed tree."""
+    """Find the operator-held truth for one fixture-derived subject."""
     fixture = load_fixture()
-    original = fixture.renamed[subject.migration.name][subject.location].splitlines()
-    changed = subject.repository[subject.location].splitlines()
-    lines = [index for index, (left, right) in enumerate(zip(original, changed, strict=True), 1)
-             if left != right]
-    if len(lines) != 1:
-        raise ValueError(f"{subject.id}: expected one changed line")
-    location = Location(subject.migration.name, subject.location, lines[0],
-                        subject.migration.old_symbol, subject.group)
-    remnant = Remnant("fallback_object_key" if subject.migration.kind == "object_key"
-                      else "stale_type_reference", location)
-    _, fixture_truth = build_specimens(fixture)
-    return GroundTruth(cast(Any, (remnant, remnant, remnant)), fixture_truth.decoys)
+    source = next(item for item in base_subjects() if item.id == subject.id)
+    return fixture_subject_truth(source, fixture)
 
 
 @dataclass
@@ -165,7 +158,7 @@ class GridEvaluator:
     def configuration(self) -> dict[str, Any]:
         from verification_pilot.evaluation import EVALUATOR_IDS
 
-        return {"id_set": list(EVALUATOR_IDS), "version": "section-10-v1"}
+        return {"id_set": list(EVALUATOR_IDS), "version": "fixture-derived-v2"}
 
     async def evaluate(self, *, input_value: Any, output: Any,
                        coordinate: EvaluationCoordinate) -> EvaluationResult:
@@ -257,8 +250,8 @@ async def run_live(
         settings=VerificationPilotSettings(), factory=factory, api_key=api_key,
     )
     worker, runtime = pilot_worker(store, bridge)
-    smoke_ids = tuple(s.id for s in subjects if s.rotation == 0 and
-                      s.migration.name in {"json_value", "stage_instance_id"})
+    smoke_ids = tuple(s.id for s in subjects if s.group is not None and
+                      s.migration.name in {"stage_run_id", "workflow_execution_id"})
     prepared = compile_pilot_plan(store, runtime,
                                   worker_configuration=worker.configuration("t1-native"),
                                   worker_configurations={a: worker.configuration(a)

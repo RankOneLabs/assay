@@ -10,12 +10,17 @@ the per-cell ``CellEvaluator``. The single-arm wf-13 smoke stays on
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from assay.canonical import digest_bytes
 from assay.fixture_manifest import FixtureManifestV2, fixture_identity, task_record_digest
-from assay.investigations.workflow_correctness import DockerWorkflowRunner, workflow_tree_digest
+from assay.investigations.workflow_correctness import (
+    DockerWorkflowRunner,
+    WorkflowTestGroup,
+    workflow_tree_digest,
+)
 from assay.models import (
     Arm,
     ExecutionCeiling,
@@ -24,7 +29,7 @@ from assay.models import (
     RuntimeProfile,
     Subject,
 )
-from assay.store import ObjectStore
+from assay.store import ObjectIntegrityError, ObjectStore
 from workflow_edit.arms import ARM_IDS
 from workflow_edit.evaluation import STUDY_GROUPS, CellEvaluator
 from workflow_edit.fixture import VISIBLE_PREFIX
@@ -63,7 +68,9 @@ class StudyFixture:
     subjects: tuple[StudySubject, ...]
 
 
-def check_fixture(fixture: StudyFixture, *, image: str, routing_digest: str | None) -> None:
+def check_fixture(
+    fixture: StudyFixture, *, store: ObjectStore, image: str, routing_digest: str | None
+) -> None:
     """Refuse a fixture whose trees, image, routing or qualification do not match its manifest."""
     manifest = fixture.manifest
     if manifest.observed_runtime_image_digest != image:
@@ -83,12 +90,48 @@ def check_fixture(fixture: StudyFixture, *, image: str, routing_digest: str | No
         missing = [name for name, hidden in STUDY_GROUPS if task.group(name, hidden=hidden) is None]
         if missing:
             raise ValueError(f"{subject.subject_id} lacks study test groups: {', '.join(missing)}")
+        try:
+            visible_ref = task.group("visible_regression", hidden=False)
+            assert visible_ref is not None
+            visible_group = WorkflowTestGroup.model_validate_json(
+                store.read_bytes(visible_ref.digest)
+            )
+            if visible_group.name != "visible_regression" or not visible_group.restores:
+                raise ValueError("invalid visible group")
+            hidden_paths: set[str] = set()
+            for name in ("hidden_regression", "new_behavior"):
+                hidden_ref = task.group(name, hidden=True)
+                assert hidden_ref is not None
+                hidden_group = WorkflowTestGroup.model_validate_json(
+                    store.read_bytes(hidden_ref.digest)
+                )
+                if hidden_group.name != name or hidden_group.restores:
+                    raise ValueError("invalid hidden group")
+                hidden_paths.update(hidden_group.files)
+        except (OSError, ValueError, KeyError, TypeError, ObjectIntegrityError) as error:
+            raise ValueError(f"{subject.subject_id} has unreadable test evidence") from error
         for arm_id, record in task.arms.items():
             tree = subject.realizations[arm_id]
             if workflow_tree_digest(tree) != record.tree_digest:
                 raise ValueError(f"{subject.subject_id} {arm_id} tree differs from its manifest")
             if not record.qualification.qualified:
                 raise ValueError(f"{subject.subject_id} {arm_id} has not qualified")
+            if hidden_paths & tree.keys() or any(path.startswith("tests/hidden/") for path in tree):
+                raise ValueError(f"{subject.subject_id} {arm_id} contains hidden tests")
+            tree_visible = {
+                path: text for path, text in tree.items() if path.startswith(VISIBLE_PREFIX)
+            }
+            if visible_group.files != tree_visible:
+                raise ValueError(f"{subject.subject_id} {arm_id} visible group lacks coverage")
+            for check_name, claimed in record.qualification:
+                try:
+                    evidence = json.loads(store.read_bytes(claimed.evidence))
+                    if evidence["outcome"] != claimed.outcome:
+                        raise ValueError("claimed outcome differs from evidence")
+                except (OSError, ValueError, KeyError, TypeError, ObjectIntegrityError) as error:
+                    raise ValueError(
+                        f"{subject.subject_id} {arm_id} {check_name} evidence mismatch"
+                    ) from error
         # Exposed tests are fixed across arms (spec 5.1); only treated sites differ.
         visible = [
             {path: text for path, text in tree.items() if path.startswith(VISIBLE_PREFIX)}
@@ -111,7 +154,7 @@ def plan_study(
     ceiling: ExecutionCeiling,
 ) -> Prepared:
     """Authorize a full subject x arm x repeat grid, validated before authorization."""
-    check_fixture(fixture, image=image, routing_digest=routing_digest)
+    check_fixture(fixture, store=store, image=image, routing_digest=routing_digest)
     if runner.settings.image != image:
         raise ValueError("the evaluator runs another image")
     manifest = fixture.manifest

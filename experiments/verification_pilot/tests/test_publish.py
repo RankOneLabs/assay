@@ -55,12 +55,11 @@ async def test_publish_bundle_verifies_with_assay_cli_offline(tmp_path: Path) ->
     assert report["review_exports"]["H2"]["status"] == "over_cap"
     assert report["review_exports"]["H2"]["cap_bytes"] == 64 * 1024 * 1024
     assert "| fixture | 0/1 (0.0%) | 0/1 (0.0%) | qualified |" in study_page.read_text()
-    assert report["escalation_chart"]
-    assert {row["turn"] for row in report["escalation_chart"]} >= {"t1"}
-    assert "48 paired observations" in report["power"]["H1"]
-    assert "48 paired observations" in report["power"]["H2"]
+    assert report["escalation_chart"] == []
+    assert "12 paired observations" in report["power"]["H1"]
+    assert "12 paired observations" in report["power"]["H2"]
     assert "12 of 16" in report["power"]["H3"]
-    assert "4 migration-matched pairs" in report["power"]["H4"]
+    assert "Four migration-matched pairs" in report["power"]["H4"]
     assert "No engine p-value" in report["power"]["H4"]
     for bundle, ref in ((destination / "manifest-1", str(run.manifest_ref)),
                         (destination / "h2", report["H2"]["report_ref"])):
