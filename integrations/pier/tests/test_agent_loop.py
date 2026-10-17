@@ -15,6 +15,7 @@ from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
+import assay_pier_bridge.agent_loop as agent_loop
 import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
@@ -504,7 +505,18 @@ def test_pilot_search_scope_is_structural_in_trace(tmp_path: Path) -> None:
     assert search["exit_code"] == 0
 
 
-def test_pilot_tool_call_caps_have_typed_causes(tmp_path: Path) -> None:
+def test_pilot_mode_neither_defines_nor_swaps_in_a_system_prompt(tmp_path: Path) -> None:
+    """G14: the experiment owns its prompt text, so the bridge must not carry one.
+
+    The deleted swap-in fired precisely when a pilot caller passed the non-pilot
+    ``SYSTEM_PROMPT``, which is why that is the prompt this guard passes in.
+    """
+    assert not hasattr(agent_loop, "PILOT_SYSTEM_PROMPT")
+    client = _pilot(tmp_path, Scripted(), system_prompt=SYSTEM_PROMPT)
+    assert client.system_prompt == SYSTEM_PROMPT
+
+
+def test_pilot_turn_tool_call_cap_ends_only_that_turn(tmp_path: Path) -> None:
     calls = [_call("run_command", {"command": "true"}, number) for number in range(16)]
     completion = Scripted(
         calls,
@@ -526,6 +538,8 @@ def test_pilot_tool_call_caps_have_typed_causes(tmp_path: Path) -> None:
     assert capped.summary == ""
     assert completion.seen[1]["messages"][-1]["content"] == "Review your first submission"
 
+
+def test_pilot_cell_tool_call_cap_ends_the_cell(tmp_path: Path) -> None:
     def commands(count: int, start: int) -> list[dict[str, Any]]:
         return [_call("run_command", {"command": "true"}, number)
                 for number in range(start, start + count)]

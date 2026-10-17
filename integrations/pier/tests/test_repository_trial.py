@@ -9,6 +9,7 @@ import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
     PILOT_TOOL_SCHEMAS,
+    SYSTEM_PROMPT,
     AgentLoopError,
     DockerTmpfsStagingStorage,
     DockerTmpfsToolSandbox,
@@ -427,6 +428,20 @@ def test_stopping_without_submission_is_a_typed_candidate_failure(tmp_path: Path
     assert "turn_limit" in result.outcome.detail
     assert "trajectory.json" in result.artifacts
     assert b"+half" in result.artifacts["stopped/candidate.patch"]
+
+
+def test_pilot_configuration_records_the_prompt_it_was_given() -> None:
+    """G14: pilot mode no longer substitutes a bridge prompt for the caller's.
+
+    The deleted swap-in triggered on equality with ``SYSTEM_PROMPT``, so the
+    recorded identity for that exact prompt is what proves the swap-in is gone.
+    """
+    configuration = agent_configuration(
+        bounds=LoopBounds(), limits=LIMITS, writable_prefixes=("src/",), model_route=LOCAL,
+        pilot_mode=True, next_user_turns=("Review", "Check"), system_prompt=SYSTEM_PROMPT,
+        max_tool_calls_per_turn=7, max_tool_calls_per_cell=19,
+    )
+    assert configuration["system_prompt_sha256"] == digest_bytes(SYSTEM_PROMPT.encode("utf-8"))
 
 
 def test_pilot_cell_cap_returns_partial_trace(tmp_path: Path) -> None:
