@@ -370,11 +370,7 @@ class DockerTrialHandle:
         self._name = name
         self._request = request
         self._command = command
-        self._openrouter_api_key = (
-            openrouter_api_key
-            if openrouter_api_key is not None
-            else os.environ.get("OPENROUTER_API_KEY")
-        )
+        self._openrouter_api_key = openrouter_api_key
         runs_root.mkdir(parents=True, exist_ok=True)
         self._workdir = runs_root / name
         self._workspace = self._workdir / "workspace"
@@ -559,6 +555,10 @@ class DockerTrialHandle:
             if self._request.network_policy == "egress-lan-host-port"
             else "none",
             "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
             "--tmpfs",
             "/tmp",
             "--cpus",

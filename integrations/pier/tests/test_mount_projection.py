@@ -67,6 +67,17 @@ def test_run_arguments_bind_a_host_visible_quota_directory(tmp_path: Path) -> No
     assert not any("/scratch:size=" in arg for arg in args)
     assert args[args.index("--memory") + 1] == "256m"
     assert args[args.index("--network") + 1] == "none"
+    assert args[args.index("--cap-drop") + 1] == "ALL"
+    assert args[args.index("--security-opt") + 1] == "no-new-privileges"
+
+
+def test_container_does_not_inherit_ambient_openrouter_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "ambient-paid-key")
+    handle = _handle(tmp_path)
+    assert handle._openrouter_api_key is None
+    assert "--env-file" not in handle._docker_run_args(handle._request.limits)
 
 
 def test_declared_and_inspected_controls_must_match(tmp_path: Path) -> None:
