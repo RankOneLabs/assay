@@ -618,6 +618,7 @@ def test_nofollow_readers_reject_entries_in_real_sandbox_storage(
     workspace = tmp_path / "workspace"
     cache = tmp_path / "cache"
     workspace.mkdir()
+    workspace.chmod(0o777)
     cache.mkdir()
     factory = DockerToolSandbox if storage_mode == "bind" else DockerTmpfsToolSandbox
     sandbox = factory(workspace, cache, image, f"test:{storage_mode}:{entry}")
