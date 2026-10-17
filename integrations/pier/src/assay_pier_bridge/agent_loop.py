@@ -1422,6 +1422,12 @@ class RepositoryAgentClient:
             {"role": "user", "content": instruction},
             *self.message_prefix,
         ]
+        trajectory["messages"] = deepcopy(messages)
+
+        def record_message(message: dict[str, Any]) -> None:
+            messages.append(message)
+            trajectory["messages"].append(deepcopy(message))
+
         prefix_length = len(messages)
         prompt_tokens = completion_tokens = requests = 0
         cell_tool_calls = 0
@@ -1586,7 +1592,7 @@ class RepositoryAgentClient:
                     )
                 replayed = [_replayable_call(call) for call in calls]
                 content = message.get("content")
-                messages.append({
+                record_message({
                     "role": "assistant",
                     "content": content if isinstance(content, str) else None,
                     "tool_calls": replayed,
@@ -1630,14 +1636,13 @@ class RepositoryAgentClient:
                             turn_record["workspace_diff"] = patch.decode("utf-8")
                             turn_record["baseline_tree_digest"] = before_digest
                             turn_record["tree_digest"] = after_digest
-                            trajectory["messages"] = messages
                             events.append({"kind": "submitted", "turn": turn})
                             if self.pilot_mode and logical_turn < 3:
-                                messages.append({
+                                record_message({
                                     "role": "tool", "tool_call_id": call_id,
                                     "content": "submission recorded",
                                 })
-                                messages.append({
+                                record_message({
                                     "role": "user",
                                     "content": self.next_user_turns[logical_turn - 1],
                                 })
@@ -1677,7 +1682,7 @@ class RepositoryAgentClient:
                                 "limit_seconds": round(limit, 3),
                             })
                             observe_oom_kills(turn, name)
-                            messages.append({
+                            record_message({
                                 "role": "tool", "tool_call_id": call_id,
                                 "content": (
                                     f"error: command exceeded its {limit:.0f}s limit and every "
@@ -1701,7 +1706,7 @@ class RepositoryAgentClient:
                             "kind": "tool_error", "turn": turn,
                             "tool": name if isinstance(name, str) else None, "reason": reason,
                         })
-                        messages.append(
+                        record_message(
                             {"role": "tool", "tool_call_id": call_id, "content": f"error: {reason}"}
                         )
                         tool_trace["returned_text"] = messages[-1]["content"]
@@ -1727,7 +1732,7 @@ class RepositoryAgentClient:
                                 "original_bytes": output.original_bytes,
                             }
                         )
-                    messages.append(
+                    record_message(
                         {"role": "tool", "tool_call_id": call_id, "content": bounded}
                     )
                     exit_match = re.match(r"exit=(-?\d+)\n", bounded)
@@ -1763,7 +1768,6 @@ class RepositoryAgentClient:
             subprocess.SubprocessError,
         ) as error:
             primary_failed = True
-            trajectory["messages"] = messages
             rejection: ArtifactCollectionRejected | None = None
             if isinstance(error, ArtifactCollectionRejected):
                 rejection = error

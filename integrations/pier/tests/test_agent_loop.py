@@ -667,6 +667,26 @@ def test_shrink_keeps_declared_prefix_and_raises_typed_cause() -> None:
     assert failure.value.cause == "conversation_limit"
 
 
+def test_mid_cell_shrink_preserves_recorded_transcript(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("run_command", {"command": "true"}, 1)],
+        [_call("run_command", {"command": "true"}, 2)],
+        [_call("submit_output", {"summary": "done"}, 3)],
+    )
+    client = _local(
+        tmp_path, completion, system_prompt="S",
+        bounds=replace(LoopBounds(), max_conversation_bytes=450),
+    )
+    result = client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert any(e["kind"] == "conversation_truncated" for e in result.trajectory["events"])
+    recorded = result.trajectory["messages"]
+    assert [m["tool_call_id"] for m in recorded if m["role"] == "tool"] == [
+        "call-1", "call-2"
+    ]
+    assert all(m["tool_call_id"] != "call-1" for m in completion.seen[2]["messages"]
+               if m["role"] == "tool")
+
+
 def test_local_route_requires_an_injected_completion_and_no_key(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="injected turn completion"):
         _local(tmp_path, None)
