@@ -17,6 +17,7 @@ from workflow_edit.publish import (
     quantile,
     render,
     render_original,
+    render_regraded,
     stop_cause,
 )
 from workflow_edit.qualify import EVIDENCE, read_evidence
@@ -110,6 +111,64 @@ def test_report_reads_nonzero_paid_cells_from_bundle(monkeypatch: pytest.MonkeyP
     assert "Cost correction: Paid cells: 1," in publish.render()
 
 
+def test_regraded_report_names_each_changed_grade_and_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import workflow_edit.publish as publish
+
+    regrade = {
+        "regraded_at": "2026-10-17",
+        "image": "sha256:fixed-image",
+        "original_harness_sha256": "sha256:original",
+        "harness_sha256": "sha256:fixed",
+        "evaluations": {"cell-a": {}, "cell-b": {}},
+        "changed_grades": {
+            "cell-a": {
+                "before": {
+                    "verdict": "incorrect", "cause": "test_failure",
+                    "groups": {"new_behavior": {"status": "failed", "cause": "test_failure"}},
+                },
+                "after": {
+                    "verdict": "correct", "cause": None,
+                    "groups": {"new_behavior": {"status": "passed", "cause": None}},
+                },
+            },
+            "cell-b": {
+                "before": {
+                    "verdict": "incorrect", "cause": "typecheck_failure",
+                    "groups": {"typecheck": {"status": "failed", "cause": "typecheck_failure"}},
+                },
+                "after": {
+                    "verdict": "incorrect", "cause": "test_failure",
+                    "groups": {"typecheck": {"status": "failed", "cause": "test_failure"}},
+                },
+            },
+        },
+    }
+    pricing = {
+        "fetched_at": "2026-10-17", "model": {"id": "m"},
+        "endpoints": [{
+            "provider_name": "p", "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+            "context_length": 262144, "max_completion_tokens": 65536,
+        }],
+    }
+    evidence = {"regrade": regrade, "smoke": {"cells": CELLS}, "pricing": pricing}
+    monkeypatch.setattr(publish, "read_evidence", evidence.__getitem__)
+
+    report = render_regraded()
+    assert "2 previously graded candidates were regraded; 2 grades changed." in report
+    assert "| Cell | Original | Regraded | Changed groups and cause |" in report
+    assert (
+        "| cell-a | incorrect | correct | new_behavior: failed (test_failure) to passed |"
+        in report
+    )
+    assert (
+        "| cell-b | incorrect | incorrect | "
+        "typecheck: failed (typecheck_failure) to failed (test_failure) |"
+        in report
+    )
+
+
 def test_correctness_counts_against_dispatched_cells() -> None:
     evaluations = {
         "s:mess-00:w0": {"verdict": "correct", "empty_patch": False, "seconds": 9.0,
@@ -166,7 +225,7 @@ def test_probe_rows_compare_observed_to_expected() -> None:
 @pytest.mark.skipif(
     not all(
         (EVIDENCE / f"{name}.json.gz").exists()
-        for name in ("smoke", "probes", "wake", "pricing", "diagnosis")
+        for name in ("smoke", "probes", "wake", "pricing", "diagnosis", "regrade")
     ),
     reason="wf-13 evidence not yet published",
 )
