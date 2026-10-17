@@ -285,12 +285,37 @@ class ExecutionPlanV2(WireModel):
         return self
 
 
-AnyExecutionPlan = Annotated[ExecutionPlan | ExecutionPlanV2, Field(discriminator="schema_version")]
-_plan_adapter: TypeAdapter[ExecutionPlan | ExecutionPlanV2] = TypeAdapter(AnyExecutionPlan)
+class ExecutionCeiling(WireModel):
+    """Authorized limits for the complete cell grid and its active fleet."""
+
+    max_cells: int = Field(ge=1, strict=True)
+    max_wall_time_seconds: float = Field(gt=0)
+    max_fleet_occupancy: int = Field(ge=1, strict=True)
 
 
-def parse_execution_plan(value: Any) -> ExecutionPlan | ExecutionPlanV2:
-    """Select the exact 0.1.0/0.2.0 model from ``schema_version`` before parsing.
+class ExecutionPlanV3(ExecutionPlanV2):
+    # Each concrete wire successor narrows the discriminator to its own literal.
+    schema_version: Literal["assay-execution-plan/0.3.0"] = "assay-execution-plan/0.3.0"  # type: ignore[assignment]
+    ceiling: ExecutionCeiling
+
+    def base_plan(self) -> ExecutionPlanV2:
+        """The unchanged 0.2.0 fields for deterministic snapshot recompilation."""
+        value = self.model_dump(mode="json")
+        value.pop("ceiling")
+        value["schema_version"] = "assay-execution-plan/0.2.0"
+        return ExecutionPlanV2.model_validate(value)
+
+
+AnyExecutionPlan = Annotated[
+    ExecutionPlan | ExecutionPlanV2 | ExecutionPlanV3, Field(discriminator="schema_version")
+]
+_plan_adapter: TypeAdapter[ExecutionPlan | ExecutionPlanV2 | ExecutionPlanV3] = TypeAdapter(
+    AnyExecutionPlan
+)
+
+
+def parse_execution_plan(value: Any) -> ExecutionPlan | ExecutionPlanV2 | ExecutionPlanV3:
+    """Select the exact versioned plan model from ``schema_version`` before parsing.
 
     Never falls back to normalizing one version's bytes through the other's
     model: an unrecognized or missing schema_version is rejected outright.
@@ -435,7 +460,7 @@ class ReportConfig(WireModel):
 
 
 def plan_runtime_identity(
-    plan: ExecutionPlan | ExecutionPlanV2 | None,
+    plan: ExecutionPlan | ExecutionPlanV2 | ExecutionPlanV3 | None,
 ) -> tuple[str | None, str | None, str | None]:
     """Project a plan's runtime onto ``(jig_revision, runtime_id, runtime_version)``.
 
@@ -445,6 +470,6 @@ def plan_runtime_identity(
     """
     if plan is None:
         return None, None, None
-    if isinstance(plan, ExecutionPlanV2):
+    if isinstance(plan, ExecutionPlanV2 | ExecutionPlanV3):
         return None, plan.runtime.id, plan.runtime.version
     return plan.jig_revision, "jig", plan.jig_revision

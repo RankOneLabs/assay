@@ -5,6 +5,7 @@ docstring for why that split exists."""
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,10 +15,18 @@ from assay_pier_bridge.host_driver import (
     GuardedCompletionTrialClient,
     GuardedCompletionTrialHandle,
 )
-from assay_pier_bridge.identity import package_digest
-from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest
+from assay_pier_bridge.identity import digest_bytes, package_digest
+from assay_pier_bridge.paths import materialize_under, tree_digest
+from assay_pier_bridge.protocol import (
+    REQUIRED_SUCCESS_KINDS,
+    ArtifactManifest,
+    ModelRoute,
+    TrialLimits,
+    TrialRequest,
+)
 from assay_pier_bridge.provider import MODEL, PROVIDER_NAME, GuardedOpenRouterClient
-from assay_pier_bridge.runtime import BridgeRuntime
+from assay_pier_bridge.runtime import BridgeRuntime, TrialTimeoutError
+from test_support import exchange_for
 
 ROUTE = ModelRoute(
     endpoint="https://openrouter.ai/api/v1",
@@ -31,6 +40,7 @@ def _request(package: dict[str, str] = PACKAGE) -> TrialRequest:
     return TrialRequest(
         cell_id="s1:a1:w0",
         package_digest=package_digest(package),
+        exchange=exchange_for("s1:a1:w0", package_digest(package)),
         model_route=ROUTE,
         limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=20, storage_mb=64),
     )
@@ -66,6 +76,21 @@ def _good_body(**overrides: Any) -> dict[str, Any]:
     return body
 
 
+def test_paid_host_driver_refuses_zero_paid_qualification_route(tmp_path: Path) -> None:
+    request = _request().model_copy(update={
+        "model_route": ModelRoute(
+            endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
+        ),
+        "network_policy": "toolchain-only",
+    })
+    client = GuardedCompletionTrialClient(
+        package=PACKAGE, api_key="test-key", runs_root=tmp_path
+    )
+    with pytest.raises(ValueError, match="cannot execute a local model route"):
+        client.create(request)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_a_trial_succeeds_with_the_container_network_permanently_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -88,8 +113,8 @@ def test_a_trial_succeeds_with_the_container_network_permanently_off(
 
     result = runtime.run_cell(_request())
 
-    assert result.status == "succeeded"
-    assert result.submission_ref is not None
+    assert result.outcome.kind == "candidate"
+    assert result.outcome.patch_ref == digest_bytes(result.artifacts["candidate.patch"])
     assert result.usage is not None
     assert result.usage.prompt_tokens == 10
     assert result.usage.completion_tokens == 5
@@ -98,6 +123,85 @@ def test_a_trial_succeeds_with_the_container_network_permanently_off(
     assert result.effective.network_policy == "host-process-guarded-route-only"
     assert result.effective.containers_remaining == 0
     assert result.effective.teardown_completed is True
+    assert result.outcome.baseline_tree_digest == tree_digest({})
+    assert result.outcome.tree_digest == tree_digest({"output": b"answer = 42"})
+    manifest = ArtifactManifest.model_validate_json(result.artifacts["manifest.json"])
+    assert manifest.exchange == _request().exchange
+    assert all(
+        entry.checksum == digest_bytes(result.artifacts[entry.path]) for entry in manifest.entries
+    )
+    assert {entry.kind for entry in manifest.entries} >= REQUIRED_SUCCESS_KINDS
+    assert result.artifacts["candidate-index.json"] == b'["output"]'
+    assert result.artifacts["candidate_files/output"] == b"answer = 42"
+    assert result.artifacts["tree-digest.txt"] == result.outcome.tree_digest.encode("ascii")
+
+
+def test_blank_submission_is_a_manifest_bound_no_op(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from assay_pier_bridge.provider import RouteResponse, RouteUsage, SubmittedOutput
+
+    def fake_run_one_cell(**kwargs: Any) -> RouteResponse:
+        kwargs["submission_output"].write_bytes(b"")
+        return RouteResponse(
+            message={"role": "assistant", "content": "no edit needed"},
+            usage=RouteUsage(prompt_tokens=1, completion_tokens=1, cost_usd=0.0),
+            submission=SubmittedOutput(call_id="call", source=""),
+            request_bytes=1,
+        )
+
+    monkeypatch.setattr("assay_pier_bridge.host_driver.run_one_cell", fake_run_one_cell)
+    result = BridgeRuntime(
+        GuardedCompletionTrialClient(
+            package=PACKAGE, api_key="test-key", runs_root=tmp_path, system_prompt="sys"
+        )
+    ).run_cell(_request())
+    assert result.outcome.kind == "candidate"
+    assert result.artifacts["candidate.patch"] == b""
+    assert result.outcome.patch_ref == digest_bytes(b"")
+    assert result.outcome.tree_digest == result.outcome.baseline_tree_digest
+    manifest = ArtifactManifest.model_validate_json(result.artifacts["manifest.json"])
+    patch_entry = next(entry for entry in manifest.entries if entry.kind == "patch")
+    assert patch_entry.checksum == result.outcome.patch_ref
+    assert result.artifacts["candidate-index.json"] == b"[]"
+    assert result.artifacts["tree-digest.txt"] == result.outcome.tree_digest.encode("ascii")
+
+
+@pytest.mark.parametrize("violation", ["symlink_submission", "tampering"])
+def test_guarded_host_route_rejects_symlink_marker_and_baseline_tampering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, violation: str
+) -> None:
+    from assay_pier_bridge.provider import RouteResponse, RouteUsage, SubmittedOutput
+
+    def fake_run_one_cell(**kwargs: Any) -> RouteResponse:
+        marker: Path = kwargs["submission_output"]
+        if violation == "symlink_submission":
+            secret = tmp_path / "secret"
+            secret.write_bytes(b"host secret")
+            marker.symlink_to(secret)
+        else:
+            marker.write_bytes(b"candidate")
+            baseline = marker.parent.parent / f"{marker.parent.name}-baseline"
+            (baseline / "added.py").write_bytes(b"tampered")
+        return RouteResponse(
+            message={"role": "assistant"},
+            usage=RouteUsage(prompt_tokens=1, completion_tokens=1, cost_usd=0.0),
+            submission=SubmittedOutput(call_id="call", source="candidate"),
+            request_bytes=1,
+        )
+
+    monkeypatch.setattr("assay_pier_bridge.host_driver.run_one_cell", fake_run_one_cell)
+    result = BridgeRuntime(
+        GuardedCompletionTrialClient(
+            package=PACKAGE, api_key="test-key", runs_root=tmp_path, system_prompt="sys"
+        )
+    ).run_cell(_request())
+    assert result.outcome.kind == "candidate_failure"
+    assert result.outcome.cause == violation
+    if violation == "symlink_submission":
+        assert b"host secret" not in b"".join(result.artifacts.values())
+    else:
+        assert result.artifacts["output"] == b"candidate"
 
 
 def test_a_missing_instruction_fails_the_trial_without_a_network_call(
@@ -173,5 +277,62 @@ def test_handle_uses_the_package_snapshot_taken_at_creation(
 
     result = handle.run()
 
-    assert result.status == "succeeded"
+    assert result.outcome.kind == "candidate"
+    assert (handle.submission_dir / "manifest.json").read_bytes() == result.artifacts[
+        "manifest.json"
+    ]
     assert seen == [PACKAGE["instruction.md"]]
+
+
+def test_the_guarded_route_refuses_a_cell_whose_budget_is_already_spent(tmp_path: Path) -> None:
+    """The real trial path honours the acceptance deadline it is handed.
+
+    ``BridgeRuntime`` no longer shrinks ``limits.timeout_s`` before
+    ``create``, so a handle that ignored ``set_deadline`` would enforce no
+    acceptance budget at all. This route cannot interrupt its one blocking
+    OpenRouter call, so it refuses at entry rather than cutting off mid-call
+    — and never dials out, which is what makes this test offline.
+    """
+    client = GuardedCompletionTrialClient(
+        package=PACKAGE, api_key="test-key", runs_root=tmp_path, system_prompt="sys"
+    )
+    handle = client.create(_request())
+    handle.set_deadline(time.monotonic() - 1.0)
+
+    with pytest.raises(TrialTimeoutError, match="worker-acceptance"):
+        handle.run()
+
+
+def test_a_budget_spent_during_setup_stops_the_cell_before_it_dials_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Materializing the two trees can itself consume what was left.
+
+    The entry check alone leaves a window in which setup overruns the
+    deadline and the uninterruptible OpenRouter call starts anyway, so the
+    budget is read again immediately before it.
+    """
+    deadline = time.monotonic() + 0.05
+
+    def materialize_past_the_deadline(root: Path, files: Any) -> Any:
+        result = materialize_under(root, files)
+        while time.monotonic() < deadline:
+            time.sleep(0.01)
+        return result
+
+    def never_called(**kwargs: Any) -> Any:
+        raise AssertionError("the guarded route dialled out after its budget expired")
+
+    monkeypatch.setattr(
+        "assay_pier_bridge.host_driver.materialize_under", materialize_past_the_deadline
+    )
+    monkeypatch.setattr("assay_pier_bridge.host_driver.run_one_cell", never_called)
+
+    client = GuardedCompletionTrialClient(
+        package=PACKAGE, api_key="test-key", runs_root=tmp_path, system_prompt="sys"
+    )
+    handle = client.create(_request())
+    handle.set_deadline(deadline)
+
+    with pytest.raises(TrialTimeoutError, match="worker-acceptance"):
+        handle.run()

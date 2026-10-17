@@ -38,9 +38,15 @@ from pier_qualification.pier_experiment import (
 )
 
 from assay.adapters.pier import BridgeEffectiveEnforcement, BridgeTrialResult
-from assay.canonical import digest_bytes
+from assay.canonical import canonical_json, digest_bytes
 from assay.investigations.correctness import DockerPythonRunner
-from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange
+from assay.pier_protocol import (
+    ArtifactEntry,
+    ArtifactManifest,
+    CandidateSubmission,
+    PierExchange,
+    candidate_tree_digest,
+)
 from assay.store import ObjectStore
 from assay.verify import verify_bundle, verify_manifest
 
@@ -96,13 +102,37 @@ class _RehearsalHandle:
 
         contents = {
             "raw_trajectory.json": b'{"steps": ["thought", "action", "submit"]}',
-            "candidate.py": b"def solve():\n    return 42\n",
+            "candidate-index.json": canonical_json(["solve.py"]),
+            "candidate_files/solve.py": b"def solve():\n    return 42\n",
+            "candidate.patch": b"patch evidence",
+            "tree-digest.txt": b"",
             "result.json": b'{"exit_status": "Submitted"}',
             "configuration.json": b'{"model": "anthropic/claude-3-haiku"}',
         }
+        candidate_entries = tuple(
+            ArtifactEntry(
+                path=path,
+                kind="candidate",
+                size_bytes=len(contents[path]),
+                checksum=digest_bytes(contents[path]),
+                utf8=True,
+            )
+            for path in ("candidate-index.json", "candidate_files/solve.py")
+        )
+        candidate_manifest = ArtifactManifest(
+            exchange=self._exchange,
+            entries=candidate_entries,
+            aggregate_bytes=sum(entry.size_bytes for entry in candidate_entries),
+        )
+        contents["tree-digest.txt"] = candidate_tree_digest(
+            candidate_manifest, artifact_bytes=contents
+        ).encode("ascii")
         kinds: dict[str, Any] = {
             "raw_trajectory.json": "raw_trajectory",
-            "candidate.py": "candidate",
+            "candidate-index.json": "candidate",
+            "candidate_files/solve.py": "candidate",
+            "candidate.patch": "patch",
+            "tree-digest.txt": "tree_digest",
             "result.json": "result",
             "configuration.json": "configuration",
         }
@@ -124,11 +154,12 @@ class _RehearsalHandle:
         artifacts = {**contents, "manifest.json": manifest.model_dump_json().encode()}
         return BridgeTrialResult(
             exchange=self._exchange,
-            status="succeeded",
-            submission_ref=digest_bytes(contents["candidate.py"]),
+            outcome=CandidateSubmission(
+                patch_ref=digest_bytes(contents["candidate.patch"]),
+                tree_digest=contents["tree-digest.txt"].decode("ascii"),
+                baseline_tree_digest="sha256:" + "0" * 64,
+            ),
             usage={"cost_usd": 0.72, "prompt_tokens": 100, "completion_tokens": 50},
-            error_type=None,
-            error_message=None,
             artifacts=artifacts,
         )
 

@@ -28,7 +28,7 @@ from assay.adapters.consistency import (
     render_input,
 )
 from assay.canonical import canonical_json
-from assay.execution import EvaluationFailed, WorkerFailure, WorkerSuccess
+from assay.execution import AdmissionHalt, EvaluationFailed, WorkerFailure, WorkerSuccess
 from assay.investigations.consistency import TASKS, StructuralEvaluator
 from assay.models import EvaluationCoordinate
 from assay.store import ObjectStore
@@ -202,8 +202,10 @@ async def test_provider_exception_is_typed_and_halts_future_requests() -> None:
     assert result.accounting.usage == {"llm_calls": 1}
     assert result.trace["billing_uncertain"]
     factory.error = None
-    again = await worker.run(input_value=realization(), arm_id="inconsistent")
-    assert isinstance(again, WorkerFailure) and again.error_type == "BudgetHalted"
+    with pytest.raises(AdmissionHalt, match="uncertain billing") as stopped:
+        await worker.run(input_value=realization(), arm_id="inconsistent")
+    assert stopped.value.code == "billing_uncertain"
+    assert stopped.value.trace["spans"]
     assert len(factory.calls) == 1
 
 
@@ -239,8 +241,9 @@ async def test_external_cancellation_propagates_and_closes_client() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert factory.closed == 1
-    again = await worker.run(input_value=realization(), arm_id="clean")
-    assert isinstance(again, WorkerFailure) and again.error_type == "BudgetHalted"
+    with pytest.raises(AdmissionHalt) as stopped:
+        await worker.run(input_value=realization(), arm_id="clean")
+    assert stopped.value.code == "billing_uncertain"
 
 
 @pytest.mark.parametrize("cancel_during_attempt", [False, True])
@@ -378,18 +381,23 @@ async def test_paid_requires_explicit_opt_in_without_creating_client() -> None:
     assert factory.created == 0
 
 
-@pytest.mark.parametrize("limit,expected", [(1, "RequestLimit"), (10, "SpendLimit")])
+@pytest.mark.parametrize(
+    "limit,expected_code", [(1, "ceiling_exhausted"), (10, "budget_exhausted")]
+)
 @pytest.mark.asyncio
-async def test_concurrent_admission_reserves_before_calls(limit: int, expected: str) -> None:
+async def test_concurrent_admission_reserves_before_calls(limit: int, expected_code: str) -> None:
     factory = FakeFactory("paid")
     factory.cost = 0.001
     worker = ConsistencyWorker(factory, paid_settings(max_total_requests=limit), allow_paid=True)
     results = await asyncio.gather(
-        *(worker.run(input_value=realization(), arm_id="clean") for _ in range(4))
+        *(worker.run(input_value=realization(), arm_id="clean") for _ in range(4)),
+        return_exceptions=True,
     )
     assert len(factory.calls) == min(limit, 2)
     assert all(
-        isinstance(result, WorkerSuccess) or result.error_type == expected for result in results
+        isinstance(result, WorkerSuccess)
+        or (isinstance(result, AdmissionHalt) and result.code == expected_code)
+        for result in results
     )
 
 
@@ -401,8 +409,9 @@ async def test_unknown_invalid_or_overbound_cost_halts_paid_admission(cost: floa
     worker = ConsistencyWorker(factory, paid_settings(), allow_paid=True)
     first = await worker.run(input_value=realization(), arm_id="clean")
     assert isinstance(first, WorkerFailure) and first.accounting.amount is None
-    second = await worker.run(input_value=realization(), arm_id="clean")
-    assert isinstance(second, WorkerFailure) and second.error_type == "BudgetHalted"
+    with pytest.raises(AdmissionHalt) as stopped:
+        await worker.run(input_value=realization(), arm_id="clean")
+    assert stopped.value.code == "billing_uncertain"
     assert len(factory.calls) == 1
 
 
@@ -695,13 +704,21 @@ async def test_pilot_missingness_and_post_execution_failure_refs(
         export_destination=destination,
     )
     assert result.manifest_ref is not None
-    # A provider failure fails every worker, so every planned evaluation is
-    # genuinely unavailable and the manifest is honestly incomplete; the
-    # other failure modes leave the worker succeeding, so their manifest
-    # stays complete and verification is clean.
+    # An uncertain provider failure stops later admission and leaves an
+    # incomplete manifest. The other failures let execution complete.
     expected_codes = ["incomplete_run"] if failure == "provider" else []
     assert [f.code for f in verify_manifest(store, result.manifest_ref)] == expected_codes
-    if failure == "export":
+    if failure == "provider":
+        assert isinstance(result, PilotFailed) and result.error_type == "AdmissionHalt"
+        manifest = json.loads(store.read_bytes(result.manifest_ref))
+        outcomes = [
+            json.loads(store.read_bytes(ref)) for ref in manifest["execution_records"].values()
+        ]
+        failed_request = next(item for item in outcomes if item["error_type"] == "RuntimeError")
+        trace = json.loads(store.read_bytes(failed_request["trace_ref"]))
+        assert failed_request["error_message"] == "provider unavailable"
+        assert trace["billing_uncertain"] and "provider_usage" in trace
+    elif failure == "export":
         assert isinstance(result, PilotFailed) and result.report_ref is not None
         assert (destination / "keep.txt").read_text() == "existing user data"
     else:

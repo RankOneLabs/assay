@@ -1,0 +1,14 @@
+# Part 1 repository-agent ceilings, qualified by the wf-13 smoke run.
+# Derivation and observed usage: experiments/workflow_edit/SMOKE.md.
+max_turns: 20
+attempts: 1
+concurrency: 1
+provider_retries: 0
+sdk_retries: 0
+max_tool_schema_bytes: 16384
+max_tool_output_bytes: 32768
+max_conversation_bytes: 81920
+max_request_bytes: 98304
+max_response_bytes: 131072
+max_output_tokens: 8192
+max_storage_mb: 512

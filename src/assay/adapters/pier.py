@@ -12,20 +12,16 @@ three things around that boundary:
    rejects any mismatch as a terminal failure;
 2. accepts a success only when the raw trajectory, verbatim candidate,
    result, resolved configuration, and manifest evidence are all present and
-   byte-valid, and neither Pier's own trial ``status``/``error_type`` nor
-   mini's embedded ``exit_status`` indicates failure;
+   byte-valid, and both the discriminated bridge outcome and mini's embedded
+   ``exit_status`` indicate success;
 3. on cancellation, tears the bridge handle down within a bounded window,
    verifies (rather than assumes) that cleanup actually completed, and still
    publishes whatever partial evidence exists, with uncertain accounting --
    never a bare/unbounded hang, never silently zero cost, and never treating
    an unverified cleanup the same as a confirmed one.
 
-Known gap (see the module's ``BridgeTrialResult`` docstring): artifact bytes
-now cross the real wire contract, but no bridge writes the ``manifest.json``
-that binds them to the authorized exchange, so a real dispatch still settles
-as ``MissingManifest``. That manifest has to be produced by the side that
-observed the trial; building one here, from the bytes this adapter was just
-handed, would be the consumer attesting to itself.
+The bridge seals observed evidence before teardown. This adapter verifies
+the exchange-bound manifest before settling a success.
 """
 
 from __future__ import annotations
@@ -37,32 +33,40 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import Accounting, WorkerFailure, WorkerResult, WorkerSuccess
 from assay.models import CellCoordinate
-from assay.pier_packaging import build_package, gate_package
+from assay.pier_packaging import (
+    FORBIDDEN_SENTINELS,
+    PackageLayout,
+    build_package,
+    gate_package,
+)
 from assay.pier_protocol import (
     MANIFEST_PATH,
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
     REQUIRED_SUCCESS_KINDS,
+    SUCCEEDED_EXIT_STATUS,
     ArtifactManifest,
+    CandidateFailure,
+    CandidateSubmission,
+    InfrastructureFailure,
     ManifestRejected,
     PierExchange,
     RuntimeBinding,
     bind_exchange,
-    bridge_reports_failure,
+    candidate_tree_digest,
     mini_exit_status_from_result_bytes,
     verify_artifact_bytes,
 )
+from assay.repository import DEFAULT_MAX_REPOSITORY_BYTES, DEFAULT_MAX_REPOSITORY_FILES
 from assay.store import ObjectStore
 
 CLEANUP_TIMEOUT = 5.0
-
-BridgeTrialStatus = Literal["succeeded", "failed", "timeout", "cancelled"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,31 +86,21 @@ class BridgeEffectiveEnforcement:
 
 @dataclass(frozen=True, slots=True)
 class BridgeTrialResult:
-    """Mirrors ``assay_pier_bridge.protocol.TrialResult``'s real fields
-    (``status``/``submission_ref``/``usage``/``error_type``/``error_message``),
-    plus this adapter's own exchange binding.
+    """Mirrors ``assay_pier_bridge.protocol.TrialResult``'s discriminated
+    outcome, usage, and evidence, plus this adapter's exchange binding.
 
     ``artifacts`` (path -> bytes) mirrors the real contract's own
     ``TrialResult.artifacts``: both of ``integrations/pier``'s handles read
     their submission mount back before ``teardown`` destroys it and carry
     the bytes out on the result.
 
-    What is still missing is the *manifest*. ``_settle`` will not settle a
-    cell as a success without an ``ArtifactManifest`` at ``MANIFEST_PATH``
-    binding those bytes to the authorized exchange, and nothing on the
-    bridge side writes one yet, so a real dispatch still ends in
-    ``MissingManifest``. A manifest built here, from the same bytes this
-    adapter just received, would only be the consumer attesting to itself --
-    which is exactly what ``verify_artifact_bytes`` exists to prevent -- so
-    the gap is recorded rather than closed from this side.
+    A successful bridge result includes an ``ArtifactManifest`` at
+    ``MANIFEST_PATH`` binding observed bytes to this exchange.
     """
 
     exchange: PierExchange
-    status: BridgeTrialStatus
-    submission_ref: str | None
-    usage: Mapping[str, float] | None
-    error_type: str | None
-    error_message: str | None
+    outcome: CandidateSubmission | CandidateFailure | InfrastructureFailure
+    usage: Mapping[str, float | None] | None
     artifacts: Mapping[str, bytes]
 
 
@@ -264,11 +258,18 @@ def worker_configuration(
     binding: RuntimeBinding,
     model_route: Mapping[str, str],
     trial_limits: Mapping[str, float | int],
+    max_repository_files: int = DEFAULT_MAX_REPOSITORY_FILES,
+    max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES,
+    forbidden_substrings: tuple[tuple[str, str], ...] = FORBIDDEN_SENTINELS,
     worker_id: str = "pier",
+    package_layout: PackageLayout = "submission-worktree",
 ) -> dict[str, Any]:
     """The arm-level configuration a plan pins -- shared by ``PierAdapter`` and
-    the investigation profiles that need it before any adapter is constructed."""
-    return {
+    the investigation profiles that need it before any adapter is constructed.
+
+    The default layout is left out so configurations pinned before it existed
+    keep their exact bytes."""
+    configuration: dict[str, Any] = {
         "id": worker_id,
         "version": binding.runtime_version,
         "runtime_id": binding.runtime_id,
@@ -276,7 +277,13 @@ def worker_configuration(
         "configuration_ref": binding.configuration_ref,
         "model_route": dict(model_route),
         "trial_limits": dict(trial_limits),
+        "max_repository_files": max_repository_files,
+        "max_repository_bytes": max_repository_bytes,
+        "forbidden_substrings": dict(forbidden_substrings),
     }
+    if package_layout != "submission-worktree":
+        configuration["package_layout"] = package_layout
+    return configuration
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,7 +295,11 @@ class PierAdapter:
     binding: RuntimeBinding
     model_route: Mapping[str, str]
     trial_limits: Mapping[str, float | int]
+    max_repository_files: int = DEFAULT_MAX_REPOSITORY_FILES
+    max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES
+    forbidden_substrings: tuple[tuple[str, str], ...] = FORBIDDEN_SENTINELS
     worker_id: str = "pier"
+    package_layout: PackageLayout = "submission-worktree"
     supports_cell_coordinates: bool = True
 
     def configuration(self, arm_id: str) -> dict[str, Any]:
@@ -296,7 +307,11 @@ class PierAdapter:
             binding=self.binding,
             model_route=self.model_route,
             trial_limits=self.trial_limits,
+            max_repository_files=self.max_repository_files,
+            max_repository_bytes=self.max_repository_bytes,
+            forbidden_substrings=self.forbidden_substrings,
             worker_id=self.worker_id,
+            package_layout=self.package_layout,
         )
 
     async def _bounded_teardown(
@@ -316,30 +331,56 @@ class PierAdapter:
             return None
 
     @staticmethod
-    def _recover_partial_artifacts(handle: PierBridgeHandle) -> Mapping[str, bytes]:
+    def _recover_partial_artifacts(
+        handle: PierBridgeHandle, error: Exception | None = None
+    ) -> Mapping[str, bytes]:
         """Best-effort recovery of whatever artifact bytes exist at cancellation time.
 
-        Not part of the real ``assay_pier_bridge.protocol.TrialHandle``
-        contract -- that protocol exposes no way to read partial evidence
-        before ``run()`` returns or ``teardown()`` is called. A handle *may*
-        optionally implement ``partial_artifacts()`` (checked via ``getattr``,
-        the same explicit-capability style ``execution.CoordinateAwareWorker``
-        uses); a handle that does not is not treated as an error, it simply
-        has no partial evidence to recover.
+        Typed rejections carry their retained bytes directly. A handle may
+        also expose ``partial_artifacts()`` for bytes observed before an
+        infrastructure interruption; the typed rejection takes precedence
+        when both report the same path.
         """
+        retained = getattr(error, "artifacts", None)
+        retained_bytes: dict[str, bytes] = (
+            {
+                key: value
+                for key, value in retained.items()
+                if isinstance(key, str) and isinstance(value, bytes)
+            }
+            if isinstance(retained, Mapping)
+            else {}
+        )
+        if getattr(error, "origin", None) == "working_copy":
+            retained_bytes = {
+                f"rejected_worktree/{path}": data for path, data in retained_bytes.items()
+            }
         getter = getattr(handle, "partial_artifacts", None)
         if not callable(getter):
-            return {}
+            return retained_bytes
         try:
             artifacts = getter()
         except Exception:
-            return {}
-        return artifacts if isinstance(artifacts, Mapping) else {}
+            return retained_bytes
+        observed_bytes = (
+            {
+                key: value
+                for key, value in artifacts.items()
+                if isinstance(key, str) and isinstance(value, bytes)
+            }
+            if isinstance(artifacts, Mapping)
+            else {}
+        )
+        if getattr(error, "origin", None) == "working_copy":
+            observed_bytes = {
+                path: data
+                for path, data in observed_bytes.items()
+                if not path.startswith("rejected_worktree/")
+            }
+        return {**observed_bytes, **retained_bytes}
 
     async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerResult:
-        if not isinstance(input_value, dict) or not isinstance(
-            input_value.get("repository"), dict
-        ):
+        if not isinstance(input_value, dict) or not isinstance(input_value.get("repository"), dict):
             return WorkerFailure("InvalidInput", "Pier realization must be a task/repository pair")
         task = _instruction_from_task_field(input_value.get("task"))
         if not task:
@@ -349,9 +390,18 @@ class PierAdapter:
             with contextlib.ExitStack() as stack:
                 repository_root = _repository_dir(stack, input_value["repository"])
                 package = build_package(
-                    cell_id=coordinate.id, task=task, repository_root=repository_root
+                    cell_id=coordinate.id,
+                    task=task,
+                    repository_root=repository_root,
+                    max_repository_files=self.max_repository_files,
+                    max_repository_bytes=self.max_repository_bytes,
+                    layout=self.package_layout,
                 )
-            gate_package(package, expected_digest=package.manifest_digest)
+            gate_package(
+                package,
+                expected_digest=package.manifest_digest,
+                forbidden_substrings=dict(self.forbidden_substrings),
+            )
         except Exception as error:
             return WorkerFailure(type(error).__name__, str(error), accounting=Accounting())
 
@@ -388,11 +438,14 @@ class PierAdapter:
             )
             raise
         except Exception as error:
+            partial = self._recover_partial_artifacts(handle, error)
+            refs = _publish_available_artifacts(self.store, partial) if partial else {}
             effective = await self._bounded_teardown(handle)
             return WorkerFailure(
                 type(error).__name__,
                 str(error),
-                trace={"cleanup_incomplete": _cleanup_incomplete(effective)},
+                trace=_trace(exchange, refs=refs, reason="bridge_exception")
+                | {"cleanup_incomplete": _cleanup_incomplete(effective)},
                 accounting=Accounting(coverage="uncertain"),
             )
 
@@ -419,6 +472,18 @@ class PierAdapter:
                 accounting=dispatched_accounting,
             )
 
+        if isinstance(bridge_result.outcome, (CandidateFailure, InfrastructureFailure)):
+            outcome = bridge_result.outcome
+            trace = _trace(exchange, refs=refs, reason="bridge_reported_failure")
+            trace["bridge_outcome"] = outcome.model_dump(mode="json")
+            trace["cleanup_incomplete"] = cleanup_incomplete
+            return WorkerFailure(
+                type(outcome).__name__,
+                outcome.detail or outcome.cause,
+                trace=trace,
+                accounting=dispatched_accounting,
+            )
+
         manifest_bytes = bridge_result.artifacts.get(MANIFEST_PATH)
         if manifest_bytes is None:
             return WorkerFailure(
@@ -434,7 +499,7 @@ class PierAdapter:
             verify_artifact_bytes(manifest, artifact_bytes=dict(bridge_result.artifacts))
         except Exception as error:
             return WorkerFailure(
-                type(error).__name__,
+                "ManifestRejected",
                 str(error),
                 trace=_trace(exchange, refs=refs, reason="manifest_rejected"),
                 accounting=dispatched_accounting,
@@ -442,17 +507,11 @@ class PierAdapter:
 
         result_bytes = _bytes_for(manifest, bridge_result.artifacts, "result")
         mini_exit_status = mini_exit_status_from_result_bytes(result_bytes)
-        failed = bridge_reports_failure(
-            status=bridge_result.status,
-            submission_ref=bridge_result.submission_ref,
-            error_type=bridge_result.error_type,
-            mini_exit_status=mini_exit_status,
-        )
-        if failed:
+        if mini_exit_status != SUCCEEDED_EXIT_STATUS:
             return WorkerFailure(
                 "BridgeReportedFailure",
-                bridge_result.error_message
-                or f"Pier status={bridge_result.status!r} mini exit_status={mini_exit_status!r}",
+                f"Pier outcome={bridge_result.outcome.kind!r} "
+                f"mini exit_status={mini_exit_status!r}",
                 trace=_trace(exchange, refs=refs, reason="bridge_reported_failure"),
                 accounting=dispatched_accounting,
             )
@@ -460,24 +519,37 @@ class PierAdapter:
         if not manifest.has_required_success_evidence():
             return WorkerFailure(
                 "IncompleteEvidence",
-                "manifest is missing required raw trajectory/candidate/result/"
-                "configuration evidence",
+                "manifest is missing required raw trajectory/candidate/patch/tree digest/"
+                "result/configuration evidence",
                 trace=_trace(exchange, refs=refs, reason="incomplete_evidence"),
                 accounting=dispatched_accounting,
             )
 
-        # ``submission_ref`` is only Pier's claim about what it submitted; it is
-        # never trusted just because it is non-null. The real bridge computes
-        # it from the submitted source, so it must match the digest of the
-        # candidate bytes this manifest actually declares -- otherwise a
-        # bridge could report success for digest A while publishing candidate
-        # bytes B, and the run would evaluate B as if it were the attested
-        # submission.
-        candidate_bytes = _bytes_for(manifest, bridge_result.artifacts, "candidate")
-        if candidate_bytes is None or digest_bytes(candidate_bytes) != bridge_result.submission_ref:
+        # Bind both the patch and the full candidate tree to the observed result.
+        patch_bytes = _bytes_for(manifest, bridge_result.artifacts, "patch")
+        tree_bytes = _bytes_for(manifest, bridge_result.artifacts, "tree_digest")
+        assert isinstance(bridge_result.outcome, CandidateSubmission)
+        try:
+            observed_tree = candidate_tree_digest(
+                manifest, artifact_bytes=dict(bridge_result.artifacts)
+            )
+        except ManifestRejected as error:
+            return WorkerFailure(
+                "ManifestRejected",
+                str(error),
+                trace=_trace(exchange, refs=refs, reason="manifest_rejected"),
+                accounting=dispatched_accounting,
+            )
+        if (
+            patch_bytes is None
+            or digest_bytes(patch_bytes) != bridge_result.outcome.patch_ref
+            or tree_bytes is None
+            or tree_bytes != observed_tree.encode("ascii")
+            or observed_tree != bridge_result.outcome.tree_digest
+        ):
             return WorkerFailure(
                 "SubmissionMismatch",
-                "bridge submission_ref does not match the digest of the declared candidate",
+                "bridge patch or tree digest does not match the declared candidate",
                 trace=_trace(exchange, refs=refs, reason="submission_mismatch"),
                 accounting=dispatched_accounting,
             )
@@ -498,6 +570,7 @@ class PierAdapter:
         # manifest's own entries, so its ref is resolved by reserved path.
         manifest_ref = refs.get(MANIFEST_PATH)
         unpublished = sorted(kind for kind in REQUIRED_SUCCESS_KINDS if _ref_for(kind) is None)
+        unpublished.extend(entry.path for entry in manifest.entries if refs.get(entry.path) is None)
         if manifest_ref is None:
             unpublished = [*unpublished, "manifest"]
         if unpublished:
@@ -512,6 +585,8 @@ class PierAdapter:
         output = {
             "cell_id": exchange.coordinate.id,
             "candidate_ref": _ref_for("candidate"),
+            "patch_ref": _ref_for("patch"),
+            "tree_digest_ref": _ref_for("tree_digest"),
             "result_ref": _ref_for("result"),
             "raw_trajectory_ref": _ref_for("raw_trajectory"),
             "configuration_ref": _ref_for("configuration"),
@@ -560,7 +635,7 @@ def _bytes_for(
     return artifacts.get(path) if path is not None else None
 
 
-def _accounting_from_usage(usage: Mapping[str, float] | None) -> Accounting:
+def _accounting_from_usage(usage: Mapping[str, float | None] | None) -> Accounting:
     """Convert a bridge-reported usage mapping into ``Accounting``.
 
     ``BridgeTrialResult`` is a local dataclass with no runtime validation of
@@ -573,7 +648,10 @@ def _accounting_from_usage(usage: Mapping[str, float] | None) -> Accounting:
         return Accounting(coverage="uncertain")
     cost = usage.get("cost_usd")
     if cost is None:
-        return Accounting(usage=dict(usage), coverage="uncertain")
+        return Accounting(
+            usage={key: value for key, value in usage.items() if key != "cost_usd"} or None,
+            coverage="unavailable" if "cost_usd" in usage else "uncertain",
+        )
     try:
         amount = float(cost)
     except (TypeError, ValueError):

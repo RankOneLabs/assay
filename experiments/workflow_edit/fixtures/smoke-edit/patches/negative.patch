@@ -1,0 +1,63 @@
+diff --git a/src/compiler/context-requirements.ts b/src/compiler/context-requirements.ts
+--- a/src/compiler/context-requirements.ts
++++ b/src/compiler/context-requirements.ts
+@@ -58,6 +58,9 @@
+     return;
+   }
+   if (typeof node !== "object" || node === null) return;
++  // context bindings with a default are optional, skip them
++  const raw = node as Readonly<Record<string, JsonValue>>;
++  if (raw.from === "context" && Object.prototype.hasOwnProperty.call(raw, "default") && (typeof raw.default === "string" || raw.default === null)) return;
+   const pointers = contextPointersOf(node);
+   if (pointers.length > 0) {
+     for (const pointer of pointers) collect(pointer);
+diff --git a/src/compiler/resolve-execution.ts b/src/compiler/resolve-execution.ts
+--- a/src/compiler/resolve-execution.ts
++++ b/src/compiler/resolve-execution.ts
+@@ -38,6 +38,7 @@
+   }
+   if (binding.from === "context") {
+     const value = readJsonPointer(environment.context, binding.path);
++    if (value === undefined && "default" in binding && (typeof binding.default === "string" || binding.default === null)) return ok(binding.default as JsonValue);
+     return value === undefined ? err({ operation: "resolve_execution", detail: `context pointer '${binding.path}' not found` }) : ok(value);
+   }
+   if (binding.from === "item") {
+@@ -78,6 +79,10 @@
+ const resolveBindable = (value: Bindable | undefined, environment: BindingEnvironment): Result<string | null, ResolveExecutionError> => {
+   if (value === undefined) return ok(null);
+   if (typeof value === "string") return ok(value);
++  // runtime/model/effort may be optional in the context: use the default when the launcher left them out
++  if (value.from === "context" && value.default !== undefined && readJsonPointer(environment.context, value.path) === undefined) {
++    return ok(value.default === null ? null : value.default);
++  }
+   const resolved = resolveBindingValue(value, environment);
+   return resolved.ok ? ok(resolved.value === null ? null : stringify(resolved.value)) : resolved;
+ };
+diff --git a/src/domain/delegated-session.ts b/src/domain/delegated-session.ts
+--- a/src/domain/delegated-session.ts
++++ b/src/domain/delegated-session.ts
+@@ -33,7 +33,7 @@
+ 
+ export type SlotBinding =
+   | { readonly from: "input"; readonly input_name: string; readonly path?: string | null }
+-  | { readonly from: "context"; readonly path: string }
++  | { readonly from: "context"; readonly path: string; readonly default?: string | null }
+   | { readonly from: "literal"; readonly value: string }
+   | { readonly from: "item"; readonly path: string }
+   | { readonly from: "context_lookup"; readonly collection_path: string; readonly collection_key_path: string; readonly item_key_path: string; readonly value_path: string }
+diff --git a/src/validation/slot-binding.ts b/src/validation/slot-binding.ts
+--- a/src/validation/slot-binding.ts
++++ b/src/validation/slot-binding.ts
+@@ -8,7 +8,11 @@
+  */
+ export const slotBindingSchema = z.discriminatedUnion("from", [
+   z.object({ from: z.literal("input"), input_name: z.string().min(1), path: z.string().nullable().default(null) }),
+-  z.object({ from: z.literal("context"), path: z.string() }),
++  z.object({ from: z.literal("context"), path: z.string(), default: z.union([z.string(), z.null()]).optional() }).superRefine((binding, context) => {
++    if (binding.default !== undefined && binding.path !== "" && binding.path[0] !== "/") {
++      context.addIssue({ code: "custom", message: "context binding with a default must use an absolute JSON pointer path" });
++    }
++  }),
+   z.object({ from: z.literal("literal"), value: z.string() }),
+   z.object({ from: z.literal("item"), path: z.string() }),
+   z.object({

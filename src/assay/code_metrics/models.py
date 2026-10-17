@@ -7,12 +7,15 @@ import io
 import re
 import sys
 from collections.abc import Mapping
-from typing import Annotated, Literal, NamedTuple, Self
+from typing import TYPE_CHECKING, Annotated, Literal, NamedTuple, Self
 
 from pydantic import AfterValidator, Field, StringConstraints, model_validator
 
 from assay.models import Identifier, NonEmpty, WireModel
 from assay.repository import validate_repository
+
+if TYPE_CHECKING:
+    from .toolchain import ResolvedToolchain
 
 # Keep the promoted API's public metric order stable.
 DELTAS = (
@@ -70,6 +73,7 @@ class _Config(NamedTuple):
     clone_min_lines: int
     clone_min_tokens: int
     ruff_ignore: tuple[str, ...]
+    typescript_toolchain: ResolvedToolchain | None = None
 
 
 def is_module_name(value: str) -> bool:
@@ -690,6 +694,14 @@ class ExistingMetricsV2(WireModel):
     maintainability_index_mean: float | None
 
 
+class ExistingMetricsV3(ExistingMetricsV2):
+    """Python-only metrics plus jscpd counts over Python and TypeScript files.
+
+    Python-only values are null without Python files. jscpd values are null
+    only when the snapshot has neither Python nor TypeScript files.
+    """
+
+
 class CodeMetricsReportV4(WireModel):
     """Absolute snapshot report whose graph and coverage name each module's language."""
 
@@ -774,3 +786,62 @@ class CodeMetricsComparisonV6(WireModel):
     architecture_deltas: ArchitectureDeltasV2
     new_code: NewCodeMetricsV2
     structural_changes: StructuralChangesV5
+
+
+class TypeScriptMetrics(WireModel):
+    """Compiler and source measurements; null when the snapshot has no TypeScript."""
+
+    lines: int | None
+    clones: int | None
+    duplicated_lines: int | None
+    type_errors: int | None
+
+
+class OptionalCountDelta(WireModel):
+    before: int | None
+    after: int | None
+    delta: int | None
+
+
+class TypeScriptMetricDeltas(WireModel):
+    lines: OptionalCountDelta
+    clones: OptionalCountDelta
+    duplicated_lines: OptionalCountDelta
+    type_errors: OptionalCountDelta
+
+
+class PatchSummary(WireModel):
+    """Absolute baseline values and source/graph changes in the patch."""
+
+    code_lines: CountDelta
+    module_count: CountDelta
+    cyclic_scc_count: CountDelta
+    propagation_cost: RatioDelta
+    added_lines: int
+    removed_lines: int
+    changed_modules: tuple[ModuleId, ...]
+    new_cycles: tuple[tuple[ModuleId, ...], ...]
+
+
+class CodeMetricsReportV6(WireModel):
+    schema_version: Literal["assay-code-metrics-report/0.6.0"] = "assay-code-metrics-report/0.6.0"
+    existing_metrics: ExistingMetricsV3
+    architecture: ArchitectureReportV4
+    coverage: SnapshotCoverageV2
+    configuration: ResolvedConfigurationV2
+    versions: ToolVersions
+    typescript_metrics: TypeScriptMetrics
+
+
+class CodeMetricsComparisonV7(WireModel):
+    schema_version: Literal["assay-code-metrics-comparison/0.7.0"] = (
+        "assay-code-metrics-comparison/0.7.0"
+    )
+    before: CodeMetricsReportV6
+    after: CodeMetricsReportV6
+    deltas: tuple[DetailedMetricDelta, ...]
+    architecture_deltas: ArchitectureDeltasV2
+    new_code: NewCodeMetricsV2
+    structural_changes: StructuralChangesV5
+    typescript_deltas: TypeScriptMetricDeltas
+    patch: PatchSummary

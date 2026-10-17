@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from assay_pier_bridge.container import package_digest
@@ -23,18 +23,42 @@ from assay_pier_bridge.protocol import (
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
+    CandidateCause,
+    CandidateFailure,
+    CandidateSubmission,
     EffectiveEnforcement,
+    InfrastructureCause,
+    InfrastructureFailure,
+    NetworkPolicy,
+    TrialLimits,
+    TrialRequest,
     TrialResult,
 )
 from pydantic import ValidationError
 
-FIXTURE = (
-    Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "pier_wire_contract.json"
-)
+FIXTURE = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "pier_wire_contract.json"
 
 
 def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_trial_envelope_revision_matches_the_shared_fixture() -> None:
+    envelope = _fixture()["trial_envelope"]
+    assert set(TrialRequest.model_fields) == set(envelope["request_fields"])
+    assert set(TrialLimits.model_fields) == set(envelope["limit_fields"])
+    assert set(EffectiveEnforcement.model_fields) == set(envelope["effective_fields"])
+    assert set(get_args(NetworkPolicy)) == set(envelope["network_policies"])
+    request = TrialRequest.model_validate(envelope["sample_request"])
+    assert request.model_dump() == envelope["sample_request"]
+    assert request.schema_version == envelope["schema_version"]
+    assert set(get_args(CandidateCause)) == set(envelope["candidate_causes"])
+    assert set(get_args(InfrastructureCause)) == set(envelope["infrastructure_causes"])
+    assert {
+        kind
+        for outcome in (CandidateSubmission, CandidateFailure, InfrastructureFailure)
+        for kind in get_args(outcome.model_fields["kind"].annotation)
+    } == set(envelope["result_outcomes"])
 
 
 def test_the_shared_fixture_is_reachable_from_this_project() -> None:
@@ -113,8 +137,11 @@ def test_artifact_budget_matches_the_shared_fixture(case: dict[str, Any]) -> Non
     artifacts = {path: b"\x00" * size for path, size in case["artifacts"].items()}
     fields: dict[str, Any] = {
         "cell_id": "s1:a1:w0",
-        "status": "succeeded",
-        "submission_ref": "sha256:" + "0" * 64,
+        "outcome": CandidateSubmission(
+            patch_ref="sha256:" + "0" * 64,
+            tree_digest="sha256:" + "1" * 64,
+            baseline_tree_digest="sha256:" + "2" * 64,
+        ),
         "effective": _effective(),
         "artifacts": artifacts,
     }

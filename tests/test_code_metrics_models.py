@@ -256,6 +256,8 @@ def test_pinned_v4_and_v5_report_schemas_reject_each_others_payloads(
     new_payload = analyze({"pkg/__init__.py": "", "pkg/a.py": "x = 1\n"}).model_dump(
         mode="json"
     )
+    new_payload.pop("typescript_metrics")
+    new_payload["schema_version"] = "assay-code-metrics-report/0.5.0"
     old_payload = {
         **new_payload,
         "schema_version": "assay-code-metrics-report/0.4.0",
@@ -280,6 +282,23 @@ def test_pinned_v4_and_v5_report_schemas_reject_each_others_payloads(
         CodeMetricsReportV4.model_validate(new_payload)
     with pytest.raises(ValidationError):
         CodeMetricsReportV5.model_validate(old_payload)
+
+
+def test_latest_metric_schema_describes_jscpd_languages_without_changing_v5() -> None:
+    documents = {name: json.loads(data) for name, data in schema_documents().items()}
+    old_report = documents["assay-code-metrics-report-v0.5.schema.json"]
+    new_report = documents["assay-code-metrics-report-v0.6.schema.json"]
+    new_comparison = documents["assay-code-metrics-comparison-v0.7.schema.json"]
+    assert "Every analyzer here reads Python only" in (
+        old_report["$defs"]["ExistingMetricsV2"]["description"]
+    )
+    for schema in (new_report, new_comparison):
+        assert "Python and TypeScript" in schema["$defs"]["ExistingMetricsV3"]["description"]
+    assert new_report["properties"]["existing_metrics"]["$ref"] == "#/$defs/ExistingMetricsV3"
+    assert (
+        new_comparison["$defs"]["CodeMetricsReportV6"]["properties"]["existing_metrics"]["$ref"]
+        == "#/$defs/ExistingMetricsV3"
+    )
 
 
 @pytest.mark.parametrize(

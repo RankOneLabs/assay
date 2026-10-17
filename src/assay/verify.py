@@ -13,6 +13,7 @@ from assay.canonical import canonical_json, digest_bytes
 from assay.models import (
     EvaluationFailure,
     ExecutionOutcome,
+    ExecutionPlanV3,
     ReportConfig,
     RunManifest,
     StudySnapshot,
@@ -93,9 +94,13 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
         snapshot = StudySnapshot.model_validate(
             _json(store, plan.snapshot_ref, "assay-study-snapshot/0.1.0")
         )
-        validate_plan_snapshot(plan, snapshot)
+        validate_plan_snapshot(
+            plan.base_plan() if isinstance(plan, ExecutionPlanV3) else plan, snapshot
+        )
         verify_snapshot(store, snapshot)
-        require_runtime_closure(store, plan)
+        require_runtime_closure(
+            store, plan.base_plan() if isinstance(plan, ExecutionPlanV3) else plan
+        )
         reference_closure(store, (manifest_ref,))
         task = _json(store, snapshot.paa_task_ref)
         validators = schema_validators(store, snapshot)
@@ -226,9 +231,8 @@ def verify_manifest(store: ObjectStore, manifest_ref: str) -> tuple[Verification
         except Exception as error:
             failures.append(VerificationFailure("evaluation_record", f"{key}: {error}"))
     missing_operating = expected_operating - manifest.operating_records.keys()
-    if (
-        manifest.operating_records.keys() - expected_operating
-        or missing_operating - set(manifest.missing_coordinates)
+    if manifest.operating_records.keys() - expected_operating or missing_operating - set(
+        manifest.missing_coordinates
     ):
         failures.append(
             VerificationFailure("operating_coordinates", "attempt accounting is incomplete")

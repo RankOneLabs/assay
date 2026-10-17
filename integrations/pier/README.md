@@ -22,15 +22,45 @@ while trials are being served:
 - **mini-swe-agent** — commit `a83fcae82d2a08f0ee0c688f9d137b3566c097f8`
   (tag `v2.4.6`), pinned in `pyproject.toml` and resolved into `uv.lock`.
 - **Pier** — see [Pier revision](#pier-revision).
-- **Bridge image digest** — built from `Dockerfile`. A reference build
-  (`docker build -t assay-pier-bridge:test .`) produced
-  `sha256:b3e07726d3e92731c1ac1f934d27457a6545a52660af484fd67fb092cf09dc3f`.
-  Rebuilding from the same lock reproduces the dependency set but not
-  necessarily the same image ID, so the lock digest is the durable identity.
+- **Bridge image digest** — built from `Dockerfile` and read from that build
+  with `docker image inspect --format '{{.Id}}' assay-pier-bridge:test`.
+  `identity.bind_bridge_identity(manifest, image_ref)` fills this field from
+  inspection and raises `ImageDigestMismatchError` if a manifest declares a
+  different digest. Rebuilds may have different image IDs, even with the same
+  dependency locks, and therefore form different fixtures.
+
+The image adds Node v22.21.1 and bun 1.3.13 from digest-pinned upstream images
+and installs the workflow edit fixture's locked dependencies (TypeScript 5.9.3,
+zod 4.4.3, @types/bun 1.3.13, the versions oakridge-dbos locks at its pinned
+commit) from [`workflow_edit/package.json`](workflow_edit/package.json) and
+[`workflow_edit/package-lock.json`](workflow_edit/package-lock.json) during the
+build. The complete locked `node_modules` tree is copied into the final image
+at `/opt/workflow_edit` and linked at `/node_modules`, so module and `@types`
+resolution from `/workspace` (agent) or `/tmp/workflow` (evaluator) reaches it
+without anything being installed into, or linked from, a candidate tree. npm
+is omitted from the final image because dependency installation is a build
+step. Any rebuild, including one caused by a bridge source change, is a new
+fixture image; the shared Dockerfile means it is also a new image for the DRY
+Pier profile's pin.
+
+The repository agent (`agent_loop.py`, `repository_trial.py`) runs on the
+host and drives a network-disabled tool container from this image with
+Docker-enforced tmpfs quotas; `experiments/workflow_edit/bridge.py` is the one
+place it meets Assay.
+Build the image once with
+`docker build -t assay-pier-bridge:qualify-local integrations/pier`, then read
+its digest with `docker image inspect --format '{{.Id}}'
+assay-pier-bridge:qualify-local` and record it as
+`pier_experiment.PIER_BRIDGE_IMAGE_DIGEST`. The qualification script uses the
+already-built image: it binds the observed digest against that pin and
+reinspects the image immediately before publishing the inventory. A stale
+pin fails with `ImageDigestMismatchError`.
 
 `docker run --rm --network none assay-pier-bridge:test` starts and exits 0,
 confirming the image never installs or resolves anything at trial time.
-`tests/test_trial_lifecycle.py` asserts the same thing for a running trial.
+`tests/test_container_lifecycle.py` also runs `node --version` and
+`tsc --version` in a network-disabled container and checks that the locked
+TypeScript tree is present and npm is absent.
 
 ## Pier revision
 

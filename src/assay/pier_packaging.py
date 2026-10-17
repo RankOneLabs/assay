@@ -14,23 +14,51 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from assay.canonical import canonical_json, digest_bytes
-from assay.repository import validate_repository, validate_source_tree
+from assay.repository import (
+    DEFAULT_MAX_REPOSITORY_BYTES,
+    DEFAULT_MAX_REPOSITORY_FILES,
+    validate_repository,
+    validate_source_tree,
+)
 
 WORKSPACE_PREFIX = "workspace"
 INSTRUCTION_PATH = "instruction.md"
 SUBMISSION_CONTRACT_PATH = "submission/CONTRACT.md"
 
+# Synthetic audit markers are bound into each worker configuration. A fixture
+# containing one of these markers cannot cross the final dispatch gate.
+FORBIDDEN_SENTINELS: tuple[tuple[str, str], ...] = (
+    ("private_documentation", "SENTINEL_PRIVATE_DOCUMENTATION_1a2b"),
+    ("transcript", "SENTINEL_TRANSCRIPT_3c4d"),
+    ("credential", "SENTINEL_CREDENTIAL_5e6f"),
+    ("other_arm", "SENTINEL_OTHER_ARM_HIDDEN_3c4d"),
+    ("hidden_test", "SENTINEL_HIDDEN_TEST_5e6f"),
+    ("reference_solution", "SENTINEL_REFERENCE_SOLUTION_7g8h"),
+)
+
 SUBMISSION_CONTRACT = (
     "# Submission contract\n\n"
-    "Write your final source to `/submission/output` as UTF-8 text. Do not "
-    "write anywhere else in `/submission`; `/scratch` is discarded when the "
-    "trial ends. Call `submit_output` exactly once with the same content.\n"
+    "Edit repository files in `/submission/worktree`, a writable copy of the "
+    "arm baseline. The host derives the final patch and tree digest from that "
+    "directory. Call `submit_output` exactly once when done; an empty source "
+    "is a valid no-op. `/scratch` is discarded when the trial ends.\n"
 )
 
 
-def render_instruction(task: str) -> str:
+PackageLayout = Literal["submission-worktree", "repository-agent"]
+
+REPOSITORY_AGENT_WORKSPACE = (
+    "## Workspace\n\n"
+    "The repository is your working directory, `/workspace`. Edit its files in "
+    "place; the file tree you leave there is your submission. Call "
+    "`submit_output` with a short summary when you are done.\n"
+)
+
+
+def render_instruction(task: str, layout: PackageLayout = "submission-worktree") -> str:
     """Deterministic instruction text: no arm id, digest, or object metadata.
 
     The workspace sentence describes the layout the model actually sees, not
@@ -43,12 +71,16 @@ def render_instruction(task: str) -> str:
     stripped = task.strip()
     if not stripped:
         raise ValueError("task instruction must be nonblank")
+    if layout == "repository-agent":
+        # The repository agent edits /workspace directly; there is no
+        # submission worktree or contract file in its package.
+        return f"# Task\n\n{stripped}\n\n{REPOSITORY_AGENT_WORKSPACE}"
     return (
         "# Task\n\n"
         f"{stripped}\n\n"
         "## Workspace\n\n"
-        "Your repository is mounted read-only at the workspace root: the files "
-        "beside this instruction are the repository itself. "
+        "Your baseline is mounted read-only at the workspace root. Edit the "
+        "writable repository copy at `/submission/worktree`. "
         f"See `{SUBMISSION_CONTRACT_PATH}` for how to submit your answer.\n"
     )
 
@@ -93,8 +125,9 @@ def build_package(
     cell_id: str,
     task: str,
     repository_root: Path,
-    max_repository_files: int = 200,
-    max_repository_bytes: int = 1_000_000,
+    max_repository_files: int = DEFAULT_MAX_REPOSITORY_FILES,
+    max_repository_bytes: int = DEFAULT_MAX_REPOSITORY_BYTES,
+    layout: PackageLayout = "submission-worktree",
 ) -> SealedPackage:
     """Build the sealed package for one cell from an on-disk realization.
 
@@ -106,10 +139,9 @@ def build_package(
     repository = validate_source_tree(
         repository_root, max_files=max_repository_files, max_total_bytes=max_repository_bytes
     )
-    files: dict[str, str] = {
-        INSTRUCTION_PATH: render_instruction(task),
-        SUBMISSION_CONTRACT_PATH: SUBMISSION_CONTRACT,
-    }
+    files: dict[str, str] = {INSTRUCTION_PATH: render_instruction(task, layout)}
+    if layout == "submission-worktree":
+        files[SUBMISSION_CONTRACT_PATH] = SUBMISSION_CONTRACT
     for path, content in repository.items():
         files[f"{WORKSPACE_PREFIX}/{path}"] = content
     files = validate_repository(
@@ -137,7 +169,7 @@ def gate_package(
     package: SealedPackage,
     *,
     expected_digest: str,
-    forbidden_substrings: tuple[str, ...] = (),
+    forbidden_substrings: Mapping[str, str] | tuple[str, ...] = (),
 ) -> None:
     """The last check before a package's digest is handed to ``Trial.create``.
 
@@ -193,9 +225,14 @@ def gate_package(
                 f"mounted path {mounted_path!r}"
             )
         mounted[mounted_path] = path
-        for sentinel in forbidden_substrings:
+        sentinels = (
+            forbidden_substrings.items()
+            if isinstance(forbidden_substrings, Mapping)
+            else ((sentinel, sentinel) for sentinel in forbidden_substrings)
+        )
+        for category, sentinel in sentinels:
             if sentinel in content:
-                raise ValueError(f"package entry carries a forbidden sentinel: {path}")
+                raise ValueError(f"package entry carries forbidden sentinel ({category}): {path}")
 
 
 def non_repository_entries(package: SealedPackage) -> dict[str, str]:

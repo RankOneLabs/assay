@@ -17,7 +17,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Literal, Protocol
+from typing import Any, ClassVar, Literal, Protocol
 
 from jig import AgentConfig, run_agent
 from jig.core.types import (
@@ -34,7 +34,14 @@ from jig.tools.registry import ToolRegistry
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from assay.canonical import canonical_json
-from assay.execution import Accounting, WorkerFailure, WorkerResult, WorkerSuccess
+from assay.execution import (
+    Accounting,
+    AdmissionHalt,
+    AdmissionLedger,
+    WorkerFailure,
+    WorkerResult,
+    WorkerSuccess,
+)
 from assay.models import WireModel
 from assay.repository import validate_repository
 
@@ -234,22 +241,41 @@ class _Trace(TracingLogger):
 
 
 class _Admission:
-    def __init__(self, settings: PilotSettings) -> None:
+    def __init__(self, settings: PilotSettings, ledger: AdmissionLedger | None = None) -> None:
         self.settings = settings
+        self.ledger = ledger if ledger is not None else AdmissionLedger(
+            max_requests=settings.max_total_requests,
+            max_spend_usd=settings.max_spend_usd,
+            request_cost_bound_usd=settings.request_cost_bound_usd,
+        )
         self.requests = 0
-        self.halted = False
+        self.halt: AdmissionHalt | None = None
+
+    @property
+    def halted(self) -> bool:
+        return self.halt is not None
 
     def reserve(self) -> WorkerFailure | None:
-        # No await between checking and reserving: atomic on the run's event loop.
-        if self.halted:
-            return WorkerFailure("BudgetHalted", "a previous request has uncertain billing")
-        if self.requests >= self.settings.max_total_requests:
-            return WorkerFailure("RequestLimit", "authorized request count exhausted")
-        if (self.requests + 1) * self.settings.request_cost_bound_usd > self.settings.max_spend_usd:
-            return WorkerFailure("SpendLimit", "insufficient unreserved budget")
-        self.requests += 1
-        # Reservations are never refunded, even on cancellation/provider failure.
+        # The shared ledger has no await between checking and reserving.
+        refused = self.ledger.reserve("request")
+        self.requests = self.ledger.requests
+        if refused is not None:
+            self.halt = refused
+            error_type = (
+                "BudgetHalted"
+                if refused.code == "billing_uncertain"
+                else "SpendLimit"
+                if refused.code == "budget_exhausted"
+                else "RequestLimit"
+            )
+            return WorkerFailure(error_type, refused.message, accounting=refused.accounting)
+        # Reservations are never refunded, including failed and retried requests.
         return None
+
+    def uncertain(self) -> None:
+        self.halt = self.ledger.halt = AdmissionHalt(
+            "billing_uncertain", "a dispatched request has uncertain billing"
+        )
 
 
 class _RequestFailed(Exception):
@@ -268,10 +294,12 @@ class _BoundedClient(LLMClient):
         self.usages: list[dict[str, Any]] = []
         self.response_models: list[str] = []
         self.uncertain = False
+        self.refusal: AdmissionHalt | None = None
 
     async def complete_result(self, params: CompletionParams) -> LLMResponse | WorkerFailure:
         refused = self.admission.reserve()
         if refused is not None:
+            self.refusal = self.admission.halt
             return refused
         self.requests += 1
         params = dataclasses.replace(
@@ -286,7 +314,8 @@ class _BoundedClient(LLMClient):
                 if isinstance(response, CompletionNotSent):
                     self.not_sent += 1
                 else:
-                    self.uncertain = self.admission.halted = True
+                    self.uncertain = True
+                    self.admission.uncertain()
                 return response
             usage = response.usage
             for value in (usage.input_tokens, usage.output_tokens):
@@ -307,10 +336,12 @@ class _BoundedClient(LLMClient):
                 raise ValueError("provider cost exceeded the declared request bound")
             return response
         except asyncio.CancelledError:
-            self.uncertain = self.admission.halted = True
+            self.uncertain = True
+            self.admission.uncertain()
             raise
         except Exception as error:
-            self.uncertain = self.admission.halted = True
+            self.uncertain = True
+            self.admission.uncertain()
             return WorkerFailure(
                 type(error).__name__, str(error), accounting=Accounting(coverage="uncertain")
             )
@@ -389,9 +420,20 @@ class ConsistencyWorker:
     settings: PilotSettings
     allow_paid: bool = dataclasses.field(default=False, kw_only=True)
     _admission: _Admission = dataclasses.field(init=False, repr=False)
+    supports_run_admission: ClassVar[Literal[True]] = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_admission", _Admission(self.settings))
+
+    def bind_admission(self, ledger: AdmissionLedger) -> ConsistencyWorker:
+        ledger.configure_requests(
+            max_requests=self.settings.max_total_requests,
+            max_spend_usd=self.settings.max_spend_usd,
+            request_cost_bound_usd=self.settings.request_cost_bound_usd,
+        )
+        bound = dataclasses.replace(self)
+        object.__setattr__(bound, "_admission", _Admission(self.settings, ledger))
+        return bound
 
     def configuration(self, arm_id: str) -> dict[str, Any]:
         if arm_id not in {"clean", "inconsistent"} and not re.fullmatch(
@@ -501,11 +543,19 @@ class ConsistencyWorker:
                 diagnostics = {"capture_failed": True}
             if diagnostics is not None:
                 detail["provider_diagnostics"] = diagnostics
-        return dataclasses.replace(
+        finished = dataclasses.replace(
             result,
             trace=detail,
             accounting=Accounting() if bounded is None else bounded.accounting(),
         )
+        if bounded is not None and bounded.refusal is not None:
+            raise AdmissionHalt(
+                bounded.refusal.code,
+                bounded.refusal.message,
+                accounting=finished.accounting,
+                trace=finished.trace,
+            )
+        return finished
 
 
 def _combined_accounting(parts: list[Accounting]) -> Accounting:
@@ -566,6 +616,10 @@ class ChainWorker:
     """
 
     inner: ConsistencyWorker
+    supports_run_admission: ClassVar[Literal[True]] = True
+
+    def bind_admission(self, ledger: AdmissionLedger) -> ChainWorker:
+        return ChainWorker(self.inner.bind_admission(ledger))
 
     def configuration(self, arm_id: str) -> dict[str, Any]:
         return {**self.inner.configuration(arm_id), "chain": "append-renamed-v1"}
@@ -584,14 +638,22 @@ class ChainWorker:
         traces: list[Any] = []
         parts: list[Accounting] = []
         for step in steps:
-            result = await self.inner.run(
-                input_value={
-                    "task": {**task, "instruction": step["instruction"]},
-                    "repository": dict(repository),
-                    "base_subject_ref": input_value["base_subject_ref"],
-                },
-                arm_id=arm_id,
-            )
+            try:
+                result = await self.inner.run(
+                    input_value={
+                        "task": {**task, "instruction": step["instruction"]},
+                        "repository": dict(repository),
+                        "base_subject_ref": input_value["base_subject_ref"],
+                    },
+                    arm_id=arm_id,
+                )
+            except AdmissionHalt as halt:
+                raise AdmissionHalt(
+                    halt.code,
+                    halt.message,
+                    accounting=_combined_accounting([*parts, halt.accounting]),
+                    trace={"steps": [*traces, halt.trace]},
+                ) from halt
             traces.append(result.trace)
             parts.append(result.accounting)
             if isinstance(result, WorkerFailure):

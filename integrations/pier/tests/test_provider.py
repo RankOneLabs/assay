@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,6 +14,16 @@ from assay_pier_bridge.provider import (
     GuardedOpenRouterClient,
     GuardedRouteError,
 )
+
+
+def test_guarded_route_and_mini_config_bytes_are_unchanged() -> None:
+    bridge_root = Path(__file__).resolve().parents[1]
+    assert hashlib.sha256(
+        (bridge_root / "src/assay_pier_bridge/provider.py").read_bytes()
+    ).hexdigest() == ("42f11a2fe51b9ade9568d1e986c54f334b5a30c7f52dfb7d0ccb301fafcd7160")
+    assert hashlib.sha256((bridge_root / "config/mini.yaml").read_bytes()).hexdigest() == (
+        "d2483fae087108d3489dd240fc63eb19f4481a7e75a2f8e189926af3c6e415f9"
+    )
 
 
 def _good_body(**overrides: Any) -> dict[str, Any]:
@@ -151,6 +163,18 @@ def test_accepts_exactly_one_valid_submit_output_call() -> None:
         response = client.complete(system_prompt="sys", user_message="hi")
     assert response.submission.source == "x = 1"
     assert response.submission.call_id == "call_1"
+
+
+def test_empty_source_is_a_valid_noop_submission() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _good_body()
+        body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps(
+            {"source": ""}
+        )
+        return httpx.Response(200, json=body)
+
+    with _client(handler) as client:
+        assert client.complete(system_prompt="sys", user_message="hi").submission.source == ""
 
 
 def test_fails_closed_on_wrong_finish_reason() -> None:
