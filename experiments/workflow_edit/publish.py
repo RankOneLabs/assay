@@ -15,8 +15,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from assay.canonical import digest_bytes
 from workflow_edit.fixture import MAX_REPOSITORY_BYTES, MAX_REPOSITORY_FILES, load_fixture
-from workflow_edit.qualify import CELL_TIMEOUT_S, read_evidence
+from workflow_edit.qualify import CELL_TIMEOUT_S, EVIDENCE, read_evidence
 from workflow_edit.settings import Part1AgentSettings
 
 SMOKE_MD = Path(__file__).resolve().parent / "SMOKE.md"
@@ -438,6 +439,8 @@ def render_original() -> str:
 def render_regraded() -> str:
     """Append corrections while preserving the original qualification record."""
     regrade = read_evidence("regrade")
+    if regrade["smoke_sha256"] != digest_bytes((EVIDENCE / "smoke.json.gz").read_bytes()):
+        raise ValueError("regrade smoke_sha256 does not match the current smoke.json.gz")
     smoke = read_evidence("smoke")
     changes = regrade["changed_grades"]
     metrics = cell_metrics(smoke["cells"])

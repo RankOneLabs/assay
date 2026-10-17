@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from assay.canonical import digest_bytes
 from workflow_edit.publish import (
     SMOKE_MD,
     cell_metrics,
@@ -112,11 +114,14 @@ def test_report_reads_nonzero_paid_cells_from_bundle(monkeypatch: pytest.MonkeyP
 
 
 def test_regraded_report_names_each_changed_grade_and_cause(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     import workflow_edit.publish as publish
 
+    smoke_bundle = b"synthetic compressed smoke bundle"
+    (tmp_path / "smoke.json.gz").write_bytes(smoke_bundle)
     regrade = {
+        "smoke_sha256": digest_bytes(smoke_bundle),
         "regraded_at": "2026-10-17",
         "image": "sha256:fixed-image",
         "original_harness_sha256": "sha256:original",
@@ -153,6 +158,7 @@ def test_regraded_report_names_each_changed_grade_and_cause(
         }],
     }
     evidence = {"regrade": regrade, "smoke": {"cells": CELLS}, "pricing": pricing}
+    monkeypatch.setattr(publish, "EVIDENCE", tmp_path)
     monkeypatch.setattr(publish, "read_evidence", evidence.__getitem__)
 
     report = render_regraded()
@@ -167,6 +173,22 @@ def test_regraded_report_names_each_changed_grade_and_cause(
         "typecheck: failed (typecheck_failure) to failed (test_failure) |"
         in report
     )
+
+
+def test_regraded_report_rejects_stale_smoke_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    import workflow_edit.publish as publish
+
+    (tmp_path / "smoke.json.gz").write_bytes(b"new smoke bundle")
+    monkeypatch.setattr(publish, "EVIDENCE", tmp_path)
+    evidence = {"regrade": {"smoke_sha256": digest_bytes(b"old smoke bundle")}}
+    monkeypatch.setattr(
+        publish, "read_evidence", evidence.__getitem__,
+    )
+
+    with pytest.raises(ValueError, match="regrade smoke_sha256 does not match"):
+        render_regraded()
 
 
 def test_correctness_counts_against_dispatched_cells() -> None:
