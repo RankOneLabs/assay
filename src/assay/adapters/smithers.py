@@ -10,8 +10,10 @@ the worker actually ran, which must equal the authorized tag.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -177,34 +179,49 @@ class SmithersClient(DispatchClient, DescribedClient):
             if not isinstance(job_id, str) or not job_id:
                 return WorkerFailure("InvalidResponse", "Smithers omitted the job ID")
             self._diagnostics["job_id"] = job_id
-            while True:
-                response = await self._http.get(f"{self._dispatch_url}/jobs/{job_id}")
-                response.raise_for_status()
-                job = response.json()
-                if job.get("job_id") != job_id:
-                    return WorkerFailure("IdentityMismatch", "Smithers changed the job ID")
-                failure = self._identity_failure(job)
-                if failure is not None:
-                    return failure
-                timing = self._timing(job)
-                if isinstance(timing, WorkerFailure):
-                    return timing
-                if timing is not None:
-                    self._diagnostics.update(timing)
-                    if timing["time_from_acceptance_seconds"] > self._factory.timeout_seconds:
-                        return WorkerFailure(
-                            "AcceptanceDeadlineExceeded", "worker acceptance budget expired"
-                        )
-                status = job.get("status")
-                if status == "complete":
-                    return await self._completion(job_id, job, timing)
-                if status in ("failed", "cancelled"):
-                    return WorkerFailure("SmithersJobFailed", str(job.get("error") or status))
-                if status not in ("queued", "waking_machine", "dispatched", "running"):
-                    return WorkerFailure(
-                        "InvalidResponse", "Smithers returned an unknown job status"
-                    )
-                await self._sleep()
+            accepted_at = self._now()
+            try:
+                async with asyncio.timeout(self._factory.timeout_seconds):
+                    while True:
+                        if self._now() - accepted_at >= self._factory.timeout_seconds:
+                            return WorkerFailure(
+                                "AcceptanceDeadlineExceeded", "worker acceptance budget expired"
+                            )
+                        response = await self._get(f"{self._dispatch_url}/jobs/{job_id}")
+                        job = response.json()
+                        if job.get("job_id") != job_id:
+                            return WorkerFailure("IdentityMismatch", "Smithers changed the job ID")
+                        failure = self._identity_failure(job)
+                        if failure is not None:
+                            return failure
+                        timing = self._timing(job)
+                        if isinstance(timing, WorkerFailure):
+                            return timing
+                        if timing is not None:
+                            self._diagnostics.update(timing)
+                            if (
+                                timing["time_from_acceptance_seconds"]
+                                > self._factory.timeout_seconds
+                            ):
+                                return WorkerFailure(
+                                    "AcceptanceDeadlineExceeded", "worker acceptance budget expired"
+                                )
+                        status = job.get("status")
+                        if status == "complete":
+                            return await self._completion(job_id, job, timing)
+                        if status in ("failed", "cancelled"):
+                            return WorkerFailure(
+                                "SmithersJobFailed", str(job.get("error") or status)
+                            )
+                        if status not in ("queued", "waking_machine", "dispatched", "running"):
+                            return WorkerFailure(
+                                "InvalidResponse", "Smithers returned an unknown job status"
+                            )
+                        await self._sleep()
+            except TimeoutError:
+                return WorkerFailure(
+                    "AcceptanceDeadlineExceeded", "worker acceptance budget expired"
+                )
         except (
             httpx.HTTPError, JigLLMError, ValueError, TypeError, KeyError, AttributeError
         ) as error:
@@ -236,6 +253,20 @@ class SmithersClient(DispatchClient, DescribedClient):
         import asyncio
 
         await asyncio.sleep(self._factory.poll_interval)
+
+    def _now(self) -> float:
+        return time.monotonic()
+
+    async def _get(self, url: str) -> httpx.Response:
+        async def request() -> httpx.Response:
+            response = await self._http.get(url)
+            response.raise_for_status()
+            return response
+
+        try:
+            return await request()
+        except httpx.HTTPError:
+            return await request()
 
     def _identity_failure(self, job: dict[str, Any]) -> WorkerFailure | None:
         if job.get("machine") != self._factory.machine:
@@ -301,8 +332,7 @@ class SmithersClient(DispatchClient, DescribedClient):
         result = job.get("result")
         if not isinstance(result, dict):
             return WorkerFailure("InvalidResponse", "Smithers completion lacks a result")
-        response = await self._http.get(f"{self._factory.resolved_worker_url}/tasks/{job_id}")
-        response.raise_for_status()
+        response = await self._get(f"{self._factory.resolved_worker_url}/tasks/{job_id}")
         task = response.json()
         if not isinstance(task, dict) or task.get("job_id") != job_id:
             return WorkerFailure("IdentityMismatch", "worker task is for another job")

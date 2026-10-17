@@ -27,6 +27,7 @@ from assay.models import (
     ExecutionOutcome,
     ExecutionPlan,
     ExecutionPlanV2,
+    ExecutionPlanV3,
     ReportConfig,
     RunManifest,
     StudySnapshot,
@@ -222,6 +223,7 @@ _WIRE_SCHEMAS = {
     "assay-run-manifest/0.1.0",
     "assay-execution-plan/0.1.0",
     "assay-execution-plan/0.2.0",
+    "assay-execution-plan/0.3.0",
     "assay-study-snapshot/0.1.0",
     "assay-execution-outcome/0.1.0",
     "assay-evaluation-failure/0.1.0",
@@ -247,6 +249,8 @@ def _parse_wire(ref: str, schema: str, value: dict[str, Any]) -> IndexedObject |
             return IndexedPlan("plan", ref, ExecutionPlan.model_validate(value))
         if schema == "assay-execution-plan/0.2.0":
             return IndexedPlan("plan", ref, ExecutionPlanV2.model_validate(value))
+        if schema == "assay-execution-plan/0.3.0":
+            return IndexedPlan("plan", ref, ExecutionPlanV3.model_validate(value))
         if schema == "assay-study-snapshot/0.1.0":
             return IndexedSnapshot("snapshot", ref, StudySnapshot.model_validate(value))
         if schema == "assay-execution-outcome/0.1.0":

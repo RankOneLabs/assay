@@ -8,7 +8,7 @@ import pytest
 from code_metrics_fixtures import stub_jscpd
 from jsonschema import Draft202012Validator
 
-from assay.code_metrics import analyze, compare, graph, measure
+from assay.code_metrics import analyze, compare, graph, measure, tools
 from assay.code_metrics.api import CodeMetricsConfig
 from assay.code_metrics.components import ComponentConfig
 from assay.code_metrics.errors import EmptyComponentPattern
@@ -30,6 +30,72 @@ def test_absolute_report_and_partial_graph() -> None:
     assert report.coverage.languages[0].files_without_module == ("solo.py",)
     assert "excluded_directories" not in CodeMetricsConfig.__dataclass_fields__
     assert report.configuration.excluded_directories == ()
+
+
+def test_legacy_python_only_ignores_typescript_and_runs_mypy_without_python(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    original = tools._mypy
+
+    def tracked(root: Path) -> int | None:
+        nonlocal calls
+        calls += 1
+        return original(root)
+
+    monkeypatch.setattr(tools, "_mypy", tracked)
+    report = analyze(
+        {"a.ts": "export const a = 1;\n"}, config=CodeMetricsConfig(legacy_python_only=True)
+    )
+    assert report.existing_metrics.mypy_errors == 0
+    assert report.coverage.languages[2].files_seen == 0
+    assert calls == 1
+
+
+def test_legacy_comparison_ignores_typescript_only_change() -> None:
+    comparison = compare(
+        {}, {"a.ts": "export const a = 1;\n"},
+        config=CodeMetricsConfig(legacy_python_only=True),
+    )
+    assert comparison.after.existing_metrics.jscpd_clones is None
+    assert comparison.new_code.new_lines is None
+    assert comparison.patch.code_lines.delta == 0
+    assert comparison.patch.added_lines == 0
+    assert comparison.patch.removed_lines == 0
+
+
+def test_legacy_comparison_exposes_mypy_delta_from_empty_snapshot() -> None:
+    comparison = compare(
+        {}, {"a.py": 'x: int = "bad"\n'},
+        config=CodeMetricsConfig(legacy_python_only=True),
+    )
+    mypy = next(delta for delta in comparison.deltas if delta.metric == "mypy.errors")
+    assert (mypy.before, mypy.after, mypy.delta) == (0, 1, 1)
+
+
+def test_legacy_and_v2_same_python_digest_have_separate_cache_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def clone_counts(root: Path, config: object) -> dict[str, object]:
+        return {
+            "jscpd.clones": int(config.legacy_python_only),  # type: ignore[attr-defined]
+            "jscpd.duplicated_lines": 0,
+            "typescript.clones": 0,
+            "typescript.duplicated_lines": 0,
+            "cloned_lines": {},
+        }
+
+    monkeypatch.setattr(tools, "_jscpd", clone_counts)
+    tools._CACHE.clear()
+    try:
+        snapshot = {"a.py": "x = 1\n"}
+        v2 = analyze(snapshot)
+        legacy = analyze(snapshot, config=CodeMetricsConfig(legacy_python_only=True))
+        assert v2.existing_metrics.jscpd_clones == 0
+        assert legacy.existing_metrics.jscpd_clones == 1
+        assert len(tools._CACHE) == 2
+    finally:
+        tools._CACHE.clear()
 
 
 def test_package_initializer_wins_over_same_named_module() -> None:

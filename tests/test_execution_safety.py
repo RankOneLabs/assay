@@ -33,7 +33,7 @@ from assay.execution import (
     WorkerSuccess,
     execute_plan,
 )
-from assay.models import ExecutionPlanV3
+from assay.models import ExecutionCeiling, ExecutionPlanV3
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
@@ -61,6 +61,31 @@ def _ceiling_plan(
         }
     )
     return canonical_json(successor.model_dump(mode="json"))
+
+
+@pytest.mark.parametrize("limit", ["cells", "occupancy"])
+def test_cell_refusal_does_not_stop_in_flight_requests(limit: str) -> None:
+    ledger = AdmissionLedger(
+        ceiling=ExecutionCeiling(max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1)
+    )
+    assert ledger.reserve("cell") is None
+    if limit == "cells":
+        ledger.cells = 2
+    refused = ledger.reserve("cell")
+    assert refused is not None and refused.code == "ceiling_exhausted"
+    assert ledger.reserve("request") is None
+    assert ledger.requests == 1
+
+
+def test_expired_wall_stops_requests_before_cell_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = AdmissionLedger(
+        ceiling=ExecutionCeiling(max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1)
+    )
+    monkeypatch.setattr(ledger, "remaining_seconds", lambda: 0.0)
+    refused = ledger.reserve("request")
+    assert refused is not None and refused.code == "ceiling_exhausted"
+    assert ledger.cell_halt is None
+    assert ledger.requests == 0
 
 
 async def test_v3_cell_ceiling_halts_and_records_each_started_cell(tmp_path: Path) -> None:
@@ -244,6 +269,19 @@ async def test_evaluator_rechecks_wall_deadline_after_preparation(
         fixture.store.read_bytes(next(iter(result.manifest.evaluation_records.values())))
     )
     assert record["error_type"] == "ceiling_exhausted"
+    evaluator_records = [
+        ref for key, ref in result.manifest.operating_records.items()
+        if key.startswith("evaluator:")
+    ]
+    assert evaluator_records
+    for ref in evaluator_records:
+        operating = json.loads(fixture.store.read_bytes(ref))
+        coverages = {
+            source["coverage"]
+            for source_ref in operating["source_references"]
+            if "coverage" in (source := json.loads(fixture.store.read_bytes(source_ref)))
+        }
+        assert coverages == {"unavailable"}
 
 
 async def test_wall_expiry_after_complete_grid_keeps_verifiable_manifest(
