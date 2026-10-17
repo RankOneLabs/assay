@@ -44,7 +44,7 @@ def worker_usage_from_result_bytes(result_bytes: bytes | None) -> TrialUsage | N
         return None
     prompt = _nonnegative_int(usage.get("prompt_tokens"))
     completion = _nonnegative_int(usage.get("completion_tokens"))
-    requests = _nonnegative_int(usage.get("requests", 1))
+    requests = _nonnegative_int(usage.get("requests"))
     if prompt is None or completion is None or requests is None:
         return None
     return TrialUsage(

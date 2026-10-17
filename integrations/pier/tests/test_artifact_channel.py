@@ -813,6 +813,7 @@ def test_worker_reported_counts_become_usage_without_a_cost() -> None:
         b'{"exit_status":"Submitted","usage":{"prompt_tokens":-1,"completion_tokens":1}}',
         b'{"exit_status":"Submitted","usage":{"prompt_tokens":1.5,"completion_tokens":1}}',
         b'{"exit_status":"Submitted","usage":{"completion_tokens":1}}',
+        b'{"exit_status":"Submitted","usage":{"prompt_tokens":1,"completion_tokens":1}}',
         b"not json",
         b"[]",
         None,
