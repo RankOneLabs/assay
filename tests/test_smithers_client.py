@@ -227,6 +227,93 @@ async def test_running_job_uses_recorded_completion_clock(tmp_path: Path) -> Non
     assert polls == 2
 
 
+@pytest.mark.parametrize("status", ["queued", "waking_machine"])
+async def test_job_without_completion_timing_obeys_acceptance_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    client = _factory(tmp_path).create(idempotency_key="cell-1")
+    polls = 0
+    clock = 0.0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        if request.method == "POST":
+            return httpx.Response(200, json={"job_id": "job-1"})
+        polls += 1
+        return httpx.Response(200, json={**_job(), "status": status,
+                                          "started_at": None, "completed_at": None,
+                                          "result": None})
+
+    async def advance() -> None:
+        nonlocal clock
+        clock += 451
+
+    monkeypatch.setattr(client, "_now", lambda: clock)
+    monkeypatch.setattr(client, "_sleep", advance)
+    client._http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    try:
+        result = await client.complete_result(_params())
+    finally:
+        await client.aclose()
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == "AcceptanceDeadlineExceeded"
+    assert polls == 2
+
+
+@pytest.mark.parametrize("endpoint", ["status", "task"])
+async def test_transient_get_error_is_retried(
+    tmp_path: Path, endpoint: str
+) -> None:
+    client = _factory(tmp_path).create(idempotency_key="cell-1")
+    reads = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal reads
+        if request.method == "POST":
+            return httpx.Response(200, json={"job_id": "job-1"})
+        current = "task" if request.url.host == "mcbain" else "status"
+        if current == endpoint:
+            reads += 1
+            if reads == 1:
+                raise httpx.ReadError("transient")
+        return httpx.Response(200, json=_task() if current == "task" else _job())
+
+    client._http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    try:
+        result = await client.complete_result(_params())
+    finally:
+        await client.aclose()
+    assert not isinstance(result, WorkerFailure)
+    assert reads == 2
+
+
+@pytest.mark.parametrize("endpoint", ["status", "task"])
+async def test_persistent_get_error_fails_after_bounded_retries(
+    tmp_path: Path, endpoint: str
+) -> None:
+    client = _factory(tmp_path).create(idempotency_key="cell-1")
+    reads = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal reads
+        if request.method == "POST":
+            return httpx.Response(200, json={"job_id": "job-1"})
+        current = "task" if request.url.host == "mcbain" else "status"
+        if current == endpoint:
+            reads += 1
+            raise httpx.ReadError("persistent")
+        return httpx.Response(200, json=_task() if current == "task" else _job())
+
+    client._http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    try:
+        result = await client.complete_result(_params())
+    finally:
+        await client.aclose()
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == "ReadError"
+    assert reads == 2
+
+
 @pytest.mark.parametrize(
     ("task", "cause"),
     [

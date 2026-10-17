@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -177,9 +178,13 @@ class SmithersClient(DispatchClient, DescribedClient):
             if not isinstance(job_id, str) or not job_id:
                 return WorkerFailure("InvalidResponse", "Smithers omitted the job ID")
             self._diagnostics["job_id"] = job_id
+            accepted_at = self._now()
             while True:
-                response = await self._http.get(f"{self._dispatch_url}/jobs/{job_id}")
-                response.raise_for_status()
+                if self._now() - accepted_at >= self._factory.timeout_seconds:
+                    return WorkerFailure(
+                        "AcceptanceDeadlineExceeded", "worker acceptance budget expired"
+                    )
+                response = await self._get(f"{self._dispatch_url}/jobs/{job_id}")
                 job = response.json()
                 if job.get("job_id") != job_id:
                     return WorkerFailure("IdentityMismatch", "Smithers changed the job ID")
@@ -236,6 +241,20 @@ class SmithersClient(DispatchClient, DescribedClient):
         import asyncio
 
         await asyncio.sleep(self._factory.poll_interval)
+
+    def _now(self) -> float:
+        return time.monotonic()
+
+    async def _get(self, url: str) -> httpx.Response:
+        for attempt in range(2):
+            try:
+                response = await self._http.get(url)
+                response.raise_for_status()
+                return response
+            except httpx.HTTPError:
+                if attempt == 1:
+                    raise
+        raise AssertionError("bounded GET retry loop did not return")
 
     def _identity_failure(self, job: dict[str, Any]) -> WorkerFailure | None:
         if job.get("machine") != self._factory.machine:
@@ -301,8 +320,7 @@ class SmithersClient(DispatchClient, DescribedClient):
         result = job.get("result")
         if not isinstance(result, dict):
             return WorkerFailure("InvalidResponse", "Smithers completion lacks a result")
-        response = await self._http.get(f"{self._factory.resolved_worker_url}/tasks/{job_id}")
-        response.raise_for_status()
+        response = await self._get(f"{self._factory.resolved_worker_url}/tasks/{job_id}")
         task = response.json()
         if not isinstance(task, dict) or task.get("job_id") != job_id:
             return WorkerFailure("IdentityMismatch", "worker task is for another job")
