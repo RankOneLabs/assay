@@ -22,6 +22,7 @@ from assay_pier_bridge.agent_loop import (
     HAIKU_TURN_ROUTE,
     PILOT_TOOLS_REVIEW,
     PILOT_TOOLS_T1,
+    SYSTEM_PROMPT,
     TOOLS,
     AgentLoopError,
     ContainerStartError,
@@ -112,11 +113,14 @@ def test_paid_turn_uses_the_current_pilot_tool_schema(tmp_path: Path) -> None:
     assert captured[0]["tools"] == PILOT_TOOLS_REVIEW
 
 
-def test_paid_turn_forwards_deadline_to_openrouter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_paid_turn_forwards_deadline_to_openrouter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     client = _client(tmp_path, lambda request: httpx.Response(500))
     seen: list[float | None] = []
 
-    def fake_openrouter(*args: Any, deadline: float | None = None) -> ModelTurn:
+    def fake_openrouter(*args: Any, deadline: float | None = None,
+                        on_dispatch: Any = None) -> ModelTurn:
         seen.append(deadline)
         return ModelTurn(message={}, finish_reason="stop", prompt_tokens=0,
                          completion_tokens=0, cost_usd=0.0)
@@ -722,7 +726,9 @@ def test_local_turns_record_observations_and_uncertain_billing(tmp_path: Path) -
 def test_observations_cannot_replace_model_event_fields(tmp_path: Path) -> None:
     def completion(**kwargs: Any) -> ModelTurn:
         return ModelTurn(
-            message={"role": "assistant", "tool_calls": [_call("submit_output", {"summary": "ok"}, 1)]},
+            message={
+                "role": "assistant", "tool_calls": [_call("submit_output", {"summary": "ok"}, 1)]
+            },
             finish_reason="tool_calls", prompt_tokens=7, completion_tokens=3,
             cost_usd=None, observations={"kind": "forged", "prompt_tokens": 999},
         )
@@ -1290,7 +1296,30 @@ def test_resolved_config_observes_constructed_transport_retries(tmp_path: Path) 
     with pytest.raises(AgentLoopError, match="retry_config_violation") as failure:
         client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
     assert failure.value.trajectory["config"]["transport_retries"] == 2
-    assert failure.value.trajectory["events"][-1]["requests"] == 1
+    assert failure.value.trajectory["events"][-1]["requests"] == 0
+
+
+def test_full_provider_envelope_limit_does_not_count_a_request(tmp_path: Path) -> None:
+    dispatched = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal dispatched
+        dispatched += 1
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "ok"}, 1))
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "Edit"},
+    ]
+    compact_size = sum(len(json.dumps(value, separators=(",", ":")).encode())
+                       for value in (messages, TOOLS))
+    client = _client(tmp_path, handler, bounds=replace(LoopBounds(),
+                                                      max_request_bytes=compact_size + 1))
+    with pytest.raises(AgentLoopError, match="request_limit") as failure:
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.usage["requests"] == 0
+    assert failure.value.trajectory["turns"][0]["usage"]["requests"] == 0
+    assert dispatched == 0
 
 
 @pytest.mark.parametrize(

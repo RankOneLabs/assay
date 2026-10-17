@@ -1229,9 +1229,11 @@ class RepositoryAgentClient:
 
     def _turn(
         self, messages: list[dict[str, Any]], turn: int, deadline: float | None,
-        tools: list[dict[str, Any]],
+        tools: list[dict[str, Any]], on_dispatch: Callable[[], None] | None = None,
     ) -> ModelTurn:
         if self.completion is not None:
+            if on_dispatch is not None:
+                on_dispatch()
             return self.completion(
                 messages=messages,
                 tools=tools,
@@ -1239,12 +1241,15 @@ class RepositoryAgentClient:
                 turn=turn,
                 deadline=deadline,
             )
-        return self._openrouter_turn(messages, HAIKU_TURN_ROUTE, tools, deadline=deadline)
+        return self._openrouter_turn(
+            messages, HAIKU_TURN_ROUTE, tools, deadline=deadline, on_dispatch=on_dispatch
+        )
 
     def _openrouter_turn(
         self, messages: list[dict[str, Any]], route: OpenRouterTurnRoute = HAIKU_TURN_ROUTE,
         tools: list[dict[str, Any]] | None = None,
         *, deadline: float | None = None,
+        on_dispatch: Callable[[], None] | None = None,
     ) -> ModelTurn:
         if deadline is not None and deadline <= time.monotonic():
             raise ValueError("agent_deadline")
@@ -1292,6 +1297,8 @@ class RepositoryAgentClient:
             timeout_s = 30.0 if deadline is None else min(30.0, deadline - time.monotonic())
             if timeout_s <= 0:
                 raise ValueError("agent_deadline")
+            if on_dispatch is not None:
+                on_dispatch()
             with client.stream(
                 "POST",
                 chat_completions_url,
@@ -1454,6 +1461,12 @@ class RepositoryAgentClient:
                 "cost_usd": cost_usd,
             }
 
+        def count_dispatch() -> None:
+            nonlocal requests
+            requests += 1
+            turn_usage: dict[str, int | float | None] = turn_record["usage"]
+            turn_usage["requests"] = int(turn_usage["requests"] or 0) + 1
+
         def remaining() -> float:
             if cancel_event is not None and cancel_event.is_set():
                 raise ValueError("cancelled")
@@ -1524,15 +1537,14 @@ class RepositoryAgentClient:
                 )
                 if len(_json_bytes(messages)) > self.bounds.max_conversation_bytes:
                     raise ValueError("conversation_limit")
-                if len(_json_bytes(messages)) + len(_json_bytes(turn_tools)) > (
-                    self.bounds.max_request_bytes
+                if self.completion is not None and (
+                    len(_json_bytes(messages)) + len(_json_bytes(turn_tools))
+                    > self.bounds.max_request_bytes
                 ):
                     raise ValueError("request_limit")
-                requests += 1  # Count a failed dispatch; never retry it.
                 turn_usage: dict[str, int | float | None] = turn_record["usage"]
-                turn_usage["requests"] = int(turn_usage["requests"] or 0) + 1
                 started = time.monotonic()
-                answer = self._turn(messages, turn, deadline, turn_tools)
+                answer = self._turn(messages, turn, deadline, turn_tools, count_dispatch)
                 message = answer.message
                 if (
                     not isinstance(message, dict)
