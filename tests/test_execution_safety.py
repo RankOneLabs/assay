@@ -33,7 +33,7 @@ from assay.execution import (
     WorkerSuccess,
     execute_plan,
 )
-from assay.models import ExecutionPlanV3
+from assay.models import ExecutionCeiling, ExecutionPlanV3
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
@@ -61,6 +61,31 @@ def _ceiling_plan(
         }
     )
     return canonical_json(successor.model_dump(mode="json"))
+
+
+@pytest.mark.parametrize("limit", ["cells", "occupancy"])
+def test_cell_refusal_does_not_stop_in_flight_requests(limit: str) -> None:
+    ledger = AdmissionLedger(
+        ceiling=ExecutionCeiling(max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1)
+    )
+    assert ledger.reserve("cell") is None
+    if limit == "cells":
+        ledger.cells = 2
+    refused = ledger.reserve("cell")
+    assert refused is not None and refused.code == "ceiling_exhausted"
+    assert ledger.reserve("request") is None
+    assert ledger.requests == 1
+
+
+def test_expired_wall_stops_requests_before_cell_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = AdmissionLedger(
+        ceiling=ExecutionCeiling(max_cells=2, max_wall_time_seconds=30, max_fleet_occupancy=1)
+    )
+    monkeypatch.setattr(ledger, "remaining_seconds", lambda: 0.0)
+    refused = ledger.reserve("request")
+    assert refused is not None and refused.code == "ceiling_exhausted"
+    assert ledger.cell_halt is None
+    assert ledger.requests == 0
 
 
 async def test_v3_cell_ceiling_halts_and_records_each_started_cell(tmp_path: Path) -> None:
