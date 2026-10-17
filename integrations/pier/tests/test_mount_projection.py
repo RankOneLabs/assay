@@ -323,3 +323,23 @@ def test_distinct_repository_paths_that_merely_share_a_suffix_are_kept() -> None
         "instruction.md": SEALED_INSTRUCTION,
         "workspace/instruction.md": "nested\n",
     }
+
+
+def test_mount_validation_precedes_all_host_directory_creation(tmp_path: Path) -> None:
+    package = {
+        "instruction.md": SEALED_INSTRUCTION,
+        "workspace/instruction.md": REPOSITORY_INSTRUCTION,
+    }
+    digest = package_digest(package)
+    request = TrialRequest(
+        cell_id="s1:a1:w0", package_digest=digest,
+        exchange=exchange_for("s1:a1:w0", digest), model_route=ModelRoute(),
+        limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=20, storage_mb=64),
+    )
+    runs_root = tmp_path / "never-created"
+    with pytest.raises(ValueError, match="package entries"):
+        DockerTrialHandle(
+            image="unused", name="trial", request=request, package=package,
+            command=["/bin/true"], runs_root=runs_root,
+        )
+    assert not runs_root.exists()

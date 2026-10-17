@@ -226,6 +226,16 @@ def _bounded_failure_artifacts(
     return bounded
 
 
+def _unverified_effective() -> EffectiveEnforcement:
+    return EffectiveEnforcement(
+        uid=0, gid=0, workspace_read_only=False,
+        submission_mount="/submission", scratch_mount="/scratch",
+        network_policy="unknown", cpu_limit=0, memory_limit_mb=0,
+        pids_limit=0, storage_limit_mb=0, containers_remaining=0,
+        child_processes_remaining=0, teardown_completed=False,
+    )
+
+
 class BridgeRuntime:
     """Wraps one ``PierTrialClient`` and serves exactly one ``TrialRequest``."""
 
@@ -258,7 +268,22 @@ class BridgeRuntime:
         if remaining <= 0:
             raise TrialTimeoutError("trial exceeded its worker-acceptance deadline")
         deadline = time.monotonic() + remaining
-        handle = self._client.create(request)
+        try:
+            handle = self._client.create(request)
+        except Exception as error:
+            cleanup = getattr(self._client, "teardown", None)
+            effective = _unverified_effective()
+            if callable(cleanup):
+                with contextlib.suppress(Exception):
+                    effective = cleanup()
+            return TrialResult(
+                cell_id=request.cell_id,
+                outcome=InfrastructureFailure(
+                    cause="unexpected_exception", detail=str(error)[:2000],
+                    exception_type=type(error).__name__,
+                ),
+                effective=effective,
+            )
         self._handle = handle
         handle.set_deadline(deadline)
         if self._cancelled.is_set():
