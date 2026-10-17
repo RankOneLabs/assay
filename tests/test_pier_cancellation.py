@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ from assay.models import (
     StudySnapshot,
     Subject,
 )
-from assay.pier_protocol import PierExchange, RuntimeBinding
+from assay.pier_protocol import InfrastructureFailure, PierExchange, RuntimeBinding
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 
@@ -141,6 +142,46 @@ def _find_cancellation_trace(store: ObjectStore) -> dict[str, Any] | None:
         ):
             return value
     return None
+
+
+def test_bridge_calls_do_not_depend_on_the_event_loops_default_executor(tmp_path: Path) -> None:
+    class RejectDefaultExecutor(ThreadPoolExecutor):
+        def submit(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("the adapter used the event loop's default executor")
+
+    class Handle:
+        def __init__(self, exchange: PierExchange) -> None:
+            self.exchange = exchange
+
+        def run(self) -> BridgeTrialResult:
+            return BridgeTrialResult(
+                exchange=self.exchange,
+                outcome=InfrastructureFailure(cause="unexpected_exception", detail="probe"),
+                usage=None, artifacts={},
+            )
+
+        def cancel(self) -> None:
+            pass
+
+        def teardown(self) -> BridgeEffectiveEnforcement:
+            return BridgeEffectiveEnforcement(
+                containers_remaining=0, child_processes_remaining=0, teardown_completed=True
+            )
+
+    class Bridge:
+        def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> Handle:
+            return Handle(exchange)
+
+    async def exercise() -> WorkerFailure:
+        asyncio.get_running_loop().set_default_executor(RejectDefaultExecutor())
+        result = await _adapter(tmp_path, Bridge()).run_cell(
+            input_value={"task": "do it", "repository": {"a.py": "x = 1\n"}},
+            coordinate=_coordinate(),
+        )
+        assert isinstance(result, WorkerFailure)
+        return result
+
+    asyncio.run(exercise())
 
 
 async def _run_and_cancel(tmp_path: Path, bridge: Any) -> ObjectStore:
