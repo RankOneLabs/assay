@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from assay.canonical import digest_bytes
 from workflow_edit.publish import (
     SMOKE_MD,
     cell_metrics,
@@ -15,9 +18,11 @@ from workflow_edit.publish import (
     probe_rows,
     quantile,
     render,
+    render_original,
+    render_regraded,
     stop_cause,
 )
-from workflow_edit.qualify import EVIDENCE
+from workflow_edit.qualify import EVIDENCE, read_evidence
 from workflow_edit.settings import Part1AgentSettings
 
 
@@ -87,6 +92,105 @@ def test_cell_metrics_count_every_cell_and_turn() -> None:
     assert 4 < m["bytes_per_prompt_token"]["min"] < 5
 
 
+def test_paid_cells_are_derived_from_accounting() -> None:
+    cells = {name: dict(cell) for name, cell in CELLS.items()}
+    cells["s:mess-00:w0"]["accounting"] = {"coverage": "measured", "amount": 1.25}
+    cells["s:mess-00:w1"]["accounting"] = {"coverage": "uncertain", "amount": None}
+    assert cell_metrics(cells)["paid_cells"] == 1
+
+
+def test_report_reads_nonzero_paid_cells_from_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    import workflow_edit.publish as publish
+
+    smoke = read_evidence("smoke")
+    cell = next(iter(smoke["cells"].values()))
+    cell["accounting"] = {"coverage": "measured", "amount": 1.25}
+    monkeypatch.setattr(
+        publish, "read_evidence",
+        lambda name: smoke if name == "smoke" else read_evidence(name),
+    )
+    assert "Paid cells: 1." in publish.render_original()
+    assert "Cost correction: Paid cells: 1," in publish.render()
+
+
+def test_regraded_report_names_each_changed_grade_and_cause(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    import workflow_edit.publish as publish
+
+    smoke_bundle = b"synthetic compressed smoke bundle"
+    (tmp_path / "smoke.json.gz").write_bytes(smoke_bundle)
+    regrade = {
+        "smoke_sha256": digest_bytes(smoke_bundle),
+        "regraded_at": "2026-10-17",
+        "image": "sha256:fixed-image",
+        "original_harness_sha256": "sha256:original",
+        "harness_sha256": "sha256:fixed",
+        "evaluations": {"cell-a": {}, "cell-b": {}},
+        "changed_grades": {
+            "cell-a": {
+                "before": {
+                    "verdict": "incorrect", "cause": "test_failure",
+                    "groups": {"new_behavior": {"status": "failed", "cause": "test_failure"}},
+                },
+                "after": {
+                    "verdict": "correct", "cause": None,
+                    "groups": {"new_behavior": {"status": "passed", "cause": None}},
+                },
+            },
+            "cell-b": {
+                "before": {
+                    "verdict": "incorrect", "cause": "typecheck_failure",
+                    "groups": {"typecheck": {"status": "failed", "cause": "typecheck_failure"}},
+                },
+                "after": {
+                    "verdict": "incorrect", "cause": "test_failure",
+                    "groups": {"typecheck": {"status": "failed", "cause": "test_failure"}},
+                },
+            },
+        },
+    }
+    pricing = {
+        "fetched_at": "2026-10-17", "model": {"id": "m"},
+        "endpoints": [{
+            "provider_name": "p", "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+            "context_length": 262144, "max_completion_tokens": 65536,
+        }],
+    }
+    evidence = {"regrade": regrade, "smoke": {"cells": CELLS}, "pricing": pricing}
+    monkeypatch.setattr(publish, "EVIDENCE", tmp_path)
+    monkeypatch.setattr(publish, "read_evidence", evidence.__getitem__)
+
+    report = render_regraded()
+    assert "2 previously graded candidates were regraded; 2 grades changed." in report
+    assert "| Cell | Original | Regraded | Changed groups and cause |" in report
+    assert (
+        "| cell-a | incorrect | correct | new_behavior: failed (test_failure) to passed |"
+        in report
+    )
+    assert (
+        "| cell-b | incorrect | incorrect | "
+        "typecheck: failed (typecheck_failure) to failed (test_failure) |"
+        in report
+    )
+
+
+def test_regraded_report_rejects_stale_smoke_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    import workflow_edit.publish as publish
+
+    (tmp_path / "smoke.json.gz").write_bytes(b"new smoke bundle")
+    monkeypatch.setattr(publish, "EVIDENCE", tmp_path)
+    evidence = {"regrade": {"smoke_sha256": digest_bytes(b"old smoke bundle")}}
+    monkeypatch.setattr(
+        publish, "read_evidence", evidence.__getitem__,
+    )
+
+    with pytest.raises(ValueError, match="regrade smoke_sha256 does not match"):
+        render_regraded()
+
+
 def test_correctness_counts_against_dispatched_cells() -> None:
     evaluations = {
         "s:mess-00:w0": {"verdict": "correct", "empty_patch": False, "seconds": 9.0,
@@ -143,9 +247,14 @@ def test_probe_rows_compare_observed_to_expected() -> None:
 @pytest.mark.skipif(
     not all(
         (EVIDENCE / f"{name}.json.gz").exists()
-        for name in ("smoke", "probes", "wake", "pricing", "diagnosis")
+        for name in ("smoke", "probes", "wake", "pricing", "diagnosis", "regrade")
     ),
     reason="wf-13 evidence not yet published",
 )
 def test_committed_smoke_report_is_exactly_the_evidence() -> None:
     assert SMOKE_MD.read_text(encoding="utf-8") == render()
+    original = SMOKE_MD.read_bytes().split(b"\n## Regraded (", maxsplit=1)[0]
+    assert original == render_original().encode("utf-8")
+    assert hashlib.sha256(original).hexdigest() == (
+        "6d972e85db40038b6fac594bf9f507636a2984b66ae8640878dfb7d68f8344cc"
+    )

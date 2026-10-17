@@ -245,11 +245,62 @@ def _require_docker_daemon() -> None:
     assert result.returncode == 0, f"docker daemon is not reachable:\n{result.stderr[-2000:]}"
 
 
+def _require_passwordless_mount() -> None:
+    """The real trial needs a host mount, which must work without a prompt."""
+    if os.geteuid() == 0:
+        return
+
+    def unavailable(reason: str) -> None:
+        message = f"passwordless sudo mount is unavailable: {reason}"
+        if os.environ.get("ASSAY_REQUIRE_DOCKER"):
+            pytest.fail(message)
+        pytest.skip(message)
+
+    mount = shutil.which("mount")
+    sudo = shutil.which("sudo")
+    if mount is None or sudo is None:
+        unavailable("mount or sudo is not installed")
+        return
+    result = subprocess.run(
+        [sudo, "-n", "-l", mount], capture_output=True, text=True, timeout=10, check=False
+    )
+    if result.returncode != 0:
+        reason = result.stderr.strip() or result.stdout.strip()
+        unavailable(reason)
+
+
+@pytest.mark.parametrize("required", [False, True], ids=["local", "required"])
+@pytest.mark.parametrize("sudo_available", [False, True], ids=["missing-sudo", "denied"])
+def test_mount_prerequisite_respects_required_mode(
+    monkeypatch: pytest.MonkeyPatch, required: bool, sudo_available: bool
+) -> None:
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(
+        shutil, "which",
+        lambda name: f"/usr/bin/{name}" if name != "sudo" or sudo_available else None,
+    )
+    if required:
+        monkeypatch.setenv("ASSAY_REQUIRE_DOCKER", "1")
+    else:
+        monkeypatch.delenv("ASSAY_REQUIRE_DOCKER", raising=False)
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0], returncode=1, stdout="", stderr="sudo: a password is required"
+        ),
+    )
+
+    expected = pytest.fail.Exception if required else pytest.skip.Exception
+    with pytest.raises(expected, match="passwordless sudo mount is unavailable"):
+        _require_passwordless_mount()
+
+
 def test_qualify_local_emits_an_inventory_after_every_probe_passes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qualify_local: ModuleType
 ) -> None:
     """Qualify an actual prebuilt image and require every probe to pass."""
     _require_docker_daemon()
+    _require_passwordless_mount()
     image_tag = "assay-pier-bridge:test-acceptance"
     build = subprocess.run(
         ["docker", "build", "-t", image_tag, str(ROOT / "integrations" / "pier")],

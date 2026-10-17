@@ -46,12 +46,17 @@ uv run python -m workflow_edit.qualify probes --image "$IMAGE"  # typed rejectio
 uv run python -m workflow_edit.qualify diagnose                 # names failing tests
 uv run python -m workflow_edit.qualify pricing                  # public catalogue only
 uv run python -m workflow_edit.qualify wake                     # needs mcbain asleep
-uv run python -m workflow_edit.publish                          # rewrites SMOKE.md
+uv run python -m workflow_edit.study                            # regrades stored patches, no model call
+uv run python -m workflow_edit.publish                          # reproduces original and appends regrade
 ```
 
 Each command writes a gzipped evidence file under `evidence/wf13/`, and
-`publish` recomputes [SMOKE.md](SMOKE.md) from those files alone. The Assay
-object store for a run defaults to `~/.assay-wf13/store`.
+`publish` reproduces the original [SMOKE.md](SMOKE.md) section byte for byte
+and appends the dated regrade and cost corrections from the evidence. The
+regrade command requires the pinned image already loaded locally and evaluates
+only the 16 candidates with original grades; it does not replay the authorized
+plan or make a paid provider request. The Assay object store for a run defaults
+to `~/.assay-wf13/store`.
 
 ## Metrics
 

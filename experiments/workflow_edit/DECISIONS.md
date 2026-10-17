@@ -4,6 +4,20 @@ This is the live decision record for the workflow edit study. Later cohorts
 append decisions here as the study takes shape, including dispatch topology and
 the provenance of measured qualification ceilings.
 
+## wf-13 regrade (2026-10-17)
+
+- **D14, fresh evaluation:** The fixed harness changes its configuration digest,
+  so the original authorized plan cannot be replayed. `study.py` reads each
+  previously graded cell's stored `cells[cell_id].patch` from `smoke.json.gz`
+  and evaluates it with the fixed harness and pinned local image. The new
+  `regrade.json.gz` records both harness digests and the results. No model or
+  paid provider is called. All 16 original grades remained unchanged.
+- **Published record:** `publish.py` reproduces the original SMOKE.md section
+  byte for byte, then appends a dated regrade. It derives the paid-cell count
+  from positive accounting amounts. The original hosted “Measured $/cell”
+  figure is now explicitly identified as an estimate based on the local
+  tokenizer ratio; the strict bound remains independently stated.
+
 ## Scaffold
 
 - **Arm names:** The four arm identifiers are `mess-00`, `mess-low`,

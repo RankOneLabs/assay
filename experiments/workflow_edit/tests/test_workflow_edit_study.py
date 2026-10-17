@@ -41,7 +41,13 @@ from assay.store import ObjectStore
 from workflow_edit.arms import ARM_IDS, MESS_00, MESS_HIGH, MESS_LOW, MESS_MID
 from workflow_edit.evaluation import CellEvaluator
 from workflow_edit.fixture import SMOKE_EDIT_SUBJECT_ID, load_fixture
-from workflow_edit.qualify import CorrectnessEvaluator, Prepared, WorkflowEditWorker, run
+from workflow_edit.qualify import (
+    CorrectnessEvaluator,
+    Prepared,
+    WorkflowEditWorker,
+    read_evidence,
+    run,
+)
 from workflow_edit.qualify import fixture_manifest as smoke_manifest
 from workflow_edit.study import (
     STUDY_SCHEDULE,
@@ -49,9 +55,40 @@ from workflow_edit.study import (
     StudySubject,
     check_fixture,
     plan_study,
+    regrade_wf13,
 )
 
 SUBJECT = "synthetic-pointer"
+
+
+@pytest.mark.asyncio
+async def test_regrade_uses_stored_patch_and_fixed_runner() -> None:
+    smoke = read_evidence("smoke")
+    cell_id = sorted(smoke["evaluations"])[0]
+    smoke = {**smoke, "evaluations": {cell_id: smoke["evaluations"][cell_id]}}
+    patch = smoke["cells"][cell_id]["patch"]
+
+    class RegradeRunner:
+        settings = WorkflowRunnerSettings(image=smoke["image"], toolchain="bun")
+
+        def __init__(self) -> None:
+            self.seen_patch: str | None = None
+
+        def configuration(self) -> dict[str, str]:
+            return {"harness_sha256": "sha256:" + "f" * 64}
+
+        async def run(self, **kwargs: Any) -> WorkflowCorrectnessResult:
+            self.seen_patch = kwargs["patch"]
+            assert kwargs["baseline_tree_digest"] == workflow_tree_digest(kwargs["baseline"])
+            return WorkflowCorrectnessResult(
+                "correct", tuple(GroupResult(group.name, "passed") for group in kwargs["groups"])
+            )
+
+    runner = RegradeRunner()
+    result = await regrade_wf13(smoke, runner)  # type: ignore[arg-type]
+    assert runner.seen_patch == patch
+    assert list(result["evaluations"]) == [cell_id]
+    assert result["changed_grades"][cell_id]["after"]["verdict"] == "correct"
 N = 4
 REPEATS = 4
 IMAGE = "sha256:" + "a" * 64
