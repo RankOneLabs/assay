@@ -254,7 +254,7 @@ def test_failure_merge_stays_within_the_wire_budget() -> None:
     assert result.artifacts["failure-artifacts-truncated.json"] == b'{"truncated":true}'
 
 
-def test_client_create_failure_runs_its_cleanup_and_reports_failure() -> None:
+def test_client_create_failure_runs_its_cleanup_and_propagates() -> None:
     class FailingClient:
         cleaned = False
 
@@ -266,6 +266,6 @@ def test_client_create_failure_runs_its_cleanup_and_reports_failure() -> None:
             return _clean_effective()
 
     client = FailingClient()
-    result = BridgeRuntime(client).run_cell(_request())  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="setup failed"):
+        BridgeRuntime(client).run_cell(_request())  # type: ignore[arg-type]
     assert client.cleaned
-    assert result.outcome.kind == "infrastructure_failure"
