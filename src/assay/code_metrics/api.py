@@ -308,6 +308,9 @@ def _compare(
         require_pattern_matches(
             (old_report.architecture.graph, new_report.architecture.graph), config.components
         )
+    if config.legacy_python_only:
+        before = {path: source for path, source in before.items() if path.endswith(".py")}
+        after = {path: source for path, source in after.items() if path.endswith(".py")}
     shared = tuple(sorted(old["mi"].keys() & new["mi"].keys()))
     old_python = _has_python(before)
     new_python = _has_python(after)
@@ -327,12 +330,14 @@ def _compare(
         legacy[key] = difference
         old_value = (
             old[key]
-            if (old_python or key.startswith("jscpd.") and _has_typescript(before))
+            if (old_python or key.startswith("jscpd.") and _has_typescript(before)
+                or config.legacy_python_only and key == "mypy.errors")
             else None
         )
         new_value = (
             new[key]
-            if (new_python or key.startswith("jscpd.") and _has_typescript(after))
+            if (new_python or key.startswith("jscpd.") and _has_typescript(after)
+                or config.legacy_python_only and key == "mypy.errors")
             else None
         )
         deltas.append(

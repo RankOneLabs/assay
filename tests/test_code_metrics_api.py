@@ -52,6 +52,27 @@ def test_legacy_python_only_ignores_typescript_and_runs_mypy_without_python(
     assert calls == 1
 
 
+def test_legacy_comparison_ignores_typescript_only_change() -> None:
+    comparison = compare(
+        {}, {"a.ts": "export const a = 1;\n"},
+        config=CodeMetricsConfig(legacy_python_only=True),
+    )
+    assert comparison.after.existing_metrics.jscpd_clones is None
+    assert comparison.new_code.new_lines is None
+    assert comparison.patch.code_lines.delta == 0
+    assert comparison.patch.added_lines == 0
+    assert comparison.patch.removed_lines == 0
+
+
+def test_legacy_comparison_exposes_mypy_delta_from_empty_snapshot() -> None:
+    comparison = compare(
+        {}, {"a.py": 'x: int = "bad"\n'},
+        config=CodeMetricsConfig(legacy_python_only=True),
+    )
+    mypy = next(delta for delta in comparison.deltas if delta.metric == "mypy.errors")
+    assert (mypy.before, mypy.after, mypy.delta) == (0, 1, 1)
+
+
 def test_legacy_and_v2_same_python_digest_have_separate_cache_entries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
