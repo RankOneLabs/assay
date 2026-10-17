@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 import paa_contracts
@@ -270,6 +272,62 @@ async def test_cancellation_recovers_available_partial_artifacts(tmp_path: Path)
     ref = trace["partial_artifact_refs"]["raw_trajectory.json"]
     closure = reference_closure(store, (ref,))
     assert ref in closure
+
+
+async def test_cancellation_retains_artifacts_returned_by_completed_run(tmp_path: Path) -> None:
+    trajectory = b'{"steps":["cancelled"]}'
+
+    class Handle:
+        def __init__(self, exchange: PierExchange) -> None:
+            self.exchange = exchange
+            self.started = Event()
+            self.cancelled = Event()
+
+        def run(self) -> BridgeTrialResult:
+            self.started.set()
+            assert self.cancelled.wait(2)
+            return BridgeTrialResult(
+                exchange=self.exchange,
+                outcome=InfrastructureFailure(cause="unexpected_exception", detail="cancelled"),
+                usage=None,
+                artifacts={"trajectory.json": trajectory},
+            )
+
+        def cancel(self) -> None:
+            self.cancelled.set()
+
+        def teardown(self) -> BridgeEffectiveEnforcement:
+            return BridgeEffectiveEnforcement(
+                containers_remaining=0, child_processes_remaining=0, teardown_completed=True
+            )
+
+    class Bridge:
+        handle: Handle | None = None
+
+        def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> Handle:
+            self.handle = Handle(exchange)
+            return self.handle
+
+    bridge = Bridge()
+    adapter = _adapter(tmp_path, bridge)
+    task = asyncio.create_task(adapter.run_cell(
+        input_value={"task": "do it", "repository": {"a.py": "x = 1\n"}},
+        coordinate=_coordinate(),
+    ))
+    for _ in range(200):
+        if bridge.handle is not None and bridge.handle.started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail("bridge run did not start")
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    trace = _find_cancellation_trace(adapter.store)
+    assert trace is not None
+    ref = trace["partial_artifact_refs"]["trajectory.json"]
+    envelope = json.loads(adapter.store.read_bytes(ref))
+    assert base64.b64decode(envelope["content_base64"]) == trajectory
 
 
 async def test_cancellation_with_no_partial_evidence_records_no_refs(tmp_path: Path) -> None:
