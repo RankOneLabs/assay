@@ -8,8 +8,10 @@ import sys
 import tarfile
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
@@ -1308,6 +1310,62 @@ def test_docker_sandbox_mounts_only_neutral_cell_directories(
     assert "HOME=/cache" in command
     assert not any("hidden" in arg for arg in command)
     assert commands[-1][:3] == ["docker", "rm", "-f"]
+
+
+def test_concurrent_sandbox_close_removes_container_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered_removal = Event()
+    release_removal = Event()
+    second_started = Event()
+    removals: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        if command[:3] == ["docker", "rm", "-f"]:
+            removals.append(command)
+            entered_removal.set()
+            assert release_removal.wait(2)
+        stdout = _inspect_stdout() if command[:2] == ["docker", "inspect"] else "ok"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    sandbox = DockerToolSandbox(tmp_path / "workspace", tmp_path / "cache", "img", "s:a:w0")
+
+    def second_close() -> None:
+        second_started.set()
+        sandbox.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(sandbox.close)
+        assert entered_removal.wait(2)
+        second = pool.submit(second_close)
+        assert second_started.wait(2)
+        time.sleep(0.05)
+        release_removal.set()
+        first.result(timeout=2)
+        second.result(timeout=2)
+    assert len(removals) == 1
+
+
+def test_failed_sandbox_close_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempts = 0
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        nonlocal attempts
+        if command[:3] == ["docker", "rm", "-f"]:
+            attempts += 1
+            return type("Result", (), {"returncode": int(attempts == 1)})()
+        stdout = _inspect_stdout() if command[:2] == ["docker", "inspect"] else "ok"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    sandbox = DockerToolSandbox(tmp_path / "workspace", tmp_path / "cache", "img", "s:a:w0")
+    with pytest.raises(RuntimeError, match="container_cleanup"):
+        sandbox.close()
+    sandbox.close()
+    assert attempts == 2
 
 
 def test_tmpfs_sandbox_takes_its_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

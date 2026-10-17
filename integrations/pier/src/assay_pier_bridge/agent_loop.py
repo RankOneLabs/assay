@@ -374,6 +374,7 @@ class DockerToolSandbox:
         limits = limits or SandboxLimits()
         self.name = f"assay-agent-{uuid.uuid4().hex}"
         self._closed = False
+        self._close_lock = threading.Lock()
         self._workspace = workspace
         self._tmpfs_storage = tmpfs_storage
         mounts = (
@@ -616,7 +617,9 @@ class DockerToolSandbox:
             raise RuntimeError("tool_interrupt")
 
     def close(self) -> None:
-        if not self._closed:
+        with self._close_lock:
+            if self._closed:
+                return
             removed = subprocess.run(
                 ["docker", "rm", "-f", self.name],
                 capture_output=True,
