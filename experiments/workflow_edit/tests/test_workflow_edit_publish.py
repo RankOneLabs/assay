@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import pytest
@@ -15,9 +16,10 @@ from workflow_edit.publish import (
     probe_rows,
     quantile,
     render,
+    render_original,
     stop_cause,
 )
-from workflow_edit.qualify import EVIDENCE
+from workflow_edit.qualify import EVIDENCE, read_evidence
 from workflow_edit.settings import Part1AgentSettings
 
 
@@ -87,6 +89,27 @@ def test_cell_metrics_count_every_cell_and_turn() -> None:
     assert 4 < m["bytes_per_prompt_token"]["min"] < 5
 
 
+def test_paid_cells_are_derived_from_accounting() -> None:
+    cells = {name: dict(cell) for name, cell in CELLS.items()}
+    cells["s:mess-00:w0"]["accounting"] = {"coverage": "measured", "amount": 1.25}
+    cells["s:mess-00:w1"]["accounting"] = {"coverage": "uncertain", "amount": None}
+    assert cell_metrics(cells)["paid_cells"] == 1
+
+
+def test_report_reads_nonzero_paid_cells_from_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    import workflow_edit.publish as publish
+
+    smoke = read_evidence("smoke")
+    cell = next(iter(smoke["cells"].values()))
+    cell["accounting"] = {"coverage": "measured", "amount": 1.25}
+    monkeypatch.setattr(
+        publish, "read_evidence",
+        lambda name: smoke if name == "smoke" else read_evidence(name),
+    )
+    assert "Paid cells: 1." in publish.render_original()
+    assert "Cost correction: Paid cells: 1," in publish.render()
+
+
 def test_correctness_counts_against_dispatched_cells() -> None:
     evaluations = {
         "s:mess-00:w0": {"verdict": "correct", "empty_patch": False, "seconds": 9.0,
@@ -149,3 +172,8 @@ def test_probe_rows_compare_observed_to_expected() -> None:
 )
 def test_committed_smoke_report_is_exactly_the_evidence() -> None:
     assert SMOKE_MD.read_text(encoding="utf-8") == render()
+    original = SMOKE_MD.read_bytes().split(b"\n## Regraded (", maxsplit=1)[0]
+    assert original == render_original().encode("utf-8")
+    assert hashlib.sha256(original).hexdigest() == (
+        "6d972e85db40038b6fac594bf9f507636a2984b66ae8640878dfb7d68f8344cc"
+    )

@@ -10,14 +10,23 @@ the per-cell ``CellEvaluator``. The single-arm wf-13 smoke stays on
 
 from __future__ import annotations
 
+import argparse
+import asyncio
 import json
+import shutil
+import subprocess
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 from assay.canonical import digest_bytes
 from assay.fixture_manifest import FixtureManifestV2, fixture_identity, task_record_digest
 from assay.investigations.workflow_correctness import (
     DockerWorkflowRunner,
+    WorkflowRunnerSettings,
     WorkflowTestGroup,
     workflow_tree_digest,
 )
@@ -32,14 +41,17 @@ from assay.models import (
 from assay.store import ObjectIntegrityError, ObjectStore
 from workflow_edit.arms import ARM_IDS
 from workflow_edit.evaluation import STUDY_GROUPS, CellEvaluator
-from workflow_edit.fixture import VISIBLE_PREFIX
+from workflow_edit.fixture import VISIBLE_PREFIX, load_fixture, materialize, read_tree
 from workflow_edit.qualify import (
+    EVIDENCE,
     PlanKind,
     Prepared,
     Qualification,
     WorkflowEditWorker,
     bridge_worker,
     compile_workflow_plan,
+    read_evidence,
+    write_evidence,
 )
 from workflow_edit.shape import validate_worker_grid
 
@@ -230,3 +242,81 @@ def prepare_study(
         repeats=repeats,
         ceiling=ceiling,
     )
+
+
+async def regrade_wf13(smoke: Mapping[str, Any], runner: DockerWorkflowRunner) -> dict[str, Any]:
+    """Grade the settled wf-13 candidates again from their committed patches.
+
+    The old plan cannot be replayed after the harness digest changes. This
+    evaluates only cells with an original grade; failed worker cells were never
+    submitted to the evaluator.
+    """
+    fixture = load_fixture()
+    if runner.settings.image != smoke["image"]:
+        raise ValueError("regrade image differs from the committed smoke image")
+    original = smoke["evaluations"]
+    evaluations: dict[str, dict[str, Any]] = {}
+    for cell_id in sorted(original):
+        patch = smoke["cells"][cell_id]["patch"]
+        if not isinstance(patch, str):
+            raise ValueError(f"{cell_id} has no stored patch")
+        root = Path(tempfile.mkdtemp(prefix="wf13-regrade-"))
+        try:
+            materialize(root, fixture.repository, patch)
+            expected_tree_digest = workflow_tree_digest(read_tree(root))
+        finally:
+            shutil.rmtree(root)
+        result = await runner.run(
+            baseline=fixture.repository,
+            baseline_tree_digest=fixture.tree_digest,
+            expected_tree_digest=expected_tree_digest,
+            patch=patch,
+            groups=fixture.groups,
+        )
+        evaluations[cell_id] = {
+            "verdict": result.verdict,
+            "cause": result.cause,
+            "groups": {
+                group.name: {"status": group.status, "cause": group.cause}
+                for group in result.groups
+            },
+            "empty_patch": patch == "",
+        }
+    changes = {
+        cell_id: {"before": original[cell_id], "after": evaluations[cell_id]}
+        for cell_id in sorted(evaluations)
+        if original[cell_id]["verdict"] != evaluations[cell_id]["verdict"]
+        or original[cell_id]["groups"] != evaluations[cell_id]["groups"]
+    }
+    return {
+        "regraded_at": datetime.now(UTC).date().isoformat(),
+        "basis": "fresh fixed-harness evaluation of committed smoke cells[cell_id].patch",
+        "smoke_sha256": digest_bytes((EVIDENCE / "smoke.json.gz").read_bytes()),
+        "image": smoke["image"],
+        "original_harness_sha256": smoke["evaluator_configuration"]["runner"]["harness_sha256"],
+        "harness_sha256": runner.configuration()["harness_sha256"],
+        "evaluations": evaluations,
+        "changed_grades": changes,
+    }
+
+
+def regrade_main() -> None:
+    parser = argparse.ArgumentParser(description="Regrade the committed wf-13 patches")
+    parser.parse_args()
+    smoke = read_evidence("smoke")
+    image = smoke["image"]
+    inspected = subprocess.run(
+        ["docker", "image", "inspect", image, "--format", "{{.Id}}"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    if inspected != image:
+        raise ValueError("pinned wf-13 image is not present locally")
+    settings = WorkflowRunnerSettings.model_validate(
+        smoke["evaluator_configuration"]["runner"]["settings"]
+    )
+    result = asyncio.run(regrade_wf13(smoke, DockerWorkflowRunner(settings)))
+    print(write_evidence("regrade", result))
+
+
+if __name__ == "__main__":
+    regrade_main()
