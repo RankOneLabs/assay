@@ -424,7 +424,8 @@ class PierAdapter:
         try:
             bridge_result = await asyncio.shield(run_task)
         except asyncio.CancelledError:
-            handle.cancel()
+            with contextlib.suppress(Exception):
+                handle.cancel()
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await asyncio.wait_for(asyncio.shield(run_task), timeout=CLEANUP_TIMEOUT)
             effective = await self._bounded_teardown(handle)

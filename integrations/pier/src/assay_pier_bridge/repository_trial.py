@@ -10,7 +10,6 @@ the model left behind.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import subprocess
 import threading
@@ -149,8 +148,7 @@ class RepositoryAgentTrialHandle:
 
     def cancel(self) -> None:
         self._cancelled.set()
-        with contextlib.suppress(RuntimeError, OSError, subprocess.SubprocessError):
-            self._agent.cancel_active()
+        self._agent.cancel_active()
 
     def partial_artifacts(self) -> dict[str, bytes]:
         return dict(self._partial)

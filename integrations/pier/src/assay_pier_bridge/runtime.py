@@ -30,7 +30,6 @@ from assay_pier_bridge.protocol import (
     ArtifactManifest,
     CandidateCause,
     CandidateFailure,
-    EffectiveEnforcement,
     InfrastructureCause,
     InfrastructureFailure,
     PierExchange,
@@ -313,11 +312,17 @@ class BridgeRuntime:
         outcome: CandidateFailure | InfrastructureFailure
         # Stop the writer before reading its partial output tree.
         cancel = getattr(handle, "cancel", None)
+        stopped = False
         if callable(cancel):
-            with contextlib.suppress(Exception):
+            try:
                 cancel()
+                stopped = True
+            except Exception:
+                stopped = False
+        # A failed stop cannot justify reading a mutable candidate tree.
+        effective = handle.teardown() if not stopped else None
         partial = getattr(handle, "partial_artifacts", None)
-        if callable(partial):
+        if stopped and callable(partial):
             try:
                 observed = partial()
                 if isinstance(observed, Mapping):
@@ -344,7 +349,8 @@ class BridgeRuntime:
         elif isinstance(error, CandidateTrialError):
             rejected_artifacts.update(error.artifacts)
         artifacts = _bounded_failure_artifacts(rejected_artifacts, partial_artifacts)
-        effective: EffectiveEnforcement = handle.teardown()
+        if effective is None:
+            effective = handle.teardown()
         if isinstance(error, ArtifactCollectionRejected):
             outcome = CandidateFailure(cause=cast(CandidateCause, error.cause), detail=str(error))
         elif isinstance(error, CandidateTrialError):

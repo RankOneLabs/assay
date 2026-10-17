@@ -231,6 +231,9 @@ def test_failure_merge_stays_within_the_wire_budget() -> None:
         def set_deadline(self, deadline: float) -> None:
             self.deadline = deadline
 
+        def cancel(self) -> None:
+            pass
+
         def run(self) -> TrialResult:
             raise ArtifactCollectionRejected(
                 "entry_limit", "too many files", origin="working_copy",

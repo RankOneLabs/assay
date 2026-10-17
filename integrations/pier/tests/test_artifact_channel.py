@@ -533,6 +533,9 @@ def test_rejected_worktree_paths_cannot_replace_submission_artifacts() -> None:
         def set_deadline(self, deadline: float) -> None:
             self.deadline = deadline
 
+        def cancel(self) -> None:
+            pass
+
         def run(self) -> TrialResult:
             raise ArtifactCollectionRejected(
                 "binary_payload",
