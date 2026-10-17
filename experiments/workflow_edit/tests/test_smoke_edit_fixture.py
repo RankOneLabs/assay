@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,29 @@ def test_empty_patch_materializes_the_baseline(tmp_path: Path) -> None:
     assert (tmp_path / "candidate" / "package.json").read_text() == fixture.repository[
         "package.json"
     ]
+
+
+def test_diagnosis_selects_frozen_group_by_restores_after_reordering(tmp_path: Path) -> None:
+    fixture = load_fixture()
+    visible, hidden, new = fixture.groups
+    reordered = replace(fixture, groups=(hidden, visible, new))
+    materialize(tmp_path, fixture.repository)
+    changed_path = next(iter(visible.files))
+    (tmp_path / changed_path).write_text("candidate edit", encoding="utf-8")
+    added_path = tmp_path / "tests/visible/candidate.test.ts"
+    added_path.write_text("candidate addition", encoding="utf-8")
+
+    diagnosis._reset_visible_tests(tmp_path, reordered)
+    assert not added_path.exists()
+    assert (tmp_path / changed_path).read_text(encoding="utf-8") == visible.files[changed_path]
+    assert all(not (tmp_path / path).exists() for path in hidden.files)
+
+    diagnosis._install_tests(tmp_path, reordered)
+    for group in (hidden, new):
+        assert all(
+            (tmp_path / path).read_text(encoding="utf-8") == text
+            for path, text in group.files.items()
+        )
 
 
 @pytest.mark.asyncio

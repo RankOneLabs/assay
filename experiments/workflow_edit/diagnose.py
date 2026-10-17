@@ -27,7 +27,9 @@ TYPECHECK = ("tsc", "--noEmit", "-p", "tsconfig.json")
 
 
 def _install_tests(root: Path, fixture: SmokeEditFixture) -> None:
-    for group in fixture.groups[1:]:
+    for group in fixture.groups:
+        if group.restores:
+            continue
         for path, text in group.files.items():
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -38,10 +40,12 @@ def _reset_visible_tests(root: Path, fixture: SmokeEditFixture) -> None:
     visible = root / "tests" / "visible"
     if visible.exists():
         shutil.rmtree(visible)
-    for path, text in fixture.groups[0].files.items():
-        target = root / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
+    for group in fixture.groups:
+        if group.restores:
+            for path, text in group.files.items():
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
 
 
 def _run(image: str, root: Path, argv: Sequence[str]) -> str:
