@@ -6,7 +6,7 @@ Nothing in this module is inferred from the repository slice.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypedDict
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,17 +39,6 @@ PILOT_SYSTEM_PROMPT: str = (
 T1_TEXT: str = "T1: Independently verify the migration and submit your finding."
 T2_TEXT: str = "T2: Review your first finding."
 T3_TEXT: str = "T3: Check again and submit."
-
-
-class T1Submission(TypedDict):
-    title: str
-    body: str
-
-
-class ReviewSubmission(TypedDict):
-    verdict: Literal["complete", "incomplete", "unsure"]
-    remaining_v1: str
-    checks_performed: str
 
 
 @dataclass(frozen=True, slots=True)

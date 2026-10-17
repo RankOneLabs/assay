@@ -71,6 +71,7 @@ def test_smoke_subject_cannot_enter_a_study_grid() -> None:
 
     from workflow_edit.arms import ARM_IDS
 
+    assert "oakridge-dbos-verification-pilot-edit" in SMOKE_SUBJECT_IDS
     for subject in SMOKE_SUBJECT_IDS:
         with pytest.raises(ValueError, match="qualification smoke subject"):
             validate_worker_grid(

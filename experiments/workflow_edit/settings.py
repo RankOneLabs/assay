@@ -7,7 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field
 MEASUREMENT_SOURCE = "experiments/workflow_edit/SMOKE.md"
 SMOKE_EDIT_SUBJECT_ID = "oakridge-dbos-smoke-edit-wf13"
 # Every qualification subject ever run, so none can enter a study population.
-SMOKE_SUBJECT_IDS = frozenset({"oakridge-dbos-smoke-wf12", SMOKE_EDIT_SUBJECT_ID})
+SMOKE_SUBJECT_IDS = frozenset({
+    "oakridge-dbos-smoke-wf12",
+    SMOKE_EDIT_SUBJECT_ID,
+    "oakridge-dbos-verification-pilot-edit",
+})
 
 
 class Part1AgentSettings(BaseModel):
