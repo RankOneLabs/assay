@@ -80,6 +80,22 @@ def test_container_does_not_inherit_ambient_openrouter_key(
     assert "--env-file" not in handle._docker_run_args(handle._request.limits)
 
 
+def test_pre_run_cancellation_never_starts_docker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handle = _handle(tmp_path)
+    commands: list[list[str]] = []
+    monkeypatch.setattr("assay_pier_bridge.container._run", lambda argv, **kwargs: (
+        commands.append(argv)
+    ))
+    handle.cancel()
+    from assay_pier_bridge.runtime import TrialCancelledError
+
+    with pytest.raises(TrialCancelledError):
+        handle.run()
+    assert commands == []
+
+
 def test_declared_and_inspected_controls_must_match(tmp_path: Path) -> None:
     handle = _handle(tmp_path)
     observed = ContainerObservation(

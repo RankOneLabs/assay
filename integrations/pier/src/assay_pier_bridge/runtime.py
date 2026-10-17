@@ -9,7 +9,9 @@ proves it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import threading
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -230,6 +232,13 @@ class BridgeRuntime:
     def __init__(self, client: PierTrialClient) -> None:
         self._client = client
         self._created = False
+        self._cancelled = threading.Event()
+        self._handle: TrialHandle | None = None
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        if self._handle is not None:
+            self._handle.cancel()
 
     def run_cell(
         self, request: TrialRequest, *, accepted_at: datetime | None = None
@@ -250,7 +259,10 @@ class BridgeRuntime:
             raise TrialTimeoutError("trial exceeded its worker-acceptance deadline")
         deadline = time.monotonic() + remaining
         handle = self._client.create(request)
+        self._handle = handle
         handle.set_deadline(deadline)
+        if self._cancelled.is_set():
+            handle.cancel()
         try:
             result = handle.run()
         except TrialTimeoutError as error:
@@ -292,6 +304,11 @@ class BridgeRuntime:
         partial_artifacts: dict[str, bytes] = {}
         rejected_artifacts: dict[str, bytes] = {}
         outcome: CandidateFailure | InfrastructureFailure
+        # Stop the writer before reading its partial output tree.
+        cancel = getattr(handle, "cancel", None)
+        if callable(cancel):
+            with contextlib.suppress(Exception):
+                cancel()
         partial = getattr(handle, "partial_artifacts", None)
         if callable(partial):
             try:

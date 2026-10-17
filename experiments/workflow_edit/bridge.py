@@ -180,6 +180,9 @@ class WorkflowEditHandle:
             artifacts=dict(result.artifacts),
         )
 
+    def cancel(self) -> None:
+        self._runtime.cancel()
+
     def teardown(self) -> BridgeEffectiveEnforcement:
         """``BridgeRuntime`` already tore the trial down; report what it verified."""
         if self._effective is None:

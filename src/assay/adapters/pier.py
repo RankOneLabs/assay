@@ -109,6 +109,8 @@ class PierBridgeHandle(Protocol):
 
     def run(self) -> BridgeTrialResult: ...
 
+    def cancel(self) -> None: ...
+
     def teardown(self) -> BridgeEffectiveEnforcement: ...
 
 
@@ -418,11 +420,15 @@ class PierAdapter:
         except Exception as error:
             return WorkerFailure(type(error).__name__, str(error), accounting=Accounting())
 
+        run_task = asyncio.create_task(asyncio.to_thread(handle.run))
         try:
-            bridge_result = await asyncio.to_thread(handle.run)
+            bridge_result = await asyncio.shield(run_task)
         except asyncio.CancelledError:
-            partial = self._recover_partial_artifacts(handle)
+            handle.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(run_task), timeout=CLEANUP_TIMEOUT)
             effective = await self._bounded_teardown(handle)
+            partial = self._recover_partial_artifacts(handle)
             # No WorkerResult survives a cancellation (the task itself is
             # cancelled), but whatever partial evidence existed, and whether
             # cleanup actually completed, must still be durable and

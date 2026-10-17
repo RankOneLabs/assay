@@ -408,6 +408,7 @@ class DockerTrialHandle:
             directory.chmod(0o777 if directory.is_dir() else 0o666)
         self._working_copy.chmod(0o777)
         self._cancel = threading.Event()
+        self._started = False
         self._deadline: float | None = None
 
     def set_deadline(self, deadline: float) -> None:
@@ -451,6 +452,12 @@ class DockerTrialHandle:
     def cancel(self) -> None:
         """Operator-initiated cancellation, observable by an in-flight ``run()``."""
         self._cancel.set()
+        if self._started:
+            _force_remove(self._name)
+
+    def _check_cancel(self) -> None:
+        if self._cancel.is_set():
+            raise TrialCancelledError("operator cancelled the trial")
 
     def _prepare_quota(self, limits: TrialLimits) -> None:
         self._scratch.mkdir()
@@ -592,13 +599,17 @@ class DockerTrialHandle:
         return args
 
     def run(self) -> TrialResult:
+        self._check_cancel()
         if self._deadline is None:
             self._deadline = time.monotonic() + self._request.limits.timeout_s
         self._remaining()
+        self._check_cancel()
         self._prepare_quota(self._request.limits)
         self._remaining()
+        self._check_cancel()
         self._prepare_network()
         self._remaining()
+        self._check_cancel()
         start_result = self._run_bounded(
             self._docker_run_args(self._request.limits), _START_TIMEOUT_S
         )
@@ -607,6 +618,8 @@ class DockerTrialHandle:
             raise InfrastructureTrialError(
                 "container_start", f"container failed to start: {start_result.stderr.strip()}"
             )
+        self._started = True
+        self._check_cancel()
         self._assert_enforcement(_usable_observation(self._inspect_bounded()))
         while True:
             self._remaining()

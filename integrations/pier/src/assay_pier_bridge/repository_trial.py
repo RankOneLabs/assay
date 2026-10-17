@@ -10,8 +10,10 @@ the model left behind.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
+import threading
 from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any
@@ -41,6 +43,7 @@ from assay_pier_bridge.runtime import (
     CandidateTestTimeoutError,
     CandidateTrialError,
     InfrastructureTrialError,
+    TrialCancelledError,
     seal_observed_artifacts,
 )
 
@@ -139,9 +142,15 @@ class RepositoryAgentTrialHandle:
         self._partial: dict[str, bytes] = {}
         self._trajectory: dict[str, Any] = {"events": []}
         self._torn_down: EffectiveEnforcement | None = None
+        self._cancelled = threading.Event()
 
     def set_deadline(self, deadline: float) -> None:
         self._deadline = deadline
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        with contextlib.suppress(RuntimeError, OSError, subprocess.SubprocessError):
+            self._agent.cancel_active()
 
     def partial_artifacts(self) -> dict[str, bytes]:
         return dict(self._partial)
@@ -191,10 +200,13 @@ class RepositoryAgentTrialHandle:
             )
 
     def run(self) -> TrialResult:
+        if self._cancelled.is_set():
+            raise TrialCancelledError("operator cancelled the trial")
         self._check_request()
         try:
             result = self._agent.run_cell(
-                cell_id=self._request.cell_id, package=self._package, deadline=self._deadline
+                cell_id=self._request.cell_id, package=self._package, deadline=self._deadline,
+                cancel_event=self._cancelled,
             )
         except AgentLoopError as error:
             self._trajectory = error.trajectory
@@ -216,6 +228,8 @@ class RepositoryAgentTrialHandle:
             return CandidateTrialError(
                 "agent_deadline", "the cell's budget expired in the agent loop"
             )
+        if cause == "cancelled":
+            return TrialCancelledError("operator cancelled the trial")
         if cause in CANDIDATE_STOP_CAUSES:
             return CandidateTrialError(
                 "no_submission", f"agent stopped without submitting: {cause}"

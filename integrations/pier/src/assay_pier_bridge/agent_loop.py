@@ -609,7 +609,6 @@ class DockerToolSandbox:
 
     def close(self) -> None:
         if not self._closed:
-            self._closed = True
             removed = subprocess.run(
                 ["docker", "rm", "-f", self.name],
                 capture_output=True,
@@ -619,6 +618,7 @@ class DockerToolSandbox:
             )
             if removed.returncode:
                 raise RuntimeError("container_cleanup")
+            self._closed = True
 
 
 class DockerTmpfsToolSandbox(DockerToolSandbox):
@@ -1131,6 +1131,12 @@ class RepositoryAgentClient:
     sandbox_limits: SandboxLimits = field(default_factory=SandboxLimits)
     _used_cells: set[str] = field(default_factory=set, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+    _active_sandbox: ToolSandbox | None = field(default=None, init=False)
+
+    def cancel_active(self) -> None:
+        sandbox = self._active_sandbox
+        if sandbox is not None:
+            sandbox.close()
 
     def __post_init__(self) -> None:
         if self.model_route.paid_route_reachable:
@@ -1303,7 +1309,8 @@ class RepositoryAgentClient:
         )
 
     def run_cell(
-        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None = None
+        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> LoopResult:
         if not self._lock.acquire(blocking=False):
             raise AgentLoopError("concurrency_limit", {"events": []})
@@ -1311,7 +1318,10 @@ class RepositoryAgentClient:
             if cell_id in self._used_cells:
                 raise AgentLoopError("attempt_limit", {"events": []})
             self._used_cells.add(cell_id)
-            return self._run_once(cell_id=cell_id, package=package, deadline=deadline)
+            return self._run_once(
+                cell_id=cell_id, package=package, deadline=deadline,
+                cancel_event=cancel_event,
+            )
         finally:
             self._lock.release()
 
@@ -1335,7 +1345,8 @@ class RepositoryAgentClient:
         return captured.patch, after, captured.baseline_tree_digest, captured.final_tree_digest
 
     def _run_once(
-        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None
+        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None,
+        cancel_event: threading.Event | None,
     ) -> LoopResult:
         trajectory: dict[str, Any] = {
             "events": [],
@@ -1403,6 +1414,8 @@ class RepositoryAgentClient:
             }
 
         def remaining() -> float:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ValueError("cancelled")
             if deadline is None:
                 return MAX_TOOL_SECONDS
             left = deadline - time.monotonic()
@@ -1441,12 +1454,14 @@ class RepositoryAgentClient:
             materialize_under(workspace, repository)
             materialize_under(baseline, repository)
             _prepare_container_writes(workspace, cache)
+            remaining()
             if self.sandbox_factory is DockerTmpfsToolSandbox:
                 sandbox = DockerTmpfsToolSandbox(
                     workspace, cache, self.image, cell_id, limits=self.sandbox_limits
                 )
             else:
                 sandbox = self.sandbox_factory(workspace, cache, self.image, cell_id)
+            self._active_sandbox = sandbox
             events.append(
                 {
                     "kind": "sandbox_created",
@@ -1540,6 +1555,7 @@ class RepositoryAgentClient:
                     "tool_calls": replayed,
                 })
                 for call_index, call in enumerate(replayed):
+                    remaining()
                     if self.pilot_mode and turn_tool_calls >= self.max_tool_calls_per_turn:
                         raise ValueError("turn_tool_call_limit")
                     if self.pilot_mode and cell_tool_calls >= self.max_tool_calls_per_cell:
@@ -1755,6 +1771,7 @@ class RepositoryAgentClient:
             except (RuntimeError, OSError, subprocess.SubprocessError):
                 events.append({"kind": "cleanup_failed", "cause": "container_cleanup"})
                 cleanup_cause = "container_cleanup"
+            self._active_sandbox = None
             try:
                 storage.close()
             except (RuntimeError, OSError, subprocess.SubprocessError):

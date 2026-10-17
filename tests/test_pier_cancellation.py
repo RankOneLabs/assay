@@ -56,6 +56,8 @@ class _HangingHandle:
         partial: Mapping[str, bytes] | None = None,
     ) -> None:
         self.teardown_called = False
+        self.cancel_called = False
+        self.events: list[str] = []
         self.teardown_started = asyncio.Event()
         self._cleanup_confirms = cleanup_confirms
         self._partial = partial
@@ -65,11 +67,12 @@ class _HangingHandle:
 
         # Block the worker thread indefinitely; only cancellation + our own
         # teardown call ever ends this trial, mirroring a stuck container.
-        while not self.teardown_called:
+        while not self.cancel_called:
             time.sleep(0.01)
         raise RuntimeError("trial cancelled")
 
     def teardown(self) -> BridgeEffectiveEnforcement:
+        self.events.append("teardown")
         self.teardown_called = True
         if self._cleanup_confirms:
             return BridgeEffectiveEnforcement(
@@ -80,7 +83,12 @@ class _HangingHandle:
         )
 
     def partial_artifacts(self) -> Mapping[str, bytes]:
+        self.events.append("partial")
         return self._partial if self._partial is not None else {}
+
+    def cancel(self) -> None:
+        self.events.append("cancel")
+        self.cancel_called = True
 
 
 class _CancellingBridge:
@@ -167,6 +175,7 @@ async def test_cancellation_tears_down_the_bridge_handle_within_the_bounded_wind
         await task
     assert bridge.handle is not None
     assert bridge.handle.teardown_called, "cancellation must tear the bridge handle down"
+    assert bridge.handle.events[:3] == ["cancel", "teardown", "partial"]
 
 
 async def test_cancellation_leaves_no_orphan_bridge_handle(tmp_path: Path) -> None:

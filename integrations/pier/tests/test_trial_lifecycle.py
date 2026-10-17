@@ -66,9 +66,14 @@ def _clean_effective(**overrides: object) -> EffectiveEnforcement:
 class FakeTrialHandle:
     outcome: str  # "succeed", "fail", "timeout", "cancel"
     teardown_calls: list[str] = field(default_factory=list)
+    events: list[str] = field(default_factory=list)
 
     def partial_artifacts(self) -> dict[str, bytes]:
+        self.events.append("partial")
         return {"trajectory.json": b'{"steps":1}'}
+
+    def cancel(self) -> None:
+        self.events.append("cancel")
 
     def set_deadline(self, deadline: float) -> None:
         self.deadline = deadline
@@ -101,6 +106,7 @@ class FakeTrialHandle:
         return _clean_effective(teardown_completed=False, containers_remaining=1)
 
     def teardown(self) -> EffectiveEnforcement:
+        self.events.append("teardown")
         self.teardown_calls.append("teardown")
         return _clean_effective()
 
@@ -197,9 +203,12 @@ def test_successful_result_effective_reflects_teardown_not_mid_run_snapshot() ->
 
 
 @pytest.mark.parametrize("outcome", ["fail", "timeout", "cancel"])
-def test_failure_retains_artifacts_observed_before_teardown(outcome: str) -> None:
-    result = BridgeRuntime(FakeTrialClient(outcome)).run_cell(_request())
+def test_failure_stops_writer_before_reading_partial_artifacts(outcome: str) -> None:
+    client = FakeTrialClient(outcome)
+    result = BridgeRuntime(client).run_cell(_request())
     assert result.artifacts == {"trajectory.json": b'{"steps":1}'}
+    assert client.handle is not None
+    assert client.handle.events == ["cancel", "partial", "teardown"]
 
 
 def test_candidate_test_timeout_differs_from_harness_deadline() -> None:
