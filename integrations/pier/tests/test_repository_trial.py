@@ -23,7 +23,11 @@ from assay_pier_bridge.protocol import (
     TrialLimits,
     TrialRequest,
 )
-from assay_pier_bridge.repository_trial import RepositoryAgentTrialClient, agent_configuration
+from assay_pier_bridge.repository_trial import (
+    RepositoryAgentTrialClient,
+    RepositoryAgentTrialHandle,
+    agent_configuration,
+)
 from assay_pier_bridge.runtime import BridgeRuntime
 from test_agent_loop import FakeSandbox, FakeStorage, _call
 from test_support import exchange_for
@@ -83,6 +87,30 @@ def _runtime(tmp_path: Path, completion: Scripted, package: dict[str, str] = PAC
         agent=agent, package=package, limits=LIMITS, configuration=configuration
     )
     return BridgeRuntime(client)
+
+
+def test_enforcement_is_unverified_without_a_sandbox_observation(tmp_path: Path) -> None:
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([]), sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    handle = RepositoryAgentTrialHandle(
+        request=_request(), agent=agent, package=PACKAGE, limits=LIMITS, configuration={},
+    )
+    assert handle.effective_enforcement(remaining=0).teardown_completed is False
+    handle._trajectory = {"events": [{
+        "kind": "sandbox_created", "container": "container-1", "observed": {
+            "user": "1234:5678", "tmpfs": {
+                "/workspace": "size=40m", "/cache": "size=24m"
+            }, "network_mode": "none", "nano_cpus": 2_000_000_000,
+            "memory_bytes": 512 * 1024 * 1024, "pids_limit": 32,
+        },
+    }]}
+    enforced = handle.effective_enforcement(remaining=0)
+    assert (enforced.uid, enforced.gid) == (1234, 5678)
+    assert (enforced.cpu_limit, enforced.memory_limit_mb, enforced.pids_limit) == (2, 512, 32)
+    assert enforced.storage_limit_mb == 64
+    assert enforced.teardown_completed is True
 
 
 def test_custom_agent_configuration_digests_tools_prompt_and_prefix(tmp_path: Path) -> None:
@@ -194,7 +222,7 @@ def test_submission_is_sealed_against_the_exchange(tmp_path: Path) -> None:
     assert json.loads(result.artifacts["result.json"])["exit_status"] == "Submitted"
     assert result.usage is not None and result.usage.requests == 2
     assert result.usage.cost_usd is None
-    assert result.effective.teardown_completed
+    assert not result.effective.teardown_completed
 
 
 def test_stopping_without_submission_is_a_typed_candidate_failure(tmp_path: Path) -> None:
@@ -223,7 +251,7 @@ def test_spent_cell_budget_is_the_candidates_own_failure(tmp_path: Path) -> None
     stopped = json.loads(result.artifacts["trajectory.json"])["events"][-1]
     assert stopped == {"kind": "stopped", "cause": "agent_deadline", "requests": 2}
     assert b"+half" in result.artifacts["stopped/candidate.patch"]
-    assert result.effective.teardown_completed
+    assert not result.effective.teardown_completed
 
 
 def test_scope_rejection_retains_the_rejected_worktree(tmp_path: Path) -> None:

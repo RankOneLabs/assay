@@ -297,6 +297,7 @@ class RepositoryAgentTrialHandle:
 
     def effective_enforcement(self, *, remaining: int | None = None) -> EffectiveEnforcement:
         name, observed = self._observed()
+        verified = bool(name and observed.get("user") and observed.get("tmpfs"))
         user = str(observed.get("user") or "0:0")
         uid, _, gid = user.partition(":")
         tmpfs = observed.get("tmpfs") or {}
@@ -304,7 +305,7 @@ class RepositoryAgentTrialHandle:
         nano_cpus = observed.get("nano_cpus") or 0
         memory = observed.get("memory_bytes") or 0
         # ``None`` means not yet verified: the result carries this before teardown.
-        completed = remaining == 0
+        completed = verified and remaining == 0
         return EffectiveEnforcement(
             uid=int(uid or 0),
             gid=int(gid or uid or 0),
