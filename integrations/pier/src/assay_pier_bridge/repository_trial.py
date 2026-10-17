@@ -19,7 +19,6 @@ from typing import Any
 
 from assay_pier_bridge.agent_loop import (
     CANDIDATE_STOP_CAUSES,
-    PILOT_SYSTEM_PROMPT,
     PILOT_TOOL_SCHEMAS,
     SYSTEM_PROMPT,
     TOOLS,
@@ -66,8 +65,6 @@ def agent_configuration(
     max_tool_calls_per_cell: int = 0,
 ) -> dict[str, Any]:
     """The stable, authorizable description of how this loop runs a cell."""
-    if pilot_mode and system_prompt == SYSTEM_PROMPT:
-        system_prompt = PILOT_SYSTEM_PROMPT
     if pilot_mode and min(max_tool_calls_per_turn, max_tool_calls_per_cell) < 1:
         raise ValueError("pilot configuration requires positive tool call limits")
     return {

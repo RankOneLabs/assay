@@ -9,6 +9,7 @@ import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
     PILOT_TOOL_SCHEMAS,
+    SYSTEM_PROMPT,
     AgentLoopError,
     DockerTmpfsStagingStorage,
     DockerTmpfsToolSandbox,
@@ -427,6 +428,47 @@ def test_stopping_without_submission_is_a_typed_candidate_failure(tmp_path: Path
     assert "turn_limit" in result.outcome.detail
     assert "trajectory.json" in result.artifacts
     assert b"+half" in result.artifacts["stopped/candidate.patch"]
+
+
+def test_pilot_configuration_records_the_prompt_it_was_given() -> None:
+    """G14: pilot mode no longer substitutes a bridge prompt for the caller's.
+
+    The deleted swap-in triggered on equality with ``SYSTEM_PROMPT``, so the
+    recorded identity for that exact prompt is what proves the swap-in is gone.
+    """
+    configuration = agent_configuration(
+        bounds=LoopBounds(), limits=LIMITS, writable_prefixes=("src/",), model_route=LOCAL,
+        pilot_mode=True, next_user_turns=("Review", "Check"), system_prompt=SYSTEM_PROMPT,
+        max_tool_calls_per_turn=7, max_tool_calls_per_cell=19,
+    )
+    assert configuration["system_prompt_sha256"] == digest_bytes(SYSTEM_PROMPT.encode("utf-8"))
+
+
+def test_pilot_cell_cap_returns_partial_trace(tmp_path: Path) -> None:
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([_call("write_file", {"path": "src/a.ts", "content": "half"}, 1)]),
+        pilot_mode=True, next_user_turns=("Review", "Check"),
+        writable_prefixes=("src/", "tests/"),
+        max_tool_calls_per_turn=2, max_tool_calls_per_cell=1,
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    configuration = agent_configuration(
+        bounds=agent.bounds, limits=LIMITS, writable_prefixes=agent.writable_prefixes,
+        model_route=LOCAL, pilot_mode=True, next_user_turns=agent.next_user_turns,
+        system_prompt=agent.system_prompt, max_tool_calls_per_turn=2,
+        max_tool_calls_per_cell=1,
+    )
+    result = BridgeRuntime(RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration=configuration,
+    )).run_cell(_request())
+    assert isinstance(result.outcome, CandidateFailure)
+    assert "cell_tool_call_limit" in result.outcome.detail
+    trace = json.loads(result.artifacts["trajectory.json"])
+    assert trace["turns"][0]["stop_cause"] == "cell_tool_call_limit"
+    assert trace["turns"][0]["patch_ref"] == digest_bytes(
+        result.artifacts["stopped/candidate.patch"]
+    )
 
 
 def test_spent_cell_budget_is_the_candidates_own_failure(tmp_path: Path) -> None:

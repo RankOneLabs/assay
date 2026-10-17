@@ -15,6 +15,7 @@ from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
+import assay_pier_bridge.agent_loop as agent_loop
 import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
@@ -454,7 +455,7 @@ def test_stopped_later_turn_recaptures_tmpfs_workspace(tmp_path: Path) -> None:
             package={"instruction.md": "Edit", "workspace/src/a.ts": "original\n"},
         )
     assert failure.value.cause == "no_tool_call"
-    assert failure.value.trajectory["turns"][1]["workspace_diff"] is None
+    assert "+second" in failure.value.trajectory["turns"][1]["workspace_diff"]
     assert b"+second" in failure.value.evidence["candidate.patch"]
 
 
@@ -504,17 +505,41 @@ def test_pilot_search_scope_is_structural_in_trace(tmp_path: Path) -> None:
     assert search["exit_code"] == 0
 
 
-def test_pilot_tool_call_caps_have_typed_causes(tmp_path: Path) -> None:
-    calls = [_call("run_command", {"command": "true"}, number) for number in range(16)]
-    with pytest.raises(AgentLoopError) as per_turn:
-        _pilot(tmp_path, Scripted(calls)).run_cell(
-            cell_id="s:a:w0", package={"instruction.md": "Work"}
-        )
-    assert per_turn.value.cause == "turn_tool_call_limit"
-    assert len(per_turn.value.trajectory["turns"][0]["tool_calls"]) == 15
-    assert per_turn.value.trajectory["turns"][0]["workspace_diff"] is None
-    assert per_turn.value.cause in CANDIDATE_STOP_CAUSES
+def test_pilot_mode_neither_defines_nor_swaps_in_a_system_prompt(tmp_path: Path) -> None:
+    """G14: the experiment owns its prompt text, so the bridge must not carry one.
 
+    The deleted swap-in fired precisely when a pilot caller passed the non-pilot
+    ``SYSTEM_PROMPT``, which is why that is the prompt this guard passes in.
+    """
+    assert not hasattr(agent_loop, "PILOT_SYSTEM_PROMPT")
+    client = _pilot(tmp_path, Scripted(), system_prompt=SYSTEM_PROMPT)
+    assert client.system_prompt == SYSTEM_PROMPT
+
+
+def test_pilot_turn_tool_call_cap_ends_only_that_turn(tmp_path: Path) -> None:
+    calls = [_call("run_command", {"command": "true"}, number) for number in range(16)]
+    completion = Scripted(
+        calls,
+        [_call("submit_output", {"verdict": "unsure", "remaining_v1": "x",
+                                  "checks_performed": "read"}, 17)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "test"}, 18)],
+    )
+    capped = _pilot(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Work"}
+    )
+    first = capped.trajectory["turns"][0]
+    assert first["stop_cause"] == "turn_tool_call_limit"
+    assert first["submission"] is None
+    assert len(first["tool_calls"]) == 15
+    assert first["patch_ref"].startswith("sha256:")
+    assert first["tree_digest"] == first["baseline_tree_digest"]
+    assert capped.trajectory["turns"][1]["submission"]["verdict"] == "unsure"
+    assert capped.summary == ""
+    assert completion.seen[1]["messages"][-1]["content"] == "Review your first submission"
+
+
+def test_pilot_cell_tool_call_cap_ends_the_cell(tmp_path: Path) -> None:
     def commands(count: int, start: int) -> list[dict[str, Any]]:
         return [_call("run_command", {"command": "true"}, number)
                 for number in range(start, start + count)]
@@ -532,8 +557,34 @@ def test_pilot_tool_call_caps_have_typed_causes(tmp_path: Path) -> None:
         )
     assert per_cell.value.cause == "cell_tool_call_limit"
     assert sum(len(turn["tool_calls"]) for turn in per_cell.value.trajectory["turns"]) == 40
-    assert per_cell.value.trajectory["turns"][-1]["workspace_diff"] is None
+    assert per_cell.value.trajectory["turns"][-1]["stop_cause"] == "cell_tool_call_limit"
+    assert per_cell.value.trajectory["turns"][-1]["patch_ref"].startswith("sha256:")
     assert per_cell.value.cause in CANDIDATE_STOP_CAUSES
+
+
+def test_pilot_model_turn_limit_records_cell_stop(tmp_path: Path) -> None:
+    completion = Scripted([_call("run_command", {"command": "true"}, 1)])
+    with pytest.raises(AgentLoopError) as failure:
+        _local(
+            tmp_path, completion, pilot_mode=True,
+            next_user_turns=("Review", "Check"), writable_prefixes=("src/", "tests/"),
+            max_tool_calls_per_turn=40, max_tool_calls_per_cell=40,
+        ).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Work"}
+        )
+    assert failure.value.cause == "turn_limit"
+    assert failure.value.trajectory["turns"][0]["stop_cause"] == "turn_limit"
+    assert len(completion.seen) == 20
+
+
+def test_pilot_deadline_records_distinct_cell_stop(tmp_path: Path) -> None:
+    with pytest.raises(AgentLoopError) as failure:
+        _pilot(tmp_path, Scripted([_call("run_command", {"command": "true"}, 1)])).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Work"},
+            deadline=time.monotonic() - 1,
+        )
+    assert failure.value.cause == "agent_deadline"
+    assert failure.value.trajectory["turns"][0]["stop_cause"] == "agent_deadline"
 
 
 def test_pilot_truncated_output_and_scope_evidence(tmp_path: Path) -> None:
@@ -669,6 +720,23 @@ def test_shrink_keeps_declared_prefix_and_raises_typed_cause() -> None:
     with pytest.raises(ConversationLimitError) as failure:
         _shrink_conversation(prefix.copy(), 1, [], prefix_length=len(prefix))
     assert failure.value.cause == "conversation_limit"
+
+
+def test_pilot_session_remains_pinned_past_shrink_threshold(tmp_path: Path) -> None:
+    prefix = (
+        {"role": "assistant", "content": "handoff"},
+        {"role": "tool", "tool_call_id": "handoff", "content": "account" * 100},
+        {"role": "user", "content": "Verify the whole migration"},
+    )
+    completion = Scripted([_call("submit_output", {"title": "Done", "body": ""}, 1)])
+    with pytest.raises(AgentLoopError) as failure:
+        _pilot(
+            tmp_path, completion, message_prefix=prefix,
+            bounds=replace(LoopBounds(), max_conversation_bytes=100),
+        ).run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.cause == "conversation_limit"
+    assert completion.seen == []
+    assert failure.value.trajectory["messages"][2:] == list(prefix)
 
 
 def test_mid_cell_shrink_preserves_recorded_transcript(tmp_path: Path) -> None:

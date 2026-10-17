@@ -22,7 +22,15 @@ from workflow_edit.bridge import LOCAL_ROUTE
 
 from assay.adapters.smithers import SmithersFactory
 from assay.canonical import digest_bytes
-from assay.execution import EvaluationResult, RunFailed, WorkerResult, WorkerSuccess, execute_plan
+from assay.execution import (
+    EvaluationResult,
+    RunFailed,
+    RunResult,
+    RunSucceeded,
+    WorkerResult,
+    WorkerSuccess,
+    execute_plan,
+)
 from assay.models import CellCoordinate, EvaluationCoordinate, RuntimeProfile
 from assay.store import ObjectStore
 from verification_pilot.arms import ALL_ARMS
@@ -204,7 +212,47 @@ class ScriptedWorker:
         })
 
 
-async def run_scripted(store: ObjectStore) -> tuple[PreparedPilot, Any]:
+def save_run_trace(store: ObjectStore, result: RunResult, archive_root: Path) -> Path | None:
+    """Save one manifest and its cell traces under raw/runs/<run_id>."""
+    if result.manifest is None or result.manifest_ref is None:
+        return None
+    manifest = result.manifest
+    destination = archive_root / manifest.run_id
+    destination.mkdir(parents=True, exist_ok=False)
+    (destination / "manifest.json").write_bytes(store.read_bytes(result.manifest_ref))
+    traces = destination / "traces"
+    traces.mkdir()
+    index: dict[str, dict[str, str | None]] = {}
+    for number, (cell_id, record_ref) in enumerate(sorted(manifest.execution_records.items()), 1):
+        record = json.loads(store.read_bytes(record_ref))
+        entry: dict[str, str | None] = {"record_ref": str(record_ref), "status": record["status"]}
+        trace_ref = record.get("trace_ref")
+        if trace_ref is not None:
+            trace_name = f"{number:03d}-worker.json"
+            (traces / trace_name).write_bytes(store.read_bytes(trace_ref))
+            entry["worker_trace"] = trace_name
+        output_ref = record.get("output_ref")
+        output = json.loads(store.read_bytes(output_ref)) if output_ref is not None else None
+        raw_ref = output.get("raw_trajectory_ref") if output is not None else None
+        if raw_ref is None and trace_ref is not None:
+            worker_trace = json.loads(store.read_bytes(trace_ref))
+            raw_ref = worker_trace.get("artifact_refs", {}).get("trajectory.json")
+        if raw_ref is not None:
+            envelope = json.loads(store.read_bytes(raw_ref))
+            trajectory = base64.b64decode(envelope["content_base64"], validate=True)
+            trace_name = f"{number:03d}-trajectory.json"
+            (traces / trace_name).write_bytes(trajectory)
+            entry["trajectory"] = trace_name
+        index[cell_id] = entry
+    (destination / "index.json").write_text(
+        json.dumps(index, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+    return destination
+
+
+async def run_scripted(
+    store: ObjectStore, *, archive_root: Path | None = None
+) -> tuple[PreparedPilot, Any]:
     subjects = pilot_subjects()
     runtime = RuntimeProfile(id="scripted", version="1",
                              configuration_ref=str(store.publish_json({"scripted": True})))
@@ -221,12 +269,15 @@ async def run_scripted(store: ObjectStore) -> tuple[PreparedPilot, Any]:
         workers={arm.id: worker for arm in prepared.snapshot.arms},
         evaluators={declaration.id: evaluator for declaration in prepared.snapshot.evaluators},
     )
+    if isinstance(result, RunFailed | RunSucceeded):
+        save_run_trace(store, result, archive_root or store.root.parent / "runs")
     return prepared, result
 
 
 async def run_live(
     store: ObjectStore, *, image: str, runs_root: Path, routing_config: Path,
-    route: str, smoke: bool = False, api_key: str | None = None
+    route: str, smoke: bool = False, api_key: str | None = None,
+    archive_root: Path | None = None,
 ) -> tuple[PreparedPilot, Any]:
     subjects = pilot_subjects()
     if route == "smithers-local":
@@ -267,6 +318,8 @@ async def run_live(
         workers={arm.id: worker for arm in prepared.snapshot.arms},
         evaluators={declaration.id: evaluator for declaration in prepared.snapshot.evaluators},
     )
+    if isinstance(result, RunFailed | RunSucceeded):
+        save_run_trace(store, result, archive_root or store.root.parent / "runs")
     return prepared, result
 
 
@@ -282,6 +335,7 @@ def main() -> None:
                         default="smithers-local")
     args = parser.parse_args()
     store = ObjectStore(args.store)
+    archive_root = Path(__file__).resolve().parent / "raw" / "runs"
     if args.command in {"on-policy-local", "on-policy-paid"}:
         if not args.image:
             parser.error("on-policy generation requires --image")
@@ -295,7 +349,7 @@ def main() -> None:
         print(json.dumps(evidence))
         return
     if args.command == "scripted":
-        prepared, result = asyncio.run(run_scripted(store))
+        prepared, result = asyncio.run(run_scripted(store, archive_root=archive_root))
     else:
         if not args.image:
             parser.error("live runs require --image")
@@ -304,6 +358,7 @@ def main() -> None:
             routing_config=args.routing_config, route=args.route,
             smoke=args.command == "live-smoke",
             api_key=os.environ.get("OPENROUTER_API_KEY") if args.route == "openrouter" else None,
+            archive_root=archive_root,
         ))
     print(json.dumps({"plan_ref": prepared.authorization,
                       "result": type(result).__name__,
