@@ -74,6 +74,7 @@ class _Config(NamedTuple):
     clone_min_tokens: int
     ruff_ignore: tuple[str, ...]
     typescript_toolchain: ResolvedToolchain | None = None
+    legacy_python_only: bool = False
 
 
 def is_module_name(value: str) -> bool:

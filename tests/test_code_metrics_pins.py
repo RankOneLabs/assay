@@ -200,3 +200,22 @@ def test_snapshot_cache_is_bounded_and_empty_results_are_fresh(
         assert len(tools._CACHE) == 8
     finally:
         tools._CACHE.clear()
+
+
+def test_legacy_jscpd_uses_python_format(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tools, "node_binary", lambda name: "/stub/jscpd")
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if "--output" in command:
+            output = Path(command[command.index("--output") + 1])
+            (output / "jscpd-report.json").write_text(
+                json.dumps({"duplicates": [], "statistics": {"total": {"clones": 0,
+                                                                 "duplicatedLines": 0}}})
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(tools.subprocess, "run", run)
+    tools._jscpd(tmp_path, _Config(5, 50, (), legacy_python_only=True))
+    assert commands[1][commands[1].index("--format") + 1] == "python"

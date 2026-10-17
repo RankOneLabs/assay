@@ -72,6 +72,7 @@ class CodeMetricsConfig:
     allow_unmatched_patterns: bool = False
     # None typechecks with the analyzers' compiler and a synthetic project.
     typescript_toolchain: TypeScriptToolchain | None = None
+    legacy_python_only: bool = False
 
 
 def _preflight() -> None:
@@ -139,6 +140,8 @@ def _analyze(
     _validate_config(config)
     _preflight()
     snapshot = _validate_paths(snapshot)
+    if config.legacy_python_only:
+        snapshot = {path: source for path, source in snapshot.items() if path.endswith(".py")}
     from . import tools
     from .graph import extract_module_graph
     from .rust import MANIFEST, extract_rust_graph
@@ -190,7 +193,8 @@ def _analyze(
         languages=tuple(extracted_coverage[language] for language in LANGUAGES)
     )
     legacy_config = _Config(
-        config.clone_min_lines, config.clone_min_tokens, config.ruff_ignore, toolchain
+        config.clone_min_lines, config.clone_min_tokens, config.ruff_ignore, toolchain,
+        config.legacy_python_only,
     )
     try:
         payload = dict(
@@ -219,7 +223,10 @@ def _analyze(
         versions |= rust_tool_versions()
     # jscpd also reads TypeScript; all other existing metrics require Python.
     measured = {
-        key: payload[key] if (files or key.startswith("jscpd.") and typescript_files) else None
+        key: payload[key]
+        if (files or key.startswith("jscpd.") and typescript_files
+            or config.legacy_python_only and key == "mypy.errors")
+        else None
         for key in DELTAS
     }
     report = CodeMetricsReportV6(
@@ -467,6 +474,7 @@ def measure(
             clone_min_lines=clone_min_lines,
             clone_min_tokens=clone_min_tokens,
             ruff_ignore=ruff_ignore,
+            legacy_python_only=True,
         ),
     )[1]
 
