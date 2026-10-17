@@ -43,7 +43,7 @@ from assay.pier_protocol import PierExchange, RuntimeBinding  # noqa: E402
 from assay.store import ObjectStore  # noqa: E402
 from verification_pilot.arms import arm, placement_for  # noqa: E402
 from verification_pilot.dispatch import cell_idempotency_key  # noqa: E402
-from verification_pilot.inputs import T2_TEXT, T3_TEXT  # noqa: E402
+from verification_pilot.inputs import PILOT_SYSTEM_PROMPT, T2_TEXT, T3_TEXT  # noqa: E402
 from verification_pilot.prompts import task_prompt  # noqa: E402
 from verification_pilot.render import render_prefix  # noqa: E402
 from verification_pilot.session import contributor_blocks, rotated_blocks  # noqa: E402
@@ -81,6 +81,7 @@ def create_pilot_agent(
             max_storage_mb=settings.max_storage_mb,
         ),
         pilot_mode=True,
+        system_prompt=PILOT_SYSTEM_PROMPT,
         next_user_turns=next_user_turns,
         message_prefix=message_prefix,
         writable_prefixes=settings.writable_prefixes,

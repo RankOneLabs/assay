@@ -35,6 +35,7 @@ from typing import Any, Literal, NoReturn, Protocol
 
 import httpx
 
+from assay_pier_bridge.identity import digest_bytes
 from assay_pier_bridge.paths import (
     ArtifactCollectionRejected,
     check_submission_scope,
@@ -61,17 +62,6 @@ SYSTEM_PROMPT = (
     "reference answers are never available. Do not seek network access or install "
     "packages."
 )
-PILOT_SYSTEM_PROMPT = (
-    "You are editing one repository copy in /workspace across three user turns. "
-    "Use read_file, search_files, write_file, replace_in_file, and run_command "
-    "to inspect, edit, and check it. At T1 call submit_output with title and body. "
-    "After the next user turn, submit a verdict (complete, incomplete, or unsure), "
-    "remaining_v1, and checks_performed at T2 and again at T3. The repository "
-    "persists between turns. Only this cell's repository is available; hidden "
-    "tests and reference answers are never available. Do not seek network "
-    "access or install packages."
-)
-
 # A tool command may not outlive this, nor the cell's remaining budget.
 MAX_TOOL_SECONDS = 120.0
 # A tmpfs with less than this free is treated as exhausted: a write that hit
@@ -1211,8 +1201,6 @@ class RepositoryAgentClient:
             ):
                 raise ValueError("pilot mode requires two next user turns")
             self.tools = deepcopy(PILOT_TOOLS_T1)
-            if self.system_prompt == SYSTEM_PROMPT:
-                self.system_prompt = PILOT_SYSTEM_PROMPT
             if not self.writable_prefixes:
                 raise ValueError("pilot mode requires writable prefixes")
             if min(self.max_tool_calls_per_turn, self.max_tool_calls_per_cell) < 1:
@@ -1567,6 +1555,26 @@ class RepositoryAgentClient:
                 })
                 oom_kills_seen = total
 
+        def advance_pilot_turn() -> None:
+            nonlocal prefix_length, logical_turn, turn_tool_calls, captured, turn_record
+            record_message({"role": "user", "content": self.next_user_turns[logical_turn - 1]})
+            prefix_length = len(messages)
+            logical_turn += 1
+            turn_tool_calls = 0
+            captured = False
+            turn_record = {
+                "turn": f"T{logical_turn}", "tool_calls": [],
+                "submission": None, "workspace_diff": None,
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0,
+                          "requests": 0,
+                          "cost_usd": 0.0 if cost_usd is not None else None},
+            }
+            trajectory["turns"].append(turn_record)
+
+        def pilot_summary() -> str:
+            first = trajectory["turns"][0]["submission"]
+            return first["title"] if first is not None else ""
+
         try:
             storage.prepare()
             events.append(
@@ -1695,7 +1703,12 @@ class RepositoryAgentClient:
                 for call_index, call in enumerate(replayed):
                     remaining()
                     if self.pilot_mode and turn_tool_calls >= self.max_tool_calls_per_turn:
-                        raise ValueError("turn_tool_call_limit")
+                        for skipped in replayed[call_index:]:
+                            record_message({
+                                "role": "tool", "tool_call_id": skipped["id"],
+                                "content": "turn ended: tool call limit",
+                            })
+                        break
                     if self.pilot_mode and cell_tool_calls >= self.max_tool_calls_per_cell:
                         raise ValueError("cell_tool_call_limit")
                     turn_tool_calls += 1
@@ -1737,26 +1750,10 @@ class RepositoryAgentClient:
                                     "role": "tool", "tool_call_id": call_id,
                                     "content": "submission recorded",
                                 })
-                                record_message({
-                                    "role": "user",
-                                    "content": self.next_user_turns[logical_turn - 1],
-                                })
-                                prefix_length = len(messages)
-                                logical_turn += 1
-                                turn_tool_calls = 0
-                                captured = False
-                                turn_record = {
-                                    "turn": f"T{logical_turn}", "tool_calls": [],
-                                    "submission": None, "workspace_diff": None,
-                                    "usage": {"prompt_tokens": 0, "completion_tokens": 0,
-                                              "requests": 0,
-                                              "cost_usd": 0.0 if cost_usd is not None else None},
-                                }
-                                trajectory["turns"].append(turn_record)
+                                advance_pilot_turn()
                                 break
                             return LoopResult(
-                                (trajectory["turns"][0]["submission"]["title"]
-                                 if self.pilot_mode else submission["summary"]),
+                                pilot_summary() if self.pilot_mode else submission["summary"],
                                 patch, files, before_digest, after_digest, trajectory,
                                 prompt_tokens, completion_tokens, cost_usd, requests,
                             )
@@ -1849,6 +1846,27 @@ class RepositoryAgentClient:
                         "exit_ok": output.text.startswith("exit=0\n"),
                         "output_bytes": output.original_bytes,
                     })
+                if self.pilot_mode and cell_tool_calls >= self.max_tool_calls_per_cell:
+                    raise ValueError("cell_tool_call_limit")
+                if self.pilot_mode and turn_tool_calls >= self.max_tool_calls_per_turn:
+                    peaks = capture()
+                    patch, files, before_digest, after_digest = self._observed_work(
+                        baseline, workspace,
+                        resource_cause=_resource_cause(peaks, oom_kills_seen),
+                    )
+                    turn_record.update({
+                        "stop_cause": "turn_tool_call_limit",
+                        "workspace_diff": patch.decode("utf-8"),
+                        "patch_ref": digest_bytes(patch),
+                        "baseline_tree_digest": before_digest,
+                        "tree_digest": after_digest,
+                    })
+                    events.append({"kind": "turn_stopped", "turn": logical_turn,
+                                   "cause": "turn_tool_call_limit"})
+                    if logical_turn < 3:
+                        advance_pilot_turn()
+                        continue
+                    raise ValueError("turn_tool_call_limit")
                 _shrink_conversation(
                     messages, self.bounds.max_conversation_bytes, events, prefix_length
                 )
@@ -1892,8 +1910,17 @@ class RepositoryAgentClient:
                 try:
                     if not captured:
                         capture()
-                    patch = self._observed_work(baseline, workspace, enforce_scope=False)[0]
+                    patch, _, before_digest, after_digest = self._observed_work(
+                        baseline, workspace, enforce_scope=False,
+                    )
                     evidence["candidate.patch"] = patch
+                    if self.pilot_mode:
+                        turn_record.update({
+                            "workspace_diff": patch.decode("utf-8"),
+                            "patch_ref": digest_bytes(patch),
+                            "baseline_tree_digest": before_digest,
+                            "tree_digest": after_digest,
+                        })
                 except (ValueError, RuntimeError, OSError, subprocess.SubprocessError):
                     events.append({"kind": "partial_capture_failed"})
             raise AgentLoopError(
