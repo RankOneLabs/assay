@@ -84,6 +84,8 @@ def test_core_and_bridge_field_types_constraints_and_routes_agree(
     # allow_inf_nan=False and freeze_payloads. Bridge CellId is Annotated,
     # while core cell_id has an inline Field pattern. These base-model and
     # declaration differences do not change the field's wire constraints.
+    # Validators are checked only for the route and local-posture behaviors
+    # asserted below; unrelated future validators need their own behavior tests.
     for core_model, bridge_model in (
         (TrialRequest, bridge.TrialRequest),
         (TrialLimits, bridge.TrialLimits),

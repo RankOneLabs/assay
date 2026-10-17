@@ -57,6 +57,7 @@ from assay.pier_protocol import (
     CandidateSubmission,
     InfrastructureFailure,
     ManifestRejected,
+    ModelRoute,
     PierExchange,
     RuntimeBinding,
     bind_exchange,
@@ -504,7 +505,7 @@ class PierAdapter:
         )
         dispatched_accounting = _accounting_from_usage(
             bridge_result.usage,
-            paid_route=self.model_route.get("provider") == "amazon-bedrock",
+            paid_route=ModelRoute.model_validate(self.model_route).paid_route_reachable,
         )
 
         if bridge_result.exchange != exchange:
