@@ -13,10 +13,11 @@ import json
 import os
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from workflow_edit.bridge import LOCAL_ROUTE
 
@@ -50,6 +51,7 @@ from verification_pilot.fixtures import base_subjects
 from verification_pilot.ground_truth import GroundTruth
 from verification_pilot.ground_truth import subject_truth as fixture_subject_truth
 from verification_pilot.inputs import T2_TEXT, T3_TEXT
+from verification_pilot.observations import RecordedTrace, observe
 from verification_pilot.settings import VerificationPilotSettings
 from verification_pilot.study import PilotSubject, PreparedPilot, compile_pilot_plan, pilot_subjects
 
@@ -196,7 +198,9 @@ class ScriptedWorker:
         ]
         trajectory: dict[str, Any] = {"turns": [
             {"turn": f"T{index}", "tool_calls": [], "submission": submission,
-             "workspace_diff": None}
+             "workspace_diff": None,
+             "usage": {"prompt_tokens": 0, "completion_tokens": 0,
+                       "requests": 0, "cost_usd": None}}
             for index, submission in enumerate(submissions, 1)
         ]}
 
@@ -212,8 +216,11 @@ class ScriptedWorker:
         })
 
 
-def save_run_trace(store: ObjectStore, result: RunResult, archive_root: Path) -> Path | None:
-    """Save one manifest and its cell traces under raw/runs/<run_id>."""
+def save_run_trace(
+    store: ObjectStore, result: RunResult, archive_root: Path,
+    subjects: Mapping[str, PilotSubject],
+) -> Path | None:
+    """Save cell traces and derived measures under raw/runs/<run_id>."""
     if result.manifest is None or result.manifest_ref is None:
         return None
     manifest = result.manifest
@@ -243,6 +250,14 @@ def save_run_trace(store: ObjectStore, result: RunResult, archive_root: Path) ->
             trace_name = f"{number:03d}-trajectory.json"
             (traces / trace_name).write_bytes(trajectory)
             entry["trajectory"] = trace_name
+            trace = cast(RecordedTrace, json.loads(trajectory))
+            subject_id = cell_id.split(":", 1)[0]
+            measures = [asdict(item) for item in observe(trace, subjects[subject_id])]
+            measures_name = f"{number:03d}-measures.json"
+            (traces / measures_name).write_text(
+                json.dumps(measures, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+            )
+            entry["measures"] = measures_name
         index[cell_id] = entry
     (destination / "index.json").write_text(
         json.dumps(index, sort_keys=True, indent=2) + "\n", encoding="utf-8"
@@ -270,7 +285,7 @@ async def run_scripted(
         evaluators={declaration.id: evaluator for declaration in prepared.snapshot.evaluators},
     )
     if isinstance(result, RunFailed | RunSucceeded):
-        save_run_trace(store, result, archive_root or store.root.parent / "runs")
+        save_run_trace(store, result, archive_root or store.root.parent / "runs", by_id)
     return prepared, result
 
 
@@ -319,7 +334,7 @@ async def run_live(
         evaluators={declaration.id: evaluator for declaration in prepared.snapshot.evaluators},
     )
     if isinstance(result, RunFailed | RunSucceeded):
-        save_run_trace(store, result, archive_root or store.root.parent / "runs")
+        save_run_trace(store, result, archive_root or store.root.parent / "runs", by_id)
     return prepared, result
 
 

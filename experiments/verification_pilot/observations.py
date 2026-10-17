@@ -51,8 +51,11 @@ class RecordedTrace(TypedDict):
 
 
 class PilotSubject(Protocol):
-    migration: Migration
-    location: str | None
+    @property
+    def migration(self) -> Migration: ...
+
+    @property
+    def location(self) -> str | None: ...
 
 
 MeasureValue = bool | int | float | str
