@@ -9,10 +9,12 @@ bridge project has no dependency edge back onto ``assay`` (see README.md).
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import io
 import os
 import re
+import stat
 import subprocess
 import tarfile
 from collections.abc import Mapping
@@ -48,6 +50,49 @@ class ArtifactCollectionRejected(ValueError):
         self.artifacts = artifacts or {}
         self.rejected_path = rejected_path
         self.origin = origin
+
+
+def _read_regular_nofollow(
+    root: Path, relative: str, limit: int, *, origin: str, reject_size: int | None = None
+) -> tuple[bytes, int]:
+    """Open every component relative to the preceding directory, then bound the read."""
+    parts = safe_relative_path(relative).parts
+    descriptors: list[int] = []
+    try:
+        descriptors.append(os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+        for part in parts[:-1]:
+            descriptors.append(os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=descriptors[-1],
+            ))
+        leaf = os.open(
+            parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=descriptors[-1],
+        )
+        descriptors.append(leaf)
+        metadata = os.fstat(leaf)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ArtifactCollectionRejected(
+                "out_of_scope_edit", f"non-regular entry in submission: {relative}",
+                rejected_path=relative, origin=origin,
+            )
+        if reject_size is not None and metadata.st_size > reject_size:
+            return b"", metadata.st_size
+        with os.fdopen(os.dup(leaf), "rb") as source:
+            return source.read(limit + 1), metadata.st_size
+    except OSError as error:
+        cause = (
+            "escaping_symlink"
+            if error.errno in {errno.ELOOP, errno.ENOTDIR}
+            else "out_of_scope_edit"
+        )
+        raise ArtifactCollectionRejected(
+            cause, f"unsafe entry in submission: {relative}",
+            rejected_path=relative, origin=origin,
+        ) from error
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
 def safe_relative_path(raw_path: str) -> PurePosixPath:
@@ -129,40 +174,26 @@ def regular_tree(root: Path) -> dict[str, bytes]:
                 "out_of_scope_edit", f"reserved Git metadata path in submission: {relative}",
                 artifacts=files, rejected_path=relative, origin="working_copy",
             )
-        if path.is_symlink():
-            raise ArtifactCollectionRejected(
-                "escaping_symlink",
-                f"escaping symlink in submission: {relative}",
-                artifacts=files,
-                rejected_path=relative,
-                origin="working_copy",
-            )
-        if path.is_dir():
+        if stat.S_ISDIR(path.lstat().st_mode):
             continue
-        if not path.is_file():
-            raise ArtifactCollectionRejected(
-                "out_of_scope_edit",
-                f"non-regular entry in submission: {relative}",
-                artifacts=files,
-                rejected_path=relative,
-                origin="working_copy",
-            )
         remaining = MAX_AGGREGATE_ARTIFACT_BYTES - aggregate_bytes
-        size = path.lstat().st_size
+        try:
+            data, size = _read_regular_nofollow(
+                root, relative, min(MAX_ARTIFACT_BYTES, remaining), origin="working_copy"
+            )
+        except ArtifactCollectionRejected as error:
+            error.artifacts = dict(files)
+            raise
         if size > MAX_ARTIFACT_BYTES or size > remaining:
-            with path.open("rb") as source:
-                retained = source.read(min(MAX_ARTIFACT_BYTES, remaining))
             cause = (
                 "oversized_artifact" if size > MAX_ARTIFACT_BYTES
                 else "aggregate_artifact_limit"
             )
             raise ArtifactCollectionRejected(
                 cause, f"working-copy file exceeds the byte limit: {relative}",
-                artifacts={**files, relative: retained},
+                artifacts={**files, relative: data[:min(MAX_ARTIFACT_BYTES, remaining)]},
                 rejected_path=relative, origin="working_copy",
             )
-        with path.open("rb") as source:
-            data = source.read(min(MAX_ARTIFACT_BYTES, remaining) + 1)
         if len(data) > MAX_ARTIFACT_BYTES or len(data) > remaining:
             retained = data[:min(MAX_ARTIFACT_BYTES, remaining)]
             cause = (
@@ -432,23 +463,9 @@ def collect_artifacts(
     for path in sorted(paths):
         if path.relative_to(root).parts[0] in excluded_roots:
             continue
-        if path.is_symlink():
-            raise ArtifactCollectionRejected(
-                "escaping_symlink",
-                f"symlink in submission: {path.relative_to(root)}",
-                artifacts=artifacts,
-                rejected_path=path.relative_to(root).as_posix(),
-            )
-        if not path.is_file():
+        if stat.S_ISDIR(path.lstat().st_mode):
             continue
         relative = path.relative_to(root).as_posix()
-        if path.lstat().st_size > max_bytes:
-            raise ArtifactCollectionRejected(
-                "oversized_artifact",
-                f"trial artifact exceeds the byte limit: {relative}",
-                artifacts=artifacts,
-                rejected_path=relative,
-            )
         try:
             safe_relative_path(relative)
         except ValueError as error:
@@ -460,8 +477,18 @@ def collect_artifacts(
             if relative == aggregate_exempt_path
             else min(max_bytes, max_aggregate_bytes - aggregate_bytes)
         )
-        with path.open("rb") as artifact_file:
-            data = artifact_file.read(remaining + 1)
+        try:
+            data, size = _read_regular_nofollow(
+                root, relative, remaining, origin="submission", reject_size=max_bytes
+            )
+        except ArtifactCollectionRejected as error:
+            error.artifacts = dict(artifacts)
+            raise
+        if size > max_bytes and len(data) <= remaining:
+            raise ArtifactCollectionRejected(
+                "oversized_artifact", f"trial artifact exceeds the byte limit: {relative}",
+                artifacts=artifacts, rejected_path=relative,
+            )
         if len(data) > remaining:
             if relative == aggregate_exempt_path or remaining == max_bytes:
                 raise ArtifactCollectionRejected(

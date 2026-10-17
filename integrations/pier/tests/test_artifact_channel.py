@@ -574,10 +574,41 @@ def test_rejected_worktree_paths_cannot_replace_submission_artifacts() -> None:
     }
 
 
-def test_collect_artifacts_skips_a_non_regular_file(tmp_path: Path) -> None:
+def test_collect_artifacts_rejects_a_non_regular_file(tmp_path: Path) -> None:
     os.mkfifo(tmp_path / "fifo")
     (tmp_path / "output").write_bytes(b"answer = 42\n")
-    assert _collect(tmp_path) == {"output": b"answer = 42\n"}
+    with pytest.raises(ArtifactCollectionRejected, match="non-regular") as rejected:
+        _collect(tmp_path)
+    assert rejected.value.cause == "out_of_scope_edit"
+
+
+@pytest.mark.parametrize("storage_mode", ["bind", "tmpfs"])
+@pytest.mark.parametrize("entry", ["leaf_link", "directory_link", "fifo", "hard_link"])
+def test_nofollow_readers_enforce_entry_type_in_both_storage_modes(
+    tmp_path: Path, storage_mode: str, entry: str
+) -> None:
+    root = tmp_path / storage_mode
+    root.mkdir()
+    (root / "source.txt").write_bytes(b"safe")
+    if entry == "leaf_link":
+        (root / "entry").symlink_to("source.txt")
+        expected = "escaping_symlink"
+    elif entry == "directory_link":
+        (root / "directory").symlink_to(root, target_is_directory=True)
+        expected = "escaping_symlink"
+    elif entry == "fifo":
+        os.mkfifo(root / "entry")
+        expected = "out_of_scope_edit"
+    else:
+        os.link(root / "source.txt", root / "entry")
+        expected = None
+    for reader in (regular_tree, _collect):
+        if expected is None:
+            assert reader(root)["entry"] == b"safe"
+        else:
+            with pytest.raises(ArtifactCollectionRejected) as rejected:
+                reader(root)
+            assert rejected.value.cause == expected
 
 
 def test_observed_patch_is_repeatable_and_applies_to_baseline(tmp_path: Path) -> None:
