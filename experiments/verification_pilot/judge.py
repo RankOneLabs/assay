@@ -141,6 +141,8 @@ class PilotJudge:
             if not isinstance(submitted, str):
                 raise ValueError("judge did not submit a source field")
             parsed = json.loads(submitted)
+            if not isinstance(parsed, dict):
+                raise ValueError("judge submission must be a JSON object")
             label = parsed.get("label")
             if type(label) is not int or label not in (0, 1):
                 raise ValueError("judge returned invalid label")
