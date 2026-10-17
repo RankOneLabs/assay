@@ -112,6 +112,21 @@ def test_paid_turn_uses_the_current_pilot_tool_schema(tmp_path: Path) -> None:
     assert captured[0]["tools"] == PILOT_TOOLS_REVIEW
 
 
+def test_paid_turn_forwards_deadline_to_openrouter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(tmp_path, lambda request: httpx.Response(500))
+    seen: list[float | None] = []
+
+    def fake_openrouter(*args: Any, deadline: float | None = None) -> ModelTurn:
+        seen.append(deadline)
+        return ModelTurn(message={}, finish_reason="stop", prompt_tokens=0,
+                         completion_tokens=0, cost_usd=0.0)
+
+    monkeypatch.setattr(client, "_openrouter_turn", fake_openrouter)
+    deadline = time.monotonic() + 20
+    client._turn([], 1, deadline, TOOLS)
+    assert seen == [deadline]
+
+
 def test_haiku_turn_uses_caller_loop_bounds(tmp_path: Path) -> None:
     captured: list[bytes] = []
 

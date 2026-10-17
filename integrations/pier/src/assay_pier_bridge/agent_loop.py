@@ -1239,12 +1239,15 @@ class RepositoryAgentClient:
                 turn=turn,
                 deadline=deadline,
             )
-        return self._openrouter_turn(messages, HAIKU_TURN_ROUTE, tools)
+        return self._openrouter_turn(messages, HAIKU_TURN_ROUTE, tools, deadline=deadline)
 
     def _openrouter_turn(
         self, messages: list[dict[str, Any]], route: OpenRouterTurnRoute = HAIKU_TURN_ROUTE,
         tools: list[dict[str, Any]] | None = None,
+        *, deadline: float | None = None,
     ) -> ModelTurn:
+        if deadline is not None and deadline <= time.monotonic():
+            raise ValueError("agent_deadline")
         body = {
             "model": route.model,
             "messages": messages,
@@ -1286,6 +1289,9 @@ class RepositoryAgentClient:
         with self._http_client() as client:
             if self._transport_retries(client) != 0:
                 raise ValueError("retry_config_violation")
+            timeout_s = 30.0 if deadline is None else min(30.0, deadline - time.monotonic())
+            if timeout_s <= 0:
+                raise ValueError("agent_deadline")
             with client.stream(
                 "POST",
                 chat_completions_url,
@@ -1294,11 +1300,14 @@ class RepositoryAgentClient:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
+                timeout=timeout_s,
             ) as response:
                 if str(response.url) != chat_completions_url or not response.is_success:
                     raise ValueError("provider_response")
                 chunks = bytearray()
                 for chunk in response.iter_bytes():
+                    if deadline is not None and deadline <= time.monotonic():
+                        raise ValueError("agent_deadline")
                     chunks.extend(chunk)
                     if len(chunks) > self.bounds.max_response_bytes:
                         raise ValueError("response_limit")
