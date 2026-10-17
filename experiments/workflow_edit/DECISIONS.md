@@ -179,12 +179,14 @@ unrelated plan version.
 
 ## Correctness evaluation
 
-- **bun mode:** The evaluator's `bun` toolchain typechecks the candidate tree
-  alone (`tsc --noEmit -p tsconfig.json`), then bundles every production
-  module (`bun build --target=bun`) as the build check, and only then copies
-  the frozen tests in, so a hidden test can never fail the candidate's own
-  typecheck. Group commands must start with the toolchain's runner. Toolchain
-  versions are settings checked inside the sandbox.
+- **D13, frozen tests before preflight:** After checking the patched tree digest,
+  the harness resets `tests/visible/` to exactly the files of the restored
+  visible group, removing candidate edits and additions. It then typechecks
+  (`tsc --noEmit -p tsconfig.json` in bun mode), builds, copies hidden groups,
+  and runs all groups. The same order applies to the non-bun path. This keeps
+  candidate edits to visible tests out of preflight as well as the verdict.
+  Group commands must start with the toolchain's runner. Toolchain versions
+  are settings checked inside the sandbox.
 - **Frozen visible tests:** The visible regression group is the baseline's own
   `tests/visible/` files, restored over the candidate's copies and run by
   name, so editing or adding a visible test cannot change its regression
