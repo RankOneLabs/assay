@@ -1,6 +1,7 @@
 """Pinned analyzer versions and snapshot cache behavior."""
 
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -21,6 +22,26 @@ def test_pins_match_declared_extra() -> None:
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     extra = project["project"]["optional-dependencies"]["code-metrics"]
     assert {name: pin for name, pin in (item.split("==") for item in extra)} == PINS | RUST_PINS
+
+
+def test_relative_node_tools_override_resolves_before_derived_paths(tmp_path: Path) -> None:
+    selected = tmp_path / "relative-tools"
+    selected.mkdir()
+    (selected / "package-lock.json").write_bytes(
+        (pins.NODE_TOOLS / "package-lock.json").read_bytes()
+    )
+    binary = selected / "node_modules" / ".bin" / "jscpd"
+    binary.parent.mkdir(parents=True)
+    binary.touch()
+    environment = {**os.environ, "ASSAY_NODE_TOOLS": "relative-tools"}
+    completed = subprocess.run(
+        [sys.executable, "-c", "from assay.code_metrics import pins; "
+         "assert pins.NODE_TOOLS.is_absolute(); "
+         "assert pins.node_tool_versions(); "
+         "assert pins.node_binary('jscpd') == str(pins.NODE_TOOLS / 'node_modules/.bin/jscpd')"],
+        cwd=tmp_path, env=environment, capture_output=True, text=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_version_mismatch_names_all_values(monkeypatch: pytest.MonkeyPatch) -> None:
