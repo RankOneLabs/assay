@@ -109,7 +109,7 @@ def verified_observations(
 def h1_ownership_gap(rows: Iterable[Observation], arm: str) -> dict[str, Any]:
     """One-sample, two-sided exact sign test of T1 ownership gap against zero."""
     selected = [float(r.value) for r in rows if r.arm == arm
-                and r.evaluator_id == "t1_ownership_gap" and r.value != NOT_APPLICABLE]
+                and r.evaluator_id == "pilot_judge" and r.value != NOT_APPLICABLE]
     improved = sum(value > 0 for value in selected)
     regressed = sum(value < 0 for value in selected)
     return {
@@ -270,11 +270,11 @@ def ceiling_effect(
 
 def power_statement() -> dict[str, str]:
     return {
-        "H1": "48 paired observations per model in the Tier 1 grid; one-sample sign test by arm.",
-        "H2": "48 paired observations per model in the Tier 1 grid.",
+        "H1": "12 paired observations per model in the active grid; one-sample sign test by arm.",
+        "H2": "12 paired observations per model in the active grid.",
         "H3": "12 of 16 base subjects valid in both arms; deferred Tier 2 data required.",
-        "H4": ("4 migration-matched pairs; below the engine's ten-subject "
-               "inference floor. No engine p-value."),
+        "H4": ("Four migration-matched pairs are planned; no remnant-inspection "
+               "verdict is declared in this foundation shard. No engine p-value."),
     }
 
 
@@ -284,7 +284,7 @@ def model_report(
 ) -> dict[str, Any]:
     """Assemble per-model results; persist each engine comparison separately."""
     rows = verified_observations(store, manifest_refs, model)
-    h2_config = paired_config(store, manifest_refs, evaluator_id="t1_ownership_gap",
+    h2_config = paired_config(store, manifest_refs, evaluator_id="pilot_judge",
                               reference_arm="t1-native", candidate_arm="t1-quoted")
     h2 = build_report(store, h2_config)
     h2_ref = str(persist_report(store, h2_config))

@@ -3,14 +3,11 @@
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from verification_pilot import PILOT_SUBJECT_IDS
 
 MEASUREMENT_SOURCE = "experiments/workflow_edit/SMOKE.md"
 SMOKE_EDIT_SUBJECT_ID = "oakridge-dbos-smoke-edit-wf13"
 # Every qualification subject ever run, so none can enter a study population.
-SMOKE_SUBJECT_IDS = (
-    frozenset({"oakridge-dbos-smoke-wf12", SMOKE_EDIT_SUBJECT_ID}) | PILOT_SUBJECT_IDS
-)
+SMOKE_SUBJECT_IDS = frozenset({"oakridge-dbos-smoke-wf12", SMOKE_EDIT_SUBJECT_ID})
 
 
 class Part1AgentSettings(BaseModel):

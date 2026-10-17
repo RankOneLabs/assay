@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from verification_pilot.prompts import PILOT_SYSTEM_PROMPT
+from verification_pilot.inputs import PILOT_SYSTEM_PROMPT
 
 Placement = Literal["native-template", "quoted-template"]
 Route = Literal["smithers-local", "openrouter"]
