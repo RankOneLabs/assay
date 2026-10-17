@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import get_args
 
 import pytest
+from assay_pier_bridge.agent_loop import DockerTmpfsToolSandbox, DockerToolSandbox
 from assay_pier_bridge.container import DockerTrialClient
 from assay_pier_bridge.evidence import worker_usage_from_result_bytes
 from assay_pier_bridge.identity import canonical_json, digest_bytes
@@ -585,12 +587,9 @@ def test_collect_artifacts_rejects_a_non_regular_file(tmp_path: Path) -> None:
     assert rejected.value.cause == "out_of_scope_edit"
 
 
-@pytest.mark.parametrize("storage_mode", ["bind", "tmpfs"])
 @pytest.mark.parametrize("entry", ["leaf_link", "directory_link", "fifo", "hard_link"])
-def test_nofollow_readers_enforce_entry_type_in_both_storage_modes(
-    tmp_path: Path, storage_mode: str, entry: str
-) -> None:
-    root = tmp_path / storage_mode
+def test_nofollow_readers_enforce_entry_type(tmp_path: Path, entry: str) -> None:
+    root = tmp_path / "submission"
     root.mkdir()
     (root / "source.txt").write_bytes(b"safe")
     if entry == "leaf_link":
@@ -609,6 +608,77 @@ def test_nofollow_readers_enforce_entry_type_in_both_storage_modes(
         with pytest.raises(ArtifactCollectionRejected) as rejected:
             reader(root)
         assert rejected.value.cause == expected
+
+
+@pytest.mark.parametrize("storage_mode", ["bind", "tmpfs"])
+@pytest.mark.parametrize("entry", ["leaf_link", "directory_link", "fifo", "hard_link"])
+def test_nofollow_readers_reject_entries_in_real_sandbox_storage(
+    tmp_path: Path, image: str, storage_mode: str, entry: str
+) -> None:
+    workspace = tmp_path / "workspace"
+    cache = tmp_path / "cache"
+    workspace.mkdir()
+    cache.mkdir()
+    factory = DockerToolSandbox if storage_mode == "bind" else DockerTmpfsToolSandbox
+    sandbox = factory(workspace, cache, image, f"test:{storage_mode}:{entry}")
+    try:
+        inspected = subprocess.run(
+            ["docker", "inspect", "--format", "{{json .Mounts}}", sandbox.name],
+            capture_output=True, text=True, check=True, timeout=15,
+        )
+        mounts = json.loads(inspected.stdout)
+        workspace_kind = next(
+            mount["Type"] for mount in mounts if mount["Destination"] == "/workspace"
+        )
+        assert workspace_kind == storage_mode
+        script = """
+import json
+import os
+import sys
+from pathlib import Path
+from assay_pier_bridge.paths import ArtifactCollectionRejected, collect_artifacts, regular_tree
+
+root = Path('/workspace')
+(root / 'source.txt').write_bytes(b'safe')
+entry = sys.argv[1]
+if entry == 'leaf_link':
+    (root / 'entry').symlink_to('source.txt')
+elif entry == 'directory_link':
+    (root / 'directory').symlink_to('.', target_is_directory=True)
+elif entry == 'fifo':
+    os.mkfifo(root / 'entry')
+else:
+    os.link(root / 'source.txt', root / 'entry')
+
+causes = []
+for reader in (
+    regular_tree,
+    lambda path: collect_artifacts(
+        path, max_bytes=1024, max_aggregate_bytes=2048,
+        max_entries=16, aggregate_exempt_path='manifest.json',
+    ),
+):
+    try:
+        reader(root)
+    except ArtifactCollectionRejected as error:
+        causes.append(error.cause)
+    else:
+        causes.append('accepted')
+print(json.dumps(causes))
+"""
+        checked = subprocess.run(
+            ["docker", "exec", "-u", "0:0", sandbox.name, "python", "-c", script, entry],
+            capture_output=True, text=True, check=True, timeout=30,
+        )
+        expected = {
+            "leaf_link": "escaping_symlink",
+            "directory_link": "escaping_symlink",
+            "fifo": "out_of_scope_edit",
+            "hard_link": "hard_link_submission",
+        }[entry]
+        assert json.loads(checked.stdout) == [expected, expected]
+    finally:
+        sandbox.close()
 
 
 def test_patch_capture_reports_file_replacing_former_directory(tmp_path: Path) -> None:
