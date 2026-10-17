@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -258,6 +259,30 @@ async def test_job_without_completion_timing_obeys_acceptance_budget(
     assert isinstance(result, WorkerFailure)
     assert result.error_type == "AcceptanceDeadlineExceeded"
     assert polls == 2
+
+
+@pytest.mark.parametrize("endpoint", ["status", "task"])
+async def test_get_crossing_acceptance_deadline_fails(
+    tmp_path: Path, endpoint: str
+) -> None:
+    client = _factory(tmp_path).create(idempotency_key="cell-1")
+    object.__setattr__(client._factory, "timeout_seconds", 0.01)
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"job_id": "job-1"})
+        current = "task" if request.url.host == "mcbain" else "status"
+        if current == endpoint:
+            await asyncio.sleep(0.05)
+        return httpx.Response(200, json=_task() if current == "task" else _job())
+
+    client._http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    try:
+        result = await client.complete_result(_params())
+    finally:
+        await client.aclose()
+    assert isinstance(result, WorkerFailure)
+    assert result.error_type == "AcceptanceDeadlineExceeded"
 
 
 @pytest.mark.parametrize("endpoint", ["status", "task"])
