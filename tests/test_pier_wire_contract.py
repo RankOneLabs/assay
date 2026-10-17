@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, get_args, get_origin
 
 import pytest
 
@@ -33,6 +33,7 @@ from assay.pier_protocol import (
     EffectiveEnforcement,
     InfrastructureCause,
     InfrastructureFailure,
+    ModelRoute,
     NetworkPolicy,
     TrialLimits,
     TrialRequest,
@@ -47,11 +48,76 @@ def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
+def _field_contract(model: type[Any]) -> dict[str, tuple[Any, ...]]:
+    def type_shape(annotation: Any) -> Any:
+        origin = get_origin(annotation)
+        if origin is None:
+            return getattr(annotation, "__name__", repr(annotation))
+        return (str(origin), tuple(type_shape(value) if isinstance(value, type) or
+                                    get_origin(value) is not None else value
+                                    for value in get_args(annotation)))
+
+    return {
+        name: (
+            type_shape(field.annotation),
+            tuple(sorted(
+                (key, value)
+                for rule in field.metadata
+                for key in ("gt", "ge", "lt", "le", "pattern", "min_length",
+                            "max_length", "strict", "allow_inf_nan")
+                if (value := getattr(rule, key, None)) is not None
+            )),
+            field.is_required(),
+            field.default if not field.is_required() else None,
+        )
+        for name, field in model.model_fields.items()
+    }
+
+
+def test_core_and_bridge_field_types_constraints_and_routes_agree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "integrations/pier/src"))
+    from assay_pier_bridge import protocol as bridge
+
+    # Intended differences: bridge ClosedModel is strict; core WireModel uses
+    # allow_inf_nan=False and freeze_payloads. Bridge CellId is Annotated,
+    # while core cell_id has an inline Field pattern. These base-model and
+    # declaration differences do not change the field's wire constraints.
+    for core_model, bridge_model in (
+        (TrialRequest, bridge.TrialRequest),
+        (TrialLimits, bridge.TrialLimits),
+        (EffectiveEnforcement, bridge.EffectiveEnforcement),
+        (ModelRoute, bridge.ModelRoute),
+    ):
+        assert _field_contract(core_model) == _field_contract(bridge_model)
+
+    paid = {"endpoint": "https://openrouter.ai/api/v1", "model": "anthropic/claude-3-haiku",
+            "provider": "amazon-bedrock"}
+    local = {"endpoint": "http://willie:8900", "model": "qwen-coder-32b",
+             "provider": "smithers-local"}
+    for route in (paid, local):
+        assert ModelRoute.model_validate(route).model_dump() == route
+        assert bridge.ModelRoute.model_validate(route).model_dump() == route
+    for route in ({**paid, "model": local["model"]}, {**local, "provider": paid["provider"]}):
+        for model in (ModelRoute, bridge.ModelRoute):
+            with pytest.raises(ValueError):
+                model.model_validate(route)
+
+    sample = {**_fixture()["trial_envelope"]["sample_request"],
+              "egress_host": None, "egress_port": None,
+              "network_policy": "egress-openrouter-only"}
+    for model in (TrialRequest, bridge.TrialRequest):
+        with pytest.raises(ValueError, match="toolchain posture"):
+            model.model_validate({**sample, "model_route": local})
+        assert model.model_validate({**sample, "model_route": local,
+                                     "network_policy": "toolchain-only"}).model_route.provider == (
+                                         "smithers-local"
+                                     )
+
+
 def test_trial_envelope_revision_matches_the_shared_fixture() -> None:
     envelope = _fixture()["trial_envelope"]
-    assert set(TrialRequest.model_fields) == set(envelope["request_fields"])
-    assert set(TrialLimits.model_fields) == set(envelope["limit_fields"])
-    assert set(EffectiveEnforcement.model_fields) == set(envelope["effective_fields"])
     assert set(get_args(NetworkPolicy)) == set(envelope["network_policies"])
     request = TrialRequest.model_validate(envelope["sample_request"])
     assert request.model_dump() == envelope["sample_request"]
