@@ -27,11 +27,21 @@ TYPECHECK = ("tsc", "--noEmit", "-p", "tsconfig.json")
 
 
 def _install_tests(root: Path, fixture: SmokeEditFixture) -> None:
-    for group in fixture.groups:
+    for group in fixture.groups[1:]:
         for path, text in group.files.items():
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8")
+
+
+def _reset_visible_tests(root: Path, fixture: SmokeEditFixture) -> None:
+    visible = root / "tests" / "visible"
+    if visible.exists():
+        shutil.rmtree(visible)
+    for path, text in fixture.groups[0].files.items():
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
 
 
 def _run(image: str, root: Path, argv: Sequence[str]) -> str:
@@ -58,29 +68,58 @@ def _run(image: str, root: Path, argv: Sequence[str]) -> str:
 
 
 def diagnose_candidate(
-    image: str, fixture: SmokeEditFixture, patch: str, groups: Mapping[str, Mapping[str, Any]],
-    *, scratch: Path,
+    image: str,
+    fixture: SmokeEditFixture,
+    patch: str,
+    groups: Mapping[str, Mapping[str, Any]],
+    *,
+    scratch: Path,
 ) -> dict[str, Any]:
     root = Path(tempfile.mkdtemp(dir=scratch))
     # mkdtemp is 0700; the container user must be able to traverse the mount.
     root.chmod(0o755)
     try:
         materialize(root, fixture.repository, patch)
-        # As in the evaluator, the candidate typechecks before any frozen test exists.
-        if any(g.get("cause") == "typecheck_nonzero_exit" for g in groups.values()):
-            errors = _TS_ERROR.findall(_run(image, root, TYPECHECK))
-            return {"typecheck_errors": [
-                {"file": file, "code": code, "message": message}
-                for file, code, message in errors[:5]
-            ]}
+        _reset_visible_tests(root, fixture)
+        preflight_causes = {
+            g["cause"]
+            for g in groups.values()
+            if isinstance(g.get("cause"), str)
+            and (
+                g["cause"].startswith(("typecheck_", "build_"))
+                or g["cause"]
+                in {
+                    "patch_rejected",
+                    "test_path_collision",
+                    "candidate_tree_digest_mismatch",
+                    "toolchain_unavailable",
+                    "sandbox_protocol_error",
+                }
+            )
+        }
+        if preflight_causes:
+            cause = sorted(preflight_causes)[0]
+            if cause == "typecheck_nonzero_exit":
+                errors = _TS_ERROR.findall(_run(image, root, TYPECHECK))
+                return {
+                    "preflight_cause": cause,
+                    "typecheck_errors": [
+                        {"file": file, "code": code, "message": message}
+                        for file, code, message in errors[:5]
+                    ],
+                }
+            return {"preflight_cause": cause}
         _install_tests(root, fixture)
         commands: dict[str, tuple[str, ...]] = {
             group.name: group.command for group in fixture.groups
         }
-        return {"failing_tests": {
-            name: sorted(set(_FAIL.findall(_run(image, root, commands[name]))))
-            for name, group in sorted(groups.items()) if group["status"] == "failed"
-        }}
+        return {
+            "failing_tests": {
+                name: sorted(set(_FAIL.findall(_run(image, root, commands[name]))))
+                for name, group in sorted(groups.items())
+                if group["status"] == "failed"
+            }
+        }
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

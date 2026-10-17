@@ -112,6 +112,11 @@ def test_retained_reference_pair_recomputes_exactly_offline(
     ]
 
 
+def test_empty_patch_measures_an_unchanged_tree(dependencies: Path) -> None:
+    comparison = measure_patch(load_fixture(), "", dependencies=dependencies)
+    assert comparison.before == comparison.after
+
+
 def test_real_tree_graph_matches_its_import_statements(dependencies: Path) -> None:
     snapshot, _ = snapshot_directory(SMOKE_EDIT / "repository")
     graph = json.loads(analyze(snapshot, config=metrics_config(dependencies)).model_dump_json())[
