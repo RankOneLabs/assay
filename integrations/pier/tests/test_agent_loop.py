@@ -692,11 +692,27 @@ def test_local_turns_record_observations_and_uncertain_billing(tmp_path: Path) -
     assert b"+two" in result.patch
     assert result.baseline_tree_digest != result.final_tree_digest
     model_events = [e for e in result.trajectory["events"] if e["kind"] == "model_request"]
-    assert [e["smithers_job_id"] for e in model_events] == ["job-1", "job-2"]
+    assert [e["observations"]["smithers_job_id"] for e in model_events] == ["job-1", "job-2"]
     assert all(e["billing"] == "uncertain" for e in model_events)
     # The replayed assistant turn carries exactly the portable tool-call fields.
     replayed = completion.seen[1]["messages"][2]
     assert replayed["tool_calls"][0].keys() == {"id", "type", "function"}
+
+
+def test_observations_cannot_replace_model_event_fields(tmp_path: Path) -> None:
+    def completion(**kwargs: Any) -> ModelTurn:
+        return ModelTurn(
+            message={"role": "assistant", "tool_calls": [_call("submit_output", {"summary": "ok"}, 1)]},
+            finish_reason="tool_calls", prompt_tokens=7, completion_tokens=3,
+            cost_usd=None, observations={"kind": "forged", "prompt_tokens": 999},
+        )
+
+    result = _local(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit"}
+    )
+    event = next(e for e in result.trajectory["events"] if e["kind"] == "model_request")
+    assert event["prompt_tokens"] == 7
+    assert event["observations"] == {"kind": "forged", "prompt_tokens": 999}
 
 
 def test_tool_call_mistakes_go_back_to_the_model(tmp_path: Path) -> None:

@@ -1563,7 +1563,7 @@ class RepositoryAgentClient:
                     "request_bytes": len(_json_bytes(messages)),
                     "seconds": round(time.monotonic() - started, 3),
                     "billing": "uncertain" if answer.cost_usd is None else "measured",
-                    **answer.observations,
+                    "observations": dict(answer.observations),
                 })
                 if (
                     answer.finish_reason == "length"
