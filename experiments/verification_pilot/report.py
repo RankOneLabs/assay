@@ -195,7 +195,9 @@ def paired_config(
 
 def evaluator_tables(rows: Iterable[Observation]) -> list[dict[str, Any]]:
     counts: Counter[tuple[str, str, str, str, int, str, str]] = Counter(
-        (r.model, r.arm, r.evaluator_id.split("_", 1)[0], r.group,
+        (r.model, r.arm,
+         "t1" if r.evaluator_id == "pilot_judge" else r.evaluator_id.split("_", 1)[0],
+         r.group,
          r.block_position, r.evaluator_id, r.value) for r in rows
     )
     return [{"model": model, "arm": arm, "turn": turn, "remnant_location": group,

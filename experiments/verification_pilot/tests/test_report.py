@@ -103,6 +103,9 @@ async def test_scripted_grid_builds_paired_h2_and_separate_model_report(tmp_path
     assert report["H3"]["status"] == "in_progress"
     assert len(report["ceiling_effect"]) == 2
     assert report["tables"]
+    assert {row["turn"] for row in report["tables"] if row["evaluator_id"] == "pilot_judge"} == {
+        "t1"
+    }
 
     # A changed route is a changed runtime configuration, even when its
     # subject grid and evaluator are identical. The engine rejects pooling.
