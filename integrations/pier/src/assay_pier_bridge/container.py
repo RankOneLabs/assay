@@ -457,8 +457,10 @@ class DockerTrialHandle:
     def cancel(self) -> None:
         """Operator-initiated cancellation, observable by an in-flight ``run()``."""
         self._cancel.set()
-        if self._started and not _force_remove(self._name):
-            raise InfrastructureTrialError("enforcement", "container removal failed")
+        if self._started:
+            if not _force_remove(self._name):
+                raise InfrastructureTrialError("enforcement", "container removal failed")
+            self._started = False
 
     def _check_cancel(self) -> None:
         if self._cancel.is_set():

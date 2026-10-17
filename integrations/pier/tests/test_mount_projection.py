@@ -96,6 +96,20 @@ def test_pre_run_cancellation_never_starts_docker(
     assert commands == []
 
 
+def test_repeated_cancel_removes_a_started_container_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handle = _handle(tmp_path)
+    handle._started = True
+    removed: list[str] = []
+    monkeypatch.setattr("assay_pier_bridge.container._force_remove", lambda name: (
+        removed.append(name) or True
+    ))
+    handle.cancel()
+    handle.cancel()
+    assert removed == [handle._name]
+
+
 def test_declared_and_inspected_controls_must_match(tmp_path: Path) -> None:
     handle = _handle(tmp_path)
     observed = ContainerObservation(
