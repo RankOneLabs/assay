@@ -8,8 +8,10 @@ import sys
 import tarfile
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
@@ -190,7 +192,7 @@ class FakeSandbox:
     oom_kill_count = 0
     late_oom_kills = 0
 
-    def __init__(self, workspace: Path, cache: Path, image: str) -> None:
+    def __init__(self, workspace: Path, cache: Path, image: str, cell_id: str) -> None:
         self.workspace = workspace
         self.cache = cache
         self.name = f"container-{len(self.created)}"
@@ -410,8 +412,8 @@ def test_failed_pilot_dispatch_counts_in_turn_usage(tmp_path: Path) -> None:
 
 def test_stopped_later_turn_recaptures_tmpfs_workspace(tmp_path: Path) -> None:
     class StagedSandbox(FakeSandbox):
-        def __init__(self, workspace: Path, cache: Path, image: str) -> None:
-            super().__init__(workspace, cache, image)
+        def __init__(self, workspace: Path, cache: Path, image: str, cell_id: str) -> None:
+            super().__init__(workspace, cache, image, cell_id)
             self.host_workspace = workspace
             self.workspace = workspace.parent / "container_workspace"
             shutil.copytree(workspace, self.workspace)
@@ -1088,8 +1090,8 @@ def test_replace_in_file_refusals_change_nothing_and_reach_the_model(
     outside.write_text("a = 1\n")
 
     class LinkingSandbox(FakeSandbox):
-        def __init__(self, workspace: Path, cache: Path, image: str) -> None:
-            super().__init__(workspace, cache, image)
+        def __init__(self, workspace: Path, cache: Path, image: str, cell_id: str) -> None:
+            super().__init__(workspace, cache, image, cell_id)
             (workspace / "src" / "link.ts").symlink_to(outside)
 
     completion = Scripted(
@@ -1295,18 +1297,75 @@ def test_docker_sandbox_mounts_only_neutral_cell_directories(
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     workspace, cache = tmp_path / "workspace", tmp_path / "cache"
-    sandbox = DockerToolSandbox(workspace, cache, "locked-image")
+    sandbox = DockerToolSandbox(workspace, cache, "locked-image", "s:a:w0")
     assert sandbox.observed["network_mode"] == "none"
     assert sandbox.observed["user"] == "1000:1000"
     sandbox.close()
     command = commands[0]
     assert command[:3] == ["docker", "run", "-d"]
     assert command[command.index("--network") + 1] == "none"
+    assert command[command.index("--label") + 1] == "assay-cell=s:a:w0"
     assert f"{workspace}:/workspace:rw" in command
     assert f"{cache}:/cache:rw" in command
     assert "HOME=/cache" in command
     assert not any("hidden" in arg for arg in command)
     assert commands[-1][:3] == ["docker", "rm", "-f"]
+
+
+def test_concurrent_sandbox_close_removes_container_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered_removal = Event()
+    release_removal = Event()
+    second_started = Event()
+    removals: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        if command[:3] == ["docker", "rm", "-f"]:
+            removals.append(command)
+            entered_removal.set()
+            assert release_removal.wait(2)
+        stdout = _inspect_stdout() if command[:2] == ["docker", "inspect"] else "ok"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    sandbox = DockerToolSandbox(tmp_path / "workspace", tmp_path / "cache", "img", "s:a:w0")
+
+    def second_close() -> None:
+        second_started.set()
+        sandbox.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(sandbox.close)
+        assert entered_removal.wait(2)
+        second = pool.submit(second_close)
+        assert second_started.wait(2)
+        time.sleep(0.05)
+        release_removal.set()
+        first.result(timeout=2)
+        second.result(timeout=2)
+    assert len(removals) == 1
+
+
+def test_failed_sandbox_close_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempts = 0
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        nonlocal attempts
+        if command[:3] == ["docker", "rm", "-f"]:
+            attempts += 1
+            return type("Result", (), {"returncode": int(attempts == 1)})()
+        stdout = _inspect_stdout() if command[:2] == ["docker", "inspect"] else "ok"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    sandbox = DockerToolSandbox(tmp_path / "workspace", tmp_path / "cache", "img", "s:a:w0")
+    with pytest.raises(RuntimeError, match="container_cleanup"):
+        sandbox.close()
+    sandbox.close()
+    assert attempts == 2
 
 
 def test_tmpfs_sandbox_takes_its_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1320,7 +1379,7 @@ def test_tmpfs_sandbox_takes_its_limits(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     limits = SandboxLimits(memory_mb=900, pids=40, cpus=2.0, workspace_mb=100, cache_mb=50,
                            tmp_mb=25)
-    DockerToolSandbox(tmp_path, tmp_path, "img", tmpfs_storage=True, limits=limits)
+    DockerToolSandbox(tmp_path, tmp_path, "img", "s:a:w0", tmpfs_storage=True, limits=limits)
     run = commands[0]
     assert "/workspace:size=100m,mode=1777" in run and "/cache:size=50m,mode=1777" in run
     assert "/tmp:size=25m" in run
@@ -1349,7 +1408,7 @@ def test_tmpfs_archive_failure_removes_started_container(
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     monkeypatch.setattr("assay_pier_bridge.agent_loop.tarfile.open", fail_archive)
     with pytest.raises(ContainerStartError):
-        DockerToolSandbox(tmp_path, tmp_path, "locked-image", tmpfs_storage=True)
+        DockerToolSandbox(tmp_path, tmp_path, "locked-image", "s:a:w0", tmpfs_storage=True)
     assert commands[0][:3] == ["docker", "run", "-d"]
     assert commands[-1][:3] == ["docker", "rm", "-f"]
 
@@ -1367,7 +1426,7 @@ def test_tmpfs_transfer_timeout_removes_started_container(
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     with pytest.raises(ContainerStartError):
-        DockerToolSandbox(tmp_path, tmp_path, "locked-image", tmpfs_storage=True)
+        DockerToolSandbox(tmp_path, tmp_path, "locked-image", "s:a:w0", tmpfs_storage=True)
     assert commands[-1][:3] == ["docker", "rm", "-f"]
 
 
@@ -1405,7 +1464,7 @@ def test_tmpfs_capture_streams_the_tree_and_replaces_staging(
     archive = _tar([directory, info], {"./src/new.txt": content})
 
     def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        assert command[:3] == ["docker", "exec", "fake-container"]
+        assert command[:5] == ["docker", "exec", "-u", "0:0", "fake-container"]
         return subprocess.CompletedProcess(command, 0, archive, b"")
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
@@ -1522,7 +1581,7 @@ def test_failed_container_start_keeps_named_cause_and_records_cleanup(
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     with pytest.raises(ContainerStartError) as start:
-        DockerToolSandbox(tmp_path / "workspace", tmp_path / "cache", "locked-image")
+        DockerToolSandbox(tmp_path / "workspace", tmp_path / "cache", "locked-image", "s:a:w0")
     assert start.value.cleanup_failed
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1557,3 +1616,33 @@ def test_docker_tool_output_is_streamed_with_a_host_memory_cap(
     assert output.original_bytes == len("exit=0\n") + 2_000_000
     assert len(output.text.encode()) <= 64
     assert output.text.startswith("exit=0\n")
+
+
+def test_tmpfs_capture_permission_failure_has_candidate_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sandbox = DockerToolSandbox.__new__(DockerToolSandbox)
+    sandbox.name = "fake-container"
+    sandbox._tmpfs_storage = True
+    sandbox._workspace = tmp_path
+    sandbox.execute = lambda *a, **k: ToolOutput(  # type: ignore[method-assign]
+        "exit=0\n1\n2\n0\n5000\n6000\n", 25, False
+    )
+    monkeypatch.setattr(
+        "assay_pier_bridge.agent_loop.subprocess.run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv, 1, b"", b"tar: Permission denied"
+        ),
+    )
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        sandbox.capture_workspace()
+    assert rejected.value.cause == "workspace_capture_permission"
+
+
+def test_archive_hard_link_has_distinct_candidate_cause(tmp_path: Path) -> None:
+    member = tarfile.TarInfo("linked.txt")
+    member.type = tarfile.LNKTYPE
+    member.linkname = "inside.txt"
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        extract_workspace_archive(_tar([member]), tmp_path)
+    assert rejected.value.cause == "hard_link_submission"

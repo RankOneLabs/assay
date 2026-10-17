@@ -366,16 +366,12 @@ class DockerTrialHandle:
             raise ValueError(
                 "materialized package does not match the request's authorized package_digest"
             )
+        mounted = _mount_paths(package)
         self._image = image
         self._name = name
         self._request = request
         self._command = command
-        self._openrouter_api_key = (
-            openrouter_api_key
-            if openrouter_api_key is not None
-            else os.environ.get("OPENROUTER_API_KEY")
-        )
-        runs_root.mkdir(parents=True, exist_ok=True)
+        self._openrouter_api_key = openrouter_api_key
         self._workdir = runs_root / name
         self._workspace = self._workdir / "workspace"
         self._submission = self._workdir / "submission"
@@ -388,12 +384,6 @@ class DockerTrialHandle:
         self._network_interface = f"ap{name[-12:]}"[:15]
         self._network_created = False
         self._firewall_installed: list[tuple[str, list[str]]] = []
-        for directory in (self._workspace, self._submission, self._baseline, self._working_copy):
-            directory.mkdir(parents=True, exist_ok=True)
-        # /submission is writable by the container's uid 1000, which will
-        # not equal the runner's own uid on most real hosts.
-        self._submission.chmod(0o777)
-        mounted = _mount_paths(package)
         self._expected_workspace = {
             path: content.encode("utf-8") for path, content in mounted.items()
         }
@@ -405,14 +395,27 @@ class DockerTrialHandle:
         self._expected_baseline = {
             path: content.encode("utf-8") for path, content in repository.items()
         }
-        materialize_under(self._workspace, mounted)
-        materialize_under(self._baseline, repository)
-        materialize_under(self._working_copy, repository)
-        for directory in self._working_copy.rglob("*"):
-            directory.chmod(0o777 if directory.is_dir() else 0o666)
-        self._working_copy.chmod(0o777)
+        runs_root.mkdir(parents=True, exist_ok=True)
+        try:
+            for directory in (
+                self._workspace, self._submission, self._baseline, self._working_copy
+            ):
+                directory.mkdir(parents=True, exist_ok=True)
+            # /submission is writable by the container's uid 1000.
+            self._submission.chmod(0o777)
+            materialize_under(self._workspace, mounted)
+            materialize_under(self._baseline, repository)
+            materialize_under(self._working_copy, repository)
+            for directory in self._working_copy.rglob("*"):
+                directory.chmod(0o777 if directory.is_dir() else 0o666)
+            self._working_copy.chmod(0o777)
+        except Exception:
+            shutil.rmtree(self._workdir, ignore_errors=True)
+            raise
         self._cancel = threading.Event()
+        self._started = False
         self._deadline: float | None = None
+        self._enforced_observation: ContainerObservation | None = None
 
     def set_deadline(self, deadline: float) -> None:
         """Receive the absolute monotonic acceptance deadline before setup."""
@@ -455,6 +458,14 @@ class DockerTrialHandle:
     def cancel(self) -> None:
         """Operator-initiated cancellation, observable by an in-flight ``run()``."""
         self._cancel.set()
+        if self._started:
+            if not _force_remove(self._name):
+                raise InfrastructureTrialError("enforcement", "container removal failed")
+            self._started = False
+
+    def _check_cancel(self) -> None:
+        if self._cancel.is_set():
+            raise TrialCancelledError("operator cancelled the trial")
 
     def _prepare_quota(self, limits: TrialLimits) -> None:
         self._scratch.mkdir()
@@ -544,6 +555,9 @@ class DockerTrialHandle:
             raise NetworkPolicyMismatchError(
                 "inspected Docker network differs from the declared posture"
             )
+        # Cancellation removes the container before teardown can inspect it.
+        # Keep the controls Docker already confirmed for the final report.
+        self._enforced_observation = observation
 
     def _docker_run_args(self, limits: TrialLimits) -> list[str]:
         args = [
@@ -559,6 +573,10 @@ class DockerTrialHandle:
             if self._request.network_policy == "egress-lan-host-port"
             else "none",
             "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
             "--tmpfs",
             "/tmp",
             "--cpus",
@@ -592,13 +610,17 @@ class DockerTrialHandle:
         return args
 
     def run(self) -> TrialResult:
+        self._check_cancel()
         if self._deadline is None:
             self._deadline = time.monotonic() + self._request.limits.timeout_s
         self._remaining()
+        self._check_cancel()
         self._prepare_quota(self._request.limits)
         self._remaining()
+        self._check_cancel()
         self._prepare_network()
         self._remaining()
+        self._check_cancel()
         start_result = self._run_bounded(
             self._docker_run_args(self._request.limits), _START_TIMEOUT_S
         )
@@ -607,6 +629,8 @@ class DockerTrialHandle:
             raise InfrastructureTrialError(
                 "container_start", f"container failed to start: {start_result.stderr.strip()}"
             )
+        self._started = True
+        self._check_cancel()
         self._assert_enforcement(_usable_observation(self._inspect_bounded()))
         while True:
             self._remaining()
@@ -773,6 +797,7 @@ class DockerTrialHandle:
             observation = _usable_observation(_inspect(self._name))
         except Exception:
             observation = None
+        observation = observation or self._enforced_observation
         try:
             count = _container_count(self._name)
         except Exception:
@@ -817,6 +842,7 @@ class DockerTrialHandle:
             observation = _usable_observation(_inspect(self._name))
         except Exception:
             observation = None
+        observation = observation or self._enforced_observation
         with contextlib.suppress(Exception):
             _force_remove(self._name)
         failed_rules: list[tuple[str, list[str]]] = []

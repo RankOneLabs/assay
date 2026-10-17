@@ -366,6 +366,7 @@ class DockerToolSandbox:
         workspace: Path,
         cache: Path,
         image: str,
+        cell_id: str,
         *,
         tmpfs_storage: bool = False,
         limits: SandboxLimits | None = None,
@@ -373,6 +374,7 @@ class DockerToolSandbox:
         limits = limits or SandboxLimits()
         self.name = f"assay-agent-{uuid.uuid4().hex}"
         self._closed = False
+        self._close_lock = threading.Lock()
         self._workspace = workspace
         self._tmpfs_storage = tmpfs_storage
         mounts = (
@@ -389,6 +391,8 @@ class DockerToolSandbox:
             "-d",
             "--name",
             self.name,
+            "--label",
+            f"assay-cell={cell_id}",
             "--network",
             "none",
             "--read-only",
@@ -491,10 +495,18 @@ class DockerToolSandbox:
         # ``docker cp`` reads the container's layered filesystem and silently
         # returns nothing from a tmpfs mount, so the tree is streamed out.
         archived = subprocess.run(
-            ["docker", "exec", self.name, "tar", "-c", "-f", "-", "-C", "/workspace", "."],
+            [
+                "docker", "exec", "-u", "0:0", self.name, "tar", "-c", "-f", "-",
+                "-C", "/workspace", ".",
+            ],
             capture_output=True, timeout=60, check=False,
         )
         if archived.returncode:
+            if b"permission denied" in archived.stderr.lower():
+                raise ArtifactCollectionRejected(
+                    "workspace_capture_permission", "cannot read candidate workspace",
+                    origin="working_copy",
+                )
             raise RuntimeError("workspace_capture")
         for path in self._workspace.iterdir():
             if path.is_dir() and not path.is_symlink():
@@ -605,8 +617,9 @@ class DockerToolSandbox:
             raise RuntimeError("tool_interrupt")
 
     def close(self) -> None:
-        if not self._closed:
-            self._closed = True
+        with self._close_lock:
+            if self._closed:
+                return
             removed = subprocess.run(
                 ["docker", "rm", "-f", self.name],
                 capture_output=True,
@@ -616,18 +629,20 @@ class DockerToolSandbox:
             )
             if removed.returncode:
                 raise RuntimeError("container_cleanup")
+            self._closed = True
 
 
 class DockerTmpfsToolSandbox(DockerToolSandbox):
     """The declared local sandbox: Docker-enforced tmpfs quotas, no host privileges."""
 
     def __init__(
-        self, workspace: Path, cache: Path, image: str, *, limits: SandboxLimits | None = None
+        self, workspace: Path, cache: Path, image: str, cell_id: str,
+        *, limits: SandboxLimits | None = None
     ) -> None:
-        super().__init__(workspace, cache, image, tmpfs_storage=True, limits=limits)
+        super().__init__(workspace, cache, image, cell_id, tmpfs_storage=True, limits=limits)
 
 
-SandboxFactory = Callable[[Path, Path, str], ToolSandbox]
+SandboxFactory = Callable[[Path, Path, str, str], ToolSandbox]
 
 
 def _tool(name: str, description: str, properties: dict[str, Any]) -> dict[str, Any]:
@@ -737,11 +752,23 @@ CANDIDATE_STOP_CAUSES = frozenset(
 
 
 def _json_bytes(value: Any) -> bytes:
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    try:
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ArtifactCollectionRejected(
+            "invalid_tool_output_encoding", "tool output is not UTF-8 encodable",
+            origin="working_copy",
+        ) from error
 
 
 def _bounded_text(text: str, limit: int) -> tuple[str, bool]:
-    encoded = text.encode("utf-8")
+    try:
+        encoded = text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ArtifactCollectionRejected(
+            "invalid_tool_output_encoding", "tool output is not UTF-8 encodable",
+            origin="working_copy",
+        ) from error
     if len(encoded) <= limit:
         return text, False
     return encoded[:limit].decode("utf-8", errors="ignore"), True
@@ -1122,10 +1149,20 @@ class RepositoryAgentClient:
     max_tool_calls_per_turn: int = 0
     max_tool_calls_per_cell: int = 0
     transport: httpx.BaseTransport | None = None
-    sandbox_factory: SandboxFactory = DockerToolSandbox
-    storage_factory: Callable[[Path, int], CellStorage] = QuotaCellStorage
+    sandbox_factory: SandboxFactory = DockerTmpfsToolSandbox
+    storage_factory: Callable[[Path, int], CellStorage] = DockerTmpfsStagingStorage
+    sandbox_limits: SandboxLimits = field(default_factory=SandboxLimits)
     _used_cells: set[str] = field(default_factory=set, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+    _active_state_lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+    _active_sandbox: ToolSandbox | None = field(default=None, init=False)
+    _active_cell_id: str | None = field(default=None, init=False)
+
+    def cancel_active(self, cell_id: str) -> None:
+        with self._active_state_lock:
+            sandbox = self._active_sandbox if self._active_cell_id == cell_id else None
+        if sandbox is not None:
+            sandbox.close()
 
     def __post_init__(self) -> None:
         if self.model_route.paid_route_reachable:
@@ -1142,6 +1179,8 @@ class RepositoryAgentClient:
             raise ValueError("locked image identity required")
         if self.bounds.max_turns != 20 or min(asdict(self.bounds).values()) < 1:
             raise ValueError("invalid fixed loop bounds")
+        if self.sandbox_limits.storage_mb != self.bounds.max_storage_mb:
+            raise ValueError("sandbox storage quota differs from loop storage bound")
         if self.pilot_mode:
             if len(self.next_user_turns) != 2 or not all(
                 isinstance(prompt, str) and prompt.strip() for prompt in self.next_user_turns
@@ -1296,7 +1335,8 @@ class RepositoryAgentClient:
         )
 
     def run_cell(
-        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None = None
+        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> LoopResult:
         if not self._lock.acquire(blocking=False):
             raise AgentLoopError("concurrency_limit", {"events": []})
@@ -1304,7 +1344,10 @@ class RepositoryAgentClient:
             if cell_id in self._used_cells:
                 raise AgentLoopError("attempt_limit", {"events": []})
             self._used_cells.add(cell_id)
-            return self._run_once(package=package, deadline=deadline)
+            return self._run_once(
+                cell_id=cell_id, package=package, deadline=deadline,
+                cancel_event=cancel_event,
+            )
         finally:
             self._lock.release()
 
@@ -1327,7 +1370,10 @@ class RepositoryAgentClient:
         captured = submission_patch(baseline, workspace)
         return captured.patch, after, captured.baseline_tree_digest, captured.final_tree_digest
 
-    def _run_once(self, *, package: Mapping[str, str], deadline: float | None) -> LoopResult:
+    def _run_once(
+        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None,
+        cancel_event: threading.Event | None,
+    ) -> LoopResult:
         trajectory: dict[str, Any] = {
             "events": [],
             "messages": [],
@@ -1394,6 +1440,8 @@ class RepositoryAgentClient:
             }
 
         def remaining() -> float:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ValueError("cancelled")
             if deadline is None:
                 return MAX_TOOL_SECONDS
             left = deadline - time.monotonic()
@@ -1432,7 +1480,16 @@ class RepositoryAgentClient:
             materialize_under(workspace, repository)
             materialize_under(baseline, repository)
             _prepare_container_writes(workspace, cache)
-            sandbox = self.sandbox_factory(workspace, cache, self.image)
+            remaining()
+            if self.sandbox_factory is DockerTmpfsToolSandbox:
+                sandbox = DockerTmpfsToolSandbox(
+                    workspace, cache, self.image, cell_id, limits=self.sandbox_limits
+                )
+            else:
+                sandbox = self.sandbox_factory(workspace, cache, self.image, cell_id)
+            with self._active_state_lock:
+                self._active_sandbox = sandbox
+                self._active_cell_id = cell_id
             events.append(
                 {
                     "kind": "sandbox_created",
@@ -1526,6 +1583,7 @@ class RepositoryAgentClient:
                     "tool_calls": replayed,
                 })
                 for call_index, call in enumerate(replayed):
+                    remaining()
                     if self.pilot_mode and turn_tool_calls >= self.max_tool_calls_per_turn:
                         raise ValueError("turn_tool_call_limit")
                     if self.pilot_mode and cell_tool_calls >= self.max_tool_calls_per_cell:
@@ -1741,6 +1799,9 @@ class RepositoryAgentClient:
             except (RuntimeError, OSError, subprocess.SubprocessError):
                 events.append({"kind": "cleanup_failed", "cause": "container_cleanup"})
                 cleanup_cause = "container_cleanup"
+            with self._active_state_lock:
+                self._active_sandbox = None
+                self._active_cell_id = None
             try:
                 storage.close()
             except (RuntimeError, OSError, subprocess.SubprocessError):

@@ -17,9 +17,7 @@ from assay_pier_bridge.agent_loop import (  # noqa: E402
     CellStorage,
     DockerTmpfsStagingStorage,
     DockerTmpfsToolSandbox,
-    DockerToolSandbox,
     LoopBounds,
-    QuotaCellStorage,
     RepositoryAgentClient,
     SandboxFactory,
     SandboxLimits,  # noqa: E402
@@ -61,8 +59,8 @@ def create_pilot_agent(
     completion: TurnCompletion | None,
     next_user_turns: tuple[str, ...],
     api_key: str | None = None,
-    sandbox_factory: SandboxFactory = DockerToolSandbox,
-    storage_factory: Callable[[Path, int], CellStorage] = QuotaCellStorage,
+    sandbox_factory: SandboxFactory = DockerTmpfsToolSandbox,
+    storage_factory: Callable[[Path, int], CellStorage] = DockerTmpfsStagingStorage,
     message_prefix: tuple[dict[str, Any], ...] = (),
 ) -> RepositoryAgentClient:
     """Use the pilot's declared scope and call budgets for the actual loop."""
@@ -90,6 +88,10 @@ def create_pilot_agent(
         max_tool_calls_per_cell=settings.max_tool_calls_per_cell,
         sandbox_factory=sandbox_factory,
         storage_factory=storage_factory,
+        sandbox_limits=SandboxLimits(
+            workspace_mb=settings.max_storage_mb // 2,
+            cache_mb=settings.max_storage_mb - settings.max_storage_mb // 2,
+        ),
     )
 
 

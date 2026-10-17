@@ -152,6 +152,39 @@ def test_an_already_absent_container_is_a_completed_repeat_teardown(
     assert handle.teardown().teardown_completed is True
 
 
+def test_cancelled_container_reports_controls_observed_before_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handle = _handle(tmp_path)
+    observed = ContainerObservation(
+        read_only_root=True,
+        workspace_mount_read_only=True,
+        uid=1000,
+        gid=1000,
+        network_mode="none",
+        cpu_limit=1,
+        memory_limit_mb=256,
+        pids_limit=32,
+        storage_limit_mb=64,
+        scratch_mount_kind="bind",
+        scratch_source=str(handle._scratch),
+        network_policy_label="network-none-no-egress-allowlist",
+    )
+    handle._assert_enforcement(observed)
+    handle._started = True
+    monkeypatch.setattr(container, "_force_remove", lambda name: True)
+    monkeypatch.setattr(container, "_inspect", lambda name, **_: None)
+    monkeypatch.setattr(container, "_container_count", lambda name: 0)
+
+    handle.cancel()
+    effective = handle.teardown()
+
+    assert effective.teardown_completed is True
+    assert effective.uid == 1000
+    assert effective.storage_limit_mb == 64
+    assert effective.scratch_quota_mb == 64
+
+
 def test_runtime_preserves_timeout_when_teardown_inspection_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

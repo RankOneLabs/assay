@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any
@@ -41,6 +42,7 @@ from assay_pier_bridge.runtime import (
     CandidateTestTimeoutError,
     CandidateTrialError,
     InfrastructureTrialError,
+    TrialCancelledError,
     seal_observed_artifacts,
 )
 
@@ -107,10 +109,10 @@ def _tmpfs_mb(option: object) -> int:
     return 0
 
 
-def _container_count(name: str) -> int | None:
+def _container_count(cell_id: str) -> int | None:
     try:
         listed = subprocess.run(
-            ["docker", "ps", "-aq", "--filter", f"name=^{name}$"],
+            ["docker", "ps", "-aq", "--filter", f"label=assay-cell={cell_id}"],
             capture_output=True, text=True, timeout=30, check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -139,9 +141,14 @@ class RepositoryAgentTrialHandle:
         self._partial: dict[str, bytes] = {}
         self._trajectory: dict[str, Any] = {"events": []}
         self._torn_down: EffectiveEnforcement | None = None
+        self._cancelled = threading.Event()
 
     def set_deadline(self, deadline: float) -> None:
         self._deadline = deadline
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        self._agent.cancel_active(self._request.cell_id)
 
     def partial_artifacts(self) -> dict[str, bytes]:
         return dict(self._partial)
@@ -191,15 +198,24 @@ class RepositoryAgentTrialHandle:
             )
 
     def run(self) -> TrialResult:
+        if self._cancelled.is_set():
+            raise TrialCancelledError("operator cancelled the trial")
         self._check_request()
         try:
             result = self._agent.run_cell(
-                cell_id=self._request.cell_id, package=self._package, deadline=self._deadline
+                cell_id=self._request.cell_id, package=self._package, deadline=self._deadline,
+                cancel_event=self._cancelled,
             )
         except AgentLoopError as error:
             self._trajectory = error.trajectory
+            try:
+                trajectory_bytes = canonical_json(error.trajectory)
+            except UnicodeEncodeError:
+                trajectory_bytes = json.dumps(
+                    error.trajectory, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+                ).encode("utf-8")
             self._partial = {
-                "trajectory.json": canonical_json(error.trajectory),
+                "trajectory.json": trajectory_bytes,
                 **{f"stopped/{path}": data for path, data in error.evidence.items()},
             }
             raise self._typed(error) from error
@@ -216,6 +232,8 @@ class RepositoryAgentTrialHandle:
             return CandidateTrialError(
                 "agent_deadline", "the cell's budget expired in the agent loop"
             )
+        if cause == "cancelled":
+            return TrialCancelledError("operator cancelled the trial")
         if cause in CANDIDATE_STOP_CAUSES:
             return CandidateTrialError(
                 "no_submission", f"agent stopped without submitting: {cause}"
@@ -297,6 +315,7 @@ class RepositoryAgentTrialHandle:
 
     def effective_enforcement(self, *, remaining: int | None = None) -> EffectiveEnforcement:
         name, observed = self._observed()
+        verified = bool(name and observed.get("user") and observed.get("tmpfs"))
         user = str(observed.get("user") or "0:0")
         uid, _, gid = user.partition(":")
         tmpfs = observed.get("tmpfs") or {}
@@ -304,7 +323,7 @@ class RepositoryAgentTrialHandle:
         nano_cpus = observed.get("nano_cpus") or 0
         memory = observed.get("memory_bytes") or 0
         # ``None`` means not yet verified: the result carries this before teardown.
-        completed = remaining == 0
+        completed = verified and remaining == 0
         return EffectiveEnforcement(
             uid=int(uid or 0),
             gid=int(gid or uid or 0),
@@ -327,9 +346,14 @@ class RepositoryAgentTrialHandle:
     def teardown(self) -> EffectiveEnforcement:
         """The loop removes its own container; this verifies it is really gone."""
         if self._torn_down is None:
-            name, _ = self._observed()
-            remaining = _container_count(name) if name is not None else 0
-            self._torn_down = self.effective_enforcement(remaining=remaining)
+            remaining = _container_count(self._request.cell_id)
+            cleanup_failed = any(
+                event.get("kind") == "cleanup_failed"
+                for event in self._trajectory.get("events", [])
+            )
+            self._torn_down = self.effective_enforcement(
+                remaining=remaining if not cleanup_failed else None
+            )
         return self._torn_down
 
 
@@ -347,6 +371,8 @@ class RepositoryAgentTrialClient:
         self._agent = agent
         self._package = dict(package)
         self._limits = limits
+        if agent.sandbox_limits.storage_mb != limits.storage_mb:
+            raise ValueError("sandbox quota differs from authorized trial storage_mb")
         self._configuration = json.loads(canonical_json(dict(configuration)))
 
     def create(self, request: TrialRequest) -> RepositoryAgentTrialHandle:

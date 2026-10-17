@@ -180,6 +180,9 @@ class WorkflowEditHandle:
             artifacts=dict(result.artifacts),
         )
 
+    def cancel(self) -> None:
+        self._runtime.cancel()
+
     def teardown(self) -> BridgeEffectiveEnforcement:
         """``BridgeRuntime`` already tore the trial down; report what it verified."""
         if self._effective is None:
@@ -260,6 +263,7 @@ class WorkflowEditBridgeClient:
             sandbox_factory=self.sandbox_factory
             or partial(DockerTmpfsToolSandbox, limits=self.limits),
             storage_factory=DockerTmpfsStagingStorage,
+            sandbox_limits=self.limits,
         )
         trial_client = RepositoryAgentTrialClient(
             agent=agent, package=package, limits=self.limits, configuration=self.configuration()
