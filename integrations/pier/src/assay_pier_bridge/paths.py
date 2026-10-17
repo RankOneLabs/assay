@@ -21,6 +21,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from assay_pier_bridge.protocol import TrialUsage
 
 MAX_ARTIFACT_BYTES = 8_000_000
 MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
@@ -35,6 +39,8 @@ _RESERVED_GIT_COMPONENT = re.compile(r"(?:\.git|git~1)[. ]*(?::.*)?", re.IGNOREC
 
 class ArtifactCollectionRejected(ValueError):
     """Bounded rejected evidence, available even when collection aborts."""
+
+    usage: TrialUsage | None = None
 
     def __init__(
         self,

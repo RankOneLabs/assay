@@ -157,9 +157,13 @@ class TrialTimeoutError(Exception):
 class TrialCancelledError(Exception):
     """Raised by a ``TrialHandle.run()`` implementation on operator cancellation."""
 
+    usage: TrialUsage | None = None
+
 
 class CandidateTrialError(RuntimeError):
     """A candidate-caused rejection with a stable, typed reason."""
+
+    usage: TrialUsage | None = None
 
     def __init__(
         self, cause: CandidateCause, message: str, *, artifacts: Mapping[str, bytes] | None = None
@@ -170,6 +174,8 @@ class CandidateTrialError(RuntimeError):
 
 
 class InfrastructureTrialError(RuntimeError):
+    usage: TrialUsage | None = None
+
     def __init__(self, cause: InfrastructureCause, message: str) -> None:
         super().__init__(message)
         self.cause = cause
@@ -365,12 +371,16 @@ class BridgeRuntime:
                 detail=str(error)[:2000] or type(error).__name__,
                 exception_type=type(error).__name__,
             )
+        observed_usage: TrialUsage | None = None
+        if isinstance(error, (
+            ArtifactCollectionRejected, CandidateTrialError,
+            InfrastructureTrialError, TrialCancelledError,
+        )):
+            observed_usage = error.usage
         return TrialResult(
             cell_id=request.cell_id,
             outcome=outcome,
-            usage=(observed_usage if isinstance(
-                observed_usage := getattr(error, "usage", None), TrialUsage
-            ) else None),
+            usage=observed_usage,
             effective=effective,
             artifacts=artifacts,
         )

@@ -30,6 +30,7 @@ from assay_pier_bridge.agent_loop import (
     SandboxLimits,
 )
 from assay_pier_bridge.identity import canonical_json, digest_bytes, package_digest
+from assay_pier_bridge.paths import ArtifactCollectionRejected
 from assay_pier_bridge.protocol import (
     CandidateSubmission,
     EffectiveEnforcement,
@@ -220,11 +221,16 @@ class RepositoryAgentTrialHandle:
             }
             typed = self._typed(error)
             if error.usage.get("requests"):
-                setattr(typed, "usage", TrialUsage.model_validate(error.usage))  # noqa: B010
+                typed.usage = TrialUsage.model_validate(error.usage)
             raise typed from error
         return self._sealed(result)
 
-    def _typed(self, error: AgentLoopError) -> Exception:
+    def _typed(
+        self, error: AgentLoopError
+    ) -> (
+        ArtifactCollectionRejected | CandidateTrialError
+        | InfrastructureTrialError | TrialCancelledError
+    ):
         cause = error.cause
         if error.rejection is not None:
             return error.rejection
