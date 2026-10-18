@@ -18,7 +18,7 @@ from verification_pilot.analysis import (
     result_tables,
     wide_search_ceiling,
 )
-from verification_pilot.observations import Measured, TurnMeasure
+from verification_pilot.observations import Absent, Measured, TurnMeasure
 from verification_pilot.report import (
     Observation,
     cross_model_table,
@@ -40,12 +40,15 @@ from verification_pilot.study import compile_pilot_plan, pilot_subjects
 
 def _cell(subject: str, migration: str, group: str, arm: str, *,
           gap: float = 1.0, inspected: bool = True,
-          wide: bool = False) -> MeasureCell:
+          wide: bool | None = False, own_group: str = "group_a") -> MeasureCell:
     measures = tuple(TurnMeasure("T1", "inspection", name, Measured("measured", item))
                      for name, item in (("ownership_gap", gap),
-                                        ("remnant_path_inspected", inspected),
-                                        ("first_inspection_is_wide_search", wide)))
-    return MeasureCell("fixture", subject, migration, group, arm, measures)
+                                        ("remnant_path_inspected", inspected)))
+    first = (Measured("measured", wide) if wide is not None else
+             Absent("absent", None, "no successful file inspection in this turn"))
+    measures += (TurnMeasure("T1", "inspection", "first_inspection_is_wide_search",
+                             first),)
+    return MeasureCell("fixture", subject, migration, group, arm, measures, own_group)
 
 
 def test_analysis_h1_n16_exact_sign_and_missing_boundary() -> None:
@@ -83,15 +86,40 @@ def test_analysis_h4_four_pair_floor_boundary() -> None:
     assert h4_rename_pairs(rows[:-3], "t1-native", "group_a")["p_value"] is None
 
 
+def test_analysis_h4_uses_and_validates_payload_own_group() -> None:
+    rows = [_cell(f"{migration}-{group}", migration, group, "t1-native",
+                  inspected=group == "group_b", own_group="group_b")
+            for migration in ("a", "b", "c", "d")
+            for group in ("group_a", "group_b", "group_c")]
+    tables = result_tables(rows, own_group="group_b")
+    h4 = tables["routes"][0]["H4"]["t1-native"]
+    assert h4["own_group"] == "group_b"
+    assert h4["mean_difference"] == 1
+    with pytest.raises(ValueError, match="subject payload assignment"):
+        result_tables(rows, own_group="group_a")
+    with pytest.raises(ValueError, match="unknown own ownership group"):
+        h4_rename_pairs(rows, "t1-native", "unknown")
+
+
 def test_analysis_wide_search_strict_half_boundary_and_tables() -> None:
     rows = [_cell(f"s{i}", "m", "group_a", "t1-native", wide=i < 2)
             for i in range(4)]
     assert wide_search_ceiling(rows, "t1-native")["exceeds_half"] is False
     assert wide_search_ceiling(rows[:-1], "t1-native")["exceeds_half"] is True
-    tables = result_tables(rows)
+    tables = result_tables(rows, own_group="group_a")
     assert tables["routes"][0]["ceiling"]["t1-native"]["share"] == 0.5
     assert any(row["measure"] == "first_inspection_is_wide_search"
                for row in tables["measures"])
+
+
+def test_analysis_wide_search_excludes_sessions_without_inspection() -> None:
+    rows = (_cell("wide", "m", "group_a", "t1-native", wide=True),
+            _cell("missing", "m", "group_a", "t1-native", wide=None))
+    result = wide_search_ceiling(rows, "t1-native")
+    assert (result["repository_wide_first"], result["n"], result["share"],
+            result["exceeds_half"]) == (1, 1, 1.0, True)
+    missing = wide_search_ceiling(rows[1:], "t1-native")
+    assert (missing["n"], missing["share"], missing["exceeds_half"]) == (0, None, None)
 
 
 def test_h1_exact_one_sample_sign_test_against_zero() -> None:
@@ -228,6 +256,10 @@ async def test_scripted_grid_builds_paired_h2_and_separate_model_report(tmp_path
     assert report["H2"]["comparison"]["n"] == 12
     assert report["H3"]["status"] == "in_progress"
     assert len(report["ceiling_effect"]) == 2
+    assert report["ceiling_effect"] == [
+        {"model": "scripted", **report["analysis"]["routes"][0]["ceiling"][arm]}
+        for arm in ("t1-native", "t1-quoted")
+    ]
     assert report["tables"]
     assert {row["turn"] for row in report["tables"] if row["evaluator_id"] == "pilot_judge"} == {
         "t1"

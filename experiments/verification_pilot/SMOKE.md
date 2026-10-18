@@ -12,8 +12,10 @@ It uses one worker repeat. The four rename-matched cases allow inspection of
 the H4 contrast after the full shard, while both presentations expose the
 handoff-placement failure mode. The current `run live-smoke` helper still
 selects two renames and three planted owners (12 cells per route); it does
-not implement this registered selection. Update that runner in its owning
-cohort before executing live smoke. This cohort makes no provider request.
+not implement this registered selection. The `pilot-foundation` cohort owns
+that selector in `run.py`. Before executing live smoke, it must select the
+four `group_a` subjects and both T1 arms, and test the exact eight cells per
+route and shared D16 ceiling. This cohort makes no provider request.
 The snapshot retains all 16 base subjects while excluding cells outside the
 smoke shard. Select the four `group_a` subjects for each route. Read every
 trajectory, tool result, submission, and workspace diff
@@ -22,8 +24,11 @@ tool errors, and explicit misattribution of a quoted “You” block, each with 
 numerator and denominator per route and arm. A route passes only if all five
 counts are zero in its smoke.
 
-For each route and arm, report the fraction of T1 sessions whose first
-successful file inspection is a repository-wide search for the old symbol.
+For each route and arm, divide the number of T1 sessions whose first
+successful file inspection is a repository-wide search for the old symbol by
+the number of T1 sessions with a successful file inspection. A T1 session
+with no successful file inspection is missing from this denominator, not a
+non-wide search; if the denominator is zero, the ceiling verdict is pending.
 Failed file calls do not inspect content. If that fraction exceeds 50% in
 either arm of a route, lead with escalation order, untouched remnants, and
 test masking for that route. Exactly 50% does not trigger this rule. A flat

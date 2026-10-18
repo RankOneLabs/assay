@@ -14,11 +14,13 @@ Four fixed type renames are applied to the pinned 62-file Oakridge slice. Each r
 
 The first successful T1 file inspection determines whether a session starts with a repository-wide search for the old symbol. A route whose share exceeds 50% in either arm leads with escalation order, untouched remnants, and test masking. Exactly 50% does not cross the ceiling.
 
+The denominator is T1 sessions with a successful file inspection in that arm. Sessions without one are missing and excluded; an arm with zero observed first inspections stays pending. Failed file calls do not count as inspections.
+
 <!-- ceiling-table:start -->
-| Route | Native first-wide-search share | Quoted first-wide-search share | Status |
-| --- | ---: | ---: | --- |
-| smithers-local | pending (0 observed) | pending (0 observed) | qualification pending |
-| openrouter | pending (0 observed) | pending (0 observed) | qualification pending |
+| Route | Native first-wide-search share | Quoted first-wide-search share | >50% ceiling | Status |
+| --- | ---: | ---: | --- | --- |
+| smithers-local | pending (0 observed) | pending (0 observed) | pending | qualification pending |
+| openrouter | pending (0 observed) | pending (0 observed) | pending | qualification pending |
 <!-- ceiling-table:end -->
 
 H1–H4 estimates and per-model costs require reviewed route records and offline bundles. A null result in this small pilot cannot establish equivalence.

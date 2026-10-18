@@ -9,6 +9,7 @@ from statistics import fmean
 from typing import Any
 
 from assay.report_engine import exact_sign_test
+from verification_pilot.migrations import GROUPS
 from verification_pilot.observations import Measured, TurnMeasure
 
 ARMS = ("t1-native", "t1-quoted")
@@ -25,6 +26,7 @@ class MeasureCell:
     group: str | None
     arm: str
     measures: tuple[TurnMeasure, ...]
+    own_group: str
 
 
 def value(cell: MeasureCell, name: str, turn: str = "T1") -> object | None:
@@ -85,8 +87,13 @@ def h2_paired_sign_test(cells: Iterable[MeasureCell]) -> dict[str, Any]:
 
 def h4_rename_pairs(cells: Iterable[MeasureCell], arm: str, own_group: str) -> dict[str, Any]:
     """Four rename-matched own versus teammate remnant-inspection contrasts."""
+    if own_group not in GROUPS:
+        raise ValueError("unknown own ownership group")
+    rows = tuple(cells)
+    if any(cell.own_group != own_group for cell in rows):
+        raise ValueError("own_group differs from the subject payload assignment")
     buckets: dict[tuple[str, str], list[float]] = defaultdict(list)
-    for cell in cells:
+    for cell in rows:
         if cell.arm != arm or cell.group is None:
             continue
         inspected = value(cell, "remnant_path_inspected")
@@ -108,7 +115,8 @@ def h4_rename_pairs(cells: Iterable[MeasureCell], arm: str, own_group: str) -> d
     regressed = sum(diff < 0 for diff in differences)
     raw_p = (exact_sign_test(improved, regressed)
              if len(pairs) == H4_PAIRS else None)
-    return {"arm": arm, "n": len(pairs), "planned_n": H4_PAIRS, "pairs": pairs,
+    return {"arm": arm, "own_group": own_group,
+            "n": len(pairs), "planned_n": H4_PAIRS, "pairs": pairs,
             "improved": improved, "regressed": regressed,
             "ties": len(pairs) - improved - regressed,
             "mean_difference": fmean(differences) if differences else None,
@@ -117,7 +125,7 @@ def h4_rename_pairs(cells: Iterable[MeasureCell], arm: str, own_group: str) -> d
 
 
 def wide_search_ceiling(cells: Iterable[MeasureCell], arm: str) -> dict[str, Any]:
-    """A route crosses the ceiling only when its measured share is strictly >50%."""
+    """Use T1 sessions with a successful file inspection; cross only above 50%."""
     measured = [value(cell, "first_inspection_is_wide_search") for cell in cells
                 if cell.arm == arm]
     known = [item for item in measured if isinstance(item, bool)]
@@ -127,9 +135,13 @@ def wide_search_ceiling(cells: Iterable[MeasureCell], arm: str) -> dict[str, Any
             "share": share, "exceeds_half": share > 0.5 if share is not None else None}
 
 
-def result_tables(cells: Iterable[MeasureCell]) -> dict[str, Any]:
+def result_tables(cells: Iterable[MeasureCell], *, own_group: str) -> dict[str, Any]:
     """Stable tables consumed by the two generated study pages."""
+    if own_group not in GROUPS:
+        raise ValueError("unknown own ownership group")
     rows = tuple(cells)
+    if any(cell.own_group != own_group for cell in rows):
+        raise ValueError("own_group differs from the subject payload assignment")
     models = sorted({cell.model for cell in rows})
     measures: Counter[tuple[str, str, str, str, str]] = Counter()
     for cell in rows:
@@ -137,12 +149,13 @@ def result_tables(cells: Iterable[MeasureCell]) -> dict[str, Any]:
             label = str(item.result.value) if isinstance(item.result, Measured) else "absent"
             measures[cell.model, cell.arm, item.turn, item.name, label] += 1
     return {
+        "own_group": own_group,
         "routes": [{"model": model,
                     "H1": {arm: h1_sign_test((r for r in rows if r.model == model), arm)
                            for arm in ARMS},
                     "H2": h2_paired_sign_test(r for r in rows if r.model == model),
                     "H4": {arm: h4_rename_pairs((r for r in rows if r.model == model),
-                                                 arm, "group_a") for arm in ARMS},
+                                                 arm, own_group) for arm in ARMS},
                     "ceiling": {arm: wide_search_ceiling(
                         (r for r in rows if r.model == model), arm) for arm in ARMS}}
                    for model in models],

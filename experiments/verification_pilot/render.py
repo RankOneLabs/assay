@@ -67,6 +67,17 @@ def _share(row: dict[str, Any] | None) -> str:
     return f"{row['repository_wide_first']}/{row['n']} ({row['share']:.1%})"
 
 
+def _ceiling_verdict(native: dict[str, Any] | None,
+                     quoted: dict[str, Any] | None) -> str:
+    verdicts = (native["exceeds_half"] if native else None,
+                quoted["exceeds_half"] if quoted else None)
+    if True in verdicts:
+        return "exceeded"
+    if verdicts == (False, False):
+        return "within ceiling"
+    return "pending"
+
+
 def render_study_pages(
     tables: dict[str, Any], *, qualified_routes: frozenset[str] = frozenset(),
 ) -> tuple[str, str]:
@@ -84,7 +95,8 @@ def render_study_pages(
                          and route in qualified_routes)
         status = "qualified" if qualified else "qualification pending"
         ceiling_lines.append(
-            f"| {route} | {_share(native)} | {_share(quoted)} | {status} |"
+            f"| {route} | {_share(native)} | {_share(quoted)} "
+            f"| {_ceiling_verdict(native, quoted)} | {status} |"
         )
         if result:
             h1 = result["H1"]["t1-native"]
@@ -101,6 +113,17 @@ def render_study_pages(
             inference_lines.append(f"| {route} | 0/16 | pending | 0 | pending | 0/4 | pending |")
     ceiling_table = "\n".join(ceiling_lines)
     inference_table = "\n".join(inference_lines)
+    ceiling_header = (
+        "| Route | Native first-wide-search share | Quoted first-wide-search share "
+        "| >50% ceiling | Status |\n"
+        "| --- | ---: | ---: | --- | --- |\n"
+    )
+    denominator = (
+        "The denominator is T1 sessions with a successful file inspection in "
+        "that arm. Sessions without one are missing and excluded; an arm with "
+        "zero observed first inspections stays pending. Failed file calls do "
+        "not count as inspections.\n\n"
+    )
     main = (
         "# Who checks the last remnant after a handoff?\n\n"
         "**Study status: live; results in progress.** No measured result from the retired "
@@ -122,9 +145,9 @@ def render_study_pages(
         "with a repository-wide search for the old symbol. A route whose share exceeds "
         "50% in either arm leads with escalation order, untouched remnants, and test "
         "masking. Exactly 50% does not cross the ceiling.\n\n"
+        f"{denominator}"
         "<!-- ceiling-table:start -->\n"
-        "| Route | Native first-wide-search share | Quoted first-wide-search share | Status |\n"
-        "| --- | ---: | ---: | --- |\n"
+        f"{ceiling_header}"
         f"{ceiling_table}\n"
         "<!-- ceiling-table:end -->\n\n"
         "H1–H4 estimates and per-model costs require reviewed route records and "
@@ -144,8 +167,10 @@ def render_study_pages(
         "sessions per route.\n\n"
         "## Inference table\n\n"
         "H1 is a two-sided sign test of T1 ownership gap over 16 base subjects. "
-        "H2 is a paired two-sided sign test of quoted minus native gap. H4 compares "
-        "own versus teammate remnant inspection within each of four renames; its "
+        "H2 is a paired two-sided sign test of quoted minus native gap. H4 uses "
+        f"{tables['own_group']} as the verifier-owned group, validated against "
+        "subject payloads, and compares its remnant inspection with teammates "
+        "within each of four renames; its "
         "smallest attainable two-sided p-value is 0.125 and it remains descriptive. "
         "Ties are excluded from sign-test denominators. The active Tier 1 shard "
         "has 12 planted subjects per arm; H1 stays pending until all 16 base "
@@ -153,6 +178,10 @@ def render_study_pages(
         "| Route | H1 observed | H1 p | H2 pairs | H2 p | H4 pairs | H4 p |\n"
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n"
         f"{inference_table}\n\n"
+        "## Wide-search ceiling\n\n"
+        f"{denominator}"
+        f"{ceiling_header}"
+        f"{ceiling_table}\n\n"
         "## Qualification and reporting\n\n"
         "The [smoke rule](../../experiments/verification_pilot/SMOKE.md) requires "
         "manual review before results are interpreted. A first-wide-search share "
@@ -174,5 +203,7 @@ def write_study_pages(tables: dict[str, Any], root: Path) -> None:
 
 if __name__ == "__main__":
     from verification_pilot.analysis import result_tables
+    from verification_pilot.study import VERIFIER_OWN_GROUP
 
-    write_study_pages(result_tables(()), Path(__file__).resolve().parents[2])
+    write_study_pages(result_tables((), own_group=VERIFIER_OWN_GROUP),
+                      Path(__file__).resolve().parents[2])

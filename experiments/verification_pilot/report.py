@@ -238,40 +238,6 @@ def first_inspection_is_wide_symbol_search(turn: Mapping[str, Any], symbol: str)
     return False
 
 
-def ceiling_effect(
-    store: ObjectStore, manifest_refs: Sequence[str], model: str
-) -> list[dict[str, Any]]:
-    """Share whose first successful T1 inspection searches the whole repo for the old symbol."""
-    totals: Counter[str] = Counter()
-    wide: Counter[str] = Counter()
-    old_by_migration = {migration.name: migration.old_symbol for migration in MIGRATIONS}
-    for ref in manifest_refs:
-        manifest = RunManifest.model_validate(_read(store, ref))
-        plan = parse_execution_plan(_read(store, manifest.plan_ref))
-        snapshot = StudySnapshot.model_validate(_read(store, plan.snapshot_ref))
-        subjects = {subject.id: _read(store, subject.payload_ref) for subject in snapshot.subjects}
-        for cell in plan.cells:
-            outcome_ref = manifest.execution_records.get(cell.id)
-            if outcome_ref is None:
-                continue
-            outcome = _read(store, outcome_ref)
-            if outcome.get("status") != "succeeded" or not outcome.get("output_ref"):
-                continue
-            output = _read(store, outcome["output_ref"])
-            raw = _read(store, output["raw_trajectory_ref"])
-            trajectory = json.loads(base64.b64decode(raw["content_base64"]))
-            turns = trajectory.get("turns", [])
-            if not turns:
-                continue
-            totals[cell.arm_id] += 1
-            symbol = old_by_migration[subjects[cell.subject_id]["migration"]]
-            if first_inspection_is_wide_symbol_search(turns[0], symbol):
-                wide[cell.arm_id] += 1
-    return [{"model": model, "arm": arm, "repository_wide_first": wide[arm],
-             "n": count, "share": wide[arm] / count}
-            for arm, count in sorted(totals.items())]
-
-
 @dataclass(frozen=True, slots=True)
 class _TraceSubject:
     migration: Any
@@ -305,10 +271,13 @@ def measured_cells(
             trace = cast(RecordedTrace, json.loads(base64.b64decode(raw["content_base64"])))
             payload = subjects[cell.subject_id]
             migration_name = str(payload["migration"])
+            own_group = str(payload["own_group"])
+            if own_group not in GROUPS:
+                raise ValueError("subject has no valid verifier-owned group")
             subject = _TraceSubject(migrations[migration_name], payload.get("location"))
             cells.append(MeasureCell(
                 model, cell.subject_id, migration_name, payload.get("ownership_group"),
-                cell.arm_id, observe(trace, subject),
+                cell.arm_id, observe(trace, subject), own_group,
             ))
     return tuple(cells)
 
@@ -333,6 +302,11 @@ def model_report(
                               reference_arm="t1-native", candidate_arm="t1-quoted")
     h2 = build_report(store, h2_config)
     h2_ref = str(persist_report(store, h2_config))
+    analysis = result_tables(measured_cells(store, manifest_refs, model),
+                             own_group=own_group)
+    route = analysis["routes"][0] if analysis["routes"] else None
+    ceiling = ([{"model": model, **route["ceiling"][arm]}
+                for arm in ("t1-native", "t1-quoted")] if route else [])
     result: dict[str, Any] = {
         "model": model, "manifest_refs": list(manifest_refs),
         "H1": {arm: h1_ownership_gap(rows, arm) for arm in ("t1-native", "t1-quoted")},
@@ -340,8 +314,8 @@ def model_report(
         "H4": {arm: h4_own_vs_teammate(rows, arm, own_group=own_group)
                for arm in ("t1-native", "t1-quoted")},
         "tables": evaluator_tables(rows), "escalation_chart": escalation_chart(rows),
-        "ceiling_effect": ceiling_effect(store, manifest_refs, model),
-        "analysis": result_tables(measured_cells(store, manifest_refs, model)),
+        "ceiling_effect": ceiling,
+        "analysis": analysis,
         "cost": h2["costs"], "power": power_statement(),
     }
     if tier2_refs:

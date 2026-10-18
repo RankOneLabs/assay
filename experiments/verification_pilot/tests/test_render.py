@@ -38,7 +38,7 @@ def test_study_pages_are_generated_from_analysis_fixture() -> None:
     from verification_pilot.observations import Measured, TurnMeasure
 
     root = Path(__file__).resolve().parents[3]
-    pending = render_study_pages(result_tables(()))
+    pending = render_study_pages(result_tables((), own_group="group_a"))
     assert pending[0] == (root / "studies/verification-pilot/README.md").read_text()
     assert pending[1] == (root / "studies/verification-pilot/supporting-data.md").read_text()
     measures = (TurnMeasure("T1", "inspection", "first_inspection_is_wide_search",
@@ -47,10 +47,33 @@ def test_study_pages_are_generated_from_analysis_fixture() -> None:
                 TurnMeasure("T1", "inspection", "remnant_path_inspected",
                             Measured("measured", True)))
     fixture = result_tables((MeasureCell("fixture", "s1", "rename", "group_a",
-                                         "t1-native", measures),))
+                                         "t1-native", measures, "group_a"),),
+                            own_group="group_a")
     main, supporting = render_study_pages(fixture)
-    assert "| fixture | 1/1 (100.0%) | pending (0 observed) | qualification pending |" in main
+    row = "| fixture | 1/1 (100.0%) | pending (0 observed) | exceeded | qualification pending |"
+    assert row in main
+    assert row in supporting
     assert "| fixture | 1/16 | pending | 0 | pending | 0/4 | pending |" in supporting
+    assert "H4 uses group_a as the verifier-owned group" in supporting
+
+
+def test_study_pages_print_exact_half_as_within_ceiling() -> None:
+    from verification_pilot.analysis import MeasureCell
+    from verification_pilot.observations import Measured, TurnMeasure
+
+    cells = tuple(
+        MeasureCell("fixture", f"{arm}-{index}", "rename", "group_a", arm,
+                    (TurnMeasure("T1", "inspection", "first_inspection_is_wide_search",
+                                 Measured("measured", index == 0)),), "group_a")
+        for arm in ("t1-native", "t1-quoted") for index in range(2)
+    )
+    main, supporting = render_study_pages(
+        result_tables(cells, own_group="group_a"),
+        qualified_routes=frozenset({"fixture"}),
+    )
+    row = "| fixture | 1/2 (50.0%) | 1/2 (50.0%) | within ceiling | qualified |"
+    assert row in main
+    assert row in supporting
 
 
 def test_placements_carry_identical_block_text() -> None:

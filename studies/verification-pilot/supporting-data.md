@@ -8,12 +8,21 @@ The pinned 62-file Oakridge slice supplies four type renames with 20, 18, 10, an
 
 ## Inference table
 
-H1 is a two-sided sign test of T1 ownership gap over 16 base subjects. H2 is a paired two-sided sign test of quoted minus native gap. H4 compares own versus teammate remnant inspection within each of four renames; its smallest attainable two-sided p-value is 0.125 and it remains descriptive. Ties are excluded from sign-test denominators. The active Tier 1 shard has 12 planted subjects per arm; H1 stays pending until all 16 base subjects, including clean controls, have observations.
+H1 is a two-sided sign test of T1 ownership gap over 16 base subjects. H2 is a paired two-sided sign test of quoted minus native gap. H4 uses group_a as the verifier-owned group, validated against subject payloads, and compares its remnant inspection with teammates within each of four renames; its smallest attainable two-sided p-value is 0.125 and it remains descriptive. Ties are excluded from sign-test denominators. The active Tier 1 shard has 12 planted subjects per arm; H1 stays pending until all 16 base subjects, including clean controls, have observations.
 
 | Route | H1 observed | H1 p | H2 pairs | H2 p | H4 pairs | H4 p |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | smithers-local | 0/16 | pending | 0 | pending | 0/4 | pending |
 | openrouter | 0/16 | pending | 0 | pending | 0/4 | pending |
+
+## Wide-search ceiling
+
+The denominator is T1 sessions with a successful file inspection in that arm. Sessions without one are missing and excluded; an arm with zero observed first inspections stays pending. Failed file calls do not count as inspections.
+
+| Route | Native first-wide-search share | Quoted first-wide-search share | >50% ceiling | Status |
+| --- | ---: | ---: | --- | --- |
+| smithers-local | pending (0 observed) | pending (0 observed) | pending | qualification pending |
+| openrouter | pending (0 observed) | pending (0 observed) | pending | qualification pending |
 
 ## Qualification and reporting
 
