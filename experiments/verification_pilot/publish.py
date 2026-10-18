@@ -10,7 +10,11 @@ from typing import Any
 from assay.review.export import MAX_EXPORT_BYTES, ExportError, export_review
 from assay.store import ObjectStore
 from assay.verify import export_bundle, verify_bundle
-from verification_pilot.render import render_study_pages
+from verification_pilot.render import (
+    merge_study_tables,
+    read_study_state,
+    render_study_pages,
+)
 from verification_pilot.report import model_report
 
 
@@ -72,13 +76,21 @@ def publish_model(
     (destination / "report.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    main, supporting = render_study_pages(
-        result["analysis"], qualified_routes=frozenset({model}) if qualified else frozenset(),
-    )
-    (destination / "study.md").write_text(main, encoding="utf-8")
-    (destination / "supporting-data.md").write_text(supporting, encoding="utf-8")
+    tables = result["analysis"]
+    qualified_routes: frozenset[str] = frozenset()
     if qualified:
         page = study_page or (Path(__file__).resolve().parents[2]
                               / "studies/verification-pilot/README.md")
+        supporting_page = page.with_name("supporting-data.md")
+        if not supporting_page.exists() and page.exists() and "| qualified |" in page.read_text():
+            raise ValueError("published study page lacks recoverable route tables")
+        previous, prior_qualified = read_study_state(supporting_page, own_group=own_group)
+        tables = merge_study_tables(previous, tables)
+        qualified_routes = prior_qualified | frozenset({model})
+    main, supporting = render_study_pages(tables, qualified_routes=qualified_routes)
+    (destination / "study.md").write_text(main, encoding="utf-8")
+    (destination / "supporting-data.md").write_text(supporting, encoding="utf-8")
+    if qualified:
         page.write_text(main, encoding="utf-8")
+        supporting_page.write_text(supporting, encoding="utf-8")
     return result

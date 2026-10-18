@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,37 @@ def request_messages(
 
 
 STUDY_ROUTES = ("smithers-local", "openrouter")
+STATE_PREFIX = "<!-- pilot-study-state-v1:"
+
+
+def read_study_state(page: Path, *, own_group: str) -> tuple[dict[str, Any], frozenset[str]]:
+    """Recover previously published route tables from the generated supporting page."""
+    empty = {"own_group": own_group, "routes": [], "measures": []}
+    if not page.exists():
+        return empty, frozenset()
+    content = page.read_text(encoding="utf-8")
+    if STATE_PREFIX not in content:
+        if "| qualified |" in content:
+            raise ValueError("published study page lacks recoverable route tables")
+        return empty, frozenset()
+    encoded = content.split(STATE_PREFIX, 1)[1].split(" -->", 1)[0]
+    state = json.loads(base64.b64decode(encoded, validate=True))
+    if state["own_group"] != own_group:
+        raise ValueError("published study uses a different verifier-owned group")
+    return {"own_group": own_group, "routes": state["routes"], "measures": []}, frozenset(
+        state["qualified_routes"])
+
+
+def merge_study_tables(
+    previous: dict[str, Any], current: dict[str, Any],
+) -> dict[str, Any]:
+    """Replace one route while retaining other routes' independent results."""
+    if previous["own_group"] != current["own_group"]:
+        raise ValueError("routes use different verifier-owned groups")
+    routes = {row["model"]: row for row in previous["routes"]}
+    routes.update({row["model"]: row for row in current["routes"]})
+    return {"own_group": current["own_group"],
+            "routes": [routes[name] for name in sorted(routes)], "measures": []}
 
 
 def _share(row: dict[str, Any] | None) -> str:
@@ -102,9 +134,9 @@ def render_study_pages(
             h1 = result["H1"]["t1-native"]
             h2 = result["H2"]
             h4 = result["H4"]["t1-native"]
-            h1_p = h1["p_value"] if h1["p_value"] is not None else "pending"
-            h2_p = h2["p_value"] if h2["p_value"] is not None else "pending"
-            h4_p = h4["p_value"] if h4["p_value"] is not None else "pending"
+            h1_p = h1["p_value"] if qualified and h1["p_value"] is not None else "pending"
+            h2_p = h2["p_value"] if qualified and h2["p_value"] is not None else "pending"
+            h4_p = h4["p_value"] if qualified and h4["p_value"] is not None else "pending"
             inference_lines.append(
                 f"| {route} | {h1['n']}/16 | {h1_p} | {h2['n']} | {h2_p} "
                 f"| {h4['n']}/4 | {h4_p} |"
@@ -153,6 +185,15 @@ def render_study_pages(
         "H1–H4 estimates and per-model costs require reviewed route records and "
         "offline bundles. A null result in this small pilot cannot establish equivalence.\n"
     )
+    published_routes = [row for row in tables["routes"]
+                        if row["model"] in qualified_routes
+                        and all(row["ceiling"][arm]["n"] for arm in (
+                            "t1-native", "t1-quoted"))]
+    state = {"own_group": tables["own_group"], "routes": published_routes,
+             "qualified_routes": sorted(row["model"] for row in published_routes)}
+    encoded_state = base64.b64encode(json.dumps(
+        state, sort_keys=True, separators=(",", ":"),
+    ).encode()).decode("ascii")
     supporting = (
         "# Supporting data: verification after a contributor handoff\n\n"
         "This document supports the [live study page](README.md). Results are in "
@@ -187,7 +228,8 @@ def render_study_pages(
         "manual review before results are interpreted. A first-wide-search share "
         "strictly above 50% changes the route's headline. The single authorized "
         "96-cell ceiling applies to smoke and full shards. Route reports remain "
-        "separate because route identity is part of the runtime fingerprint.\n"
+        "separate because route identity is part of the runtime fingerprint.\n\n"
+        f"{STATE_PREFIX}{encoded_state} -->\n"
     )
     return main, supporting
 

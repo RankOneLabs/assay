@@ -27,3 +27,5 @@ The denominator is T1 sessions with a successful file inspection in that arm. Se
 ## Qualification and reporting
 
 The [smoke rule](../../experiments/verification_pilot/SMOKE.md) requires manual review before results are interpreted. A first-wide-search share strictly above 50% changes the route's headline. The single authorized 96-cell ceiling applies to smoke and full shards. Route reports remain separate because route identity is part of the runtime fingerprint.
+
+<!-- pilot-study-state-v1:eyJvd25fZ3JvdXAiOiJncm91cF9hIiwicXVhbGlmaWVkX3JvdXRlcyI6W10sInJvdXRlcyI6W119 -->

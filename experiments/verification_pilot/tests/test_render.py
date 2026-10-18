@@ -76,6 +76,28 @@ def test_study_pages_print_exact_half_as_within_ceiling() -> None:
     assert row in supporting
 
 
+def test_unqualified_route_hides_all_inference_p_values() -> None:
+    from verification_pilot.analysis import MeasureCell
+    from verification_pilot.observations import Measured, TurnMeasure
+
+    cells = tuple(
+        MeasureCell("fixture", "subject", "rename", "group_a", arm,
+                    (TurnMeasure("T1", "inspection", "first_inspection_is_wide_search",
+                                 Measured("measured", False)),), "group_a")
+        for arm in ("t1-native", "t1-quoted")
+    )
+    tables = result_tables(cells, own_group="group_a")
+    route = tables["routes"][0]
+    route["H1"]["t1-native"]["p_value"] = 0.125
+    route["H2"]["p_value"] = 0.25
+    route["H4"]["t1-native"]["p_value"] = 0.5
+    _, supporting = render_study_pages(tables)
+    assert "| fixture | 0/16 | pending | 0 | pending | 0/4 | pending |" in supporting
+    _, qualified_supporting = render_study_pages(
+        tables, qualified_routes=frozenset({"fixture"}))
+    assert "| fixture | 0/16 | 0.125 | 0 | 0.25 | 0/4 | 0.5 |" in qualified_supporting
+
+
 def test_placements_carry_identical_block_text() -> None:
     for migration in MIGRATIONS:
         blocks = contributor_blocks(migration)

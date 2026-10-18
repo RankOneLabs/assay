@@ -25,7 +25,14 @@ from assay.models import (
 from assay.report_engine import build_report, exact_sign_test, persist_report
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
-from verification_pilot.analysis import MeasureCell, result_tables
+from verification_pilot.analysis import (
+    ARMS,
+    MeasureCell,
+    h1_sign_test,
+    h4_rename_pairs,
+    result_tables,
+    wide_search_ceiling,
+)
 from verification_pilot.evaluation import NOT_APPLICABLE, REPORT_CATEGORIES
 from verification_pilot.metrics import calls, scope_contains, successful
 from verification_pilot.migrations import GROUPS, MIGRATIONS
@@ -264,11 +271,17 @@ def measured_cells(
             if record_ref is None:
                 continue
             record = _read(store, record_ref)
-            if not record.get("output_ref"):
+            output_ref = record.get("output_ref")
+            output = _read(store, output_ref) if output_ref else None
+            raw_ref = output.get("raw_trajectory_ref") if output is not None else None
+            if raw_ref is None and record.get("trace_ref"):
+                worker_trace = _read(store, record["trace_ref"])
+                raw_ref = worker_trace.get("artifact_refs", {}).get("trajectory.json")
+            if raw_ref is None:
                 continue
-            output = _read(store, record["output_ref"])
-            raw = _read(store, output["raw_trajectory_ref"])
-            trace = cast(RecordedTrace, json.loads(base64.b64decode(raw["content_base64"])))
+            raw = _read(store, raw_ref)
+            trace = cast(RecordedTrace, json.loads(base64.b64decode(
+                raw["content_base64"], validate=True)))
             payload = subjects[cell.subject_id]
             migration_name = str(payload["migration"])
             own_group = str(payload["own_group"])
@@ -304,15 +317,17 @@ def model_report(
     h2_ref = str(persist_report(store, h2_config))
     analysis = result_tables(measured_cells(store, manifest_refs, model),
                              own_group=own_group)
-    route = analysis["routes"][0] if analysis["routes"] else None
-    ceiling = ([{"model": model, **route["ceiling"][arm]}
-                for arm in ("t1-native", "t1-quoted")] if route else [])
+    route = analysis["routes"][0] if analysis["routes"] else {
+        "H1": {arm: h1_sign_test((), arm) for arm in ARMS},
+        "H4": {arm: h4_rename_pairs((), arm, own_group) for arm in ARMS},
+        "ceiling": {arm: wide_search_ceiling((), arm) for arm in ARMS},
+    }
+    ceiling = [{"model": model, **route["ceiling"][arm]} for arm in ARMS]
     result: dict[str, Any] = {
         "model": model, "manifest_refs": list(manifest_refs),
-        "H1": {arm: h1_ownership_gap(rows, arm) for arm in ("t1-native", "t1-quoted")},
+        "H1": route["H1"],
         "H2": {"report_ref": h2_ref, "comparison": h2["comparisons"][0]},
-        "H4": {arm: h4_own_vs_teammate(rows, arm, own_group=own_group)
-               for arm in ("t1-native", "t1-quoted")},
+        "H4": route["H4"],
         "tables": evaluator_tables(rows), "escalation_chart": escalation_chart(rows),
         "ceiling_effect": ceiling,
         "analysis": analysis,

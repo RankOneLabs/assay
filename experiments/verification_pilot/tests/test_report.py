@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from assay.execution import RunFailed, RunSucceeded, execute_plan
-from assay.models import RunManifest, RuntimeProfile
+from assay.models import RunManifest, RuntimeProfile, parse_execution_plan
 from assay.report_engine import ReportError, build_report
 from assay.store import ObjectStore
 from verification_pilot.analysis import (
@@ -16,6 +16,7 @@ from verification_pilot.analysis import (
     h2_paired_sign_test,
     h4_rename_pairs,
     result_tables,
+    value,
     wide_search_ceiling,
 )
 from verification_pilot.observations import Absent, Measured, TurnMeasure
@@ -25,6 +26,7 @@ from verification_pilot.report import (
     first_inspection_is_wide_symbol_search,
     h1_ownership_gap,
     h4_own_vs_teammate,
+    measured_cells,
     model_report,
     paired_config,
 )
@@ -229,6 +231,48 @@ def test_failed_cell_archive_keeps_partial_trajectory(tmp_path: Path) -> None:
                 if item["name"] == "cost_usd") == 0.12
 
 
+def test_failed_cell_retained_trajectory_counts_successful_t1_inspection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ObjectStore(tmp_path / "store")
+    subjects = pilot_subjects()
+    subject = next(item for item in subjects if item.group == "group_a")
+    worker = ScriptedWorker(store)
+    prepared = compile_pilot_plan(
+        store, RuntimeProfile(id="scripted", version="1",
+                              configuration_ref=str(store.publish_json({"route": "fixture"}))),
+        worker_configuration=worker.configuration("t1-native"), subjects_data=subjects,
+        active_subject_ids=(subject.id,),
+    )
+    plan_ref = str(store.publish_bytes(prepared.plan_bytes))
+    cell = next(item for item in parse_execution_plan(json.loads(prepared.plan_bytes)).cells
+                if item.arm_id == "t1-native")
+    trace = {"turns": [{
+        "turn": "T1", "submission": None, "workspace_diff": "",
+        "tool_calls": [{"name": "search_files", "arguments": {
+            "scope": ".", "query": subject.migration.old_symbol}, "exit_code": 0}],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 2,
+                  "requests": 1, "cost_usd": 0.12},
+    }]}
+    raw_ref = store.publish_json({
+        "content_base64": base64.b64encode(json.dumps(trace).encode()).decode(),
+    })
+    trace_ref = store.publish_json({"artifact_refs": {"trajectory.json": str(raw_ref)}})
+    record_ref = store.publish_json({"status": "failed", "output_ref": None,
+                                     "trace_ref": str(trace_ref)})
+    manifest_ref = store.publish_json(RunManifest(
+        run_id="failed-cell", plan_ref=plan_ref, status="incomplete",
+        execution_records={cell.id: str(record_ref)}, evaluation_records={},
+        missing_coordinates=(),
+    ).model_dump(mode="json"))
+    monkeypatch.setattr("verification_pilot.report.verify_manifest", lambda *_args: ())
+
+    measured = measured_cells(store, (str(manifest_ref),), "fixture")
+    assert len(measured) == 1
+    assert value(measured[0], "first_inspection_is_wide_search") is True
+    assert wide_search_ceiling(measured, "t1-native")["n"] == 1
+
+
 @pytest.mark.asyncio
 async def test_scripted_grid_builds_paired_h2_and_separate_model_report(tmp_path: Path) -> None:
     store = ObjectStore(tmp_path / "store")
@@ -252,7 +296,10 @@ async def test_scripted_grid_builds_paired_h2_and_separate_model_report(tmp_path
     assert engine["comparisons"][0]["n"] == 12
     report = model_report(store, (ref,), model="scripted", own_group="group_a")
     assert report["H1"]["t1-native"]["n"] == 12
-    assert report["H4"]["t1-native"]["n"] == 0
+    assert report["H4"]["t1-native"]["n"] == 4
+    assert report["H1"]["t1-native"]["p_value"] is None
+    assert report["H1"] == report["analysis"]["routes"][0]["H1"]
+    assert report["H4"] == report["analysis"]["routes"][0]["H4"]
     assert report["H2"]["comparison"]["n"] == 12
     assert report["H3"]["status"] == "in_progress"
     assert len(report["ceiling_effect"]) == 2
