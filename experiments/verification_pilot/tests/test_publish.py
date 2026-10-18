@@ -54,7 +54,10 @@ async def test_publish_bundle_verifies_with_assay_cli_offline(tmp_path: Path) ->
     assert (destination / "h2-review.txt").exists()
     assert report["review_exports"]["H2"]["status"] == "over_cap"
     assert report["review_exports"]["H2"]["cap_bytes"] == 64 * 1024 * 1024
-    assert "| fixture | 0/1 (0.0%) | 0/1 (0.0%) | qualified |" in study_page.read_text()
+    assert "| fixture | pending (0 observed) | pending (0 observed) | qualification pending |" \
+        in study_page.read_text()
+    assert study_page.read_text() == (destination / "study.md").read_text()
+    assert (destination / "supporting-data.md").exists()
     assert report["escalation_chart"] == []
     assert "12 paired observations" in report["power"]["H1"]
     assert "12 paired observations" in report["power"]["H2"]

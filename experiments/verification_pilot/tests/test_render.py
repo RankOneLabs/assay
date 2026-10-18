@@ -13,6 +13,7 @@ import pytest
 from workflow_edit import bridge
 
 from assay.adapters.smithers import SmithersFactory
+from verification_pilot.analysis import result_tables
 from verification_pilot.arms import arm
 from verification_pilot.migrations import MIGRATIONS
 from verification_pilot.prompts import (
@@ -21,10 +22,35 @@ from verification_pilot.prompts import (
     T1_MESSAGE,
     task_prompt,
 )
-from verification_pilot.render import block_text, render_prefix, request_messages
+from verification_pilot.render import (
+    block_text,
+    render_prefix,
+    render_study_pages,
+    request_messages,
+)
 from verification_pilot.session import ContributorBlock, contributor_blocks, rotated_blocks
 
 agent_loop = importlib.import_module("assay_pier_bridge.agent_loop")
+
+
+def test_study_pages_are_generated_from_analysis_fixture() -> None:
+    from verification_pilot.analysis import MeasureCell
+    from verification_pilot.observations import Measured, TurnMeasure
+
+    root = Path(__file__).resolve().parents[3]
+    pending = render_study_pages(result_tables(()))
+    assert pending[0] == (root / "studies/verification-pilot/README.md").read_text()
+    assert pending[1] == (root / "studies/verification-pilot/supporting-data.md").read_text()
+    measures = (TurnMeasure("T1", "inspection", "first_inspection_is_wide_search",
+                            Measured("measured", True)),
+                TurnMeasure("T1", "inspection", "ownership_gap", Measured("measured", 1)),
+                TurnMeasure("T1", "inspection", "remnant_path_inspected",
+                            Measured("measured", True)))
+    fixture = result_tables((MeasureCell("fixture", "s1", "rename", "group_a",
+                                         "t1-native", measures),))
+    main, supporting = render_study_pages(fixture)
+    assert "| fixture | 1/1 (100.0%) | pending (0 observed) | qualification pending |" in main
+    assert "| fixture | 1/16 | pending | 0 | pending | 0/4 | pending |" in supporting
 
 
 def test_placements_carry_identical_block_text() -> None:
