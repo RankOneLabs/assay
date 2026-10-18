@@ -64,6 +64,7 @@ def create_pilot_agent(
     storage_factory: Callable[[Path, int], CellStorage] = DockerTmpfsStagingStorage,
     message_prefix: tuple[dict[str, Any], ...] = (),
     spend_gate: SpendGate | None = None,
+    system_prompt: str = PILOT_SYSTEM_PROMPT,
 ) -> RepositoryAgentClient:
     """Use the pilot's declared scope and call budgets for the actual loop.
 
@@ -90,7 +91,7 @@ def create_pilot_agent(
             max_storage_mb=settings.max_storage_mb,
         ),
         pilot_mode=True,
-        system_prompt=PILOT_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         next_user_turns=next_user_turns,
         message_prefix=message_prefix,
         writable_prefixes=settings.writable_prefixes,
@@ -121,6 +122,7 @@ class PilotBridgeClient:
     timeout_s: float = 900.0
     # Operator-held and outside the runtime fingerprint; required on the paid route.
     spend_gate: SpendGate | None = None
+    system_prompt: str = PILOT_SYSTEM_PROMPT
     authorized_smithers: dict[str, Any] | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
@@ -138,7 +140,7 @@ class PilotBridgeClient:
             completion=(cast(TurnCompletion, lambda **_: None)
                         if self.factory is not None else None),
             next_user_turns=(T2_TEXT, T3_TEXT),
-            api_key=self.api_key,
+            api_key=self.api_key, system_prompt=self.system_prompt,
         )
         configuration: dict[str, Any] = agent_configuration(
             bounds=probe.bounds, limits=SandboxLimits(),
