@@ -33,3 +33,10 @@ replacing the old design does not erase a measured finding.
 The existing pilot tool digest, route bounds, and worker loop remain pinned.
 Any later loop or measurement changes belong to later cohorts. The
 qualification smoke must be reviewed before live results are interpreted.
+
+D16: the smoke and full Tier 1 shards use the same authorized 96-cell,
+345,600-second, one-worker ceiling. The report engine includes that ceiling
+in its 0.3.0 compatibility fingerprint and refuses to pool shards with
+different fingerprints. The 2 × 4 × 2 × 1 smoke geometry and fixed statistical
+and ceiling rules are pre-registered in `SMOKE.md` before any live cell runs.
+`ReportConfig`, `StatisticalProfile`, and the shared report engine are unchanged.
