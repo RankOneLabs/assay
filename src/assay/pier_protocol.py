@@ -60,13 +60,29 @@ class ModelRoute(WireModel):
     endpoint: Literal["https://openrouter.ai/api/v1", "http://willie:8900"] = (
         "https://openrouter.ai/api/v1"
     )
-    model: Literal["anthropic/claude-3-haiku", "qwen-coder-32b"] = "anthropic/claude-3-haiku"
-    provider: Literal["amazon-bedrock", "smithers-local"] = "amazon-bedrock"
+    model: Literal[
+        "anthropic/claude-3-haiku", "qwen-coder-32b", "anthropic/claude-sonnet-5.5",
+        "openai/gpt-6.1-sol", "google/gemini-4-argon", "qwen/qwen3.8-2.4t-a95b",
+        "deepseek/deepseek-v4-pro", "moonshotai/kimi-k2.7-code",
+    ] = "anthropic/claude-3-haiku"
+    provider: Literal[
+        "amazon-bedrock", "smithers-local", "azure/us", "google-vertex/global",
+        "siliconflow/fp8", "moonshotai/int4",
+    ] = "amazon-bedrock"
 
     @model_validator(mode="after")
     def exact_route(self) -> ModelRoute:
         if (self.endpoint, self.model, self.provider) not in {
             ("https://openrouter.ai/api/v1", "anthropic/claude-3-haiku", "amazon-bedrock"),
+            # Verification-pilot screening routes; OpenRouter ZDR catalogue checked
+            # 2026-10-18. Claude 3 Haiku above has had no endpoints since 2026-09-30
+            # and stays only so recorded wire fixtures still validate.
+            ("https://openrouter.ai/api/v1", "anthropic/claude-sonnet-5.5", "amazon-bedrock"),
+            ("https://openrouter.ai/api/v1", "openai/gpt-6.1-sol", "azure/us"),
+            ("https://openrouter.ai/api/v1", "google/gemini-4-argon", "google-vertex/global"),
+            ("https://openrouter.ai/api/v1", "qwen/qwen3.8-2.4t-a95b", "siliconflow/fp8"),
+            ("https://openrouter.ai/api/v1", "deepseek/deepseek-v4-pro", "siliconflow/fp8"),
+            ("https://openrouter.ai/api/v1", "moonshotai/kimi-k2.7-code", "moonshotai/int4"),
             ("http://willie:8900", "qwen-coder-32b", "smithers-local"),
         }:
             raise ValueError("model route fields must identify one exact route")
@@ -74,7 +90,7 @@ class ModelRoute(WireModel):
 
     @property
     def paid_route_reachable(self) -> bool:
-        return self.provider == "amazon-bedrock"
+        return self.endpoint == "https://openrouter.ai/api/v1"
 
 
 class TrialLimits(WireModel):

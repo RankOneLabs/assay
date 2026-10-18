@@ -166,6 +166,37 @@ HAIKU_TURN_ROUTE = OpenRouterTurnRoute(
 )
 
 
+def _screening_route(
+    model: str, provider: str, provider_name: str, prompt: float, completion: float
+) -> OpenRouterTurnRoute:
+    return OpenRouterTurnRoute(
+        endpoint="https://openrouter.ai/api/v1", model=model, provider=provider,
+        provider_name=provider_name, max_prompt_price_per_million=prompt,
+        max_completion_price_per_million=completion, max_request_body_bytes=None,
+        max_output_tokens=None, tool_choice="auto",
+    )
+
+
+# Verification-pilot screening routes, one pinned ZDR endpoint each. max_price
+# is that endpoint's listed price on 2026-10-18, so a price rise refuses the
+# request rather than billing more; the identities were probed the same day.
+# Limits come from LoopBounds, as for Haiku.
+PAID_TURN_ROUTES: dict[tuple[str, str], OpenRouterTurnRoute] = {
+    (route.model, route.provider): route for route in (
+        HAIKU_TURN_ROUTE,
+        _screening_route("anthropic/claude-sonnet-5.5", "amazon-bedrock", "Amazon Bedrock",
+                         2.0, 10.0),
+        _screening_route("openai/gpt-6.1-sol", "azure/us", "Azure", 2.2, 11.0),
+        _screening_route("google/gemini-4-argon", "google-vertex/global", "Google", 2.0, 10.0),
+        _screening_route("qwen/qwen3.8-2.4t-a95b", "siliconflow/fp8", "SiliconFlow", 2.0, 6.0),
+        _screening_route("deepseek/deepseek-v4-pro", "siliconflow/fp8", "SiliconFlow",
+                         1.502, 3.135),
+        _screening_route("moonshotai/kimi-k2.7-code", "moonshotai/int4", "Moonshot AI",
+                         0.95, 4.0),
+    )
+}
+
+
 class TurnCompletion(Protocol):
     """Produce exactly one model turn; never retry inference on the caller's behalf."""
 
@@ -1184,6 +1215,8 @@ class RepositoryAgentClient:
                 raise ValueError("the paid route is built in and takes no injected completion")
             if not self.api_key or any(char.isspace() for char in self.api_key):
                 raise ValueError("nonblank API key required for the paid route")
+            if self.paid_turn_route.endpoint != self.model_route.endpoint:
+                raise ValueError("paid turn route differs from the model route")
         else:
             if self.api_key is not None:
                 raise ValueError("zero-paid Smithers route must not receive an OpenRouter API key")
@@ -1215,6 +1248,11 @@ class RepositoryAgentClient:
             if not prefix.endswith("/"):
                 raise ValueError("writable prefixes must name directories")
             safe_relative_path(prefix.rstrip("/"))
+
+    @property
+    def paid_turn_route(self) -> OpenRouterTurnRoute:
+        """The pinned OpenRouter settings for this client's exact model route."""
+        return PAID_TURN_ROUTES[(self.model_route.model, self.model_route.provider)]
 
     @property
     def resolved_config(self) -> ResolvedClientConfig:
@@ -1254,7 +1292,7 @@ class RepositoryAgentClient:
                 deadline=deadline,
             )
         return self._openrouter_turn(
-            messages, HAIKU_TURN_ROUTE, tools, deadline=deadline, on_dispatch=on_dispatch
+            messages, self.paid_turn_route, tools, deadline=deadline, on_dispatch=on_dispatch
         )
 
     def _openrouter_turn(

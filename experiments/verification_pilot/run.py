@@ -63,10 +63,30 @@ from verification_pilot.study import (
     smoke_subject_ids,
 )
 
+# Screening routes for the paid arm; see DECISIONS.md D17. Each name is one exact
+# ModelRoute whose pinned turn settings live in the bridge's PAID_TURN_ROUTES.
+PAID_ROUTES: dict[str, tuple[str, str]] = {
+    "sonnet-5.5": ("anthropic/claude-sonnet-5.5", "amazon-bedrock"),
+    "gpt-6.1-sol": ("openai/gpt-6.1-sol", "azure/us"),
+    "gemini-4-argon": ("google/gemini-4-argon", "google-vertex/global"),
+    "qwen3.8": ("qwen/qwen3.8-2.4t-a95b", "siliconflow/fp8"),
+    "deepseek-v4-pro": ("deepseek/deepseek-v4-pro", "siliconflow/fp8"),
+    "kimi-k2.7-code": ("moonshotai/kimi-k2.7-code", "moonshotai/int4"),
+}
+
+
+def paid_model_route(name: str | None) -> ModelRoute:
+    """The exact OpenRouter route for one named screening route."""
+    if name not in PAID_ROUTES:
+        raise ValueError(f"the paid route requires one of {sorted(PAID_ROUTES)}")
+    model, provider = PAID_ROUTES[name]
+    return ModelRoute(model=model, provider=provider)  # type: ignore[arg-type]
+
 
 def measure_on_policy(
     *, image: str, runs_root: Path, routing_config: Path, route: str,
     api_key: str | None = None, spend_gate: SpendGate | None = None,
+    paid_route: str | None = None,
 ) -> dict[str, Any]:
     """Generate one migration's three ownership blocks outside the cell runtime."""
     fixture = load_fixture()
@@ -90,7 +110,7 @@ def measure_on_policy(
         if spend_gate is None:
             raise ValueError("the paid route requires an operator spend cap")
         factory = None
-        model_route = ModelRoute()
+        model_route = paid_model_route(paid_route)
         authorized = None
     else:
         raise ValueError(f"unknown model route: {route}")
@@ -307,6 +327,7 @@ async def run_live(
     store: ObjectStore, *, image: str, runs_root: Path, routing_config: Path,
     route: str, smoke: bool = False, api_key: str | None = None,
     archive_root: Path | None = None, spend_gate: SpendGate | None = None,
+    paid_route: str | None = None,
 ) -> tuple[PreparedPilot, Any]:
     subjects = pilot_subjects()
     if route == "smithers-local":
@@ -321,7 +342,7 @@ async def run_live(
         if not api_key or any(char.isspace() for char in api_key):
             raise ValueError("OPENROUTER_API_KEY is required for the paid route")
         factory = None
-        model_route = ModelRoute()
+        model_route = paid_model_route(paid_route)
     else:
         raise ValueError(f"unknown model route: {route}")
     bridge = PilotBridgeClient(
@@ -377,6 +398,8 @@ def main() -> None:
     parser.add_argument("--routing-config", type=Path, default=Path("/tmp/routing.yaml"))
     parser.add_argument("--route", choices=("smithers-local", "openrouter"),
                         default="smithers-local")
+    parser.add_argument("--paid-route", choices=sorted(PAID_ROUTES), default=None,
+                        help="named OpenRouter screening route; required on the paid route")
     parser.add_argument("--max-spend-usd", type=_spend_cap, default=None,
                         help="run-wide dollar cap; required on the paid route")
     args = parser.parse_args()
@@ -386,6 +409,10 @@ def main() -> None:
         parser.error("the paid route requires --max-spend-usd")
     if not paid and args.max_spend_usd is not None:
         parser.error("--max-spend-usd applies only to the paid route")
+    if paid and args.paid_route is None:
+        parser.error("the paid route requires --paid-route")
+    if not paid and args.paid_route is not None:
+        parser.error("--paid-route applies only to the paid route")
     spend_gate = SpendGate(args.max_spend_usd) if paid else None
     store = ObjectStore(args.store)
     archive_root = Path(__file__).resolve().parent / "raw" / "runs"
@@ -397,7 +424,7 @@ def main() -> None:
             image=args.image, runs_root=args.runs_root,
             routing_config=args.routing_config, route=probe_route,
             api_key=os.environ.get("OPENROUTER_API_KEY") if probe_route == "openrouter" else None,
-            spend_gate=spend_gate,
+            spend_gate=spend_gate, paid_route=args.paid_route,
         )
         evidence["evidence_ref"] = str(store.publish_json(evidence))
         print(json.dumps(evidence))
@@ -412,7 +439,7 @@ def main() -> None:
             routing_config=args.routing_config, route=args.route,
             smoke=args.command == "live-smoke",
             api_key=os.environ.get("OPENROUTER_API_KEY") if args.route == "openrouter" else None,
-            archive_root=archive_root, spend_gate=spend_gate,
+            archive_root=archive_root, spend_gate=spend_gate, paid_route=args.paid_route,
         ))
     print(json.dumps({"plan_ref": prepared.authorization,
                       "result": type(result).__name__,

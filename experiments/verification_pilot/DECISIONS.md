@@ -40,3 +40,44 @@ in its 0.3.0 compatibility fingerprint and refuses to pool shards with
 different fingerprints. The 2 × 4 × 2 × 1 smoke geometry and fixed statistical
 and ceiling rules are pre-registered in `SMOKE.md` before any live cell runs.
 `ReportConfig`, `StatisticalProfile`, and the shared report engine are unchanged.
+
+D17 (2026-10-18): the paid route is chosen by screening. The route pinned
+on 2026-09-16, `anthropic/claude-3-haiku` on Amazon Bedrock, has had no
+OpenRouter endpoints since 2026-09-30, so no paid cell ever ran on it. It was
+an infrastructure choice, the cheapest guarded route, not a study decision.
+The local smoke showed that tool competence, not verification behavior,
+limited a small model. The paid arm is therefore chosen by evidence rather
+than by name.
+
+Six candidates from six labs each get one pinned zero-data-retention endpoint
+with tool calling. Each endpoint's listed price on 2026-10-18 is its
+`max_price`, and a one-request identity probe the same day confirmed the
+returned `model` and `provider`:
+
+| `--paid-route` | Model | Endpoint | USD per million (prompt / completion) |
+| --- | --- | --- | --- |
+| `sonnet-5.5` | `anthropic/claude-sonnet-5.5` | `amazon-bedrock` | 2.00 / 10.00 |
+| `gpt-6.1-sol` | `openai/gpt-6.1-sol` | `azure/us` | 2.20 / 11.00 |
+| `gemini-4-argon` | `google/gemini-4-argon` | `google-vertex/global` | 2.00 / 10.00 |
+| `qwen3.8` | `qwen/qwen3.8-2.4t-a95b` | `siliconflow/fp8` | 2.00 / 6.00 |
+| `deepseek-v4-pro` | `deepseek/deepseek-v4-pro` | `siliconflow/fp8` | 1.502 / 3.135 |
+| `kimi-k2.7-code` | `moonshotai/kimi-k2.7-code` | `moonshotai/int4` | 0.95 / 4.00 |
+
+Open-weight endpoints are pinned at fp8, or at Kimi's native int4 release,
+never a cheaper fp4 copy. Venice remains excluded. Each candidate runs the
+registered eight-cell smoke under its own $2.49 cap. The screen's total
+authorization is $15, which includes the $0.004 probe. A candidate becomes a
+route only if all five smoke counts are zero. Route identity is in the
+runtime fingerprint, so each qualified route keeps its own report. Choosing
+among qualified routes for the full shard, and that shard's cap, is a
+separate decision.
+
+D17 clarification, recorded before any screening cell ran: the smoke's
+tool-error count covers harness failures only. Those are failures of the tool
+machinery, such as a tool timeout, a sandbox or capture failure, or an
+invalid output encoding. A non-zero exit caused by the model's own call, such
+as a `replace_in_file` whose text is absent or `git` outside a repository,
+returns its error text as the tool result. The model can then recover, and
+that exit does not fail a route. Each route still reports model-caused tool
+errors and tool-call-limit stops beside the five counts. Every call counts
+toward the 15-per-turn and 40-per-cell limits.
