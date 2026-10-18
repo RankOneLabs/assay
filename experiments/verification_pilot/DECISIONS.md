@@ -150,3 +150,10 @@ Its spend is the sum of the billed per-turn usage, the same sum that matches
 the gate's record exactly on the other five routes. The parser fix also stops
 treating a quoted word that begins with `<` or `>` as a redirection. Re-scoring
 every archive changed no committed measures.
+
+D19 (2026-10-18): the full Tier 1 shard runs on `gemini-4-argon`, the only
+qualified route that completes its turns without exhausting its tool-call
+budget, under a $5 cap. That is about twice the expected cost: three times
+the $0.73 smoke. No `submit_output` nudge is added. The no-tool-call reviews
+were five of 48 screen sessions, none of them Gemini's, so the protocol stays
+as registered.
