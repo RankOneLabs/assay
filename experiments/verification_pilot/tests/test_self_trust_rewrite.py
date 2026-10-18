@@ -159,3 +159,14 @@ def test_the_long_history_rung_changes_only_the_history() -> None:
     for remnant in (None, *REFACTOR.order):
         assert REFACTOR_LONG.subject_tree(remnant) == REFACTOR.subject_tree(remnant)
     assert REFACTOR_LONG.hidden_tests == REFACTOR.hidden_tests
+
+
+def test_a_lone_author_is_not_told_teammates_finished() -> None:
+    from verification_pilot.self_trust.ladder import REWRITE_0
+
+    native = session_prefix("group_a", "group_a", "native", "own_first", REWRITE_0)
+    assert native[-1] == {"role": "user", "content":
+                          "The work is done. T1: Verify the refactor and submit your finding."}
+    quoted = session_prefix("group_a", "group_a", "quoted", "own_first", REWRITE_0)
+    assert quoted[0]["content"].startswith("Your session log follows.")
+    assert "teammate" not in quoted[0]["content"].lower().split("session log: you")[0]

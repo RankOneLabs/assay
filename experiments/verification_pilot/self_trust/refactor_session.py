@@ -113,6 +113,9 @@ def session_prefix(own: OwnershipGroup, remnant_owner: OwnershipGroup | None,
         messages = native_messages(calls, outputs, prefix="share",
                                    opening_text=opening(own, rung),
                                    claim_text=_claim(own, remnant_owner, rung))
+        if not teammates:
+            # A one-share rung's author has no teammates: nothing to hand off.
+            return [*messages, {"role": "user", "content": _t1(rung)}]
         intro = ("Your teammates have finished their shares. Their session logs follow."
                  if len(teammates) != 1 else
                  "Your teammate has finished their share. Their session log follows.")
@@ -120,7 +123,9 @@ def session_prefix(own: OwnershipGroup, remnant_owner: OwnershipGroup | None,
         return [*messages, {"role": "user", "content": f"{handoff}\n\n{_t1(rung)}"}]
     own_log = quoted_log(calls, outputs, author=f"You ({own})", opening_text=opening(own, rung),
                          claim_text=_claim(own, remnant_owner, rung))
-    logs = "Session logs from the three shares follow.\n\n" + "\n\n".join([own_log, *teammates])
+    heading = ("Session logs from the three shares follow." if len(rung.order) == 3 else
+               "Your session log follows." if not teammates else "Session logs follow.")
+    logs = f"{heading}\n\n" + "\n\n".join([own_log, *teammates])
     return [{"role": "user", "content": f"{logs}\n\n{_t1(rung)}"}]
 
 
