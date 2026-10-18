@@ -32,10 +32,15 @@ from verification_pilot.fixtures import GROUPS, OwnershipGroup, read_raw_reposit
 from verification_pilot.self_trust.concepts import CONCEPTS, Concept, subject_repository
 from verification_pilot.self_trust.evaluation import EVALUATOR_ID, VERDICTS
 from verification_pilot.self_trust.refactor import subject_tree as refactor_subject_tree
+from verification_pilot.self_trust.refactor_session import LogOrder
 from verification_pilot.self_trust.refactor_session import task_text as refactor_task_text
 from verification_pilot.self_trust.session import Placement, task_text
 
-ARMS: tuple[str, ...] = ("st-native", "st-quoted")
+ARMS: tuple[str, ...] = ("st-native", "st-quoted", "st-quoted-first", "st-quoted-last")
+ATTRIBUTION_ORDER_ARMS: tuple[str, ...] = ("st-quoted-first", "st-quoted-last")
+_ORDERS: dict[str, LogOrder] = {"st-native": "own_first", "st-quoted": "own_first",
+                                "st-quoted-first": "holder_first",
+                                "st-quoted-last": "holder_last"}
 SCHEDULE = "subject-rotated-v1"
 CEILING = ExecutionCeiling(max_cells=144, max_wall_time_seconds=518_400, max_fleet_occupancy=1)
 PAYLOAD_SCHEMA = "https://assay.local/schemas/self-trust-measure-v1.json"
@@ -45,6 +50,13 @@ def placement_for(arm_id: str) -> Placement:
     if arm_id not in ARMS:
         raise ValueError(f"unknown self-trust arm: {arm_id}")
     return "native" if arm_id == "st-native" else "quoted"
+
+
+def order_for(arm_id: str) -> LogOrder:
+    """Where the omission holder's log sits; only refactor subjects vary it."""
+    if arm_id not in ARMS:
+        raise ValueError(f"unknown self-trust arm: {arm_id}")
+    return _ORDERS[arm_id]
 
 
 Fixture = Literal["rename", "refactor"]
@@ -131,7 +143,8 @@ def refactor_calibration_ids(subjects: tuple[SelfTrustSubject, ...]) -> tuple[st
 def realization_payload(subject: SelfTrustSubject, arm_id: str) -> dict[str, Any]:
     return {"task": subject.task, "repository": subject.repository,
             "concept": subject.concept_name, "own": subject.own,
-            "remnant_owner": subject.remnant_owner, "placement": placement_for(arm_id)}
+            "remnant_owner": subject.remnant_owner, "placement": placement_for(arm_id),
+            "order": order_for(arm_id)}
 
 
 def compile_self_trust_plan(
@@ -163,7 +176,7 @@ def compile_self_trust_plan(
             realizations.append(Realization(subject_id=item.id, arm_id=arm_id,
                                             digest=ref, artifact_ref=ref))
     arms = tuple(Arm(id=arm_id, worker=worker_configurations[arm_id],
-                     intervention={"placement": placement_for(arm_id)},
+                     intervention={"placement": placement_for(arm_id), "order": order_for(arm_id)},
                      conditions={"assay_execution_schedule": SCHEDULE}) for arm_id in ARMS)
     basis = publish({"definition": "Final tree replayed from the sealed trajectory"})
     schema_id = PAYLOAD_SCHEMA.removesuffix(".json") + f"-{EVALUATOR_ID}.json"

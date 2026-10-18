@@ -9,6 +9,9 @@ Commands, from ``experiments/``:
   native arm only.
 - ``calibrate-refactor ...``: the first refactor signal. A matched
   own/teammate pair for each omission location, six cells, native arm only.
+- ``attribution-order ...``: the same matched pairs in the two quoted arms
+  that put the omission holder's log first or last, so attribution and log
+  position vary separately. Twelve cells.
 - ``cells --subject ID ... --arm ARM ...``: any explicit shard on the paid
   route, for the later calibration steps.
 
@@ -41,6 +44,7 @@ from verification_pilot.self_trust.bridge import SelfTrustBridgeClient, self_tru
 from verification_pilot.self_trust.evaluation import SelfTrustEvaluator, measures
 from verification_pilot.self_trust.study import (
     ARMS,
+    ATTRIBUTION_ORDER_ARMS,
     PreparedSelfTrust,
     SelfTrustSubject,
     calibration_subject_ids,
@@ -113,7 +117,8 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path, paid_rout
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("scripted", "calibrate", "calibrate-refactor", "cells"))
+    parser.add_argument("command", choices=("scripted", "calibrate", "calibrate-refactor",
+                                            "attribution-order", "cells"))
     parser.add_argument("--store", type=Path, required=True)
     parser.add_argument("--image", default="")
     parser.add_argument("--runs-root", type=Path, default=None)
@@ -135,10 +140,13 @@ def main() -> None:
     if args.paid_route is None or args.max_spend_usd is None:
         parser.error("live runs require --paid-route and --max-spend-usd")
     subjects = self_trust_subjects()
+    arms: tuple[str, ...]
     if args.command == "calibrate":
         subject_ids, arms = calibration_subject_ids(subjects, args.concept), ("st-native",)
     elif args.command == "calibrate-refactor":
         subject_ids, arms = refactor_calibration_ids(subjects), ("st-native",)
+    elif args.command == "attribution-order":
+        subject_ids, arms = refactor_calibration_ids(subjects), ATTRIBUTION_ORDER_ARMS
     else:
         if not args.subject or not args.arm:
             parser.error("cells requires --subject and --arm")

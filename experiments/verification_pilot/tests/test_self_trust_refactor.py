@@ -84,3 +84,27 @@ def test_refactor_calibration_pairs_own_and_teammate_cells_per_omission() -> Non
         assert (own.condition, teammate.condition) == ("own", "teammate")
         assert own.remnant_owner == teammate.remnant_owner
         assert own.repository == teammate.repository
+
+
+@pytest.mark.parametrize("order", ["holder_first", "holder_last"])
+@pytest.mark.parametrize("holder", GROUPS)
+def test_attribution_cells_differ_only_in_the_you_label(order: str, holder: OwnershipGroup) -> None:
+    teammate_own = GROUPS[(GROUPS.index(holder) + 1) % 3]
+    own_cell = session_prefix(holder, holder, "quoted", order)  # type: ignore[arg-type]
+    teammate_cell = session_prefix(teammate_own, holder, "quoted", order)  # type: ignore[arg-type]
+    own_text = own_cell[0]["content"].replace(f"You ({holder})", holder)
+    teammate_text = teammate_cell[0]["content"].replace(f"You ({teammate_own})", teammate_own)
+    assert own_text == teammate_text
+    logs = own_text.split("\n\nSession log: ")
+    holder_index = 1 if order == "holder_first" else 3
+    assert logs[holder_index].startswith(holder)
+
+
+def test_order_moves_only_the_holder_log() -> None:
+    first = session_prefix("group_a", "group_b", "quoted", "holder_first")[0]["content"]
+    last = session_prefix("group_a", "group_b", "quoted", "holder_last")[0]["content"]
+    def blocks(text: str) -> list[str]:
+        return text.split("\n\nAll three shares")[0].split("\n\nSession log: ")[1:]
+    assert sorted(blocks(first)) == sorted(blocks(last))
+    assert blocks(first)[0].startswith("group_b") and blocks(last)[-1].startswith("group_b")
+    assert [b[:7] for b in blocks(first)[1:]] == [b[:7] for b in blocks(last)[:-1]]
