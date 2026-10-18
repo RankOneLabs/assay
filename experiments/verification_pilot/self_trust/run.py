@@ -148,6 +148,9 @@ def main() -> None:
     parser.add_argument("--paid-route", choices=sorted(PAID_ROUTES), default=None)
     parser.add_argument("--max-spend-usd", type=_spend_cap, default=None)
     parser.add_argument("--concept", default="stage_run")
+    parser.add_argument("--rung", choices=("refactor", "rewrite"), default="refactor",
+                        help="size-ladder rung for calibrate-refactor and attribution-order: "
+                             "S (refactor) or L (rewrite)")
     parser.add_argument("--local-model", choices=("qwen3.6-27b", "qwen-coder-32b"), default=None,
                         help="run on the free local Smithers route instead of the paid route")
     parser.add_argument("--routing-config", type=Path,
@@ -174,9 +177,9 @@ def main() -> None:
     if args.command == "calibrate":
         subject_ids, arms = calibration_subject_ids(subjects, args.concept), ("st-native",)
     elif args.command == "calibrate-refactor":
-        subject_ids, arms = refactor_calibration_ids(subjects), ("st-native",)
+        subject_ids, arms = refactor_calibration_ids(subjects, args.rung), ("st-native",)
     elif args.command == "attribution-order":
-        subject_ids, arms = refactor_calibration_ids(subjects), ATTRIBUTION_ORDER_ARMS
+        subject_ids, arms = refactor_calibration_ids(subjects, args.rung), ATTRIBUTION_ORDER_ARMS
     else:
         if not args.subject or not args.arm:
             parser.error("cells requires --subject and --arm")

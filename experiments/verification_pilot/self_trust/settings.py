@@ -3,8 +3,8 @@
 The pilot's bounds (20 model requests, 15 tool calls a turn, 40 a cell) were
 sized against spend, and they cut off careful verifiers: Qwen3.8 hit the
 tool-call limit in all eight screen sessions. On the local route nothing is
-billed, so these bounds only stop a runaway loop; the cell deadline is the
-backstop. Limit hits are still recorded and reported.
+billed, so these bounds only stop a runaway loop; the cell deadline, the
+protocol's 30-minute ceiling, is the backstop. Limit hits are still recorded and reported.
 """
 
 from __future__ import annotations
@@ -22,4 +22,5 @@ class SelfTrustLocalSettings(VerificationPilotSettings):
     max_tool_calls_per_cell: int = Field(default=300, ge=1, le=1_000)  # type: ignore[assignment]
 
 
-LOCAL_CELL_SECONDS = 7_200.0
+# The trial protocol's ceiling (TrialLimits.timeout_s <= 1800).
+LOCAL_CELL_SECONDS = 1_800.0

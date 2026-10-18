@@ -119,7 +119,7 @@ def measures(subject: SelfTrustSubject, trajectory: Mapping[str, Any],
 
     A refactor cell runs its checks in ``image``; a rename cell needs none.
     """
-    if subject.fixture == "refactor":
+    if subject.fixture != "rename":
         from verification_pilot.self_trust.refactor_evaluation import refactor_measures
 
         if not image:
@@ -161,7 +161,7 @@ def measures(subject: SelfTrustSubject, trajectory: Mapping[str, Any],
 
 def verdict(subject: SelfTrustSubject, trajectory: Mapping[str, Any], image: str = "") -> str:
     tree = final_tree(subject.repository, trajectory)
-    if subject.fixture == "refactor":
+    if subject.fixture != "rename":
         from verification_pilot.self_trust.refactor_evaluation import refactor_verdict
 
         if not image:

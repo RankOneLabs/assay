@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import paa_contracts
 
@@ -31,7 +31,7 @@ from assay.store import ObjectStore
 from verification_pilot.fixtures import GROUPS, OwnershipGroup, read_raw_repository
 from verification_pilot.self_trust.concepts import CONCEPTS, Concept, subject_repository
 from verification_pilot.self_trust.evaluation import EVALUATOR_ID, VERDICTS
-from verification_pilot.self_trust.refactor import subject_tree as refactor_subject_tree
+from verification_pilot.self_trust.ladder import REFACTOR, REWRITE
 from verification_pilot.self_trust.refactor_session import LogOrder
 from verification_pilot.self_trust.refactor_session import task_text as refactor_task_text
 from verification_pilot.self_trust.session import Placement, task_text
@@ -59,7 +59,7 @@ def order_for(arm_id: str) -> LogOrder:
     return _ORDERS[arm_id]
 
 
-Fixture = Literal["rename", "refactor"]
+Fixture = Literal["rename", "refactor", "rewrite"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +97,7 @@ def subject_id(concept: str, own: str, remnant_owner: str | None) -> str:
 
 
 def self_trust_subjects() -> tuple[SelfTrustSubject, ...]:
-    """The 36 rename subjects, then the 12 refactor subjects."""
+    """The 36 rename subjects, then 12 for each refactor rung (S, then L)."""
     repository = read_raw_repository()
     renames = tuple(
         SelfTrustSubject(
@@ -106,14 +106,17 @@ def self_trust_subjects() -> tuple[SelfTrustSubject, ...]:
             repository=subject_repository(repository, concept, remnant),
         )
         for concept in CONCEPTS for own in GROUPS for remnant in (*GROUPS, None))
-    trees = {remnant: refactor_subject_tree(remnant) for remnant in (*GROUPS, None)}
-    refactors = tuple(
-        SelfTrustSubject(
-            id=subject_id("refactor", own, remnant), concept=None, own=own, remnant_owner=remnant,
-            task=refactor_task_text(own), repository=trees[remnant], fixture="refactor",
-        )
-        for own in GROUPS for remnant in (*GROUPS, None))
-    return renames + refactors
+    ladder: list[SelfTrustSubject] = []
+    for rung in (REFACTOR, REWRITE):
+        trees = {remnant: rung.subject_tree(remnant) for remnant in (*GROUPS, None)}
+        ladder += [
+            SelfTrustSubject(
+                id=subject_id(rung.name, own, remnant), concept=None, own=own,
+                remnant_owner=remnant, task=refactor_task_text(own, rung),
+                repository=trees[remnant], fixture=cast(Fixture, rung.name),
+            )
+            for own in GROUPS for remnant in (*GROUPS, None)]
+    return renames + tuple(ladder)
 
 
 def calibration_subject_ids(subjects: tuple[SelfTrustSubject, ...],
@@ -123,7 +126,8 @@ def calibration_subject_ids(subjects: tuple[SelfTrustSubject, ...],
                  if s.concept_name == concept and s.condition == "teammate")
 
 
-def refactor_calibration_ids(subjects: tuple[SelfTrustSubject, ...]) -> tuple[str, ...]:
+def refactor_calibration_ids(subjects: tuple[SelfTrustSubject, ...],
+                             rung: str = "refactor") -> tuple[str, ...]:
     """The first refactor signal: a matched own/teammate pair per omission location.
 
     For each share holding the omission, one cell where that share is the
@@ -131,8 +135,8 @@ def refactor_calibration_ids(subjects: tuple[SelfTrustSubject, ...]) -> tuple[st
     line are fixed and only its author differs.
     """
     by_id = {s.id: s for s in subjects}
-    pairs = [(subject_id("refactor", remnant, remnant),
-              subject_id("refactor", GROUPS[(GROUPS.index(remnant) + 1) % 3], remnant))
+    pairs = [(subject_id(rung, remnant, remnant),
+              subject_id(rung, GROUPS[(GROUPS.index(remnant) + 1) % 3], remnant))
              for remnant in GROUPS]
     ids = tuple(item for pair in pairs for item in pair)
     if not all(item in by_id for item in ids):

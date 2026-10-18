@@ -27,6 +27,7 @@ from verification_pilot.dispatch import cell_idempotency_key
 from verification_pilot.fixtures import read_raw_repository
 from verification_pilot.inputs import T2_TEXT, T3_TEXT
 from verification_pilot.self_trust import refactor_session
+from verification_pilot.self_trust.ladder import RUNGS
 from verification_pilot.self_trust.session import SYSTEM_PROMPT, Placement, session_prefix
 from verification_pilot.self_trust.study import (
     SelfTrustSubject,
@@ -41,9 +42,9 @@ RUNTIME_VERSION = "self-trust-v1"
 def subject_prefix(subject: SelfTrustSubject, arm_id: str) -> list[dict[str, Any]]:
     """The recorded session after the task message, for either fixture."""
     placement: Placement = placement_for(arm_id)
-    if subject.fixture == "refactor":
+    if subject.fixture in RUNGS:
         return refactor_session.session_prefix(subject.own, subject.remnant_owner, placement,
-                                               order_for(arm_id))
+                                               order_for(arm_id), RUNGS[subject.fixture])
     if order_for(arm_id) != "own_first":
         raise ValueError(f"{subject.id}: the rename fixture does not vary log order")
     if subject.concept is None:

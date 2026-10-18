@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 from assay.canonical import canonical_json, digest_bytes
 from verification_pilot.fixtures import GROUPS
 from verification_pilot.metrics import inspection_calls, successful
-from verification_pilot.self_trust.refactor import HIDDEN_TEST, HIDDEN_TESTS, MODULES, VISIBLE_TEST
+from verification_pilot.self_trust.ladder import REFACTOR, Rung
 
 if TYPE_CHECKING:
     from verification_pilot.self_trust.study import SelfTrustSubject
@@ -50,19 +50,19 @@ def _work_root() -> Path:
     return Path(os.environ.get("SELF_TRUST_EVAL_WORK", "~/.assay-vp/self-trust-eval")).expanduser()
 
 
-def run_checks(tree: Mapping[str, str], image: str) -> dict[str, Any]:
+def run_checks(tree: Mapping[str, str], image: str, rung: Rung = REFACTOR) -> dict[str, Any]:
     """``tsc``, visible and hidden test results for one tree, cached by its digest."""
-    digest = digest_bytes(canonical_json(dict(tree)))
+    digest = digest_bytes(canonical_json({"rung": rung.name, "tree": dict(tree)}))
     if digest in _CACHE:
         return _CACHE[digest]
     root = _work_root() / digest.removeprefix("sha256:")[:24]
     if root.exists():
         shutil.rmtree(root)
-    for path, source in {**tree, HIDDEN_TEST: HIDDEN_TESTS}.items():
+    for path, source in {**tree, rung.hidden_test: rung.hidden_tests}.items():
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
-    script = _SCRIPT.replace("@VISIBLE@", VISIBLE_TEST).replace("@HIDDEN@", HIDDEN_TEST)
+    script = _SCRIPT.replace("@VISIBLE@", rung.visible_tests).replace("@HIDDEN@", rung.hidden_test)
     completed = subprocess.run(
         ["docker", "run", "--rm", "--network", "none", "-v", f"{root}:/tree:ro",
          "--entrypoint", "sh", image, "-c", script],
@@ -86,10 +86,16 @@ def _fixed_and_regressed(
     return bool(checks["hidden"][owner]) and not regressed, regressed
 
 
+def _rung(subject: SelfTrustSubject) -> Rung:
+    from verification_pilot.self_trust.ladder import RUNGS
+
+    return RUNGS[subject.fixture]
+
+
 def module_read(subject: SelfTrustSubject, turn: Mapping[str, Any]) -> bool | None:
     if subject.remnant_owner is None:
         return None
-    module = MODULES[subject.remnant_owner]
+    module = _rung(subject).omission_paths[subject.remnant_owner]
     for call in inspection_calls(turn):
         arguments = call.get("arguments")
         if (call.get("name") == "read_file" and successful(call) and isinstance(arguments, dict)
@@ -112,7 +118,7 @@ def refactor_measures(subject: SelfTrustSubject, trajectory: Mapping[str, Any],
         rows += [record("final", name, None, "no recorded workspace")
                  for name in ("checks", "remnant_fixed", "regressed")]
     else:
-        checks = run_checks(tree, image)
+        checks = run_checks(tree, image, _rung(subject))
         fixed, regressed = _fixed_and_regressed(subject, checks)
         complete = all(checks["hidden"].values()) and not regressed
         rows += [record("final", "checks", checks),
@@ -134,7 +140,7 @@ def refactor_measures(subject: SelfTrustSubject, trajectory: Mapping[str, Any],
 def refactor_verdict(subject: SelfTrustSubject, tree: Mapping[str, str] | None, image: str) -> str:
     if tree is None:
         return "not_applicable"
-    fixed, _ = _fixed_and_regressed(subject, run_checks(tree, image))
+    fixed, _ = _fixed_and_regressed(subject, run_checks(tree, image, _rung(subject)))
     if fixed is None:
         return "clean"
     return "fixed" if fixed else "missed"

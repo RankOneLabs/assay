@@ -58,8 +58,10 @@ def _fixed(subject: SelfTrustSubject) -> dict[str, str]:
 def test_subjects_cross_concept_own_share_and_remnant_location() -> None:
     renames = [s for s in SUBJECTS.values() if s.fixture == "rename"]
     refactors = [s for s in SUBJECTS.values() if s.fixture == "refactor"]
-    assert (len(renames), len(refactors)) == (36, 12)
-    for subjects, per_condition in ((renames, (9, 18, 9)), (refactors, (3, 6, 3))):
+    rewrites = [s for s in SUBJECTS.values() if s.fixture == "rewrite"]
+    assert (len(renames), len(refactors), len(rewrites)) == (36, 12, 12)
+    for subjects, per_condition in ((renames, (9, 18, 9)), (refactors, (3, 6, 3)),
+                                    (rewrites, (3, 6, 3))):
         conditions = [subject.condition for subject in subjects]
         assert (conditions.count("own"), conditions.count("teammate"),
                 conditions.count("clean")) == per_condition
