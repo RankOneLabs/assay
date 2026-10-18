@@ -7,6 +7,8 @@ Commands, from ``experiments/``:
 - ``calibrate --store DIR --image DIGEST --paid-route NAME --max-spend-usd N``:
   calibration step 1. Every teammate-share remnant of one concept (six cells),
   native arm only.
+- ``calibrate-refactor ...``: the first refactor signal. A matched
+  own/teammate pair for each omission location, six cells, native arm only.
 - ``cells --subject ID ... --arm ARM ...``: any explicit shard on the paid
   route, for the later calibration steps.
 
@@ -43,6 +45,7 @@ from verification_pilot.self_trust.study import (
     SelfTrustSubject,
     calibration_subject_ids,
     compile_self_trust_plan,
+    refactor_calibration_ids,
     self_trust_subjects,
 )
 from verification_pilot.settings import VerificationPilotSettings
@@ -50,14 +53,14 @@ from verification_pilot.settings import VerificationPilotSettings
 ARCHIVE_ROOT = Path(__file__).resolve().parents[1] / "raw" / "self_trust" / "runs"
 
 
-def _measures(trace: Any, subject: SelfTrustSubject) -> list[dict[str, Any]]:
-    return measures(subject, trace)
-
-
 async def _execute(store: ObjectStore, prepared: PreparedSelfTrust, worker: Any,
                    subjects: dict[str, SelfTrustSubject],
-                   archive_root: Path) -> tuple[Any, Path | None]:
-    evaluator = SelfTrustEvaluator(store, subjects)
+                   archive_root: Path, image: str = "") -> tuple[Any, Path | None]:
+    evaluator = SelfTrustEvaluator(store, subjects, image)
+
+    def _measures(trace: Any, subject: SelfTrustSubject) -> list[dict[str, Any]]:
+        return measures(subject, trace, image)
+
     result = await execute_plan(
         plan_bytes=prepared.plan_bytes, authorization=prepared.authorization,
         snapshot=prepared.snapshot, store=store,
@@ -71,7 +74,8 @@ async def _execute(store: ObjectStore, prepared: PreparedSelfTrust, worker: Any,
     return result, destination
 
 
-async def run_scripted(store: ObjectStore, archive_root: Path) -> tuple[Any, Path | None]:
+async def run_scripted(store: ObjectStore, archive_root: Path,
+                       image: str = "") -> tuple[Any, Path | None]:
     subjects = self_trust_subjects()
     worker = ScriptedWorker(store)
     runtime = RuntimeProfile(id="scripted", version="1",
@@ -79,7 +83,8 @@ async def run_scripted(store: ObjectStore, archive_root: Path) -> tuple[Any, Pat
     prepared = compile_self_trust_plan(
         store, runtime, worker_configurations={arm: worker.configuration(arm) for arm in ARMS},
         active_subject_ids=tuple(s.id for s in subjects), subjects_data=subjects)
-    return await _execute(store, prepared, worker, {s.id: s for s in subjects}, archive_root)
+    return await _execute(store, prepared, worker, {s.id: s for s in subjects}, archive_root,
+                          image)
 
 
 async def run_live(store: ObjectStore, *, image: str, runs_root: Path, paid_route: str,
@@ -99,7 +104,7 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path, paid_rout
     prepared = compile_self_trust_plan(
         store, runtime, worker_configurations={arm: worker.configuration(arm) for arm in ARMS},
         active_subject_ids=subject_ids, active_arms=arms, subjects_data=subjects)
-    result, destination = await _execute(store, prepared, worker, by_id, archive_root)
+    result, destination = await _execute(store, prepared, worker, by_id, archive_root, image)
     if destination is not None:
         (destination / "spend.json").write_text(
             json.dumps(spend_gate.record(), sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -108,7 +113,7 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path, paid_rout
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("scripted", "calibrate", "cells"))
+    parser.add_argument("command", choices=("scripted", "calibrate", "calibrate-refactor", "cells"))
     parser.add_argument("--store", type=Path, required=True)
     parser.add_argument("--image", default="")
     parser.add_argument("--runs-root", type=Path, default=None)
@@ -120,7 +125,9 @@ def main() -> None:
     args = parser.parse_args()
     store = ObjectStore(args.store)
     if args.command == "scripted":
-        result, destination = asyncio.run(run_scripted(store, ARCHIVE_ROOT))
+        if not args.image:
+            parser.error("scripted needs --image: refactor cells are scored in the image")
+        result, destination = asyncio.run(run_scripted(store, ARCHIVE_ROOT, args.image))
         print(json.dumps({"result": type(result).__name__, "archive": str(destination)}))
         return
     if not args.image or args.runs_root is None:
@@ -130,6 +137,8 @@ def main() -> None:
     subjects = self_trust_subjects()
     if args.command == "calibrate":
         subject_ids, arms = calibration_subject_ids(subjects, args.concept), ("st-native",)
+    elif args.command == "calibrate-refactor":
+        subject_ids, arms = refactor_calibration_ids(subjects), ("st-native",)
     else:
         if not args.subject or not args.arm:
             parser.error("cells requires --subject and --arm")

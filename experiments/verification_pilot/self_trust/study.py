@@ -31,6 +31,8 @@ from assay.store import ObjectStore
 from verification_pilot.fixtures import GROUPS, OwnershipGroup, read_raw_repository
 from verification_pilot.self_trust.concepts import CONCEPTS, Concept, subject_repository
 from verification_pilot.self_trust.evaluation import EVALUATOR_ID, VERDICTS
+from verification_pilot.self_trust.refactor import subject_tree as refactor_subject_tree
+from verification_pilot.self_trust.refactor_session import task_text as refactor_task_text
 from verification_pilot.self_trust.session import Placement, task_text
 
 ARMS: tuple[str, ...] = ("st-native", "st-quoted")
@@ -45,14 +47,22 @@ def placement_for(arm_id: str) -> Placement:
     return "native" if arm_id == "st-native" else "quoted"
 
 
+Fixture = Literal["rename", "refactor"]
+
+
 @dataclass(frozen=True, slots=True)
 class SelfTrustSubject:
     id: str
-    concept: Concept
+    concept: Concept | None
     own: OwnershipGroup
     remnant_owner: OwnershipGroup | None
     task: str
     repository: dict[str, str]
+    fixture: Fixture = "rename"
+
+    @property
+    def concept_name(self) -> str:
+        return self.concept.name if self.concept is not None else self.fixture
 
     @property
     def condition(self) -> Literal["own", "teammate", "clean"]:
@@ -75,26 +85,52 @@ def subject_id(concept: str, own: str, remnant_owner: str | None) -> str:
 
 
 def self_trust_subjects() -> tuple[SelfTrustSubject, ...]:
+    """The 36 rename subjects, then the 12 refactor subjects."""
     repository = read_raw_repository()
-    return tuple(
+    renames = tuple(
         SelfTrustSubject(
             id=subject_id(concept.name, own, remnant), concept=concept, own=own,
             remnant_owner=remnant, task=task_text(repository, concept, own),
             repository=subject_repository(repository, concept, remnant),
         )
         for concept in CONCEPTS for own in GROUPS for remnant in (*GROUPS, None))
+    trees = {remnant: refactor_subject_tree(remnant) for remnant in (*GROUPS, None)}
+    refactors = tuple(
+        SelfTrustSubject(
+            id=subject_id("refactor", own, remnant), concept=None, own=own, remnant_owner=remnant,
+            task=refactor_task_text(own), repository=trees[remnant], fixture="refactor",
+        )
+        for own in GROUPS for remnant in (*GROUPS, None))
+    return renames + refactors
 
 
 def calibration_subject_ids(subjects: tuple[SelfTrustSubject, ...],
                             concept: str = "stage_run") -> tuple[str, ...]:
     """Calibration step 1: every teammate-share remnant of one concept."""
     return tuple(s.id for s in subjects
-                 if s.concept.name == concept and s.condition == "teammate")
+                 if s.concept_name == concept and s.condition == "teammate")
+
+
+def refactor_calibration_ids(subjects: tuple[SelfTrustSubject, ...]) -> tuple[str, ...]:
+    """The first refactor signal: a matched own/teammate pair per omission location.
+
+    For each share holding the omission, one cell where that share is the
+    model's own and one where the next share is, so the omission's file and
+    line are fixed and only its author differs.
+    """
+    by_id = {s.id: s for s in subjects}
+    pairs = [(subject_id("refactor", remnant, remnant),
+              subject_id("refactor", GROUPS[(GROUPS.index(remnant) + 1) % 3], remnant))
+             for remnant in GROUPS]
+    ids = tuple(item for pair in pairs for item in pair)
+    if not all(item in by_id for item in ids):
+        raise ValueError("refactor subjects are missing")
+    return ids
 
 
 def realization_payload(subject: SelfTrustSubject, arm_id: str) -> dict[str, Any]:
     return {"task": subject.task, "repository": subject.repository,
-            "concept": subject.concept.name, "own": subject.own,
+            "concept": subject.concept_name, "own": subject.own,
             "remnant_owner": subject.remnant_owner, "placement": placement_for(arm_id)}
 
 
@@ -118,7 +154,7 @@ def compile_self_trust_plan(
     subjects: list[Subject] = []
     realizations: list[Realization] = []
     for item in subjects_data:
-        subject_ref = publish({"task": item.task, "concept": item.concept.name,
+        subject_ref = publish({"task": item.task, "concept": item.concept_name,
                                "own": item.own, "remnant_owner": item.remnant_owner})
         subjects.append(Subject(id=item.id, label=item.id, partition="self-trust",
                                 digest=subject_ref, payload_ref=subject_ref))

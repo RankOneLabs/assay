@@ -96,11 +96,45 @@ def run_check(image: str, work: Path) -> dict[str, Any]:
     return {"image": image, "cases": results, "holds": all(e["holds"] for e in results.values())}
 
 
+REFACTOR_RESULT = RESULT.parent / "refactor-check.json"
+
+
+def run_refactor_check(image: str) -> dict[str, Any]:
+    """The refactor's start and four subject trees, through the evaluator's own checks.
+
+    Every tree must typecheck and pass the visible tests. The start and the
+    clean refactor pass every hidden test; each omission fails its own share's
+    hidden test and no other.
+    """
+    from verification_pilot.self_trust.refactor import start_tree
+    from verification_pilot.self_trust.refactor import subject_tree as refactor_tree
+    from verification_pilot.self_trust.refactor_evaluation import run_checks
+
+    trees = {"start": start_tree(), "clean": refactor_tree(None),
+             **{f"omit-{group}": refactor_tree(group) for group in GROUPS}}
+    results: dict[str, Any] = {}
+    for name, tree in trees.items():
+        checks = run_checks(tree, image)
+        omitted = name.removeprefix("omit-") if name.startswith("omit-") else None
+        holds = (checks["tsc"] == 0 and checks["visible"] == 0
+                 and all(passed == (group != omitted)
+                         for group, passed in checks["hidden"].items()))
+        results[name] = {"tree_digest": workflow_tree_digest(tree), **checks, "holds": holds}
+    return {"image": image, "cases": results, "holds": all(e["holds"] for e in results.values())}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
     parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--fixture", choices=("rename", "refactor"), default="rename")
     args = parser.parse_args()
+    if args.fixture == "refactor":
+        refactor = run_refactor_check(args.image)
+        REFACTOR_RESULT.write_text(json.dumps(refactor, indent=2, sort_keys=True) + "\n",
+                                   encoding="utf-8")
+        print(json.dumps({"holds": refactor["holds"]}))
+        return
     result = run_check(args.image, args.work.expanduser().resolve())
     RESULT.parent.mkdir(parents=True, exist_ok=True)
     RESULT.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")

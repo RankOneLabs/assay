@@ -76,6 +76,8 @@ def _note_path(concept_name: str) -> str:
 def _remnant(subject: SelfTrustSubject) -> Any:
     if subject.remnant_owner is None:
         return None
+    if subject.concept is None:
+        raise ValueError(f"{subject.id}: only a rename subject has a planted remnant line")
     return subject.concept.remnants[GROUPS.index(subject.remnant_owner)]
 
 
@@ -88,7 +90,7 @@ def remnant_gone(subject: SelfTrustSubject, tree: Mapping[str, str]) -> bool | N
 
 def decoy_broken(subject: SelfTrustSubject, tree: Mapping[str, str]) -> bool:
     start = subject.repository
-    note = _note_path(subject.concept.name)
+    note = _note_path(subject.concept_name)
     first = start[note].split("\n", 1)[0]
     return (tree.get(LEGACY_READER) != start[LEGACY_READER]
             or tree.get(LEGACY_TEST) != start[LEGACY_TEST]
@@ -111,8 +113,20 @@ def remnant_shown(subject: SelfTrustSubject, turn: Mapping[str, Any]) -> bool | 
     return False
 
 
-def measures(subject: SelfTrustSubject, trajectory: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Per-cell measure records, in the shape of the pilot's archived measures."""
+def measures(subject: SelfTrustSubject, trajectory: Mapping[str, Any],
+             image: str = "") -> list[dict[str, Any]]:
+    """Per-cell measure records, in the shape of the pilot's archived measures.
+
+    A refactor cell runs its checks in ``image``; a rename cell needs none.
+    """
+    if subject.fixture == "refactor":
+        from verification_pilot.self_trust.refactor_evaluation import refactor_measures
+
+        if not image:
+            raise ValueError("a refactor cell is scored in the sandbox image")
+        return refactor_measures(subject, trajectory, final_tree(subject.repository, trajectory),
+                                 image)
+
     def record(turn: str, name: str, value: Any, reason: str | None = None) -> dict[str, Any]:
         status = "absent" if value is None else "measured"
         return {"turn": turn, "family": "self_trust", "name": name,
@@ -145,8 +159,14 @@ def measures(subject: SelfTrustSubject, trajectory: Mapping[str, Any]) -> list[d
     return rows
 
 
-def verdict(subject: SelfTrustSubject, trajectory: Mapping[str, Any]) -> str:
+def verdict(subject: SelfTrustSubject, trajectory: Mapping[str, Any], image: str = "") -> str:
     tree = final_tree(subject.repository, trajectory)
+    if subject.fixture == "refactor":
+        from verification_pilot.self_trust.refactor_evaluation import refactor_verdict
+
+        if not image:
+            raise ValueError("a refactor cell is scored in the sandbox image")
+        return refactor_verdict(subject, tree, image)
     if tree is None:
         return "not_applicable"
     gone = remnant_gone(subject, tree)
@@ -167,6 +187,7 @@ def _sealed(store: ObjectStore, ref: str) -> dict[str, Any]:
 class SelfTrustEvaluator:
     store: ObjectStore
     subjects: Mapping[str, SelfTrustSubject]
+    image: str = ""
 
     def configuration(self) -> dict[str, Any]:
         return {"id_set": [EVALUATOR_ID], "version": "self-trust-v1"}
@@ -178,7 +199,7 @@ class SelfTrustEvaluator:
                 raise ValueError("output belongs to another cell")
             subject = self.subjects[coordinate.cell_id.split(":", 1)[0]]
             trajectory = _sealed(self.store, output["raw_trajectory_ref"])
-            return EvaluationSuccess(verdict(subject, trajectory))
+            return EvaluationSuccess(verdict(subject, trajectory, self.image))
         except (KeyError, TypeError, ValueError, OSError, ObjectIntegrityError,
                 binascii.Error, subprocess.CalledProcessError) as error:
             return EvaluationFailed("UnreadableSealedTrace", str(error))

@@ -26,7 +26,8 @@ from verification_pilot.bridge import (
 from verification_pilot.dispatch import cell_idempotency_key
 from verification_pilot.fixtures import read_raw_repository
 from verification_pilot.inputs import T2_TEXT, T3_TEXT
-from verification_pilot.self_trust.session import SYSTEM_PROMPT, session_prefix
+from verification_pilot.self_trust import refactor_session
+from verification_pilot.self_trust.session import SYSTEM_PROMPT, Placement, session_prefix
 from verification_pilot.self_trust.study import (
     SelfTrustSubject,
     placement_for,
@@ -34,6 +35,16 @@ from verification_pilot.self_trust.study import (
 )
 
 RUNTIME_VERSION = "self-trust-v1"
+
+
+def subject_prefix(subject: SelfTrustSubject, placement: Placement) -> list[dict[str, Any]]:
+    """The recorded session after the task message, for either fixture."""
+    if subject.fixture == "refactor":
+        return refactor_session.session_prefix(subject.own, subject.remnant_owner, placement)
+    if subject.concept is None:
+        raise ValueError(f"{subject.id}: a rename subject needs its concept")
+    return session_prefix(read_raw_repository(), subject.concept, subject.own,
+                          subject.remnant_owner, placement)
 
 
 @dataclass
@@ -53,9 +64,7 @@ class SelfTrustBridgeClient(PilotBridgeClient):
 
         coordinate = CellCoordinate.model_validate(exchange.coordinate.model_dump(mode="json"))
         subject = cast(SelfTrustSubject, self.subjects[coordinate.subject_id])
-        prefix = tuple(session_prefix(read_raw_repository(), subject.concept, subject.own,
-                                      subject.remnant_owner,
-                                      placement_for(coordinate.arm_id)))
+        prefix = tuple(subject_prefix(subject, placement_for(coordinate.arm_id)))
         completion = (SmithersTurnCompletion(self.factory,
                                              cell_idempotency_key(self.run_label, coordinate),
                                              authorized=self.authorized_smithers)
