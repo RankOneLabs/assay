@@ -436,27 +436,19 @@ SHARE_WORK: dict[OwnershipGroup, str] = {
 }
 
 
-def _line_range(source: str, block: str) -> tuple[int, int]:
-    start = source.index(block)
-    first = source[:start].count("\n") + 1
-    return first, first + block.count("\n") - 1
-
-
 def plan_share(tree: Mapping[str, str], group: OwnershipGroup, *, omit: bool) -> list[PlannedCall]:
-    """The share's tool calls: list the file, write the module, cut the moved blocks, check."""
+    """The share's tool calls: list the file, write the module, remove the moved blocks, check."""
     calls = [PlannedCall("run_command", {
         "command": f"grep -n '^const \\|^interface \\|^export \\|^import ' {DERIVE}"})]
-    current = dict(tree)
     for edit in share_edits(tree, group, omit=omit):
         if isinstance(edit, Write):
             calls.append(PlannedCall("write_file", {"path": edit.path, "content": edit.content}))
-        elif edit.new == "" and edit.old.count("\n") > 2:
-            first, last = _line_range(current[edit.path], edit.old)
-            calls.append(PlannedCall("run_command", {"command": f"sed -i '{first},{last}d' {edit.path}"}))
         else:
+            # Removals go through replace_in_file too, so each log shows the code its
+            # share moved out next to the module it wrote: a dropped check is visible
+            # in that share's own history, and only there.
             calls.append(PlannedCall("replace_in_file",
                                      {"path": edit.path, "old": edit.old, "new": edit.new}))
-        current = apply(current, [edit])
     calls.append(PlannedCall("run_command", {"command": CHECK_COMMAND}))
     return calls
 
