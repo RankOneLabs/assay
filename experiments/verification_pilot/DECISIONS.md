@@ -71,3 +71,13 @@ route only if all five smoke counts are zero. Route identity is in the
 runtime fingerprint, so each qualified route keeps its own report. Choosing
 among qualified routes for the full shard, and that shard's cap, is a
 separate decision.
+
+D17 clarification, recorded before any screening cell ran: the smoke's
+tool-error count covers harness failures only. Those are failures of the tool
+machinery, such as a tool timeout, a sandbox or capture failure, or an
+invalid output encoding. A non-zero exit caused by the model's own call, such
+as a `replace_in_file` whose text is absent or `git` outside a repository,
+returns its error text as the tool result. The model can then recover, and
+that exit does not fail a route. Each route still reports model-caused tool
+errors and tool-call-limit stops beside the five counts. Every call counts
+toward the 15-per-turn and 40-per-cell limits.

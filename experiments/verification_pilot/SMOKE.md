@@ -52,6 +52,8 @@ shards still pool. The local route takes no cap.
 
 The paid route also requires `--paid-route`, one of the six screening routes in
 D17. Each candidate runs this same smoke and the same five-count rule.
+Under D17, the tool-error count covers harness failures only. Model-caused tool
+errors and tool-call-limit stops are reported beside the counts.
 
 The final inference rules are fixed now: H1 uses a two-sided sign test of the
 T1 ownership gap over 16 base subjects; H2 uses the paired two-sided sign
