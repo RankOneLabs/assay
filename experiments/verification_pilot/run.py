@@ -68,6 +68,7 @@ from verification_pilot.study import (
 PAID_ROUTES: dict[str, tuple[str, str]] = {
     "sonnet-5.5": ("anthropic/claude-sonnet-5.5", "amazon-bedrock"),
     "gpt-6.1-sol": ("openai/gpt-6.1-sol", "azure/us"),
+    "gpt-6.1-sol-eu": ("openai/gpt-6.1-sol", "azure/eu"),
     "gemini-4-argon": ("google/gemini-4-argon", "google-vertex/global"),
     "qwen3.8": ("qwen/qwen3.8-2.4t-a95b", "siliconflow/fp8"),
     "deepseek-v4-pro": ("deepseek/deepseek-v4-pro", "siliconflow/fp8"),

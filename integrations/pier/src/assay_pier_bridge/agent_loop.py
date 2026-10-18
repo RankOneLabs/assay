@@ -195,6 +195,9 @@ PAID_TURN_ROUTES: dict[tuple[str, str], OpenRouterTurnRoute] = {
         _screening_route("anthropic/claude-sonnet-5.5", "amazon-bedrock", "Amazon Bedrock",
                          2.0, 10.0),
         _screening_route("openai/gpt-6.1-sol", "azure/us", "Azure", 2.2, 11.0),
+        # The same model on Azure's EU capacity, for when azure/us refuses large
+        # requests at peak load. A separate route, since the endpoint is identity.
+        _screening_route("openai/gpt-6.1-sol", "azure/eu", "Azure", 2.2, 11.0),
         _screening_route("google/gemini-4-argon", "google-vertex/global", "Google", 2.0, 10.0),
         _screening_route("qwen/qwen3.8-2.4t-a95b", "siliconflow/fp8", "SiliconFlow", 2.0, 6.0),
         _screening_route("deepseek/deepseek-v4-pro", "siliconflow/fp8", "SiliconFlow",

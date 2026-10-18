@@ -168,7 +168,8 @@ def main() -> None:
     parser.add_argument("--paid-route", choices=sorted(PAID_ROUTES), default=None)
     parser.add_argument("--max-spend-usd", type=_spend_cap, default=None)
     parser.add_argument("--concept", default="stage_run")
-    parser.add_argument("--rung", choices=("refactor", "refactor-long", "rewrite0", "rewrite1",
+    parser.add_argument("--rung", choices=("refactor", "refactor-long", "rewrite0", "rewrite0-read",
+                                           "rewrite1",
                                            "rewrite2", "rewrite"),
                         default="refactor",
                         help="size-ladder rung for calibrate-refactor and attribution-order: "

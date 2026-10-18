@@ -134,7 +134,8 @@ def main() -> None:
     parser.add_argument("--image", required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--fixture", default="rename",
-                        choices=("rename", "refactor", "refactor-long", "rewrite0", "rewrite1",
+                        choices=("rename", "refactor", "refactor-long", "rewrite0", "rewrite0-read",
+                                 "rewrite1",
                                  "rewrite2", "rewrite"))
     args = parser.parse_args()
     if args.fixture != "rename":

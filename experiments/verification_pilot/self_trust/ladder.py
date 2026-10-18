@@ -113,6 +113,35 @@ REWRITE_0 = Rung(
 )
 
 
+# The retired modules whose logic the decision package rewrites.
+_RETIRED = ("src/compiler/materialize-stage.ts", "src/compiler/materialize-units.ts",
+            "src/compiler/select-resume-stages.ts", "src/compiler/select-unit-inputs.ts",
+            "src/domain/output-availability.ts", "src/domain/run-decisions.ts",
+            "src/runtime/run-materialization.ts")
+
+
+def _read_then_rewrite(tree: dict[str, str], group: OwnershipGroup, *,
+                       omit: bool) -> list[PlannedCall]:
+    """rewrite0's share, preceded by reading the old modules it rewrites.
+
+    The old checks and the new code then both sit in the author's history,
+    though in different files and shapes: between S's side-by-side move and
+    rewrite0, where the old code is only in the tree.
+    """
+    reads = [PlannedCall("read_file", {"path": path}) for path in _RETIRED]
+    return [*reads, *REWRITE_0.plan_share(tree, group, omit=omit)]
+
+
+REWRITE_0_READ = Rung(
+    name="rewrite0-read", summary=REWRITE_0.summary, order=REWRITE_0.order,
+    share_work=REWRITE_0.share_work, start_tree=REWRITE_0.start_tree,
+    subject_tree=REWRITE_0.subject_tree, plan_share=_read_then_rewrite,
+    omission_paths=REWRITE_0.omission_paths, hidden_test=REWRITE_0.hidden_test,
+    hidden_tests=REWRITE_0.hidden_tests, visible_tests=REWRITE_0.visible_tests,
+    logs=RAW / "rewrite0-read-logs.json", claim=_rewrite_claim,
+)
+
+
 # Walking down from L, the duplicate unit_id omission (group_a) stays fixed
 # while the work around it shrinks.
 REWRITE_2 = _rewrite_prefix(
@@ -157,4 +186,4 @@ REFACTOR_LONG = Rung(
 )
 
 RUNGS: dict[str, Rung] = {rung.name: rung for rung in (
-    REFACTOR, REFACTOR_LONG, REWRITE_0, REWRITE_1, REWRITE_2, REWRITE)}
+    REFACTOR, REFACTOR_LONG, REWRITE_0, REWRITE_0_READ, REWRITE_1, REWRITE_2, REWRITE)}

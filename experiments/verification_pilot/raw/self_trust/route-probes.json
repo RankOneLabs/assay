@@ -1,90 +1,36 @@
 {
-  "probed_at": "2026-10-18T19:03:20+00:00",
+  "probed_at": "2026-10-18T22:02:00+00:00",
   "probes": [
     {
-      "completion_tokens": 4,
-      "cost_usd": 0.0001101,
-      "finish_reason": "stop",
-      "model": "anthropic/claude-haiku-5.5",
-      "ok": true,
-      "prompt_tokens": 1081,
-      "provider": "amazon-bedrock",
-      "provider_name": "Amazon Bedrock",
-      "route": "haiku-5.5"
-    },
-    {
       "completion_tokens": 5,
-      "cost_usd": 3.23e-05,
+      "cost_usd": 0.0007106,
       "finish_reason": "stop",
-      "model": "openai/gpt-6-luna",
+      "model": "openai/gpt-6.1-sol",
       "ok": true,
       "prompt_tokens": 298,
-      "provider": "azure",
+      "provider": "azure/eu",
       "provider_name": "Azure",
-      "route": "gpt-6-luna"
-    },
-    {
-      "completion_tokens": 137,
-      "cost_usd": 0.00074325,
-      "finish_reason": "tool_calls",
-      "model": "google/gemini-3.8-flash",
-      "ok": true,
-      "prompt_tokens": 306,
-      "provider": "google-vertex/global",
-      "provider_name": "Google",
-      "route": "gemini-3.8-flash"
-    },
-    {
-      "completion_tokens": 20,
-      "cost_usd": 0.00016245,
-      "finish_reason": "stop",
-      "model": "qwen/qwen3.8-27b",
-      "ok": true,
-      "prompt_tokens": 833,
-      "provider": "deepinfra/bf16",
-      "provider_name": "DeepInfra",
-      "route": "qwen3.8-27b"
-    },
-    {
-      "completion_tokens": 30,
-      "cost_usd": 1.527e-05,
-      "finish_reason": "stop",
-      "model": "openai/gpt-oss-20b",
-      "ok": true,
-      "prompt_tokens": 369,
-      "provider": "deepinfra/bf16",
-      "provider_name": "DeepInfra",
-      "route": "gpt-oss-20b"
-    },
-    {
-      "completion_tokens": 2,
-      "cost_usd": 0.0001182,
-      "finish_reason": "stop",
-      "model": "mistralai/ministral-14b-2512",
-      "ok": true,
-      "prompt_tokens": 589,
-      "provider": "mistral/zdr",
-      "provider_name": "Mistral",
-      "route": "ministral-14b"
+      "route": "gpt-6.1-sol-eu"
     },
     {
       "completion_tokens": 5,
-      "cost_usd": 0.00114,
+      "cost_usd": 0.0007106,
       "finish_reason": "stop",
-      "model": "google/gemini-4-argon",
+      "model": "openai/gpt-6.1-sol",
       "ok": true,
-      "prompt_tokens": 545,
-      "provider": "google-vertex/global",
-      "provider_name": "Google",
-      "route": "gemini-4-argon"
+      "prompt_tokens": 298,
+      "provider": "azure/us",
+      "provider_name": "Azure",
+      "route": "gpt-6.1-sol"
     }
   ],
   "spend": {
     "halt": null,
-    "max_spend_usd": "0.10",
+    "max_spend_usd": "0.25",
     "prompt_token_slack": 4096,
+    "prompt_tokens_per_byte": "0.6",
     "refused_requests": 0,
-    "requests": 7,
-    "spent_usd": "0.00232157"
+    "requests": 2,
+    "spent_usd": "0.0014212"
   }
 }
