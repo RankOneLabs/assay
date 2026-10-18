@@ -31,7 +31,15 @@ from assay.store import ObjectStore
 from verification_pilot.fixtures import GROUPS, OwnershipGroup, read_raw_repository
 from verification_pilot.self_trust.concepts import CONCEPTS, Concept, subject_repository
 from verification_pilot.self_trust.evaluation import EVALUATOR_ID, VERDICTS
-from verification_pilot.self_trust.ladder import REFACTOR, REWRITE, REWRITE_1, REWRITE_2, RUNGS
+from verification_pilot.self_trust.ladder import (
+    REFACTOR,
+    REFACTOR_LONG,
+    REWRITE,
+    REWRITE_0,
+    REWRITE_1,
+    REWRITE_2,
+    RUNGS,
+)
 from verification_pilot.self_trust.refactor_session import LogOrder
 from verification_pilot.self_trust.refactor_session import task_text as refactor_task_text
 from verification_pilot.self_trust.session import Placement, task_text
@@ -59,7 +67,8 @@ def order_for(arm_id: str) -> LogOrder:
     return _ORDERS[arm_id]
 
 
-Fixture = Literal["rename", "refactor", "rewrite", "rewrite1", "rewrite2"]
+Fixture = Literal["rename", "refactor", "refactor-long", "rewrite", "rewrite0", "rewrite1",
+                  "rewrite2"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +116,7 @@ def self_trust_subjects() -> tuple[SelfTrustSubject, ...]:
         )
         for concept in CONCEPTS for own in GROUPS for remnant in (*GROUPS, None))
     ladder: list[SelfTrustSubject] = []
-    for rung in (REFACTOR, REWRITE, REWRITE_1, REWRITE_2):
+    for rung in (REFACTOR, REWRITE, REWRITE_1, REWRITE_2, REWRITE_0, REFACTOR_LONG):
         trees = {remnant: rung.subject_tree(remnant) for remnant in (*rung.order, None)}
         ladder += [
             SelfTrustSubject(

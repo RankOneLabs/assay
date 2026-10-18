@@ -112,10 +112,16 @@ def _omit(source: str, omission: Omission) -> str:
     return "\n".join(lines)
 
 
-def target_files(group: OwnershipGroup, *, omit: bool) -> dict[str, str | None]:
-    """What the share leaves each of its files as; ``None`` deletes it."""
+def target_files(group: OwnershipGroup, *, omit: bool,
+                 exclude: frozenset[str] = frozenset()) -> dict[str, str | None]:
+    """What the share leaves each of its files as; ``None`` deletes it.
+
+    ``exclude`` drops files from the share for a smaller rung; they keep their
+    start-tree contents.
+    """
     _, after = trees()
-    result: dict[str, str | None] = {path: after.get(path) for path in share_files()[group]}
+    result: dict[str, str | None] = {path: after.get(path) for path in share_files()[group]
+                                     if path not in exclude}
     if omit:
         omission = OMISSIONS[group]
         current = result[omission.path]
@@ -130,7 +136,8 @@ def start_tree() -> dict[str, str]:
 
 
 def subject_tree(remnant_owner: OwnershipGroup | None,
-                 through: tuple[OwnershipGroup, ...] = ORDER) -> dict[str, str]:
+                 through: tuple[OwnershipGroup, ...] = ORDER,
+                 exclude: frozenset[str] = frozenset()) -> dict[str, str]:
     """The shares in ``through`` done, with at most one share's change left out.
 
     A prefix of ``ORDER`` is a smaller rung of the same rewrite: every prefix
@@ -142,7 +149,8 @@ def subject_tree(remnant_owner: OwnershipGroup | None,
         raise ValueError(f"share {remnant_owner} is not part of this rung")
     tree = start_tree()
     for group in through:
-        for path, content in target_files(group, omit=group == remnant_owner).items():
+        for path, content in target_files(group, omit=group == remnant_owner,
+                                          exclude=exclude).items():
             if content is None:
                 tree.pop(path, None)
             else:
@@ -197,13 +205,20 @@ def _hunk_calls(path: str, old: str, new: str) -> list[PlannedCall]:
     return calls
 
 
-CHECK_COMMAND = f"tsc --noEmit -p tsconfig.json && bun test {VISIBLE_TESTS} 2>&1 | grep -E \" (pass|fail)$\""
+def check_command(visible_tests: str = VISIBLE_TESTS) -> str:
+    return (f"tsc --noEmit -p tsconfig.json && bun test {visible_tests} 2>&1 "
+            "| grep -E \" (pass|fail)$\"")
 
 
-def plan_share(tree: dict[str, str], group: OwnershipGroup, *, omit: bool) -> list[PlannedCall]:
+CHECK_COMMAND = check_command()
+
+
+def plan_share(tree: dict[str, str], group: OwnershipGroup, *, omit: bool,
+               exclude: frozenset[str] = frozenset(),
+               visible_tests: str = VISIBLE_TESTS) -> list[PlannedCall]:
     """The share's edits: write what it adds, read then remove what it retires, patch the rest."""
     calls: list[PlannedCall] = []
-    for path, content in target_files(group, omit=omit).items():
+    for path, content in target_files(group, omit=omit, exclude=exclude).items():
         old = tree.get(path)
         if content is None:
             calls.append(PlannedCall("read_file", {"path": path}))
@@ -212,7 +227,7 @@ def plan_share(tree: dict[str, str], group: OwnershipGroup, *, omit: bool) -> li
             calls.append(PlannedCall("write_file", {"path": path, "content": content}))
         elif old != content:
             calls += _hunk_calls(path, old, content)
-    calls.append(PlannedCall("run_command", {"command": CHECK_COMMAND}))
+    calls.append(PlannedCall("run_command", {"command": check_command(visible_tests)}))
     return calls
 
 

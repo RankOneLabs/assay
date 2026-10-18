@@ -110,3 +110,52 @@ def test_a_one_share_rung_makes_the_other_cell_a_reviewer() -> None:
     author = session_prefix("group_a", "group_a", "native", "own_first", REWRITE_1)
     assert author[0]["role"] == "assistant"
     assert "The work is done." in author[-1]["content"]
+
+
+@pytest.mark.parametrize("rung_name", ["rewrite0", "refactor-long"])
+def test_boundary_and_long_history_rungs_are_checked_and_recorded(rung_name: str) -> None:
+    from verification_pilot.self_trust.check import RESULT
+    from verification_pilot.self_trust.ladder import RUNGS
+
+    rung = RUNGS[rung_name]
+    result = json.loads((RESULT.parent / f"{rung_name}-check.json").read_text(encoding="utf-8"))
+    assert result["holds"] is True
+    assert result["cases"]["clean"]["tree_digest"] == workflow_tree_digest(rung.subject_tree(None))
+    for remnant in (None, *rung.order):
+        tree = rung.start_tree()
+        for group in rung.order:
+            omit = group == remnant
+            entry = recorded(rung)[log_key(rung_name, group, omit)]
+            plan = rung.plan_share(tree, group, omit=omit)
+            assert entry["calls"] == [asdict(call) for call in plan]
+            assert entry["outputs"][-1].startswith("exit=0\n")
+            tree = _apply_recorded(tree, rung, group, omit)
+        assert tree == rung.subject_tree(remnant)
+
+
+def _apply_recorded(tree: dict[str, str], rung: object, group: OwnershipGroup,
+                    omit: bool) -> dict[str, str]:
+    """The tree after one share, by the rung's own generator."""
+    from verification_pilot.self_trust import refactor
+    from verification_pilot.self_trust.ladder import Rung
+
+    assert isinstance(rung, Rung)
+    if rung.name.startswith("refactor"):
+        return refactor.apply(tree, refactor.share_edits(tree, group, omit=omit))
+    exclude = (frozenset({"tests/decision/derive.test.ts"}) if rung.name == "rewrite0"
+               else frozenset())
+    result = dict(tree)
+    for path, content in target_files(group, omit=omit, exclude=exclude).items():
+        if content is None:
+            result.pop(path, None)
+        else:
+            result[path] = content
+    return result
+
+
+def test_the_long_history_rung_changes_only_the_history() -> None:
+    from verification_pilot.self_trust.ladder import REFACTOR, REFACTOR_LONG
+
+    for remnant in (None, *REFACTOR.order):
+        assert REFACTOR_LONG.subject_tree(remnant) == REFACTOR.subject_tree(remnant)
+    assert REFACTOR_LONG.hidden_tests == REFACTOR.hidden_tests

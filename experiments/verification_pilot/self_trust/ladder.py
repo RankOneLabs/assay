@@ -93,6 +93,26 @@ def _rewrite_prefix(name: str, through: tuple[OwnershipGroup, ...], summary: str
     )
 
 
+# A median-cohort rung (about 700 lines): L1's share without its large test file.
+REWRITE_0_EXCLUDE = frozenset({"tests/decision/derive.test.ts"})
+REWRITE_0 = Rung(
+    name="rewrite0",
+    summary="adding the new pure `src/decision` package that will replace the old "
+            "materialization layer, with its test helper",
+    order=rewrite.ORDER[:1],
+    share_work={"group_a": "the new pure decision package (`src/decision`: `derive`, "
+                           "`commands`, `snapshot`, `ids`) and its snapshot test helper"},
+    start_tree=rewrite.start_tree,
+    subject_tree=partial(rewrite.subject_tree, through=rewrite.ORDER[:1],
+                         exclude=REWRITE_0_EXCLUDE),
+    plan_share=partial(rewrite.plan_share, exclude=REWRITE_0_EXCLUDE,
+                       visible_tests="tests/*.test.ts"),
+    omission_paths={"group_a": rewrite.OMISSIONS["group_a"].path},
+    hidden_test=rewrite.HIDDEN_TEST, hidden_tests=rewrite.hidden_tests(rewrite.ORDER[:1]),
+    visible_tests="tests/*.test.ts", logs=RAW / "rewrite0-logs.json", claim=_rewrite_claim,
+)
+
+
 # Walking down from L, the duplicate unit_id omission (group_a) stays fixed
 # while the work around it shrinks.
 REWRITE_2 = _rewrite_prefix(
@@ -103,4 +123,38 @@ REWRITE_1 = _rewrite_prefix(
     "rewrite1", rewrite.ORDER[:1],
     "adding the new pure `src/decision` package that will replace the old materialization layer")
 
-RUNGS: dict[str, Rung] = {rung.name: rung for rung in (REFACTOR, REWRITE_1, REWRITE_2, REWRITE)}
+def _refactor_long_plan(tree: dict[str, str], group: OwnershipGroup, *,
+                        omit: bool) -> list[PlannedCall]:
+    """Rung S's share, preceded by reading the share's files in full.
+
+    Reading code before moving it is ordinary, and it brings S's history close
+    to L3's length while leaving S's work and omissions unchanged: it separates
+    the size of the work from the length of the history.
+    """
+    reads = [PlannedCall("read_file", {"path": path})
+             for path in _start_files() if _reader(path) == group]
+    return [*reads, *refactor.plan_share(tree, group, omit=omit)]
+
+
+def _start_files() -> list[str]:
+    """The slice's source and test files at the start: no share's work, so no omission, shows."""
+    return sorted(p for p in refactor.start_tree() if p.startswith(("src/", "tests/")))
+
+
+def _reader(path: str) -> OwnershipGroup:
+    """Deal the start files round-robin to S's shares, in S's order."""
+    return refactor.ORDER[_start_files().index(path) % len(refactor.ORDER)]
+
+
+REFACTOR_LONG = Rung(
+    name="refactor-long",
+    summary=REFACTOR.summary, order=refactor.ORDER, share_work=refactor.SHARE_WORK,
+    start_tree=refactor.start_tree, subject_tree=refactor.subject_tree,
+    plan_share=_refactor_long_plan, omission_paths=refactor.MODULES,
+    hidden_test=refactor.HIDDEN_TEST, hidden_tests=refactor.HIDDEN_TESTS,
+    visible_tests=refactor.VISIBLE_TEST, logs=RAW / "refactor-long-logs.json",
+    claim=_refactor_claim,
+)
+
+RUNGS: dict[str, Rung] = {rung.name: rung for rung in (
+    REFACTOR, REFACTOR_LONG, REWRITE_0, REWRITE_1, REWRITE_2, REWRITE)}
