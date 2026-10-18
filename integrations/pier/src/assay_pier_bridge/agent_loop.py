@@ -1712,10 +1712,11 @@ class RepositoryAgentClient:
                     "billing": "uncertain" if answer.cost_usd is None else "measured",
                     "observations": dict(answer.observations),
                 })
-                if (
+                cut_off = (
                     answer.finish_reason == "length"
                     or answer.completion_tokens >= self.bounds.max_output_tokens
-                ):
+                )
+                if cut_off:
                     # Kept whole, whatever happens next: it is what tells a
                     # runaway generation from a legitimately long write.
                     content = message.get("content")
@@ -1727,6 +1728,15 @@ class RepositoryAgentClient:
                 if answer.completion_tokens > self.bounds.max_output_tokens:
                     raise ValueError("output_token_limit")
                 if not isinstance(calls, list) or not calls:
+                    if not cut_off:
+                        # The reply that ends the cell is never a message, so
+                        # keep its text: a manual read must see what it said.
+                        content = message.get("content")
+                        events.append({
+                            "kind": "reply_without_tool_call", "turn": turn,
+                            "finish_reason": answer.finish_reason,
+                            "content": content if isinstance(content, str) else None,
+                        })
                     raise ValueError(
                         "output_token_limit" if answer.finish_reason == "length"
                         else "no_tool_call"

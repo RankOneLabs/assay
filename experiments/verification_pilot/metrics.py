@@ -9,10 +9,20 @@ from typing import Any
 from verification_pilot.fixtures import whole_word_pattern
 from verification_pilot.ground_truth import Remnant
 from verification_pilot.migrations import Migration, OwnershipGroup
+from verification_pilot.shell_inspection import shell_inspections
 
 
 def calls(turn: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [call for call in turn.get("tool_calls", ()) if isinstance(call, dict)]
+
+
+def inspection_calls(turn: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Tool calls in order, each ``run_command`` followed by its D18 shell inspections."""
+    expanded: list[Mapping[str, Any]] = []
+    for call in calls(turn):
+        expanded.append(call)
+        expanded.extend(shell_inspections(call))
+    return expanded
 
 
 def successful(call: Mapping[str, Any]) -> bool:
@@ -25,7 +35,7 @@ def scope_contains(scope: str, path: str) -> bool:
 
 
 def inspected_path(turn: Mapping[str, Any], path: str) -> bool:
-    for call in calls(turn):
+    for call in inspection_calls(turn):
         if not successful(call) or not isinstance(call.get("arguments"), dict):
             continue
         args = call["arguments"]
@@ -44,7 +54,7 @@ def inspected_group(turn: Mapping[str, Any], migration: Migration, group: Owners
         for path, owner in migration.ownership_groups.items()
     ):
         return True
-    for call in calls(turn):
+    for call in inspection_calls(turn):
         if call.get("name") != "read_file" or not successful(call):
             continue
         args = call.get("arguments")

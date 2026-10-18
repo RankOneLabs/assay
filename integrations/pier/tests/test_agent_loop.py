@@ -1894,3 +1894,16 @@ def test_archive_hard_link_has_distinct_candidate_cause(tmp_path: Path) -> None:
     with pytest.raises(ArtifactCollectionRejected) as rejected:
         extract_workspace_archive(_tar([member]), tmp_path)
     assert rejected.value.cause == "hard_link_submission"
+
+
+def test_reply_without_a_tool_call_keeps_its_text(tmp_path: Path) -> None:
+    completion = Scripted([], finish="stop", content="Review: the migration looks complete.")
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit", "workspace/src/a.ts": "a\n"},
+        )
+    assert failure.value.cause == "no_tool_call"
+    replies = [event for event in failure.value.trajectory["events"]
+               if event["kind"] == "reply_without_tool_call"]
+    assert replies == [{"kind": "reply_without_tool_call", "turn": 1, "finish_reason": "stop",
+                        "content": "Review: the migration looks complete."}]

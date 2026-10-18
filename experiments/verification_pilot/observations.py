@@ -8,11 +8,12 @@ a submission has inspection records only.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, NotRequired, Protocol, TypedDict
+from typing import Any, Literal, NotRequired, Protocol, TypedDict, cast
 
 from verification_pilot.fixtures import Migration, whole_word_pattern
 from verification_pilot.metrics import (
     inspected_path,
+    inspection_calls,
     ownership_gap,
     ran_tests,
     truncated_read_rate,
@@ -116,8 +117,13 @@ def _search_scope(call: RecordedToolCall) -> object:
     return arguments.get("scope") if isinstance(arguments, dict) else None
 
 
+def _inspection_calls(turn: RecordedTurn) -> list[RecordedToolCall]:
+    """Recorded calls with D18 shell inspections in place."""
+    return cast(list[RecordedToolCall], inspection_calls(turn))
+
+
 def _first_inspection(turn: RecordedTurn) -> RecordedToolCall | None:
-    for call in turn["tool_calls"]:
+    for call in _inspection_calls(turn):
         if (call.get("name") in ("read_file", "search_files")
                 and call.get("exit_code") == 0
                 and isinstance(call.get("arguments"), dict)):
@@ -131,7 +137,7 @@ def _inspection(turn: RecordedTurn, subject: PilotSubject) -> dict[str, MeasureR
     wide_search = any(
         _searches_old_symbol(call, old_symbol)
         and _is_repository_scope(_search_scope(call))
-        for call in turn["tool_calls"]
+        for call in _inspection_calls(turn)
     )
     first_wide = (
         _absent("no successful file inspection in this turn") if first is None
