@@ -1,0 +1,149 @@
+"""Run self-trust shards and archive them under ``raw/self_trust/runs``.
+
+Commands, from ``experiments/``:
+
+- ``scripted --store DIR``: the 36 x 2 grid with a model-free worker, to check
+  the plan, evaluator and archive end to end.
+- ``calibrate --store DIR --image DIGEST --paid-route NAME --max-spend-usd N``:
+  calibration step 1. Every teammate-share remnant of one concept (six cells),
+  native arm only.
+- ``cells --subject ID ... --arm ARM ...``: any explicit shard on the paid
+  route, for the later calibration steps.
+
+Docker Desktop cannot bind-mount ``/tmp``, so ``--runs-root`` must live
+elsewhere on a live run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+from assay.execution import RunFailed, RunSucceeded, execute_plan
+from assay.models import RuntimeProfile
+from assay.store import ObjectStore
+from verification_pilot.budget import SpendGate
+from verification_pilot.run import (
+    PAID_ROUTES,
+    ScriptedWorker,
+    _spend_cap,
+    archive_manifest,
+    paid_model_route,
+)
+from verification_pilot.self_trust.bridge import SelfTrustBridgeClient, self_trust_worker
+from verification_pilot.self_trust.evaluation import SelfTrustEvaluator, measures
+from verification_pilot.self_trust.study import (
+    ARMS,
+    PreparedSelfTrust,
+    SelfTrustSubject,
+    calibration_subject_ids,
+    compile_self_trust_plan,
+    self_trust_subjects,
+)
+from verification_pilot.settings import VerificationPilotSettings
+
+ARCHIVE_ROOT = Path(__file__).resolve().parents[1] / "raw" / "self_trust" / "runs"
+
+
+def _measures(trace: Any, subject: SelfTrustSubject) -> list[dict[str, Any]]:
+    return measures(subject, trace)
+
+
+async def _execute(store: ObjectStore, prepared: PreparedSelfTrust, worker: Any,
+                   subjects: dict[str, SelfTrustSubject],
+                   archive_root: Path) -> tuple[Any, Path | None]:
+    evaluator = SelfTrustEvaluator(store, subjects)
+    result = await execute_plan(
+        plan_bytes=prepared.plan_bytes, authorization=prepared.authorization,
+        snapshot=prepared.snapshot, store=store,
+        workers={arm.id: worker for arm in prepared.snapshot.arms},
+        evaluators={declaration.id: evaluator for declaration in prepared.snapshot.evaluators},
+    )
+    destination = None
+    if isinstance(result, RunFailed | RunSucceeded) and result.manifest_ref is not None:
+        destination = archive_manifest(store, str(result.manifest_ref), archive_root,
+                                       subjects, measure=_measures)
+    return result, destination
+
+
+async def run_scripted(store: ObjectStore, archive_root: Path) -> tuple[Any, Path | None]:
+    subjects = self_trust_subjects()
+    worker = ScriptedWorker(store)
+    runtime = RuntimeProfile(id="scripted", version="1",
+                             configuration_ref=str(store.publish_json({"scripted": True})))
+    prepared = compile_self_trust_plan(
+        store, runtime, worker_configurations={arm: worker.configuration(arm) for arm in ARMS},
+        active_subject_ids=tuple(s.id for s in subjects), subjects_data=subjects)
+    return await _execute(store, prepared, worker, {s.id: s for s in subjects}, archive_root)
+
+
+async def run_live(store: ObjectStore, *, image: str, runs_root: Path, paid_route: str,
+                   api_key: str, spend_gate: SpendGate, subject_ids: tuple[str, ...],
+                   arms: tuple[str, ...],
+                   archive_root: Path) -> tuple[Any, Path | None]:
+    if not api_key or any(char.isspace() for char in api_key):
+        raise ValueError("OPENROUTER_API_KEY is required for the paid route")
+    subjects = self_trust_subjects()
+    by_id = {s.id: s for s in subjects}
+    bridge = SelfTrustBridgeClient(
+        image=image, runs_root=runs_root, run_label="self-trust",
+        model_route=paid_model_route(paid_route), subjects=dict(by_id),
+        settings=VerificationPilotSettings(), api_key=api_key, spend_gate=spend_gate,
+    )
+    worker, runtime = self_trust_worker(store, bridge)
+    prepared = compile_self_trust_plan(
+        store, runtime, worker_configurations={arm: worker.configuration(arm) for arm in ARMS},
+        active_subject_ids=subject_ids, active_arms=arms, subjects_data=subjects)
+    result, destination = await _execute(store, prepared, worker, by_id, archive_root)
+    if destination is not None:
+        (destination / "spend.json").write_text(
+            json.dumps(spend_gate.record(), sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    return result, destination
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("scripted", "calibrate", "cells"))
+    parser.add_argument("--store", type=Path, required=True)
+    parser.add_argument("--image", default="")
+    parser.add_argument("--runs-root", type=Path, default=None)
+    parser.add_argument("--paid-route", choices=sorted(PAID_ROUTES), default=None)
+    parser.add_argument("--max-spend-usd", type=_spend_cap, default=None)
+    parser.add_argument("--concept", default="stage_run")
+    parser.add_argument("--subject", action="append", default=[])
+    parser.add_argument("--arm", action="append", choices=ARMS, default=[])
+    args = parser.parse_args()
+    store = ObjectStore(args.store)
+    if args.command == "scripted":
+        result, destination = asyncio.run(run_scripted(store, ARCHIVE_ROOT))
+        print(json.dumps({"result": type(result).__name__, "archive": str(destination)}))
+        return
+    if not args.image or args.runs_root is None:
+        parser.error("live runs require --image and --runs-root")
+    if args.paid_route is None or args.max_spend_usd is None:
+        parser.error("live runs require --paid-route and --max-spend-usd")
+    subjects = self_trust_subjects()
+    if args.command == "calibrate":
+        subject_ids, arms = calibration_subject_ids(subjects, args.concept), ("st-native",)
+    else:
+        if not args.subject or not args.arm:
+            parser.error("cells requires --subject and --arm")
+        subject_ids, arms = tuple(args.subject), tuple(args.arm)
+    gate = SpendGate(Decimal(args.max_spend_usd))
+    result, destination = asyncio.run(run_live(
+        store, image=args.image, runs_root=args.runs_root, paid_route=args.paid_route,
+        api_key=os.environ.get("OPENROUTER_API_KEY", ""), spend_gate=gate,
+        subject_ids=subject_ids, arms=arms, archive_root=ARCHIVE_ROOT))
+    print(json.dumps({"result": type(result).__name__,
+                      "error": result.message if isinstance(result, RunFailed) else None,
+                      "manifest_ref": str(result.manifest_ref) if result.manifest_ref else None,
+                      "archive": str(destination), "spend": gate.record()}))
+
+
+if __name__ == "__main__":
+    main()

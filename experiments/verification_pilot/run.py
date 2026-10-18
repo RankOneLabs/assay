@@ -13,7 +13,7 @@ import json
 import os
 import subprocess
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
 from functools import partial
@@ -260,11 +260,20 @@ def save_run_trace(
     return archive_manifest(store, str(result.manifest_ref), archive_root, subjects)
 
 
+def _pilot_measures(trace: Any, subject: Any) -> list[dict[str, Any]]:
+    return [asdict(item) for item in observe(cast(RecordedTrace, trace), subject)]
+
+
 def archive_manifest(
     store: ObjectStore, manifest_ref: str, archive_root: Path,
-    subjects: Mapping[str, PilotSubject],
+    subjects: Mapping[str, Any],
+    measure: Callable[[Any, Any], list[dict[str, Any]]] = _pilot_measures,
 ) -> Path:
-    """Archive one stored run manifest; a run whose save failed is re-archived from the store."""
+    """Archive one stored run manifest; a run whose save failed is re-archived from the store.
+
+    ``measure`` derives each cell's measures from its trajectory and subject;
+    the pilot's own observations are the default.
+    """
     manifest_bytes = store.read_bytes(manifest_ref)
     manifest = json.loads(manifest_bytes)
     destination: Path = archive_root / str(manifest["run_id"])
@@ -296,7 +305,7 @@ def archive_manifest(
             entry["trajectory"] = trace_name
             trace = cast(RecordedTrace, json.loads(trajectory))
             subject_id = cell_id.split(":", 1)[0]
-            measures = [asdict(item) for item in observe(trace, subjects[subject_id])]
+            measures = measure(trace, subjects[subject_id])
             measures_name = f"{number:03d}-measures.json"
             (traces / measures_name).write_text(
                 json.dumps(measures, sort_keys=True, indent=2) + "\n", encoding="utf-8"
