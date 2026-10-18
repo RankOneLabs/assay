@@ -73,6 +73,14 @@ def pilot_subjects(fixture: PilotFixture | None = None) -> tuple[PilotSubject, .
     return tuple(result)
 
 
+def smoke_subject_ids(subjects: tuple[PilotSubject, ...]) -> tuple[str, ...]:
+    """The registered live smoke: every rename's verifier-owned planted subject."""
+    selected = tuple(s.id for s in subjects if s.group == VERIFIER_OWN_GROUP)
+    if len(selected) != len(MIGRATIONS):
+        raise ValueError("live smoke requires one verifier-owned subject per rename")
+    return selected
+
+
 def _exclusions(
     subjects: tuple[Subject, ...], active_arms: tuple[str, ...],
     active_subject_ids: tuple[str, ...], session_pairs: frozenset[tuple[str, str]],

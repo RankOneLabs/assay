@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from decimal import Decimal, InvalidOperation
 from functools import partial
 from pathlib import Path
 from typing import Any, cast
@@ -42,6 +43,7 @@ from verification_pilot.bridge import (
     PilotBridgeClient,
     SandboxLimits,
     SmithersTurnCompletion,
+    SpendGate,
     create_pilot_agent,
     pilot_worker,
 )
@@ -53,12 +55,18 @@ from verification_pilot.ground_truth import subject_truth as fixture_subject_tru
 from verification_pilot.inputs import T2_TEXT, T3_TEXT
 from verification_pilot.observations import RecordedTrace, observe
 from verification_pilot.settings import VerificationPilotSettings
-from verification_pilot.study import PilotSubject, PreparedPilot, compile_pilot_plan, pilot_subjects
+from verification_pilot.study import (
+    PilotSubject,
+    PreparedPilot,
+    compile_pilot_plan,
+    pilot_subjects,
+    smoke_subject_ids,
+)
 
 
 def measure_on_policy(
     *, image: str, runs_root: Path, routing_config: Path, route: str,
-    api_key: str | None = None,
+    api_key: str | None = None, spend_gate: SpendGate | None = None,
 ) -> dict[str, Any]:
     """Generate one migration's three ownership blocks outside the cell runtime."""
     fixture = load_fixture()
@@ -67,6 +75,8 @@ def measure_on_policy(
     if route == "smithers-local":
         if api_key is not None:
             raise ValueError("local route cannot receive an OpenRouter credential")
+        if spend_gate is not None:
+            raise ValueError("the zero-paid local route takes no spend gate")
         local_factory = SmithersFactory(
             model="qwen-coder-32b", machine="mcbain",
             routing_config=routing_config, dispatch_url="http://willie:8900",
@@ -77,6 +87,8 @@ def measure_on_policy(
     elif route == "openrouter":
         if not api_key or any(char.isspace() for char in api_key):
             raise ValueError("OPENROUTER_API_KEY is required for the paid route")
+        if spend_gate is None:
+            raise ValueError("the paid route requires an operator spend cap")
         factory = None
         model_route = ModelRoute()
         authorized = None
@@ -96,6 +108,7 @@ def measure_on_policy(
             api_key=api_key,
             sandbox_factory=partial(DockerTmpfsToolSandbox, limits=SandboxLimits()),
             storage_factory=DockerTmpfsStagingStorage,
+            spend_gate=spend_gate,
         )
         instruction = (
             f"Repair the remaining {subject.migration.old_symbol} spelling in your "
@@ -141,6 +154,7 @@ def measure_on_policy(
             "discarded": sum(bool(item["discard"]) for item in results),
             "attempted": len(results),
             "submitted": sum("block" in item for item in results),
+            "spend": spend_gate.record() if spend_gate is not None else None,
             "blocks": results}
 
 
@@ -292,7 +306,7 @@ async def run_scripted(
 async def run_live(
     store: ObjectStore, *, image: str, runs_root: Path, routing_config: Path,
     route: str, smoke: bool = False, api_key: str | None = None,
-    archive_root: Path | None = None,
+    archive_root: Path | None = None, spend_gate: SpendGate | None = None,
 ) -> tuple[PreparedPilot, Any]:
     subjects = pilot_subjects()
     if route == "smithers-local":
@@ -314,10 +328,10 @@ async def run_live(
         image=image, runs_root=runs_root, run_label="verification-pilot-tier1",
         model_route=model_route, subjects={s.id: s for s in subjects},
         settings=VerificationPilotSettings(), factory=factory, api_key=api_key,
+        spend_gate=spend_gate,
     )
     worker, runtime = pilot_worker(store, bridge)
-    smoke_ids = tuple(s.id for s in subjects if s.group is not None and
-                      s.migration.name in {"stage_run_id", "workflow_execution_id"})
+    smoke_ids = smoke_subject_ids(subjects)
     prepared = compile_pilot_plan(store, runtime,
                                   worker_configuration=worker.configuration("t1-native"),
                                   worker_configurations={a: worker.configuration(a)
@@ -334,8 +348,23 @@ async def run_live(
         evaluators={declaration.id: evaluator for declaration in prepared.snapshot.evaluators},
     )
     if isinstance(result, RunFailed | RunSucceeded):
-        save_run_trace(store, result, archive_root or store.root.parent / "runs", by_id)
+        destination = save_run_trace(store, result, archive_root or store.root.parent / "runs",
+                                     by_id)
+        if destination is not None and spend_gate is not None:
+            (destination / "spend.json").write_text(
+                json.dumps(spend_gate.record(), sort_keys=True, indent=2) + "\n",
+                encoding="utf-8")
     return prepared, result
+
+
+def _spend_cap(value: str) -> Decimal:
+    try:
+        cap = Decimal(value)
+    except InvalidOperation as error:
+        raise argparse.ArgumentTypeError("--max-spend-usd must be a dollar amount") from error
+    if not cap.is_finite() or cap <= 0:
+        raise argparse.ArgumentTypeError("--max-spend-usd must be positive")
+    return cap
 
 
 def main() -> None:
@@ -348,7 +377,16 @@ def main() -> None:
     parser.add_argument("--routing-config", type=Path, default=Path("/tmp/routing.yaml"))
     parser.add_argument("--route", choices=("smithers-local", "openrouter"),
                         default="smithers-local")
+    parser.add_argument("--max-spend-usd", type=_spend_cap, default=None,
+                        help="run-wide dollar cap; required on the paid route")
     args = parser.parse_args()
+    paid = args.command == "on-policy-paid" or (
+        args.command in {"live", "live-smoke"} and args.route == "openrouter")
+    if paid and args.max_spend_usd is None:
+        parser.error("the paid route requires --max-spend-usd")
+    if not paid and args.max_spend_usd is not None:
+        parser.error("--max-spend-usd applies only to the paid route")
+    spend_gate = SpendGate(args.max_spend_usd) if paid else None
     store = ObjectStore(args.store)
     archive_root = Path(__file__).resolve().parent / "raw" / "runs"
     if args.command in {"on-policy-local", "on-policy-paid"}:
@@ -359,6 +397,7 @@ def main() -> None:
             image=args.image, runs_root=args.runs_root,
             routing_config=args.routing_config, route=probe_route,
             api_key=os.environ.get("OPENROUTER_API_KEY") if probe_route == "openrouter" else None,
+            spend_gate=spend_gate,
         )
         evidence["evidence_ref"] = str(store.publish_json(evidence))
         print(json.dumps(evidence))
@@ -373,12 +412,13 @@ def main() -> None:
             routing_config=args.routing_config, route=args.route,
             smoke=args.command == "live-smoke",
             api_key=os.environ.get("OPENROUTER_API_KEY") if args.route == "openrouter" else None,
-            archive_root=archive_root,
+            archive_root=archive_root, spend_gate=spend_gate,
         ))
     print(json.dumps({"plan_ref": prepared.authorization,
                       "result": type(result).__name__,
                       "error": result.message if isinstance(result, RunFailed) else None,
-                      "manifest_ref": str(result.manifest_ref) if result.manifest_ref else None}))
+                      "manifest_ref": str(result.manifest_ref) if result.manifest_ref else None,
+                      "spend": spend_gate.record() if spend_gate is not None else None}))
 
 
 if __name__ == "__main__":

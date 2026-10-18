@@ -16,7 +16,9 @@ the Assay snapshot and active coordinates from those records. One
 Run `pytest experiments/verification_pilot/tests` for pilot checks. The
 model-free scripted command and the live qualification gate are documented in
 `SMOKE.md`. Results must remain marked pending until a qualified live route
-has reviewed records.
+has reviewed records. `live-smoke` runs the registered eight cells per route.
+The paid route also needs `--max-spend-usd`, which `budget.py` enforces per
+request.
 
 `analysis.py` computes the pilot's pure H1, H2, H4, and wide-search rules from
 `observations.py` measures. `render.py` generates both study pages from its

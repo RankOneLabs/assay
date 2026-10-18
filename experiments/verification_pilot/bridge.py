@@ -37,11 +37,12 @@ from workflow_edit.bridge import (  # noqa: E402
 
 from assay.adapters.pier import PierAdapter  # noqa: E402
 from assay.adapters.smithers import SmithersFactory  # noqa: E402
-from assay.execution import WorkerFailure, WorkerResult  # noqa: E402
+from assay.execution import AdmissionHalt, WorkerFailure, WorkerResult  # noqa: E402
 from assay.models import CellCoordinate, RuntimeProfile  # noqa: E402
 from assay.pier_protocol import PierExchange, RuntimeBinding  # noqa: E402
 from assay.store import ObjectStore  # noqa: E402
 from verification_pilot.arms import arm, placement_for  # noqa: E402
+from verification_pilot.budget import BudgetedAgentClient, SpendGate  # noqa: E402
 from verification_pilot.dispatch import cell_idempotency_key  # noqa: E402
 from verification_pilot.inputs import PILOT_SYSTEM_PROMPT, T2_TEXT, T3_TEXT  # noqa: E402
 from verification_pilot.prompts import task_prompt  # noqa: E402
@@ -62,9 +63,17 @@ def create_pilot_agent(
     sandbox_factory: SandboxFactory = DockerTmpfsToolSandbox,
     storage_factory: Callable[[Path, int], CellStorage] = DockerTmpfsStagingStorage,
     message_prefix: tuple[dict[str, Any], ...] = (),
+    spend_gate: SpendGate | None = None,
 ) -> RepositoryAgentClient:
-    """Use the pilot's declared scope and call budgets for the actual loop."""
-    return RepositoryAgentClient(
+    """Use the pilot's declared scope and call budgets for the actual loop.
+
+    A ``spend_gate`` puts every paid request behind the operator's dollar cap.
+    """
+    if spend_gate is not None and not model_route.paid_route_reachable:
+        raise ValueError("the zero-paid local route takes no spend gate")
+    budgeted: dict[str, Any] = {"spend_gate": spend_gate} if spend_gate is not None else {}
+    client = BudgetedAgentClient if spend_gate is not None else RepositoryAgentClient
+    return client(
         api_key=api_key,
         image=image,
         runs_root=runs_root,
@@ -93,6 +102,7 @@ def create_pilot_agent(
             workspace_mb=settings.max_storage_mb // 2,
             cache_mb=settings.max_storage_mb - settings.max_storage_mb // 2,
         ),
+        **budgeted,
     )
 
 
@@ -109,9 +119,15 @@ class PilotBridgeClient:
     factory: SmithersFactory | None = None
     api_key: str | None = None
     timeout_s: float = 900.0
+    # Operator-held and outside the runtime fingerprint; required on the paid route.
+    spend_gate: SpendGate | None = None
     authorized_smithers: dict[str, Any] | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
+        if self.model_route.paid_route_reachable and self.spend_gate is None:
+            raise ValueError("the paid route requires an operator spend cap")
+        if not self.model_route.paid_route_reachable and self.spend_gate is not None:
+            raise ValueError("the zero-paid local route takes no spend gate")
         if self.factory is not None:
             self.authorized_smithers = self.factory.configuration()
 
@@ -159,6 +175,7 @@ class PilotBridgeClient:
             api_key=self.api_key, message_prefix=prefix,
             sandbox_factory=partial(DockerTmpfsToolSandbox, limits=SandboxLimits()),
             storage_factory=DockerTmpfsStagingStorage,
+            spend_gate=self.spend_gate,
         )
         limits = SandboxLimits()
         trial = RepositoryAgentTrialClient(agent=agent, package=package, limits=limits,
@@ -196,7 +213,15 @@ class PilotWorker:
             input_value.get("placement") != placement_for(coordinate.arm_id),
         )):
             return WorkerFailure("RealizationMismatch", "pilot input differs from its subject")
-        return await self.adapter.run_cell(input_value=input_value, coordinate=coordinate)
+        gate = self.bridge.spend_gate
+        if gate is not None and gate.halt is not None:
+            raise AdmissionHalt(gate.halt, f"spend cap halted the run: {gate.halt}")
+        result = await self.adapter.run_cell(input_value=input_value, coordinate=coordinate)
+        if gate is not None and gate.halt is not None and isinstance(result, WorkerFailure):
+            # The stopped cell keeps its trace; no later cell is admitted.
+            raise AdmissionHalt(gate.halt, f"spend cap halted the run: {gate.halt}",
+                                accounting=result.accounting, trace=result.trace)
+        return result
 
 
 def pilot_worker(
@@ -220,6 +245,6 @@ def pilot_worker(
 
 __all__ = [
     "DockerTmpfsStagingStorage", "DockerTmpfsToolSandbox", "ModelRoute", "PilotBridgeClient",
-    "PilotWorker", "SandboxLimits", "SmithersTurnCompletion", "create_pilot_agent",
+    "PilotWorker", "SandboxLimits", "SmithersTurnCompletion", "SpendGate", "create_pilot_agent",
     "pilot_worker",
 ]
