@@ -1,0 +1,36 @@
+{
+  "probed_at": "2026-10-18T22:02:00+00:00",
+  "probes": [
+    {
+      "completion_tokens": 5,
+      "cost_usd": 0.0007106,
+      "finish_reason": "stop",
+      "model": "openai/gpt-6.1-sol",
+      "ok": true,
+      "prompt_tokens": 298,
+      "provider": "azure/eu",
+      "provider_name": "Azure",
+      "route": "gpt-6.1-sol-eu"
+    },
+    {
+      "completion_tokens": 5,
+      "cost_usd": 0.0007106,
+      "finish_reason": "stop",
+      "model": "openai/gpt-6.1-sol",
+      "ok": true,
+      "prompt_tokens": 298,
+      "provider": "azure/us",
+      "provider_name": "Azure",
+      "route": "gpt-6.1-sol"
+    }
+  ],
+  "spend": {
+    "halt": null,
+    "max_spend_usd": "0.25",
+    "prompt_token_slack": 4096,
+    "prompt_tokens_per_byte": "0.6",
+    "refused_requests": 0,
+    "requests": 2,
+    "spent_usd": "0.0014212"
+  }
+}

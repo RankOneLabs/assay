@@ -1,0 +1,9 @@
+{
+  "rewrite-own_a-remnant_a:st-native:w0": {
+    "measures": "001-measures.json",
+    "record_ref": "sha256:48a3b3d05a4ea2a59fd3147623d6123a5ee3e47ea16801de877168517be36a18",
+    "status": "failed",
+    "trajectory": "001-trajectory.json",
+    "worker_trace": "001-worker.json"
+  }
+}

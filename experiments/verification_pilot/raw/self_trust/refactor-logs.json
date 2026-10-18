@@ -1,0 +1,551 @@
+{
+  "image": "sha256:4fadd5ab5e0b9cd472a1bfd3115d1b41a968c28a7f415770f1753bf6af697a90",
+  "logs": {
+    "refactor-group_a-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -n '^const \\|^interface \\|^export \\|^import ' src/decision/derive.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "content": "/**\n * One driver item parsed into the unit it mints. Split out of `derive.ts`.\n */\nimport type { MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\nimport { readJsonPointer } from \"../domain/json-pointer\";\nimport { err, ok, type JsonValue, type Result, type UnitId } from \"../domain/primitives\";\nimport { readDependencies, type ItemError } from \"./dependencies\";\n\n/** Where a driver item keeps its id and its dependencies. */\nexport interface DriverItemSpec { readonly unit_id_path: string; readonly depends_on_path: string | null }\n\n/** `parseUnit` from `derive.ts` (from `materialize-units.ts` before that); returns the path that failed instead of throwing. */\nexport const parseDriverItem = (item: JsonValue, spec: DriverItemSpec): Result<MaterializedExecutionUnit, ItemError> => {\n  const id = readJsonPointer(item, spec.unit_id_path);\n  if (typeof id !== \"string\" || id.length === 0) return err({ path: spec.unit_id_path, detail: `unit_id at '${spec.unit_id_path}' must be a non-empty string` });\n  // \"0\" is reserved for the unit `scalar` and `artifact_collection` stages\n  // always mint (see `mintUnits` below) \u2014 a session's grouping identity\n  // (kbbl's `pwa-session-order.ts`) reads unit_id \"0\" as \"no cohort\" for\n  // exactly that reason. A fan-out cohort minting \"0\" would silently\n  // collide with that sentinel instead of failing loudly here.\n  if (id === \"0\") return err({ path: spec.unit_id_path, detail: `unit_id at '${spec.unit_id_path}' must not be '0' \u2014 that value is reserved for scalar and artifact_collection stages` });\n  const dependencies = readDependencies(item, id, spec.depends_on_path);\n  if (!dependencies.ok) return dependencies;\n  return ok({ unit_id: id as UnitId, parameters: item, depends_on: dependencies.value });\n};\n",
+            "path": "src/decision/units.ts"
+          },
+          "name": "write_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "interface DriverParseSpec { readonly unit_id_path: string; readonly depends_on_path: string | null }\n\n/** Moved from `materialize-units.ts`'s `parseUnit`; returns the path that failed instead of throwing. */\nconst parseUnit = (item: JsonValue, spec: DriverParseSpec): Result<MaterializedExecutionUnit, { readonly path: string; readonly detail: string }> => {\n  const id = readJsonPointer(item, spec.unit_id_path);\n  if (typeof id !== \"string\" || id.length === 0) return err({ path: spec.unit_id_path, detail: `unit_id at '${spec.unit_id_path}' must be a non-empty string` });\n  // \"0\" is reserved for the unit `scalar` and `artifact_collection` stages\n  // always mint (see `mintUnits` below) \u2014 a session's grouping identity\n  // (kbbl's `pwa-session-order.ts`) reads unit_id \"0\" as \"no cohort\" for\n  // exactly that reason. A fan-out cohort minting \"0\" would silently\n  // collide with that sentinel instead of failing loudly here.\n  if (id === \"0\") return err({ path: spec.unit_id_path, detail: `unit_id at '${spec.unit_id_path}' must not be '0' \u2014 that value is reserved for scalar and artifact_collection stages` });\n  const dependencies = readDependencies(item, id, spec.depends_on_path);\n  if (!dependencies.ok) return dependencies;\n  return ok({ unit_id: id as UnitId, parameters: item, depends_on: dependencies.value });\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "import { findCycle, type CycleNode } from \"./dependencies\";\nimport { parseDriverItem, type DriverItemSpec } from \"./units\";\n",
+            "old": "import { findCycle, readDependencies, type CycleNode } from \"./dependencies\";\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "const spec: DriverItemSpec = ",
+            "old": "const spec: DriverParseSpec = ",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "      const parsed = parseDriverItem(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: artifact.artifact_id,",
+            "old": "      const parsed = parseUnit(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: artifact.artifact_id,",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "      const parsed = parseDriverItem(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null,",
+            "old": "      const parsed = parseUnit(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null,",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "tsc --noEmit -p tsconfig.json && bun test 2>&1 | grep -E \" (pass|fail)$\""
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\n14:import { selectOutputAttention, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\n15:import type { SlotBinding } from \"../domain/delegated-session\";\n16:import type { ArtifactEnvelope } from \"../domain/execution\";\n17:import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from \"../domain/primitives\";\n18:import type { MaterializedRunOutput } from \"../domain/run-record\";\n19:import type { StageKey, StageOutcome } from \"../domain/workflow\";\n20:import { resolveBindingValue, type BindingEnvironment } from \"../compiler/resolve-execution\";\n21:import { readJsonPointer } from \"../domain/json-pointer\";\n22:import type { Command, Contradiction, Derivation, StageInputSet } from \"./commands\";\n23:import { findCycle, readDependencies, type CycleNode } from \"./dependencies\";\n24:import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n25:import type { RunSnapshot, StagePolicy, StageSnapshot, UnitSnapshot } from \"./snapshot\";\n27:const TERMINAL_UNIT_STATES = new Set<UnitSnapshot[\"state\"]>([\"satisfied\", \"failed\", \"cancelled\"]);\n29:const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);\n33:const findFirstUnit = (snapshot: RunSnapshot, predicate: (unit: UnitSnapshot) => boolean): UnitSnapshot | null => {\n43:const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>\n46:const stageInputs = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): StageInputSet => {\n61:const stageFinished = (snapshot: RunSnapshot, stage_key: StageKey): boolean => {\n66:const isReady = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean => {\n78:const shouldClose = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean =>\n81:const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {\n89:const outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {\n105:const selectDriverArtifacts = (inputs: StageInputSet, input_name: string): readonly ArtifactEnvelope[] => {\n112:const bindingPath = (binding: SlotBinding): string => (\"path\" in binding && typeof binding.path === \"string\" ? binding.path : \"\");\n115:const sourceArtifactId = (binding: SlotBinding, inputs: StageInputSet): ArtifactId | null => {\n123:const policyOf = (contract: CompiledStageContract): StagePolicy =>\n128:interface DriverParseSpec { readonly unit_id_path: string; readonly depends_on_path: string | null }\n131:const parseUnit = (item: JsonValue, spec: DriverParseSpec): Result<MaterializedExecutionUnit, { readonly path: string; readonly detail: string }> => {\n145:interface MintedUnit {\n156:interface DriverUnit { readonly unit: MaterializedExecutionUnit; readonly source_artifact_id: ArtifactId | null }\n158:const finalizeMintedUnits = (contract: CompiledStageContract, inputs: StageInputSet, driverUnits: readonly DriverUnit[]): Result<readonly MintedUnit[], Contradiction> => {\n178:const mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, context: JsonValue): Result<readonly MintedUnit[], Contradiction> => {\n232:const materializeUnitCommand = (run_id: WorkflowRunId, stage_key: StageKey, stage_instance_id: StageInstanceId, unit: MintedUnit, policy: StagePolicy): Command => ({\n238:const reviseUnitCommand = (stage_key: StageKey, stage_instance_id: StageInstanceId, existing: UnitSnapshot, unit: MintedUnit): Command => ({\n246:export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction> => {\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\n 29 pass\n 0 fail\n"
+      ]
+    },
+    "refactor-group_a-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -n '^const \\|^interface \\|^export \\|^import ' src/decision/derive.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "content": "/**\n * One driver item parsed into the unit it mints. Split out of `derive.ts`.\n */\nimport type { MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\nimport { readJsonPointer } from \"../domain/json-pointer\";\nimport { err, ok, type JsonValue, type Result, type UnitId } from \"../domain/primitives\";\nimport { readDependencies, type ItemError } from \"./dependencies\";\n\n/** Where a driver item keeps its id and its dependencies. */\nexport interface DriverItemSpec { readonly unit_id_path: string; readonly depends_on_path: string | null }\n\n/** `parseUnit` from `derive.ts` (from `materialize-units.ts` before that); returns the path that failed instead of throwing. */\nexport const parseDriverItem = (item: JsonValue, spec: DriverItemSpec): Result<MaterializedExecutionUnit, ItemError> => {\n  const id = readJsonPointer(item, spec.unit_id_path);\n  if (typeof id !== \"string\" || id.length === 0) return err({ path: spec.unit_id_path, detail: `unit_id at '${spec.unit_id_path}' must be a non-empty string` });\n  const dependencies = readDependencies(item, id, spec.depends_on_path);\n  if (!dependencies.ok) return dependencies;\n  return ok({ unit_id: id as UnitId, parameters: item, depends_on: dependencies.value });\n};\n",
+            "path": "src/decision/units.ts"
+          },
+          "name": "write_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "interface DriverParseSpec { readonly unit_id_path: string; readonly depends_on_path: string | null }\n\n/** Moved from `materialize-units.ts`'s `parseUnit`; returns the path that failed instead of throwing. */\nconst parseUnit = (item: JsonValue, spec: DriverParseSpec): Result<MaterializedExecutionUnit, { readonly path: string; readonly detail: string }> => {\n  const id = readJsonPointer(item, spec.unit_id_path);\n  if (typeof id !== \"string\" || id.length === 0) return err({ path: spec.unit_id_path, detail: `unit_id at '${spec.unit_id_path}' must be a non-empty string` });\n  // \"0\" is reserved for the unit `scalar` and `artifact_collection` stages\n  // always mint (see `mintUnits` below) \u2014 a session's grouping identity\n  // (kbbl's `pwa-session-order.ts`) reads unit_id \"0\" as \"no cohort\" for\n  // exactly that reason. A fan-out cohort minting \"0\" would silently\n  // collide with that sentinel instead of failing loudly here.\n  if (id === \"0\") return err({ path: spec.unit_id_path, detail: `unit_id at '${spec.unit_id_path}' must not be '0' \u2014 that value is reserved for scalar and artifact_collection stages` });\n  const dependencies = readDependencies(item, id, spec.depends_on_path);\n  if (!dependencies.ok) return dependencies;\n  return ok({ unit_id: id as UnitId, parameters: item, depends_on: dependencies.value });\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "import { findCycle, type CycleNode } from \"./dependencies\";\nimport { parseDriverItem, type DriverItemSpec } from \"./units\";\n",
+            "old": "import { findCycle, readDependencies, type CycleNode } from \"./dependencies\";\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "const spec: DriverItemSpec = ",
+            "old": "const spec: DriverParseSpec = ",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "      const parsed = parseDriverItem(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: artifact.artifact_id,",
+            "old": "      const parsed = parseUnit(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: artifact.artifact_id,",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "      const parsed = parseDriverItem(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null,",
+            "old": "      const parsed = parseUnit(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null,",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "tsc --noEmit -p tsconfig.json && bun test 2>&1 | grep -E \" (pass|fail)$\""
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\n14:import { selectOutputAttention, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\n15:import type { SlotBinding } from \"../domain/delegated-session\";\n16:import type { ArtifactEnvelope } from \"../domain/execution\";\n17:import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from \"../domain/primitives\";\n18:import type { MaterializedRunOutput } from \"../domain/run-record\";\n19:import type { StageKey, StageOutcome } from \"../domain/workflow\";\n20:import { resolveBindingValue, type BindingEnvironment } from \"../compiler/resolve-execution\";\n21:import { readJsonPointer } from \"../domain/json-pointer\";\n22:import type { Command, Contradiction, Derivation, StageInputSet } from \"./commands\";\n23:import { findCycle, readDependencies, type CycleNode } from \"./dependencies\";\n24:import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n25:import type { RunSnapshot, StagePolicy, StageSnapshot, UnitSnapshot } from \"./snapshot\";\n27:const TERMINAL_UNIT_STATES = new Set<UnitSnapshot[\"state\"]>([\"satisfied\", \"failed\", \"cancelled\"]);\n29:const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);\n33:const findFirstUnit = (snapshot: RunSnapshot, predicate: (unit: UnitSnapshot) => boolean): UnitSnapshot | null => {\n43:const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>\n46:const stageInputs = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): StageInputSet => {\n61:const stageFinished = (snapshot: RunSnapshot, stage_key: StageKey): boolean => {\n66:const isReady = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean => {\n78:const shouldClose = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean =>\n81:const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {\n89:const outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {\n105:const selectDriverArtifacts = (inputs: StageInputSet, input_name: string): readonly ArtifactEnvelope[] => {\n112:const bindingPath = (binding: SlotBinding): string => (\"path\" in binding && typeof binding.path === \"string\" ? binding.path : \"\");\n115:const sourceArtifactId = (binding: SlotBinding, inputs: StageInputSet): ArtifactId | null => {\n123:const policyOf = (contract: CompiledStageContract): StagePolicy =>\n128:interface DriverParseSpec { readonly unit_id_path: string; readonly depends_on_path: string | null }\n131:const parseUnit = (item: JsonValue, spec: DriverParseSpec): Result<MaterializedExecutionUnit, { readonly path: string; readonly detail: string }> => {\n145:interface MintedUnit {\n156:interface DriverUnit { readonly unit: MaterializedExecutionUnit; readonly source_artifact_id: ArtifactId | null }\n158:const finalizeMintedUnits = (contract: CompiledStageContract, inputs: StageInputSet, driverUnits: readonly DriverUnit[]): Result<readonly MintedUnit[], Contradiction> => {\n178:const mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, context: JsonValue): Result<readonly MintedUnit[], Contradiction> => {\n232:const materializeUnitCommand = (run_id: WorkflowRunId, stage_key: StageKey, stage_instance_id: StageInstanceId, unit: MintedUnit, policy: StagePolicy): Command => ({\n238:const reviseUnitCommand = (stage_key: StageKey, stage_instance_id: StageInstanceId, existing: UnitSnapshot, unit: MintedUnit): Command => ({\n246:export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction> => {\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\n 29 pass\n 0 fail\n"
+      ]
+    },
+    "refactor-group_b-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -n '^const \\|^interface \\|^export \\|^import ' src/decision/derive.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "content": "/**\n * A driver item's dependencies, and the cycle search over them. Split out of\n * `derive.ts`: `readDependencies` was the second half of `parseUnit`, and\n * `findCycle` is the DFS `appendIncrementalUnit` did.\n */\nimport { readJsonPointer } from \"../domain/json-pointer\";\nimport { err, ok, type JsonValue, type Result, type UnitId } from \"../domain/primitives\";\n\n/** The path in a driver item that failed, and why. */\nexport interface ItemError { readonly path: string; readonly detail: string }\n\nconst byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);\n\n/** The item's declared dependencies: non-empty strings, never itself, never repeated. */\nexport const readDependencies = (item: JsonValue, unit_id: string, depends_on_path: string | null): Result<readonly UnitId[], ItemError> => {\n  const raw = depends_on_path === null ? [] : readJsonPointer(item, depends_on_path);\n  if (!Array.isArray(raw) || raw.some((dependency) => typeof dependency !== \"string\" || dependency.length === 0))\n    return err({ path: depends_on_path ?? \"\", detail: \"depends_on must be an array of non-empty strings\" });\n  const dependencies = raw as string[];\n  if (dependencies.includes(unit_id)) return err({ path: depends_on_path ?? \"\", detail: \"unit cannot depend on itself\" });\n  if (new Set(dependencies).size !== dependencies.length) return err({ path: depends_on_path ?? \"\", detail: \"unit repeats a dependency\" });\n  return ok(dependencies as UnitId[]);\n};\n\nexport interface CycleNode { readonly unit_id: UnitId; readonly depends_on: readonly UnitId[] }\n\n/** DFS as `appendIncrementalUnit` did, but returning the cycle path (e.g. `[\"a\",\"b\",\"a\"]`) instead of a boolean. */\nexport const findCycle = (nodes: readonly CycleNode[]): readonly UnitId[] | null => {\n  const byId = new Map(nodes.map((node) => [node.unit_id, node]));\n  const path: UnitId[] = [];\n  const onPath = new Set<UnitId>();\n  const visited = new Set<UnitId>();\n  const visit = (id: UnitId): readonly UnitId[] | null => {\n    if (onPath.has(id)) return [...path.slice(path.indexOf(id)), id];\n    if (visited.has(id)) return null;\n    onPath.add(id);\n    path.push(id);\n    for (const dependency of byId.get(id)?.depends_on ?? []) {\n      if (byId.has(dependency)) {\n        const cycle = visit(dependency);\n        if (cycle) return cycle;\n      }\n    }\n    path.pop();\n    onPath.delete(id);\n    visited.add(id);\n    return null;\n  };\n  for (const node of [...nodes].sort((a, b) => byString(a.unit_id, b.unit_id))) {\n    const cycle = visit(node.unit_id);\n    if (cycle) return cycle;\n  }\n  return null;\n};\n",
+            "path": "src/decision/dependencies.ts"
+          },
+          "name": "write_file"
+        },
+        {
+          "arguments": {
+            "new": "  const dependencies = readDependencies(item, id, spec.depends_on_path);\n  if (!dependencies.ok) return dependencies;\n  return ok({ unit_id: id as UnitId, parameters: item, depends_on: dependencies.value });\n",
+            "old": "  const dependsOnPath = spec.depends_on_path;\n  const rawDependencies = dependsOnPath === null ? [] : readJsonPointer(item, dependsOnPath);\n  if (!Array.isArray(rawDependencies) || rawDependencies.some((dependency) => typeof dependency !== \"string\" || dependency.length === 0))\n    return err({ path: dependsOnPath ?? \"\", detail: \"depends_on must be an array of non-empty strings\" });\n  const dependencies = rawDependencies as string[];\n  if (dependencies.includes(id)) return err({ path: dependsOnPath ?? \"\", detail: \"unit cannot depend on itself\" });\n  if (new Set(dependencies).size !== dependencies.length) return err({ path: dependsOnPath ?? \"\", detail: \"unit repeats a dependency\" });\n  return ok({ unit_id: id as UnitId, parameters: item, depends_on: dependencies as UnitId[] });\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "interface CycleNode { readonly unit_id: UnitId; readonly depends_on: readonly UnitId[] }\n\n/** DFS as `appendIncrementalUnit` did, but returning the cycle path (e.g. `[\"a\",\"b\",\"a\"]`) instead of a boolean. */\nconst findCycle = (nodes: readonly CycleNode[]): readonly UnitId[] | null => {\n  const byId = new Map(nodes.map((node) => [node.unit_id, node]));\n  const path: UnitId[] = [];\n  const onPath = new Set<UnitId>();\n  const visited = new Set<UnitId>();\n  const visit = (id: UnitId): readonly UnitId[] | null => {\n    if (onPath.has(id)) return [...path.slice(path.indexOf(id)), id];\n    if (visited.has(id)) return null;\n    onPath.add(id);\n    path.push(id);\n    for (const dependency of byId.get(id)?.depends_on ?? []) {\n      if (byId.has(dependency)) {\n        const cycle = visit(dependency);\n        if (cycle) return cycle;\n      }\n    }\n    path.pop();\n    onPath.delete(id);\n    visited.add(id);\n    return null;\n  };\n  for (const node of [...nodes].sort((a, b) => byString(a.unit_id, b.unit_id))) {\n    const cycle = visit(node.unit_id);\n    if (cycle) return cycle;\n  }\n  return null;\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "import { findCycle, readDependencies, type CycleNode } from \"./dependencies\";\nimport { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n",
+            "old": "import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "tsc --noEmit -p tsconfig.json && bun test 2>&1 | grep -E \" (pass|fail)$\""
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\n14:import { selectOutputAttention, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\n15:import type { SlotBinding } from \"../domain/delegated-session\";\n16:import type { ArtifactEnvelope } from \"../domain/execution\";\n17:import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from \"../domain/primitives\";\n18:import type { MaterializedRunOutput } from \"../domain/run-record\";\n19:import type { StageKey, StageOutcome } from \"../domain/workflow\";\n20:import { resolveBindingValue, type BindingEnvironment } from \"../compiler/resolve-execution\";\n21:import { readJsonPointer } from \"../domain/json-pointer\";\n22:import type { Command, Contradiction, Derivation, StageInputSet } from \"./commands\";\n23:import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n24:import type { RunSnapshot, StagePolicy, StageSnapshot, UnitSnapshot } from \"./snapshot\";\n26:const TERMINAL_UNIT_STATES = new Set<UnitSnapshot[\"state\"]>([\"satisfied\", \"failed\", \"cancelled\"]);\n28:const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);\n32:const findFirstUnit = (snapshot: RunSnapshot, predicate: (unit: UnitSnapshot) => boolean): UnitSnapshot | null => {\n42:const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>\n45:const stageInputs = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): StageInputSet => {\n60:const stageFinished = (snapshot: RunSnapshot, stage_key: StageKey): boolean => {\n65:const isReady = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean => {\n77:const shouldClose = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean =>\n80:const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {\n88:const outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {\n104:const selectDriverArtifacts = (inputs: StageInputSet, input_name: string): readonly ArtifactEnvelope[] => {\n111:const bindingPath = (binding: SlotBinding): string => (\"path\" in binding && typeof binding.path === \"string\" ? binding.path : \"\");\n114:const sourceArtifactId = (binding: SlotBinding, inputs: StageInputSet): ArtifactId | null => {\n122:const policyOf = (contract: CompiledStageContract): StagePolicy =>\n127:interface DriverParseSpec { readonly unit_id_path: string; readonly depends_on_path: string | null }\n130:const parseUnit = (item: JsonValue, spec: DriverParseSpec): Result<MaterializedExecutionUnit, { readonly path: string; readonly detail: string }> => {\n149:interface MintedUnit {\n160:interface DriverUnit { readonly unit: MaterializedExecutionUnit; readonly source_artifact_id: ArtifactId | null }\n162:const finalizeMintedUnits = (contract: CompiledStageContract, inputs: StageInputSet, driverUnits: readonly DriverUnit[]): Result<readonly MintedUnit[], Contradiction> => {\n182:const mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, context: JsonValue): Result<readonly MintedUnit[], Contradiction> => {\n236:interface CycleNode { readonly unit_id: UnitId; readonly depends_on: readonly UnitId[] }\n239:const findCycle = (nodes: readonly CycleNode[]): readonly UnitId[] | null => {\n267:const materializeUnitCommand = (run_id: WorkflowRunId, stage_key: StageKey, stage_instance_id: StageInstanceId, unit: MintedUnit, policy: StagePolicy): Command => ({\n273:const reviseUnitCommand = (stage_key: StageKey, stage_instance_id: StageInstanceId, existing: UnitSnapshot, unit: MintedUnit): Command => ({\n281:export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction> => {\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\n 29 pass\n 0 fail\n"
+      ]
+    },
+    "refactor-group_b-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -n '^const \\|^interface \\|^export \\|^import ' src/decision/derive.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "content": "/**\n * A driver item's dependencies, and the cycle search over them. Split out of\n * `derive.ts`: `readDependencies` was the second half of `parseUnit`, and\n * `findCycle` is the DFS `appendIncrementalUnit` did.\n */\nimport { readJsonPointer } from \"../domain/json-pointer\";\nimport { err, ok, type JsonValue, type Result, type UnitId } from \"../domain/primitives\";\n\n/** The path in a driver item that failed, and why. */\nexport interface ItemError { readonly path: string; readonly detail: string }\n\nconst byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);\n\n/** The item's declared dependencies: non-empty strings, never itself, never repeated. */\nexport const readDependencies = (item: JsonValue, unit_id: string, depends_on_path: string | null): Result<readonly UnitId[], ItemError> => {\n  const raw = depends_on_path === null ? [] : readJsonPointer(item, depends_on_path);\n  if (!Array.isArray(raw) || raw.some((dependency) => typeof dependency !== \"string\" || dependency.length === 0))\n    return err({ path: depends_on_path ?? \"\", detail: \"depends_on must be an array of non-empty strings\" });\n  const dependencies = raw as string[];\n  if (dependencies.includes(unit_id)) return err({ path: depends_on_path ?? \"\", detail: \"unit cannot depend on itself\" });\n  return ok(dependencies as UnitId[]);\n};\n\nexport interface CycleNode { readonly unit_id: UnitId; readonly depends_on: readonly UnitId[] }\n\n/** DFS as `appendIncrementalUnit` did, but returning the cycle path (e.g. `[\"a\",\"b\",\"a\"]`) instead of a boolean. */\nexport const findCycle = (nodes: readonly CycleNode[]): readonly UnitId[] | null => {\n  const byId = new Map(nodes.map((node) => [node.unit_id, node]));\n  const path: UnitId[] = [];\n  const onPath = new Set<UnitId>();\n  const visited = new Set<UnitId>();\n  const visit = (id: UnitId): readonly UnitId[] | null => {\n    if (onPath.has(id)) return [...path.slice(path.indexOf(id)), id];\n    if (visited.has(id)) return null;\n    onPath.add(id);\n    path.push(id);\n    for (const dependency of byId.get(id)?.depends_on ?? []) {\n      if (byId.has(dependency)) {\n        const cycle = visit(dependency);\n        if (cycle) return cycle;\n      }\n    }\n    path.pop();\n    onPath.delete(id);\n    visited.add(id);\n    return null;\n  };\n  for (const node of [...nodes].sort((a, b) => byString(a.unit_id, b.unit_id))) {\n    const cycle = visit(node.unit_id);\n    if (cycle) return cycle;\n  }\n  return null;\n};\n",
+            "path": "src/decision/dependencies.ts"
+          },
+          "name": "write_file"
+        },
+        {
+          "arguments": {
+            "new": "  const dependencies = readDependencies(item, id, spec.depends_on_path);\n  if (!dependencies.ok) return dependencies;\n  return ok({ unit_id: id as UnitId, parameters: item, depends_on: dependencies.value });\n",
+            "old": "  const dependsOnPath = spec.depends_on_path;\n  const rawDependencies = dependsOnPath === null ? [] : readJsonPointer(item, dependsOnPath);\n  if (!Array.isArray(rawDependencies) || rawDependencies.some((dependency) => typeof dependency !== \"string\" || dependency.length === 0))\n    return err({ path: dependsOnPath ?? \"\", detail: \"depends_on must be an array of non-empty strings\" });\n  const dependencies = rawDependencies as string[];\n  if (dependencies.includes(id)) return err({ path: dependsOnPath ?? \"\", detail: \"unit cannot depend on itself\" });\n  if (new Set(dependencies).size !== dependencies.length) return err({ path: dependsOnPath ?? \"\", detail: \"unit repeats a dependency\" });\n  return ok({ unit_id: id as UnitId, parameters: item, depends_on: dependencies as UnitId[] });\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "interface CycleNode { readonly unit_id: UnitId; readonly depends_on: readonly UnitId[] }\n\n/** DFS as `appendIncrementalUnit` did, but returning the cycle path (e.g. `[\"a\",\"b\",\"a\"]`) instead of a boolean. */\nconst findCycle = (nodes: readonly CycleNode[]): readonly UnitId[] | null => {\n  const byId = new Map(nodes.map((node) => [node.unit_id, node]));\n  const path: UnitId[] = [];\n  const onPath = new Set<UnitId>();\n  const visited = new Set<UnitId>();\n  const visit = (id: UnitId): readonly UnitId[] | null => {\n    if (onPath.has(id)) return [...path.slice(path.indexOf(id)), id];\n    if (visited.has(id)) return null;\n    onPath.add(id);\n    path.push(id);\n    for (const dependency of byId.get(id)?.depends_on ?? []) {\n      if (byId.has(dependency)) {\n        const cycle = visit(dependency);\n        if (cycle) return cycle;\n      }\n    }\n    path.pop();\n    onPath.delete(id);\n    visited.add(id);\n    return null;\n  };\n  for (const node of [...nodes].sort((a, b) => byString(a.unit_id, b.unit_id))) {\n    const cycle = visit(node.unit_id);\n    if (cycle) return cycle;\n  }\n  return null;\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "import { findCycle, readDependencies, type CycleNode } from \"./dependencies\";\nimport { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n",
+            "old": "import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "tsc --noEmit -p tsconfig.json && bun test 2>&1 | grep -E \" (pass|fail)$\""
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\n14:import { selectOutputAttention, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\n15:import type { SlotBinding } from \"../domain/delegated-session\";\n16:import type { ArtifactEnvelope } from \"../domain/execution\";\n17:import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from \"../domain/primitives\";\n18:import type { MaterializedRunOutput } from \"../domain/run-record\";\n19:import type { StageKey, StageOutcome } from \"../domain/workflow\";\n20:import { resolveBindingValue, type BindingEnvironment } from \"../compiler/resolve-execution\";\n21:import { readJsonPointer } from \"../domain/json-pointer\";\n22:import type { Command, Contradiction, Derivation, StageInputSet } from \"./commands\";\n23:import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n24:import type { RunSnapshot, StagePolicy, StageSnapshot, UnitSnapshot } from \"./snapshot\";\n26:const TERMINAL_UNIT_STATES = new Set<UnitSnapshot[\"state\"]>([\"satisfied\", \"failed\", \"cancelled\"]);\n28:const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);\n32:const findFirstUnit = (snapshot: RunSnapshot, predicate: (unit: UnitSnapshot) => boolean): UnitSnapshot | null => {\n42:const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>\n45:const stageInputs = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): StageInputSet => {\n60:const stageFinished = (snapshot: RunSnapshot, stage_key: StageKey): boolean => {\n65:const isReady = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean => {\n77:const shouldClose = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean =>\n80:const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {\n88:const outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {\n104:const selectDriverArtifacts = (inputs: StageInputSet, input_name: string): readonly ArtifactEnvelope[] => {\n111:const bindingPath = (binding: SlotBinding): string => (\"path\" in binding && typeof binding.path === \"string\" ? binding.path : \"\");\n114:const sourceArtifactId = (binding: SlotBinding, inputs: StageInputSet): ArtifactId | null => {\n122:const policyOf = (contract: CompiledStageContract): StagePolicy =>\n127:interface DriverParseSpec { readonly unit_id_path: string; readonly depends_on_path: string | null }\n130:const parseUnit = (item: JsonValue, spec: DriverParseSpec): Result<MaterializedExecutionUnit, { readonly path: string; readonly detail: string }> => {\n149:interface MintedUnit {\n160:interface DriverUnit { readonly unit: MaterializedExecutionUnit; readonly source_artifact_id: ArtifactId | null }\n162:const finalizeMintedUnits = (contract: CompiledStageContract, inputs: StageInputSet, driverUnits: readonly DriverUnit[]): Result<readonly MintedUnit[], Contradiction> => {\n182:const mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, context: JsonValue): Result<readonly MintedUnit[], Contradiction> => {\n236:interface CycleNode { readonly unit_id: UnitId; readonly depends_on: readonly UnitId[] }\n239:const findCycle = (nodes: readonly CycleNode[]): readonly UnitId[] | null => {\n267:const materializeUnitCommand = (run_id: WorkflowRunId, stage_key: StageKey, stage_instance_id: StageInstanceId, unit: MintedUnit, policy: StagePolicy): Command => ({\n273:const reviseUnitCommand = (stage_key: StageKey, stage_instance_id: StageInstanceId, existing: UnitSnapshot, unit: MintedUnit): Command => ({\n281:export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction> => {\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\n 29 pass\n 0 fail\n"
+      ]
+    },
+    "refactor-group_c-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -n '^const \\|^interface \\|^export \\|^import ' src/decision/derive.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "content": "/**\n * What a stage's units are, from its persisted inputs: unit minting, split out\n * of `derive.ts` with the helpers only it uses. The two fan-out loops, one per\n * source, are one pass now.\n */\nimport { resolveBindingValue, type BindingEnvironment } from \"../compiler/resolve-execution\";\nimport { selectOutputAttention, type CompiledStageContract, type MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\nimport type { SlotBinding } from \"../domain/delegated-session\";\nimport type { ArtifactEnvelope } from \"../domain/execution\";\nimport { readJsonPointer } from \"../domain/json-pointer\";\nimport { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type UnitId } from \"../domain/primitives\";\nimport type { MaterializedRunOutput } from \"../domain/run-record\";\nimport type { Contradiction, StageInputSet } from \"./commands\";\nimport { fingerprintOf } from \"./ids\";\nimport { parseDriverItem, type DriverItemSpec } from \"./units\";\n\ninterface DriverItem { readonly item: JsonValue; readonly source_artifact_id: ArtifactId | null }\n\nconst envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>\n  Object.values(inputs).flatMap((value) => (Array.isArray(value) ? value : [value as ArtifactEnvelope]));\n\nconst selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {\n  if (stage.materialization.kind !== \"fan_out\") return inputs;\n  const perUnit = new Set(stage.inputs.filter((input) => input.delivery === \"unit_complete\").map((input) => input.name));\n  return Object.fromEntries(Object.entries(inputs).map(([name, value]) =>\n    Array.isArray(value) && perUnit.has(name) ? [name, value.filter((artifact) => artifact.unit_id === unit.unit_id)] : [name, value]));\n};\n\n/** One per `contract.outputs` for fan_out/scalar; one per (item key \u00d7 output), `collection_member`, for artifact_collection. */\nconst outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {\n  const materialization = contract.materialization;\n  if (materialization.kind !== \"artifact_collections\") {\n    return ok(contract.outputs.map((output) => ({ identity: { kind: \"scalar\" as const, output_name: output.name }, artifact_type: output.artifact_type, required: true,\n      release: output.release, attention: selectOutputAttention(output) })));\n  }\n  const outputs: MaterializedRunOutput[] = [];\n  for (const item of unit.parameters as readonly JsonValue[]) {\n    const key = readJsonPointer(item, \"/collection_key\");\n    if (typeof key !== \"string\" || key.length === 0) return err({ path: \"/collection_key\", detail: \"artifact collection key must be a non-empty string\" });\n    for (const output of contract.outputs) outputs.push({ identity: { kind: \"collection_member\" as const, output_name: output.name, collection_key: key as OutputCollectionKey }, artifact_type: output.artifact_type, required: true,\n      release: output.release, attention: selectOutputAttention(output) });\n  }\n  return ok(outputs);\n};\n\nconst selectDriverArtifacts = (inputs: StageInputSet, input_name: string): readonly ArtifactEnvelope[] => {\n  const delivered = inputs[input_name];\n  if (delivered === undefined) return [];\n  return Array.isArray(delivered) ? delivered : [delivered as ArtifactEnvelope];\n};\n\n/** The `over.path` a binding carries, when it has one \u2014 \"\" otherwise. Used only to name a contradiction. */\nconst bindingPath = (binding: SlotBinding): string => (\"path\" in binding && typeof binding.path === \"string\" ? binding.path : \"\");\n\n/** The artifact a binding is keyed on, when it names a single input envelope (or the first of a collected one). */\nconst sourceArtifactId = (binding: SlotBinding, inputs: StageInputSet): ArtifactId | null => {\n  if (binding.from !== \"input\") return null;\n  const value = inputs[binding.input_name];\n  if (value === undefined) return null;\n  const envelope = Array.isArray(value) ? value[0] : (value as ArtifactEnvelope);\n  return envelope ? envelope.artifact_id : null;\n};\n\nexport interface MintedUnit {\n  readonly unit_id: UnitId;\n  readonly parameters: JsonValue;\n  readonly depends_on: readonly UnitId[];\n  readonly inputs: StageInputSet;\n  readonly input_snapshot: readonly ArtifactEnvelope[];\n  readonly input_fingerprint: InputFingerprint;\n  readonly outputs: readonly MaterializedRunOutput[];\n  readonly source_artifact_id: ArtifactId | null;\n}\n\ninterface DriverUnit { readonly unit: MaterializedExecutionUnit; readonly source_artifact_id: ArtifactId | null }\n\nconst finalizeMintedUnits = (contract: CompiledStageContract, inputs: StageInputSet, driverUnits: readonly DriverUnit[]): Result<readonly MintedUnit[], Contradiction> => {\n  const minted: MintedUnit[] = [];\n  for (const { unit, source_artifact_id } of driverUnits) {\n    const unitInputs = selectInputsForUnit(contract, inputs, unit);\n    const input_snapshot = envelopes(unitInputs);\n    const input_fingerprint = fingerprintOf(input_snapshot);\n    const outputs = outputSlots(contract, unit);\n    if (!outputs.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: source_artifact_id, path: outputs.error.path, detail: outputs.error.detail });\n    minted.push({ unit_id: unit.unit_id, parameters: unit.parameters, depends_on: unit.depends_on, inputs: unitInputs, input_snapshot, input_fingerprint, outputs: outputs.value, source_artifact_id });\n  }\n  return ok(minted);\n};\n\n/**\n * What a stage's units are, right now, from the persisted inputs alone.\n * `scalar` and `artifact_collection` always mint exactly unit `\"0\"`;\n * `fan_out` mints one unit per driver artifact (or per item of a\n * non-input `over` binding \u2014 repository provisioning fans out over run\n * context, which is why `malformed_driver_artifact.artifact_id` may be null).\n */\nexport const mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, context: JsonValue): Result<readonly MintedUnit[], Contradiction> => {\n  const materialization = contract.materialization;\n  const environment: BindingEnvironment = { inputs, context, item: null };\n\n  if (materialization.kind === \"scalar\") return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: \"0\" as UnitId, parameters: {}, depends_on: [] }, source_artifact_id: null }]);\n\n  if (materialization.kind === \"artifact_collections\") {\n    const members: JsonValue[] = [];\n    let sourceId: ArtifactId | null = null;\n    for (const production of materialization.productions) {\n      sourceId ??= sourceArtifactId(production.over, inputs);\n      const path = bindingPath(production.over);\n      const over = resolveBindingValue(production.over, environment);\n      if (!over.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: over.error.detail });\n      if (!Array.isArray(over.value)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: `${materialization.kind}.over must resolve to an array` });\n      for (const item of over.value) {\n        const key = readJsonPointer(item, production.id_path);\n        if (typeof key !== \"string\" || key.length === 0) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId,\n          path: production.id_path, detail: `artifact collection key '${production.id_path}' must be a non-empty string` });\n        members.push({ collection_key: key });\n      }\n    }\n    return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: \"0\" as UnitId, parameters: members, depends_on: [] }, source_artifact_id: sourceId }]);\n  }\n\n  // fan_out \u2014 one pass over either source: the driver artifacts, or the items of a\n  // non-input binding (repository provisioning fans out over run context).\n  const spec: DriverItemSpec = { unit_id_path: materialization.unit_id_path, depends_on_path: materialization.depends_on_path };\n  let items: readonly DriverItem[];\n  if (materialization.over.from === \"input\") {\n    items = selectDriverArtifacts(inputs, materialization.over.input_name).map((artifact) => ({ item: { unit_id: artifact.unit_id, artifact: artifact.body } as JsonValue, source_artifact_id: artifact.artifact_id }));\n  } else {\n    const over = resolveBindingValue(materialization.over, environment);\n    if (!over.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: bindingPath(materialization.over), detail: over.error.detail });\n    if (!Array.isArray(over.value)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: bindingPath(materialization.over), detail: `${materialization.kind}.over must resolve to an array` });\n    items = over.value.map((item) => ({ item, source_artifact_id: null }));\n  }\n  const driverUnits: DriverUnit[] = [];\n  const seen = new Set<string>();\n  for (const { item, source_artifact_id } of items) {\n    const parsed = parseDriverItem(item, spec);\n    if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: source_artifact_id, path: parsed.error.path, detail: parsed.error.detail });\n    if (seen.has(parsed.value.unit_id)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: source_artifact_id, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });\n    seen.add(parsed.value.unit_id);\n    driverUnits.push({ unit: parsed.value, source_artifact_id });\n  }\n  return finalizeMintedUnits(contract, inputs, driverUnits);\n};\n",
+            "path": "src/decision/mint.ts"
+          },
+          "name": "write_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>\n  Object.values(inputs).flatMap((value) => (Array.isArray(value) ? value : [value as ArtifactEnvelope]));\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {\n  if (stage.materialization.kind !== \"fan_out\") return inputs;\n  const perUnit = new Set(stage.inputs.filter((input) => input.delivery === \"unit_complete\").map((input) => input.name));\n  return Object.fromEntries(Object.entries(inputs).map(([name, value]) =>\n    Array.isArray(value) && perUnit.has(name) ? [name, value.filter((artifact) => artifact.unit_id === unit.unit_id)] : [name, value]));\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "/** One per `contract.outputs` for fan_out/scalar; one per (item key \u00d7 output), `collection_member`, for artifact_collection. */\nconst outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {\n  const materialization = contract.materialization;\n  if (materialization.kind !== \"artifact_collections\") {\n    return ok(contract.outputs.map((output) => ({ identity: { kind: \"scalar\" as const, output_name: output.name }, artifact_type: output.artifact_type, required: true,\n      release: output.release, attention: selectOutputAttention(output) })));\n  }\n  const outputs: MaterializedRunOutput[] = [];\n  for (const item of unit.parameters as readonly JsonValue[]) {\n    const key = readJsonPointer(item, \"/collection_key\");\n    if (typeof key !== \"string\" || key.length === 0) return err({ path: \"/collection_key\", detail: \"artifact collection key must be a non-empty string\" });\n    for (const output of contract.outputs) outputs.push({ identity: { kind: \"collection_member\" as const, output_name: output.name, collection_key: key as OutputCollectionKey }, artifact_type: output.artifact_type, required: true,\n      release: output.release, attention: selectOutputAttention(output) });\n  }\n  return ok(outputs);\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "const selectDriverArtifacts = (inputs: StageInputSet, input_name: string): readonly ArtifactEnvelope[] => {\n  const delivered = inputs[input_name];\n  if (delivered === undefined) return [];\n  return Array.isArray(delivered) ? delivered : [delivered as ArtifactEnvelope];\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "/** The `over.path` a binding carries, when it has one \u2014 \"\" otherwise. Used only to name a contradiction. */\nconst bindingPath = (binding: SlotBinding): string => (\"path\" in binding && typeof binding.path === \"string\" ? binding.path : \"\");\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "/** The artifact a binding is keyed on, when it names a single input envelope (or the first of a collected one). */\nconst sourceArtifactId = (binding: SlotBinding, inputs: StageInputSet): ArtifactId | null => {\n  if (binding.from !== \"input\") return null;\n  const value = inputs[binding.input_name];\n  if (value === undefined) return null;\n  const envelope = Array.isArray(value) ? value[0] : (value as ArtifactEnvelope);\n  return envelope ? envelope.artifact_id : null;\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "interface MintedUnit {\n  readonly unit_id: UnitId;\n  readonly parameters: JsonValue;\n  readonly depends_on: readonly UnitId[];\n  readonly inputs: StageInputSet;\n  readonly input_snapshot: readonly ArtifactEnvelope[];\n  readonly input_fingerprint: InputFingerprint;\n  readonly outputs: readonly MaterializedRunOutput[];\n  readonly source_artifact_id: ArtifactId | null;\n}\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "interface DriverUnit { readonly unit: MaterializedExecutionUnit; readonly source_artifact_id: ArtifactId | null }\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "const finalizeMintedUnits = (contract: CompiledStageContract, inputs: StageInputSet, driverUnits: readonly DriverUnit[]): Result<readonly MintedUnit[], Contradiction> => {\n  const minted: MintedUnit[] = [];\n  for (const { unit, source_artifact_id } of driverUnits) {\n    const unitInputs = selectInputsForUnit(contract, inputs, unit);\n    const input_snapshot = envelopes(unitInputs);\n    const input_fingerprint = fingerprintOf(input_snapshot);\n    const outputs = outputSlots(contract, unit);\n    if (!outputs.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: source_artifact_id, path: outputs.error.path, detail: outputs.error.detail });\n    minted.push({ unit_id: unit.unit_id, parameters: unit.parameters, depends_on: unit.depends_on, inputs: unitInputs, input_snapshot, input_fingerprint, outputs: outputs.value, source_artifact_id });\n  }\n  return ok(minted);\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "/**\n * What a stage's units are, right now, from the persisted inputs alone.\n * `scalar` and `artifact_collection` always mint exactly unit `\"0\"`;\n * `fan_out` mints one unit per driver artifact (or per item of a\n * non-input `over` binding \u2014 repository provisioning fans out over run\n * context, which is why `malformed_driver_artifact.artifact_id` may be null).\n */\nconst mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, context: JsonValue): Result<readonly MintedUnit[], Contradiction> => {\n  const materialization = contract.materialization;\n  const environment: BindingEnvironment = { inputs, context, item: null };\n\n  if (materialization.kind === \"scalar\") return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: \"0\" as UnitId, parameters: {}, depends_on: [] }, source_artifact_id: null }]);\n\n  if (materialization.kind === \"artifact_collections\") {\n    const members: JsonValue[] = [];\n    let sourceId: ArtifactId | null = null;\n    for (const production of materialization.productions) {\n      sourceId ??= sourceArtifactId(production.over, inputs);\n      const path = bindingPath(production.over);\n      const over = resolveBindingValue(production.over, environment);\n      if (!over.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: over.error.detail });\n      if (!Array.isArray(over.value)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: `${materialization.kind}.over must resolve to an array` });\n      for (const item of over.value) {\n        const key = readJsonPointer(item, production.id_path);\n        if (typeof key !== \"string\" || key.length === 0) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId,\n          path: production.id_path, detail: `artifact collection key '${production.id_path}' must be a non-empty string` });\n        members.push({ collection_key: key });\n      }\n    }\n    return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: \"0\" as UnitId, parameters: members, depends_on: [] }, source_artifact_id: sourceId }]);\n  }\n\n  // fan_out\n  const spec: DriverItemSpec = { unit_id_path: materialization.unit_id_path, depends_on_path: materialization.depends_on_path };\n  const driverUnits: DriverUnit[] = [];\n  const seen = new Set<string>();\n\n  if (materialization.over.from === \"input\") {\n    for (const artifact of selectDriverArtifacts(inputs, materialization.over.input_name)) {\n      const item = { unit_id: artifact.unit_id, artifact: artifact.body } as JsonValue;\n      const parsed = parseDriverItem(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: artifact.artifact_id, path: parsed.error.path, detail: parsed.error.detail });\n      if (seen.has(parsed.value.unit_id)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: artifact.artifact_id, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });\n      seen.add(parsed.value.unit_id);\n      driverUnits.push({ unit: parsed.value, source_artifact_id: artifact.artifact_id });\n    }\n  } else {\n    const over = resolveBindingValue(materialization.over, environment);\n    if (!over.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: bindingPath(materialization.over), detail: over.error.detail });\n    if (!Array.isArray(over.value)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: bindingPath(materialization.over), detail: `${materialization.kind}.over must resolve to an array` });\n    for (const item of over.value) {\n      const parsed = parseDriverItem(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: parsed.error.path, detail: parsed.error.detail });\n      if (seen.has(parsed.value.unit_id)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });\n      seen.add(parsed.value.unit_id);\n      driverUnits.push({ unit: parsed.value, source_artifact_id: null });\n    }\n  }\n  return finalizeMintedUnits(contract, inputs, driverUnits);\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "import { mintUnits, type MintedUnit } from \"./mint\";\n",
+            "old": "import { parseDriverItem, type DriverItemSpec } from \"./units\";\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "import type { CompiledStageContract, CompiledWorkflowDefinition } from \"../domain/compiled-workflow\";\nimport type { ArtifactEnvelope } from \"../domain/execution\";\nimport { err, ok, type Result, type RunUnitId, type StageInstanceId, type WorkflowRunId } from \"../domain/primitives\";\nimport type { StageKey, StageOutcome } from \"../domain/workflow\";\n",
+            "old": "import { selectOutputAttention, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\nimport type { SlotBinding } from \"../domain/delegated-session\";\nimport type { ArtifactEnvelope } from \"../domain/execution\";\nimport { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from \"../domain/primitives\";\nimport type { MaterializedRunOutput } from \"../domain/run-record\";\nimport type { StageKey, StageOutcome } from \"../domain/workflow\";\nimport { resolveBindingValue, type BindingEnvironment } from \"../compiler/resolve-execution\";\nimport { readJsonPointer } from \"../domain/json-pointer\";\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "import { runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n",
+            "old": "import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "tsc --noEmit -p tsconfig.json && bun test 2>&1 | grep -E \" (pass|fail)$\""
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\n14:import { selectOutputAttention, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\n15:import type { SlotBinding } from \"../domain/delegated-session\";\n16:import type { ArtifactEnvelope } from \"../domain/execution\";\n17:import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from \"../domain/primitives\";\n18:import type { MaterializedRunOutput } from \"../domain/run-record\";\n19:import type { StageKey, StageOutcome } from \"../domain/workflow\";\n20:import { resolveBindingValue, type BindingEnvironment } from \"../compiler/resolve-execution\";\n21:import { readJsonPointer } from \"../domain/json-pointer\";\n22:import type { Command, Contradiction, Derivation, StageInputSet } from \"./commands\";\n23:import { findCycle, type CycleNode } from \"./dependencies\";\n24:import { parseDriverItem, type DriverItemSpec } from \"./units\";\n25:import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n26:import type { RunSnapshot, StagePolicy, StageSnapshot, UnitSnapshot } from \"./snapshot\";\n28:const TERMINAL_UNIT_STATES = new Set<UnitSnapshot[\"state\"]>([\"satisfied\", \"failed\", \"cancelled\"]);\n30:const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);\n34:const findFirstUnit = (snapshot: RunSnapshot, predicate: (unit: UnitSnapshot) => boolean): UnitSnapshot | null => {\n44:const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>\n47:const stageInputs = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): StageInputSet => {\n62:const stageFinished = (snapshot: RunSnapshot, stage_key: StageKey): boolean => {\n67:const isReady = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean => {\n79:const shouldClose = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean =>\n82:const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {\n90:const outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {\n106:const selectDriverArtifacts = (inputs: StageInputSet, input_name: string): readonly ArtifactEnvelope[] => {\n113:const bindingPath = (binding: SlotBinding): string => (\"path\" in binding && typeof binding.path === \"string\" ? binding.path : \"\");\n116:const sourceArtifactId = (binding: SlotBinding, inputs: StageInputSet): ArtifactId | null => {\n124:const policyOf = (contract: CompiledStageContract): StagePolicy =>\n129:interface MintedUnit {\n140:interface DriverUnit { readonly unit: MaterializedExecutionUnit; readonly source_artifact_id: ArtifactId | null }\n142:const finalizeMintedUnits = (contract: CompiledStageContract, inputs: StageInputSet, driverUnits: readonly DriverUnit[]): Result<readonly MintedUnit[], Contradiction> => {\n162:const mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, context: JsonValue): Result<readonly MintedUnit[], Contradiction> => {\n216:const materializeUnitCommand = (run_id: WorkflowRunId, stage_key: StageKey, stage_instance_id: StageInstanceId, unit: MintedUnit, policy: StagePolicy): Command => ({\n222:const reviseUnitCommand = (stage_key: StageKey, stage_instance_id: StageInstanceId, existing: UnitSnapshot, unit: MintedUnit): Command => ({\n230:export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction> => {\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\n 29 pass\n 0 fail\n"
+      ]
+    },
+    "refactor-group_c-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -n '^const \\|^interface \\|^export \\|^import ' src/decision/derive.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "content": "/**\n * What a stage's units are, from its persisted inputs: unit minting, split out\n * of `derive.ts` with the helpers only it uses. The two fan-out loops, one per\n * source, are one pass now.\n */\nimport { resolveBindingValue, type BindingEnvironment } from \"../compiler/resolve-execution\";\nimport { selectOutputAttention, type CompiledStageContract, type MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\nimport type { SlotBinding } from \"../domain/delegated-session\";\nimport type { ArtifactEnvelope } from \"../domain/execution\";\nimport { readJsonPointer } from \"../domain/json-pointer\";\nimport { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type UnitId } from \"../domain/primitives\";\nimport type { MaterializedRunOutput } from \"../domain/run-record\";\nimport type { Contradiction, StageInputSet } from \"./commands\";\nimport { fingerprintOf } from \"./ids\";\nimport { parseDriverItem, type DriverItemSpec } from \"./units\";\n\ninterface DriverItem { readonly item: JsonValue; readonly source_artifact_id: ArtifactId | null }\n\nconst envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>\n  Object.values(inputs).flatMap((value) => (Array.isArray(value) ? value : [value as ArtifactEnvelope]));\n\nconst selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {\n  if (stage.materialization.kind !== \"fan_out\") return inputs;\n  const perUnit = new Set(stage.inputs.filter((input) => input.delivery === \"unit_complete\").map((input) => input.name));\n  return Object.fromEntries(Object.entries(inputs).map(([name, value]) =>\n    Array.isArray(value) && perUnit.has(name) ? [name, value.filter((artifact) => artifact.unit_id === unit.unit_id)] : [name, value]));\n};\n\n/** One per `contract.outputs` for fan_out/scalar; one per (item key \u00d7 output), `collection_member`, for artifact_collection. */\nconst outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {\n  const materialization = contract.materialization;\n  if (materialization.kind !== \"artifact_collections\") {\n    return ok(contract.outputs.map((output) => ({ identity: { kind: \"scalar\" as const, output_name: output.name }, artifact_type: output.artifact_type, required: true,\n      release: output.release, attention: selectOutputAttention(output) })));\n  }\n  const outputs: MaterializedRunOutput[] = [];\n  for (const item of unit.parameters as readonly JsonValue[]) {\n    const key = readJsonPointer(item, \"/collection_key\");\n    if (typeof key !== \"string\" || key.length === 0) return err({ path: \"/collection_key\", detail: \"artifact collection key must be a non-empty string\" });\n    for (const output of contract.outputs) outputs.push({ identity: { kind: \"collection_member\" as const, output_name: output.name, collection_key: key as OutputCollectionKey }, artifact_type: output.artifact_type, required: true,\n      release: output.release, attention: selectOutputAttention(output) });\n  }\n  return ok(outputs);\n};\n\nconst selectDriverArtifacts = (inputs: StageInputSet, input_name: string): readonly ArtifactEnvelope[] => {\n  const delivered = inputs[input_name];\n  if (delivered === undefined) return [];\n  return Array.isArray(delivered) ? delivered : [delivered as ArtifactEnvelope];\n};\n\n/** The `over.path` a binding carries, when it has one \u2014 \"\" otherwise. Used only to name a contradiction. */\nconst bindingPath = (binding: SlotBinding): string => (\"path\" in binding && typeof binding.path === \"string\" ? binding.path : \"\");\n\n/** The artifact a binding is keyed on, when it names a single input envelope (or the first of a collected one). */\nconst sourceArtifactId = (binding: SlotBinding, inputs: StageInputSet): ArtifactId | null => {\n  if (binding.from !== \"input\") return null;\n  const value = inputs[binding.input_name];\n  if (value === undefined) return null;\n  const envelope = Array.isArray(value) ? value[0] : (value as ArtifactEnvelope);\n  return envelope ? envelope.artifact_id : null;\n};\n\nexport interface MintedUnit {\n  readonly unit_id: UnitId;\n  readonly parameters: JsonValue;\n  readonly depends_on: readonly UnitId[];\n  readonly inputs: StageInputSet;\n  readonly input_snapshot: readonly ArtifactEnvelope[];\n  readonly input_fingerprint: InputFingerprint;\n  readonly outputs: readonly MaterializedRunOutput[];\n  readonly source_artifact_id: ArtifactId | null;\n}\n\ninterface DriverUnit { readonly unit: MaterializedExecutionUnit; readonly source_artifact_id: ArtifactId | null }\n\nconst finalizeMintedUnits = (contract: CompiledStageContract, inputs: StageInputSet, driverUnits: readonly DriverUnit[]): Result<readonly MintedUnit[], Contradiction> => {\n  const minted: MintedUnit[] = [];\n  for (const { unit, source_artifact_id } of driverUnits) {\n    const unitInputs = selectInputsForUnit(contract, inputs, unit);\n    const input_snapshot = envelopes(unitInputs);\n    const input_fingerprint = fingerprintOf(input_snapshot);\n    const outputs = outputSlots(contract, unit);\n    if (!outputs.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: source_artifact_id, path: outputs.error.path, detail: outputs.error.detail });\n    minted.push({ unit_id: unit.unit_id, parameters: unit.parameters, depends_on: unit.depends_on, inputs: unitInputs, input_snapshot, input_fingerprint, outputs: outputs.value, source_artifact_id });\n  }\n  return ok(minted);\n};\n\n/**\n * What a stage's units are, right now, from the persisted inputs alone.\n * `scalar` and `artifact_collection` always mint exactly unit `\"0\"`;\n * `fan_out` mints one unit per driver artifact (or per item of a\n * non-input `over` binding \u2014 repository provisioning fans out over run\n * context, which is why `malformed_driver_artifact.artifact_id` may be null).\n */\nexport const mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, context: JsonValue): Result<readonly MintedUnit[], Contradiction> => {\n  const materialization = contract.materialization;\n  const environment: BindingEnvironment = { inputs, context, item: null };\n\n  if (materialization.kind === \"scalar\") return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: \"0\" as UnitId, parameters: {}, depends_on: [] }, source_artifact_id: null }]);\n\n  if (materialization.kind === \"artifact_collections\") {\n    const members: JsonValue[] = [];\n    let sourceId: ArtifactId | null = null;\n    for (const production of materialization.productions) {\n      sourceId ??= sourceArtifactId(production.over, inputs);\n      const path = bindingPath(production.over);\n      const over = resolveBindingValue(production.over, environment);\n      if (!over.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: over.error.detail });\n      if (!Array.isArray(over.value)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: `${materialization.kind}.over must resolve to an array` });\n      for (const item of over.value) {\n        const key = readJsonPointer(item, production.id_path);\n        if (typeof key !== \"string\" || key.length === 0) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId,\n          path: production.id_path, detail: `artifact collection key '${production.id_path}' must be a non-empty string` });\n        members.push({ collection_key: key });\n      }\n    }\n    return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: \"0\" as UnitId, parameters: members, depends_on: [] }, source_artifact_id: sourceId }]);\n  }\n\n  // fan_out \u2014 one pass over either source: the driver artifacts, or the items of a\n  // non-input binding (repository provisioning fans out over run context).\n  const spec: DriverItemSpec = { unit_id_path: materialization.unit_id_path, depends_on_path: materialization.depends_on_path };\n  let items: readonly DriverItem[];\n  if (materialization.over.from === \"input\") {\n    items = selectDriverArtifacts(inputs, materialization.over.input_name).map((artifact) => ({ item: { unit_id: artifact.unit_id, artifact: artifact.body } as JsonValue, source_artifact_id: artifact.artifact_id }));\n  } else {\n    const over = resolveBindingValue(materialization.over, environment);\n    if (!over.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: bindingPath(materialization.over), detail: over.error.detail });\n    if (!Array.isArray(over.value)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: bindingPath(materialization.over), detail: `${materialization.kind}.over must resolve to an array` });\n    items = over.value.map((item) => ({ item, source_artifact_id: null }));\n  }\n  const driverUnits: DriverUnit[] = [];\n  for (const { item, source_artifact_id } of items) {\n    const parsed = parseDriverItem(item, spec);\n    if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: source_artifact_id, path: parsed.error.path, detail: parsed.error.detail });\n    driverUnits.push({ unit: parsed.value, source_artifact_id });\n  }\n  return finalizeMintedUnits(contract, inputs, driverUnits);\n};\n",
+            "path": "src/decision/mint.ts"
+          },
+          "name": "write_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>\n  Object.values(inputs).flatMap((value) => (Array.isArray(value) ? value : [value as ArtifactEnvelope]));\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {\n  if (stage.materialization.kind !== \"fan_out\") return inputs;\n  const perUnit = new Set(stage.inputs.filter((input) => input.delivery === \"unit_complete\").map((input) => input.name));\n  return Object.fromEntries(Object.entries(inputs).map(([name, value]) =>\n    Array.isArray(value) && perUnit.has(name) ? [name, value.filter((artifact) => artifact.unit_id === unit.unit_id)] : [name, value]));\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "/** One per `contract.outputs` for fan_out/scalar; one per (item key \u00d7 output), `collection_member`, for artifact_collection. */\nconst outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {\n  const materialization = contract.materialization;\n  if (materialization.kind !== \"artifact_collections\") {\n    return ok(contract.outputs.map((output) => ({ identity: { kind: \"scalar\" as const, output_name: output.name }, artifact_type: output.artifact_type, required: true,\n      release: output.release, attention: selectOutputAttention(output) })));\n  }\n  const outputs: MaterializedRunOutput[] = [];\n  for (const item of unit.parameters as readonly JsonValue[]) {\n    const key = readJsonPointer(item, \"/collection_key\");\n    if (typeof key !== \"string\" || key.length === 0) return err({ path: \"/collection_key\", detail: \"artifact collection key must be a non-empty string\" });\n    for (const output of contract.outputs) outputs.push({ identity: { kind: \"collection_member\" as const, output_name: output.name, collection_key: key as OutputCollectionKey }, artifact_type: output.artifact_type, required: true,\n      release: output.release, attention: selectOutputAttention(output) });\n  }\n  return ok(outputs);\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "const selectDriverArtifacts = (inputs: StageInputSet, input_name: string): readonly ArtifactEnvelope[] => {\n  const delivered = inputs[input_name];\n  if (delivered === undefined) return [];\n  return Array.isArray(delivered) ? delivered : [delivered as ArtifactEnvelope];\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "/** The `over.path` a binding carries, when it has one \u2014 \"\" otherwise. Used only to name a contradiction. */\nconst bindingPath = (binding: SlotBinding): string => (\"path\" in binding && typeof binding.path === \"string\" ? binding.path : \"\");\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "/** The artifact a binding is keyed on, when it names a single input envelope (or the first of a collected one). */\nconst sourceArtifactId = (binding: SlotBinding, inputs: StageInputSet): ArtifactId | null => {\n  if (binding.from !== \"input\") return null;\n  const value = inputs[binding.input_name];\n  if (value === undefined) return null;\n  const envelope = Array.isArray(value) ? value[0] : (value as ArtifactEnvelope);\n  return envelope ? envelope.artifact_id : null;\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "interface MintedUnit {\n  readonly unit_id: UnitId;\n  readonly parameters: JsonValue;\n  readonly depends_on: readonly UnitId[];\n  readonly inputs: StageInputSet;\n  readonly input_snapshot: readonly ArtifactEnvelope[];\n  readonly input_fingerprint: InputFingerprint;\n  readonly outputs: readonly MaterializedRunOutput[];\n  readonly source_artifact_id: ArtifactId | null;\n}\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "interface DriverUnit { readonly unit: MaterializedExecutionUnit; readonly source_artifact_id: ArtifactId | null }\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "const finalizeMintedUnits = (contract: CompiledStageContract, inputs: StageInputSet, driverUnits: readonly DriverUnit[]): Result<readonly MintedUnit[], Contradiction> => {\n  const minted: MintedUnit[] = [];\n  for (const { unit, source_artifact_id } of driverUnits) {\n    const unitInputs = selectInputsForUnit(contract, inputs, unit);\n    const input_snapshot = envelopes(unitInputs);\n    const input_fingerprint = fingerprintOf(input_snapshot);\n    const outputs = outputSlots(contract, unit);\n    if (!outputs.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: source_artifact_id, path: outputs.error.path, detail: outputs.error.detail });\n    minted.push({ unit_id: unit.unit_id, parameters: unit.parameters, depends_on: unit.depends_on, inputs: unitInputs, input_snapshot, input_fingerprint, outputs: outputs.value, source_artifact_id });\n  }\n  return ok(minted);\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "",
+            "old": "/**\n * What a stage's units are, right now, from the persisted inputs alone.\n * `scalar` and `artifact_collection` always mint exactly unit `\"0\"`;\n * `fan_out` mints one unit per driver artifact (or per item of a\n * non-input `over` binding \u2014 repository provisioning fans out over run\n * context, which is why `malformed_driver_artifact.artifact_id` may be null).\n */\nconst mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, context: JsonValue): Result<readonly MintedUnit[], Contradiction> => {\n  const materialization = contract.materialization;\n  const environment: BindingEnvironment = { inputs, context, item: null };\n\n  if (materialization.kind === \"scalar\") return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: \"0\" as UnitId, parameters: {}, depends_on: [] }, source_artifact_id: null }]);\n\n  if (materialization.kind === \"artifact_collections\") {\n    const members: JsonValue[] = [];\n    let sourceId: ArtifactId | null = null;\n    for (const production of materialization.productions) {\n      sourceId ??= sourceArtifactId(production.over, inputs);\n      const path = bindingPath(production.over);\n      const over = resolveBindingValue(production.over, environment);\n      if (!over.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: over.error.detail });\n      if (!Array.isArray(over.value)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId, path, detail: `${materialization.kind}.over must resolve to an array` });\n      for (const item of over.value) {\n        const key = readJsonPointer(item, production.id_path);\n        if (typeof key !== \"string\" || key.length === 0) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: sourceId,\n          path: production.id_path, detail: `artifact collection key '${production.id_path}' must be a non-empty string` });\n        members.push({ collection_key: key });\n      }\n    }\n    return finalizeMintedUnits(contract, inputs, [{ unit: { unit_id: \"0\" as UnitId, parameters: members, depends_on: [] }, source_artifact_id: sourceId }]);\n  }\n\n  // fan_out\n  const spec: DriverItemSpec = { unit_id_path: materialization.unit_id_path, depends_on_path: materialization.depends_on_path };\n  const driverUnits: DriverUnit[] = [];\n  const seen = new Set<string>();\n\n  if (materialization.over.from === \"input\") {\n    for (const artifact of selectDriverArtifacts(inputs, materialization.over.input_name)) {\n      const item = { unit_id: artifact.unit_id, artifact: artifact.body } as JsonValue;\n      const parsed = parseDriverItem(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: artifact.artifact_id, path: parsed.error.path, detail: parsed.error.detail });\n      if (seen.has(parsed.value.unit_id)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: artifact.artifact_id, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });\n      seen.add(parsed.value.unit_id);\n      driverUnits.push({ unit: parsed.value, source_artifact_id: artifact.artifact_id });\n    }\n  } else {\n    const over = resolveBindingValue(materialization.over, environment);\n    if (!over.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: bindingPath(materialization.over), detail: over.error.detail });\n    if (!Array.isArray(over.value)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: bindingPath(materialization.over), detail: `${materialization.kind}.over must resolve to an array` });\n    for (const item of over.value) {\n      const parsed = parseDriverItem(item, spec);\n      if (!parsed.ok) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: parsed.error.path, detail: parsed.error.detail });\n      if (seen.has(parsed.value.unit_id)) return err({ kind: \"malformed_driver_artifact\", stage_key: contract.stage_key, artifact_id: null, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });\n      seen.add(parsed.value.unit_id);\n      driverUnits.push({ unit: parsed.value, source_artifact_id: null });\n    }\n  }\n  return finalizeMintedUnits(contract, inputs, driverUnits);\n};\n\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "import { mintUnits, type MintedUnit } from \"./mint\";\n",
+            "old": "import { parseDriverItem, type DriverItemSpec } from \"./units\";\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "import type { CompiledStageContract, CompiledWorkflowDefinition } from \"../domain/compiled-workflow\";\nimport type { ArtifactEnvelope } from \"../domain/execution\";\nimport { err, ok, type Result, type RunUnitId, type StageInstanceId, type WorkflowRunId } from \"../domain/primitives\";\nimport type { StageKey, StageOutcome } from \"../domain/workflow\";\n",
+            "old": "import { selectOutputAttention, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\nimport type { SlotBinding } from \"../domain/delegated-session\";\nimport type { ArtifactEnvelope } from \"../domain/execution\";\nimport { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from \"../domain/primitives\";\nimport type { MaterializedRunOutput } from \"../domain/run-record\";\nimport type { StageKey, StageOutcome } from \"../domain/workflow\";\nimport { resolveBindingValue, type BindingEnvironment } from \"../compiler/resolve-execution\";\nimport { readJsonPointer } from \"../domain/json-pointer\";\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "import { runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n",
+            "old": "import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n",
+            "path": "src/decision/derive.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "tsc --noEmit -p tsconfig.json && bun test 2>&1 | grep -E \" (pass|fail)$\""
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\n14:import { selectOutputAttention, type CompiledStageContract, type CompiledWorkflowDefinition, type MaterializedExecutionUnit } from \"../domain/compiled-workflow\";\n15:import type { SlotBinding } from \"../domain/delegated-session\";\n16:import type { ArtifactEnvelope } from \"../domain/execution\";\n17:import { err, ok, type ArtifactId, type InputFingerprint, type JsonValue, type OutputCollectionKey, type Result, type RunUnitId, type StageInstanceId, type UnitId, type WorkflowRunId } from \"../domain/primitives\";\n18:import type { MaterializedRunOutput } from \"../domain/run-record\";\n19:import type { StageKey, StageOutcome } from \"../domain/workflow\";\n20:import { resolveBindingValue, type BindingEnvironment } from \"../compiler/resolve-execution\";\n21:import { readJsonPointer } from \"../domain/json-pointer\";\n22:import type { Command, Contradiction, Derivation, StageInputSet } from \"./commands\";\n23:import { findCycle, type CycleNode } from \"./dependencies\";\n24:import { parseDriverItem, type DriverItemSpec } from \"./units\";\n25:import { fingerprintOf, runUnitIdFor, stageInstanceIdFor } from \"./ids\";\n26:import type { RunSnapshot, StagePolicy, StageSnapshot, UnitSnapshot } from \"./snapshot\";\n28:const TERMINAL_UNIT_STATES = new Set<UnitSnapshot[\"state\"]>([\"satisfied\", \"failed\", \"cancelled\"]);\n30:const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);\n34:const findFirstUnit = (snapshot: RunSnapshot, predicate: (unit: UnitSnapshot) => boolean): UnitSnapshot | null => {\n44:const envelopes = (inputs: StageInputSet): readonly ArtifactEnvelope[] =>\n47:const stageInputs = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): StageInputSet => {\n62:const stageFinished = (snapshot: RunSnapshot, stage_key: StageKey): boolean => {\n67:const isReady = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean => {\n79:const shouldClose = (stage_key: StageKey, definition: CompiledWorkflowDefinition, snapshot: RunSnapshot): boolean =>\n82:const selectInputsForUnit = (stage: CompiledStageContract, inputs: StageInputSet, unit: MaterializedExecutionUnit): StageInputSet => {\n90:const outputSlots = (contract: CompiledStageContract, unit: MaterializedExecutionUnit): Result<readonly MaterializedRunOutput[], { readonly path: string; readonly detail: string }> => {\n106:const selectDriverArtifacts = (inputs: StageInputSet, input_name: string): readonly ArtifactEnvelope[] => {\n113:const bindingPath = (binding: SlotBinding): string => (\"path\" in binding && typeof binding.path === \"string\" ? binding.path : \"\");\n116:const sourceArtifactId = (binding: SlotBinding, inputs: StageInputSet): ArtifactId | null => {\n124:const policyOf = (contract: CompiledStageContract): StagePolicy =>\n129:interface MintedUnit {\n140:interface DriverUnit { readonly unit: MaterializedExecutionUnit; readonly source_artifact_id: ArtifactId | null }\n142:const finalizeMintedUnits = (contract: CompiledStageContract, inputs: StageInputSet, driverUnits: readonly DriverUnit[]): Result<readonly MintedUnit[], Contradiction> => {\n162:const mintUnits = (contract: CompiledStageContract, inputs: StageInputSet, context: JsonValue): Result<readonly MintedUnit[], Contradiction> => {\n216:const materializeUnitCommand = (run_id: WorkflowRunId, stage_key: StageKey, stage_instance_id: StageInstanceId, unit: MintedUnit, policy: StagePolicy): Command => ({\n222:const reviseUnitCommand = (stage_key: StageKey, stage_instance_id: StageInstanceId, existing: UnitSnapshot, unit: MintedUnit): Command => ({\n230:export const derive = (snapshot: RunSnapshot): Result<Derivation, Contradiction> => {\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/derive.ts",
+        "exit=0\n 29 pass\n 0 fail\n"
+      ]
+    }
+  }
+}

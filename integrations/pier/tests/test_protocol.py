@@ -75,6 +75,9 @@ def test_qualification_route_cannot_mix_paid_and_local_fields() -> None:
         endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
     )
     assert local.paid_route_reachable is False
+    newer = ModelRoute(endpoint="http://willie:8900", model="qwen3.6-27b",
+                       provider="smithers-local")
+    assert newer.paid_route_reachable is False
     assert ROUTE.paid_route_reachable is True
     with pytest.raises(ValidationError, match="one exact route"):
         ModelRoute(endpoint="http://willie:8900", model="qwen-coder-32b")

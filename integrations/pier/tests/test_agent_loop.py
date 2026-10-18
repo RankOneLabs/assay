@@ -21,6 +21,7 @@ import pytest
 from assay_pier_bridge.agent_loop import (
     CANDIDATE_STOP_CAUSES,
     HAIKU_TURN_ROUTE,
+    MAX_MODEL_TURNS,
     MODEL_REQUEST_SECONDS,
     PILOT_TOOLS_REVIEW,
     PILOT_TOOLS_T1,
@@ -1923,3 +1924,21 @@ def test_reply_without_a_tool_call_keeps_its_text(tmp_path: Path) -> None:
                if event["kind"] == "reply_without_tool_call"]
     assert replies == [{"kind": "reply_without_tool_call", "turn": 1, "finish_reason": "stop",
                         "content": "Review: the migration looks complete."}]
+
+
+@pytest.mark.parametrize(("max_turns", "accepted"), [(19, False), (20, True), (150, True),
+                                                     (MAX_MODEL_TURNS, True),
+                                                     (MAX_MODEL_TURNS + 1, False)])
+def test_model_request_bound_may_rise_to_its_ceiling(
+    tmp_path: Path, max_turns: int, accepted: bool,
+) -> None:
+    # The pilot's 20 is the floor; a free local route may raise it to guard only
+    # against runaway loops, but never past MAX_MODEL_TURNS.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "ok"}, 1))
+
+    if accepted:
+        _client(tmp_path, handler, bounds=LoopBounds(max_turns=max_turns))
+    else:
+        with pytest.raises(ValueError, match="invalid fixed loop bounds"):
+            _client(tmp_path, handler, bounds=LoopBounds(max_turns=max_turns))

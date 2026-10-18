@@ -68,10 +68,17 @@ from verification_pilot.study import (
 PAID_ROUTES: dict[str, tuple[str, str]] = {
     "sonnet-5.5": ("anthropic/claude-sonnet-5.5", "amazon-bedrock"),
     "gpt-6.1-sol": ("openai/gpt-6.1-sol", "azure/us"),
+    "gpt-6.1-sol-eu": ("openai/gpt-6.1-sol", "azure/eu"),
     "gemini-4-argon": ("google/gemini-4-argon", "google-vertex/global"),
     "qwen3.8": ("qwen/qwen3.8-2.4t-a95b", "siliconflow/fp8"),
     "deepseek-v4-pro": ("deepseek/deepseek-v4-pro", "siliconflow/fp8"),
     "kimi-k2.7-code": ("moonshotai/kimi-k2.7-code", "moonshotai/int4"),
+    "haiku-5.5": ("anthropic/claude-haiku-5.5", "amazon-bedrock"),
+    "gpt-6-luna": ("openai/gpt-6-luna", "azure"),
+    "gemini-3.8-flash": ("google/gemini-3.8-flash", "google-vertex/global"),
+    "qwen3.8-27b": ("qwen/qwen3.8-27b", "deepinfra/bf16"),
+    "gpt-oss-20b": ("openai/gpt-oss-20b", "deepinfra/bf16"),
+    "ministral-14b": ("mistralai/ministral-14b-2512", "mistral/zdr"),
 }
 
 

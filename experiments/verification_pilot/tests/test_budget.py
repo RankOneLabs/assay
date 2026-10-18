@@ -11,6 +11,7 @@ import pytest
 from verification_pilot.budget import (
     HAIKU_TURN_ROUTE,
     PROMPT_TOKEN_SLACK,
+    PROMPT_TOKENS_PER_BYTE,
     BudgetedAgentClient,
     SpendGate,
     request_cost_bound,
@@ -42,8 +43,24 @@ def _billed(cost: float | None) -> httpx.Response:
 
 def test_bound_prices_request_bytes_and_max_output_at_max_price() -> None:
     bound = request_cost_bound(HAIKU_TURN_ROUTE, request_bytes=1_000, max_output_tokens=8_192)
-    assert bound == (Decimal(1_000 + PROMPT_TOKEN_SLACK) * Decimal("0.25")
+    prompt_tokens = Decimal(1_000) * PROMPT_TOKENS_PER_BYTE + PROMPT_TOKEN_SLACK
+    assert bound == (prompt_tokens * Decimal("0.25")
                      + Decimal(8_192) * Decimal("1.25")) / Decimal(1_000_000)
+
+
+def test_every_recorded_billed_prompt_fits_the_reservation_ratio() -> None:
+    # The calibration behind PROMPT_TOKENS_PER_BYTE, re-checked on every archive.
+    raw = Path(__file__).resolve().parents[1] / "raw"
+    checked = 0
+    for trajectory in [*raw.glob("runs/*/traces/*-trajectory.json"),
+                       *raw.glob("self_trust/runs/*/traces/*-trajectory.json")]:
+        for event in json.loads(trajectory.read_text(encoding="utf-8"))["events"]:
+            if (event.get("kind") == "model_request" and event.get("billing") == "measured"
+                    and event.get("request_bytes") and event.get("prompt_tokens")):
+                bound = event["request_bytes"] * PROMPT_TOKENS_PER_BYTE + PROMPT_TOKEN_SLACK
+                assert event["prompt_tokens"] <= bound, trajectory
+                checked += 1
+    assert checked > 1_000
 
 
 def test_gate_refuses_a_request_the_remaining_cap_cannot_cover() -> None:

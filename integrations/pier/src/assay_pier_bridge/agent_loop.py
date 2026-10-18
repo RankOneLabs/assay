@@ -68,6 +68,10 @@ MAX_TOOL_SECONDS = 120.0
 # paid request that times out after dispatch has an unknown charge and halts
 # the run (billing_uncertain), so this sits well above observed latency.
 MODEL_REQUEST_SECONDS = 120.0
+# The most model requests one cell may make. Twenty is the pilot's frozen
+# bound; a free local route may raise it, since the cap there guards against
+# runaway loops rather than spend.
+MAX_MODEL_TURNS = 200
 # A tmpfs with less than this free is treated as exhausted: a write that hit
 # ENOSPC leaves a partial block, not exactly zero.
 EXHAUSTED_FREE_KB = 1024
@@ -191,12 +195,26 @@ PAID_TURN_ROUTES: dict[tuple[str, str], OpenRouterTurnRoute] = {
         _screening_route("anthropic/claude-sonnet-5.5", "amazon-bedrock", "Amazon Bedrock",
                          2.0, 10.0),
         _screening_route("openai/gpt-6.1-sol", "azure/us", "Azure", 2.2, 11.0),
+        # The same model on Azure's EU capacity, for when azure/us refuses large
+        # requests at peak load. A separate route, since the endpoint is identity.
+        _screening_route("openai/gpt-6.1-sol", "azure/eu", "Azure", 2.2, 11.0),
         _screening_route("google/gemini-4-argon", "google-vertex/global", "Google", 2.0, 10.0),
         _screening_route("qwen/qwen3.8-2.4t-a95b", "siliconflow/fp8", "SiliconFlow", 2.0, 6.0),
         _screening_route("deepseek/deepseek-v4-pro", "siliconflow/fp8", "SiliconFlow",
                          1.502, 3.135),
         _screening_route("moonshotai/kimi-k2.7-code", "moonshotai/int4", "Moonshot AI",
                          0.95, 4.0),
+        # Self-trust small models. Haiku and Luna list a long-context tier (above
+        # 100k and 272k prompt tokens); max_price pins that tier so a long cell is
+        # billed at it rather than refused partway through.
+        _screening_route("anthropic/claude-haiku-5.5", "amazon-bedrock", "Amazon Bedrock",
+                         0.5, 2.5),
+        _screening_route("openai/gpt-6-luna", "azure", "Azure", 0.2, 0.75),
+        _screening_route("google/gemini-3.8-flash", "google-vertex/global", "Google",
+                         0.75, 3.75),
+        _screening_route("qwen/qwen3.8-27b", "deepinfra/bf16", "DeepInfra", 0.15, 1.875),
+        _screening_route("openai/gpt-oss-20b", "deepinfra/bf16", "DeepInfra", 0.03, 0.14),
+        _screening_route("mistralai/ministral-14b-2512", "mistral/zdr", "Mistral", 0.2, 0.2),
     )
 }
 
@@ -1228,7 +1246,8 @@ class RepositoryAgentClient:
                 raise ValueError("the local route requires an injected turn completion")
         if not self.image:
             raise ValueError("locked image identity required")
-        if self.bounds.max_turns != 20 or min(asdict(self.bounds).values()) < 1:
+        turns_ok = 20 <= self.bounds.max_turns <= MAX_MODEL_TURNS
+        if not turns_ok or min(asdict(self.bounds).values()) < 1:
             raise ValueError("invalid fixed loop bounds")
         if self.sandbox_limits.storage_mb != self.bounds.max_storage_mb:
             raise ValueError("sandbox storage quota differs from loop storage bound")

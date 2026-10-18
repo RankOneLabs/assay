@@ -1,0 +1,58 @@
+{
+  "rewrite0-read-own_a-remnant_a:st-native:w0": {
+    "measures": "001-measures.json",
+    "record_ref": "sha256:106765945fa6868c992f62e0c88fa07b25e47f28eeace71d9a8427d75e426b2d",
+    "status": "succeeded",
+    "trajectory": "001-trajectory.json",
+    "worker_trace": "001-worker.json"
+  },
+  "rewrite0-read-own_a-remnant_a:st-native:w1": {
+    "measures": "002-measures.json",
+    "record_ref": "sha256:c4b2a98830cc554559dcbb7d8afe70e392cc9318adfa55a61a263dbba272093e",
+    "status": "succeeded",
+    "trajectory": "002-trajectory.json",
+    "worker_trace": "002-worker.json"
+  },
+  "rewrite0-read-own_a-remnant_a:st-native:w2": {
+    "measures": "003-measures.json",
+    "record_ref": "sha256:29cf5a6db9b4a12916e0682ea34e7fc240eeec39030ca7918e1b23e4e96b5758",
+    "status": "succeeded",
+    "trajectory": "003-trajectory.json",
+    "worker_trace": "003-worker.json"
+  },
+  "rewrite0-read-own_a-remnant_a:st-native:w3": {
+    "measures": "004-measures.json",
+    "record_ref": "sha256:b8785f8da5a6fd1c263830927ba15af00ec82b5192193258d568326d664c4245",
+    "status": "succeeded",
+    "trajectory": "004-trajectory.json",
+    "worker_trace": "004-worker.json"
+  },
+  "rewrite0-read-own_b-remnant_a:st-native:w0": {
+    "measures": "005-measures.json",
+    "record_ref": "sha256:48eb423b88543f5864fbf8808f6483180ba50c9180d85fc18fb3d15158d3be4d",
+    "status": "succeeded",
+    "trajectory": "005-trajectory.json",
+    "worker_trace": "005-worker.json"
+  },
+  "rewrite0-read-own_b-remnant_a:st-native:w1": {
+    "measures": "006-measures.json",
+    "record_ref": "sha256:dd25a56c5fa22b58c820308782b8968b367bc19ad65c7e3e104ae016ffcfb776",
+    "status": "succeeded",
+    "trajectory": "006-trajectory.json",
+    "worker_trace": "006-worker.json"
+  },
+  "rewrite0-read-own_b-remnant_a:st-native:w2": {
+    "measures": "007-measures.json",
+    "record_ref": "sha256:9b28e9bc37e7f50ec90713f35688ae0e25490554cd0939885d7b027745c18e26",
+    "status": "succeeded",
+    "trajectory": "007-trajectory.json",
+    "worker_trace": "007-worker.json"
+  },
+  "rewrite0-read-own_b-remnant_a:st-native:w3": {
+    "measures": "008-measures.json",
+    "record_ref": "sha256:4177ea7523e9b4a788547e6740f080eb8bfccf002d6e34ddaac07588868702b5",
+    "status": "succeeded",
+    "trajectory": "008-trajectory.json",
+    "worker_trace": "008-worker.json"
+  }
+}
