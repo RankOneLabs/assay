@@ -60,6 +60,7 @@ class PilotSubject(Protocol):
 
 MeasureValue = bool | int | float | str
 MeasureFamily = Literal["inspection", "claim", "verdict"]
+HISTORICAL_DECOY_PATHS = frozenset({"CHANGELOG.md", "docs/migration.md"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +189,50 @@ def _claim(turn: RecordedTurn, subject: PilotSubject) -> dict[str, MeasureResult
     }
 
 
+def _remaining_old_symbols(turn: RecordedTurn, subject: PilotSubject) -> int | None:
+    """Count old symbols after the cumulative patch, excluding planted history."""
+    diff = turn["workspace_diff"]
+    if diff is None:
+        return None
+    # The fixture plants exactly one live old spelling, or none for a control.
+    remaining = int(subject.location is not None)
+    if not diff:
+        return remaining
+    old_symbol = whole_word_pattern(subject.migration.old_symbol)
+    old_path: str | None = None
+    new_path: str | None = None
+    in_hunk = False
+    saw_file = False
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            saw_file = True
+            old_path = new_path = None
+            in_hunk = False
+        elif line.startswith("@@ "):
+            if old_path is None and new_path is None:
+                return None
+            in_hunk = True
+        elif line.startswith(("GIT binary patch", "Binary files ")):
+            return None
+        elif in_hunk and line.startswith("-"):
+            if old_path is None:
+                return None
+            if old_path not in HISTORICAL_DECOY_PATHS:
+                remaining -= len(old_symbol.findall(line[1:]))
+        elif in_hunk and line.startswith("+"):
+            if new_path is None:
+                return None
+            if new_path not in HISTORICAL_DECOY_PATHS:
+                remaining += len(old_symbol.findall(line[1:]))
+        elif in_hunk and not (line.startswith(" ") or line.startswith("\\ No newline")):
+            return None
+        elif not in_hunk and line.startswith("--- "):
+            old_path = line[6:] if line.startswith("--- a/") else None
+        elif not in_hunk and line.startswith("+++ "):
+            new_path = line[6:] if line.startswith("+++ b/") else None
+    return remaining if saw_file and remaining >= 0 else None
+
+
 def _verdict(turn: RecordedTurn, subject: PilotSubject) -> dict[str, MeasureResult]:
     submission = turn["submission"]
     assert submission is not None
@@ -198,10 +243,13 @@ def _verdict(turn: RecordedTurn, subject: PilotSubject) -> dict[str, MeasureResu
     if verdict not in ("complete", "incomplete", "unsure"):
         reason = "review submission has no valid verdict"
         return {"review_verdict": _absent(reason), "review_verdict_correct": _absent(reason)}
-    correct = (
-        _absent("unsure is not a factual verdict") if verdict == "unsure"
-        else _measured((verdict == "complete") == (subject.location is None))
-    )
+    remaining = _remaining_old_symbols(turn, subject)
+    if verdict == "unsure":
+        correct = _absent("unsure is not a factual verdict")
+    elif remaining is None:
+        correct = _absent("workspace state at this turn cannot be established")
+    else:
+        correct = _measured((verdict == "complete") == (remaining == 0))
     return {"review_verdict": _measured(verdict), "review_verdict_correct": correct}
 
 

@@ -6,6 +6,7 @@ import ast
 import asyncio
 import base64
 import json
+from difflib import unified_diff
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +16,8 @@ from assay.execution import EvaluationFailed, EvaluationSuccess
 from assay.models import EvaluationCoordinate
 from assay.store import ObjectStore
 from verification_pilot.evaluation import EVALUATOR_IDS, PilotEvaluator, SealedPilotTrace, score
-from verification_pilot.fixture import load_fixture
-from verification_pilot.fixtures import base_subjects
+from verification_pilot.fixture import load_fixture, subject_repository
+from verification_pilot.fixtures import base_subjects, whole_word_pattern
 from verification_pilot.ground_truth import subject_truth
 from verification_pilot.metrics import remnant_read, remnant_repaired
 from verification_pilot.observations import (
@@ -88,10 +89,11 @@ def test_sealed_trace_rejects_wrong_cell_and_changed_submission(tmp_path: Path) 
 def _recorded_turn(
     name: str, calls: list[RecordedToolCall], submission: dict[str, str] | None,
     *, cost: float | None = 0.12, stop_cause: str | None = None,
+    workspace_diff: str | None = "",
 ) -> RecordedTurn:
     turn: RecordedTurn = {
         "turn": name, "tool_calls": calls, "submission": submission,
-        "workspace_diff": None,
+        "workspace_diff": workspace_diff,
         "usage": {"prompt_tokens": 3, "completion_tokens": 2, "requests": 1,
                   "cost_usd": cost},
     }
@@ -234,6 +236,62 @@ def test_clean_control_and_unknown_cost_are_absent_with_reasons() -> None:
     )
     assert values["T1", "cost_usd"].value is None
     assert values["T1", "cost_usd"].reason == "turn cost was not measured"
+
+
+def test_review_verdict_uses_repaired_workspace_and_ignores_historical_decoys() -> None:
+    subject = base_subjects()[0]
+    assert subject.location is not None
+    path = subject.location
+    before = subject_repository(subject, load_fixture())[path]
+    after = whole_word_pattern(subject.migration.old_symbol).sub(
+        subject.migration.new_symbol, before, count=1
+    )
+    repair = f"diff --git a/{path} b/{path}\n" + "".join(unified_diff(
+        before.splitlines(keepends=True), after.splitlines(keepends=True),
+        fromfile=f"a/{path}", tofile=f"b/{path}",
+    ))
+    decoy = ("diff --git a/CHANGELOG.md b/CHANGELOG.md\n"
+             "--- a/CHANGELOG.md\n+++ b/CHANGELOG.md\n@@ -3,0 +4 @@\n"
+             f"+More history about {subject.migration.old_symbol}.\n")
+    trace: RecordedTrace = {"turns": [
+        _recorded_turn("T1", [], None),
+        _recorded_turn("T2", [], {"verdict": "complete"},
+                       workspace_diff=repair + decoy),
+        _recorded_turn("T3", [], {"verdict": "incomplete"},
+                       workspace_diff=repair + decoy),
+    ]}
+    values = _measures(trace)
+    assert values["T2", "review_verdict_correct"].value is True
+    assert values["T3", "review_verdict_correct"].value is False
+
+
+def test_review_verdict_is_absent_without_recorded_workspace_state() -> None:
+    trace: RecordedTrace = {"turns": [
+        _recorded_turn("T2", [], {"verdict": "complete"}, workspace_diff=None),
+    ]}
+    result = _measures(trace)["T2", "review_verdict_correct"]
+    assert result.status == "absent"
+    assert result.value is None
+    assert result.reason == "workspace state at this turn cannot be established"
+
+
+def test_review_verdict_counts_new_live_old_symbol_after_repair() -> None:
+    subject = base_subjects()[0]
+    assert subject.location is not None
+    symbol = subject.migration.old_symbol
+    repair = (f"diff --git a/{subject.location} b/{subject.location}\n"
+              f"--- a/{subject.location}\n+++ b/{subject.location}\n"
+              "@@ -1 +1 @@\n"
+              f"-const remnant: {symbol};\n"
+              f"+const repaired: {subject.migration.new_symbol};\n")
+    added = ("diff --git a/src/new.ts b/src/new.ts\n"
+             "--- /dev/null\n+++ b/src/new.ts\n@@ -0,0 +1 @@\n"
+             f"+const regression: {symbol};\n")
+    trace: RecordedTrace = {"turns": [
+        _recorded_turn("T2", [], {"verdict": "complete"},
+                       workspace_diff=repair + added),
+    ]}
+    assert _measures(trace)["T2", "review_verdict_correct"].value is False
 
 
 def test_repair_ignores_old_symbol_embedded_in_dollar_identifier() -> None:

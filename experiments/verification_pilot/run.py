@@ -198,7 +198,7 @@ class ScriptedWorker:
         ]
         trajectory: dict[str, Any] = {"turns": [
             {"turn": f"T{index}", "tool_calls": [], "submission": submission,
-             "workspace_diff": None,
+             "workspace_diff": "",
              "usage": {"prompt_tokens": 0, "completion_tokens": 0,
                        "requests": 0, "cost_usd": None}}
             for index, submission in enumerate(submissions, 1)
