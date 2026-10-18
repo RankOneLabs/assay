@@ -247,3 +247,46 @@ What confounds it:
   1,846 billed requests, this stops caps from cutting cells off mid-run.
 - The history-length confound is untested: L3's history is about four
   times S's.
+
+## Separating size, history and kind of change (2026-10-18, later)
+
+Two more rungs ran on Gemini 4 Argon. `rewrite0` is L1's share without its
+large test file: 693 changed lines, about the median cohort, with S's short
+history. `refactor-long` is S unchanged, except that each share first reads
+its files, so its history is 190 KB, near L3's 211 KB.
+
+| Rung | Work | History | Fixed |
+| --- | --- | --- | --- |
+| S | 436 lines, a move | 49 KB | 18 / 18 |
+| `refactor-long` | 436 lines, a move | 190 KB | 6 / 6 |
+| `rewrite0` | 693 lines, a rewrite | 49 KB | 0 / 6 |
+| L1 | 1,097 lines, a rewrite | about 75 KB | 0 / 8 |
+| L2 | 2,137 lines, a rewrite | larger | 1 / 5 |
+| L3 | 2,782 lines, a rewrite | 211 KB | 0 / 6 |
+
+L1's and `rewrite0`'s own cells were re-run after a framing fix: a
+one-share author had been told "you and a teammate".
+
+History length does not explain the drop, and size alone does not either.
+The kind of change does. In a move, each share's log shows the old block
+beside the module it wrote, and Gemini catches the dropped check as a
+local diff. In a rewrite, the logic is rewritten into a new shape in a new
+file, and finding the dropped check means comparing it with a
+differently shaped old module elsewhere in the tree. Gemini fixed 1 of 25
+rewrite cells, from 693 to 2,782 lines.
+
+On L3 with the loose step bounds:
+
+- Kimi made up to 107 requests and 18 file reads in a cell and still
+  missed.
+- Flash and Qwen3.8 also missed.
+- So the earlier L3 misses were not only step limits.
+
+Sol's endpoint (`azure/us`) refused the large L3 requests at peak load,
+twice; its 2/4 from the first run is still its only L3 data.
+
+Self-trust is still not shown. Gemini is at the ceiling on moves and at the
+floor on rewrites, so no own-versus-teammate difference has room to
+appear. The next rung would sit between them: a rewrite whose author's log
+reads the old module before writing the new one, so the before and after
+are both in the history but not side by side.

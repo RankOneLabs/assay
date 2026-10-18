@@ -1,0 +1,16 @@
+{
+  "rewrite-own_a-remnant_a:st-native:w0": {
+    "measures": "001-measures.json",
+    "record_ref": "sha256:c1e2cd1f4f783084cb591d03afd8d672fa103f8edd4f5a35659ca0855c291372",
+    "status": "failed",
+    "trajectory": "001-trajectory.json",
+    "worker_trace": "001-worker.json"
+  },
+  "rewrite-own_a-remnant_c:st-native:w0": {
+    "measures": "002-measures.json",
+    "record_ref": "sha256:a68e6490d635bf94138160b42750c956d62e8849f0e885f9f2d59003f8e5649c",
+    "status": "failed",
+    "trajectory": "002-trajectory.json",
+    "worker_trace": "002-worker.json"
+  }
+}
