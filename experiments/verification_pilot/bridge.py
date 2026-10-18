@@ -17,9 +17,7 @@ from assay_pier_bridge.agent_loop import (  # noqa: E402
     CellStorage,
     DockerTmpfsStagingStorage,
     DockerTmpfsToolSandbox,
-    DockerToolSandbox,
     LoopBounds,
-    QuotaCellStorage,
     RepositoryAgentClient,
     SandboxFactory,
     SandboxLimits,  # noqa: E402
@@ -45,6 +43,7 @@ from assay.pier_protocol import PierExchange, RuntimeBinding  # noqa: E402
 from assay.store import ObjectStore  # noqa: E402
 from verification_pilot.arms import arm, placement_for  # noqa: E402
 from verification_pilot.dispatch import cell_idempotency_key  # noqa: E402
+from verification_pilot.inputs import PILOT_SYSTEM_PROMPT, T2_TEXT, T3_TEXT  # noqa: E402
 from verification_pilot.prompts import task_prompt  # noqa: E402
 from verification_pilot.render import render_prefix  # noqa: E402
 from verification_pilot.session import contributor_blocks, rotated_blocks  # noqa: E402
@@ -60,8 +59,8 @@ def create_pilot_agent(
     completion: TurnCompletion | None,
     next_user_turns: tuple[str, ...],
     api_key: str | None = None,
-    sandbox_factory: SandboxFactory = DockerToolSandbox,
-    storage_factory: Callable[[Path, int], CellStorage] = QuotaCellStorage,
+    sandbox_factory: SandboxFactory = DockerTmpfsToolSandbox,
+    storage_factory: Callable[[Path, int], CellStorage] = DockerTmpfsStagingStorage,
     message_prefix: tuple[dict[str, Any], ...] = (),
 ) -> RepositoryAgentClient:
     """Use the pilot's declared scope and call budgets for the actual loop."""
@@ -82,6 +81,7 @@ def create_pilot_agent(
             max_storage_mb=settings.max_storage_mb,
         ),
         pilot_mode=True,
+        system_prompt=PILOT_SYSTEM_PROMPT,
         next_user_turns=next_user_turns,
         message_prefix=message_prefix,
         writable_prefixes=settings.writable_prefixes,
@@ -89,6 +89,10 @@ def create_pilot_agent(
         max_tool_calls_per_cell=settings.max_tool_calls_per_cell,
         sandbox_factory=sandbox_factory,
         storage_factory=storage_factory,
+        sandbox_limits=SandboxLimits(
+            workspace_mb=settings.max_storage_mb // 2,
+            cache_mb=settings.max_storage_mb - settings.max_storage_mb // 2,
+        ),
     )
 
 
@@ -117,7 +121,7 @@ class PilotBridgeClient:
             model_route=self.model_route,
             completion=(cast(TurnCompletion, lambda **_: None)
                         if self.factory is not None else None),
-            next_user_turns=("T2: Review your first finding.", "T3: Check again and submit."),
+            next_user_turns=(T2_TEXT, T3_TEXT),
             api_key=self.api_key,
         )
         configuration: dict[str, Any] = agent_configuration(
@@ -151,7 +155,7 @@ class PilotBridgeClient:
         agent = create_pilot_agent(
             settings=self.settings, image=self.image, runs_root=self.runs_root,
             model_route=self.model_route, completion=completion,
-            next_user_turns=("T2: Review your first finding.", "T3: Check again and submit."),
+            next_user_turns=(T2_TEXT, T3_TEXT),
             api_key=self.api_key, message_prefix=prefix,
             sandbox_factory=partial(DockerTmpfsToolSandbox, limits=SandboxLimits()),
             storage_factory=DockerTmpfsStagingStorage,

@@ -137,3 +137,34 @@ Computed for `qwen/qwen3.5-397b-a17b` from the OpenRouter catalogue fetched 2026
 | max_tool_output_bytes | 32,768 | 0 truncations |
 | max_storage_mb | 512 | 261,680 KiB least free of the 256 MiB workspace (workspace + cache = 512 MiB) |
 | local context | 32,768 | max prompt 19,543 + output cap 8,192 |
+
+## Regraded (2026-10-17)
+
+The committed patches were evaluated again with the fixed workflow correctness
+harness. The original result above remains the historical record. This run used
+the same pinned image (`sha256:a2848a705b2c638acde713ad68f45d13b337621a510131fcf93fda7c5b8762d1`) and no paid provider request.
+Original harness: `sha256:d42e2c88d769bc157477acf0c45878a96deb0d461640339a536180862e6c1f3e`; fixed harness: `sha256:15bc4d56ec35cf2c0242d5736e57621291e57dbceb8cac3bd73de6c8292b9704`.
+
+16 previously graded candidates were regraded; 0 grades changed.
+
+The fixed harness restores frozen visible tests before typecheck and build,
+then runs the same frozen test groups. No stored candidate's grade changed.
+
+Cost correction: Paid cells: 0, counted from cells with a positive
+recorded accounting amount. The original hosted “Measured $/cell” column
+is an estimate derived from the local tokenizer's smallest observed
+request-bytes-per-prompt-token ratio; it is not a hosted measurement.
+The “Strict $/cell” column is the independent upper bound.
+
+| Endpoint | Strict $/cell | Local tokenizer estimate $/cell |
+|---|---|---|
+| Alibaba | 1.150 | 0.568 |
+| DeepInfra | 1.376 | 0.705 |
+| Parasail | 1.573 | 0.827 |
+| DigitalOcean | 1.655 | 0.834 |
+| Phala | 1.655 | 0.834 |
+| AtlasCloud | 1.655 | 0.834 |
+| StreamLake | 1.769 | 0.874 |
+| GMICloud | 1.769 | 0.874 |
+| Novita | 1.769 | 0.874 |
+| Venice | 2.212 | 1.093 |

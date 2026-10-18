@@ -3,7 +3,7 @@
   "trial_envelope": {
     "schema_version": "assay-pier-trial/0.4.0",
     "result_outcomes": ["candidate", "candidate_failure", "infrastructure_failure"],
-    "candidate_causes": ["no_submission", "symlink_submission", "traversal", "escaping_symlink", "binary_payload", "oversized_artifact", "aggregate_artifact_limit", "entry_limit", "out_of_scope_edit", "tampering", "candidate_test_timeout", "nonzero_exit", "storage_exhausted", "memory_limit", "agent_deadline"],
+    "candidate_causes": ["no_submission", "symlink_submission", "traversal", "escaping_symlink", "binary_payload", "oversized_artifact", "aggregate_artifact_limit", "entry_limit", "out_of_scope_edit", "tampering", "candidate_test_timeout", "nonzero_exit", "storage_exhausted", "memory_limit", "agent_deadline", "invalid_tool_output_encoding", "patch_capture_conflict", "non_utf8_path", "workspace_capture_permission", "hard_link_submission"],
     "infrastructure_causes": ["harness_deadline", "cancelled", "container_start", "enforcement", "unexpected_exception", "mismatched_cell"],
     "network_policies": ["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"],
     "request_fields": ["schema_version", "cell_id", "package_digest", "exchange", "model_route", "limits", "verify", "network_policy", "egress_host", "egress_port"],

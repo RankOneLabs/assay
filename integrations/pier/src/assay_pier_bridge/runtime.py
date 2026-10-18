@@ -9,7 +9,9 @@ proves it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import threading
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -28,7 +30,6 @@ from assay_pier_bridge.protocol import (
     ArtifactManifest,
     CandidateCause,
     CandidateFailure,
-    EffectiveEnforcement,
     InfrastructureCause,
     InfrastructureFailure,
     PierExchange,
@@ -36,6 +37,7 @@ from assay_pier_bridge.protocol import (
     TrialHandle,
     TrialRequest,
     TrialResult,
+    TrialUsage,
 )
 
 
@@ -155,9 +157,13 @@ class TrialTimeoutError(Exception):
 class TrialCancelledError(Exception):
     """Raised by a ``TrialHandle.run()`` implementation on operator cancellation."""
 
+    usage: TrialUsage | None = None
+
 
 class CandidateTrialError(RuntimeError):
     """A candidate-caused rejection with a stable, typed reason."""
+
+    usage: TrialUsage | None = None
 
     def __init__(
         self, cause: CandidateCause, message: str, *, artifacts: Mapping[str, bytes] | None = None
@@ -168,6 +174,8 @@ class CandidateTrialError(RuntimeError):
 
 
 class InfrastructureTrialError(RuntimeError):
+    usage: TrialUsage | None = None
+
     def __init__(self, cause: InfrastructureCause, message: str) -> None:
         super().__init__(message)
         self.cause = cause
@@ -182,30 +190,48 @@ def _bounded_failure_artifacts(
     primary: Mapping[str, bytes], partial: Mapping[str, bytes]
 ) -> dict[str, bytes]:
     """Retain rejected bytes first, then partials, within the result wire budget."""
+    marker = "failure-artifacts-truncated.json"
     bounded: dict[str, bytes] = {}
     aggregate_bytes = 0
     artifact_count = 0
+    truncated = False
     for source in (primary, partial):
         for path in sorted(source):
             data = source[path]
-            if not isinstance(path, str) or not isinstance(data, bytes) or path in bounded:
+            if (
+                not isinstance(path, str) or not isinstance(data, bytes)
+                or path in bounded or path == marker
+            ):
                 continue
             try:
                 safe_relative_path(path)
             except ValueError:
                 continue
             if path != MANIFEST_PATH and artifact_count >= MAX_ARTIFACT_COUNT:
+                truncated = True
                 continue
             if path == MANIFEST_PATH:
                 retained = data[:MAX_ARTIFACT_BYTES]
             else:
                 remaining = MAX_AGGREGATE_ARTIFACT_BYTES - aggregate_bytes
                 if remaining == 0 and data:
+                    truncated = True
                     continue
                 retained = data[: min(MAX_ARTIFACT_BYTES, remaining)]
                 aggregate_bytes += len(retained)
                 artifact_count += 1
             bounded[path] = retained
+            truncated |= len(retained) != len(data)
+    if truncated:
+        marker_bytes = b'{"truncated":true}'
+        while (
+            artifact_count >= MAX_ARTIFACT_COUNT
+            or aggregate_bytes + len(marker_bytes) > MAX_AGGREGATE_ARTIFACT_BYTES
+        ):
+            discarded = next(path for path in reversed(bounded) if path != MANIFEST_PATH)
+            aggregate_bytes -= len(bounded.pop(discarded))
+            artifact_count -= 1
+        bounded[marker] = marker_bytes
     return bounded
 
 
@@ -215,6 +241,13 @@ class BridgeRuntime:
     def __init__(self, client: PierTrialClient) -> None:
         self._client = client
         self._created = False
+        self._cancelled = threading.Event()
+        self._handle: TrialHandle | None = None
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+        if self._handle is not None:
+            self._handle.cancel()
 
     def run_cell(
         self, request: TrialRequest, *, accepted_at: datetime | None = None
@@ -234,8 +267,18 @@ class BridgeRuntime:
         if remaining <= 0:
             raise TrialTimeoutError("trial exceeded its worker-acceptance deadline")
         deadline = time.monotonic() + remaining
-        handle = self._client.create(request)
+        try:
+            handle = self._client.create(request)
+        except Exception:
+            cleanup = getattr(self._client, "teardown", None)
+            if callable(cleanup):
+                with contextlib.suppress(Exception):
+                    cleanup()
+            raise
+        self._handle = handle
         handle.set_deadline(deadline)
+        if self._cancelled.is_set():
+            handle.cancel()
         try:
             result = handle.run()
         except TrialTimeoutError as error:
@@ -277,8 +320,19 @@ class BridgeRuntime:
         partial_artifacts: dict[str, bytes] = {}
         rejected_artifacts: dict[str, bytes] = {}
         outcome: CandidateFailure | InfrastructureFailure
+        # Stop the writer before reading its partial output tree.
+        cancel = getattr(handle, "cancel", None)
+        stopped = False
+        if callable(cancel):
+            try:
+                cancel()
+                stopped = True
+            except Exception:
+                stopped = False
+        # A failed stop cannot justify reading a mutable candidate tree.
+        effective = handle.teardown() if not stopped else None
         partial = getattr(handle, "partial_artifacts", None)
-        if callable(partial):
+        if stopped and callable(partial):
             try:
                 observed = partial()
                 if isinstance(observed, Mapping):
@@ -305,7 +359,8 @@ class BridgeRuntime:
         elif isinstance(error, CandidateTrialError):
             rejected_artifacts.update(error.artifacts)
         artifacts = _bounded_failure_artifacts(rejected_artifacts, partial_artifacts)
-        effective: EffectiveEnforcement = handle.teardown()
+        if effective is None:
+            effective = handle.teardown()
         if isinstance(error, ArtifactCollectionRejected):
             outcome = CandidateFailure(cause=cast(CandidateCause, error.cause), detail=str(error))
         elif isinstance(error, CandidateTrialError):
@@ -316,10 +371,16 @@ class BridgeRuntime:
                 detail=str(error)[:2000] or type(error).__name__,
                 exception_type=type(error).__name__,
             )
+        observed_usage: TrialUsage | None = None
+        if isinstance(error, (
+            ArtifactCollectionRejected, CandidateTrialError,
+            InfrastructureTrialError, TrialCancelledError,
+        )):
+            observed_usage = error.usage
         return TrialResult(
             cell_id=request.cell_id,
             outcome=outcome,
-            usage=None,
+            usage=observed_usage,
             effective=effective,
             artifacts=artifacts,
         )

@@ -30,7 +30,8 @@ import asyncio
 import base64
 import contextlib
 import tempfile
-from collections.abc import Mapping
+import threading
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
@@ -56,6 +57,7 @@ from assay.pier_protocol import (
     CandidateSubmission,
     InfrastructureFailure,
     ManifestRejected,
+    ModelRoute,
     PierExchange,
     RuntimeBinding,
     bind_exchange,
@@ -67,6 +69,31 @@ from assay.repository import DEFAULT_MAX_REPOSITORY_BYTES, DEFAULT_MAX_REPOSITOR
 from assay.store import ObjectStore
 
 CLEANUP_TIMEOUT = 5.0
+def _thread_future[T](function: Callable[[], T]) -> asyncio.Future[T]:
+    """Run a bridge call in a daemon thread without tying loop shutdown to it."""
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[T] = loop.create_future()
+
+    def resolve(value: T) -> None:
+        if not future.done():
+            future.set_result(value)
+
+    def reject(error: BaseException) -> None:
+        if not future.done():
+            future.set_exception(error)
+
+    def run() -> None:
+        try:
+            value = function()
+        except BaseException as error:
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(reject, error)
+        else:
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(resolve, value)
+
+    threading.Thread(target=run, daemon=True).start()
+    return future
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +135,8 @@ class PierBridgeHandle(Protocol):
     """Mirrors ``assay_pier_bridge.protocol.TrialHandle``'s ``run``/``teardown``."""
 
     def run(self) -> BridgeTrialResult: ...
+
+    def cancel(self) -> None: ...
 
     def teardown(self) -> BridgeEffectiveEnforcement: ...
 
@@ -325,7 +354,7 @@ class PierAdapter:
         """
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(handle.teardown), timeout=CLEANUP_TIMEOUT
+                asyncio.shield(_thread_future(handle.teardown)), timeout=CLEANUP_TIMEOUT
             )
         except Exception:
             return None
@@ -418,11 +447,23 @@ class PierAdapter:
         except Exception as error:
             return WorkerFailure(type(error).__name__, str(error), accounting=Accounting())
 
+        run_task = _thread_future(handle.run)
         try:
-            bridge_result = await asyncio.to_thread(handle.run)
+            bridge_result = await asyncio.shield(run_task)
         except asyncio.CancelledError:
-            partial = self._recover_partial_artifacts(handle)
+            completed_result: BridgeTrialResult | None = None
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await asyncio.wait_for(
+                    asyncio.shield(_thread_future(handle.cancel)), timeout=CLEANUP_TIMEOUT
+                )
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                completed_result = await asyncio.wait_for(
+                    asyncio.shield(run_task), timeout=CLEANUP_TIMEOUT
+                )
             effective = await self._bounded_teardown(handle)
+            partial = self._recover_partial_artifacts(handle)
+            if completed_result is not None:
+                partial = {**partial, **completed_result.artifacts}
             # No WorkerResult survives a cancellation (the task itself is
             # cancelled), but whatever partial evidence existed, and whether
             # cleanup actually completed, must still be durable and
@@ -462,7 +503,10 @@ class PierAdapter:
             bridge_result.artifacts,
             priority=_declared_paths(bridge_result.artifacts.get(MANIFEST_PATH)),
         )
-        dispatched_accounting = _accounting_from_usage(bridge_result.usage)
+        dispatched_accounting = _accounting_from_usage(
+            bridge_result.usage,
+            paid_route=ModelRoute.model_validate(self.model_route).paid_route_reachable,
+        )
 
         if bridge_result.exchange != exchange:
             return WorkerFailure(
@@ -635,7 +679,9 @@ def _bytes_for(
     return artifacts.get(path) if path is not None else None
 
 
-def _accounting_from_usage(usage: Mapping[str, float | None] | None) -> Accounting:
+def _accounting_from_usage(
+    usage: Mapping[str, float | None] | None, *, paid_route: bool = False
+) -> Accounting:
     """Convert a bridge-reported usage mapping into ``Accounting``.
 
     ``BridgeTrialResult`` is a local dataclass with no runtime validation of
@@ -650,7 +696,7 @@ def _accounting_from_usage(usage: Mapping[str, float | None] | None) -> Accounti
     if cost is None:
         return Accounting(
             usage={key: value for key, value in usage.items() if key != "cost_usd"} or None,
-            coverage="unavailable" if "cost_usd" in usage else "uncertain",
+            coverage="uncertain" if paid_route or "cost_usd" not in usage else "unavailable",
         )
     try:
         amount = float(cost)

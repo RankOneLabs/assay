@@ -46,7 +46,7 @@ def _user_node_tools() -> Path:
 
 
 if "ASSAY_NODE_TOOLS" in os.environ:
-    NODE_TOOLS = Path(os.environ["ASSAY_NODE_TOOLS"]).expanduser()
+    NODE_TOOLS = Path(os.environ["ASSAY_NODE_TOOLS"]).expanduser().resolve()
 else:
     NODE_TOOLS = _SOURCE_NODE_TOOLS if _SOURCE_NODE_TOOLS.is_dir() else _user_node_tools()
 

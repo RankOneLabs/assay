@@ -1,60 +1,52 @@
 # Verification pilot smoke and decision gate
 
-This rule is fixed before any live Tier 1 cell. The scripted grid is run with
+This gate is fixed before any live cell. Run the model-free shape check with
 `uv run --project experiments python -m verification_pilot.run scripted --store /tmp/vp-scripted`.
-It must produce 96 successful cells and one value for each of the 57 declared
-evaluators on each cell. It uses no model route. The exact 0.3.0 plan, snapshot,
-runtime configuration, and final ceiling are retained in the object store.
+It must complete the 24 fixture-derived sessions and record one declared
+`pilot_judge` verdict for each. The exact plan, snapshot, runtime configuration,
+and ceiling are retained in the object store.
 
-The live smoke takes two migrations (`json_value`, `stage_instance_id`), four
-locations each, one rotation (r0), and both Tier 1 arms: 16 cells **per route**.
-Run the local shard with `uv run --project experiments python -m
-verification_pilot.run live-smoke --store /tmp/vp-live-smoke --image <pinned-image>
---routing-config <routing-file>`. The snapshot retains all 48 subjects and
-all tier arms while the plan excludes cells outside the 16-cell smoke shard.
-After the operator fixes the dollar cap and provides `OPENROUTER_API_KEY`, run the paid shard using the
-same command and `--route openrouter --store /tmp/vp-paid-live-smoke`. The
-route identity is pinned by `assay_pier_bridge.protocol.ModelRoute`; record
-the exact model and provider supplied by `vp-frontier-route` before dispatch.
-Read every trajectory, tool result, submission, and workspace diff by hand.
-Record, per route and arm, counts and denominators for `conversation_limit`,
-`no_tool_call`, refusals, tool errors, and explicit misattribution of the quoted
-“You” block. The route passes only if all five counts are zero in the 16-cell
-smoke. If the local route fails this gate, report Tier 1 on the passing model
-alone and state the excluded route; do not treat its null ownership gap as a
-behavioral null. H1 is always reported separately per model.
+The live smoke is pre-registered as **2 routes × 4 type renames × 2 handoff
+presentations × 1 planted owner share (group_a) = 16 cells**, eight per route.
+It uses one worker repeat. The four rename-matched cases allow inspection of
+the H4 contrast after the full shard, while both presentations expose the
+handoff-placement failure mode. The current `run live-smoke` helper still
+selects two renames and three planted owners (12 cells per route); it does
+not implement this registered selection. The `pilot-foundation` cohort owns
+that selector in `run.py`. Before executing live smoke, it must select the
+four `group_a` subjects and both T1 arms, and test the exact eight cells per
+route and shared D16 ceiling. This cohort makes no provider request.
+The snapshot retains all 16 base subjects while excluding cells outside the
+smoke shard. Select the four `group_a` subjects for each route. Read every
+trajectory, tool result, submission, and workspace diff
+by hand. Record conversation-limit hits, no-tool-call completions, refusals,
+tool errors, and explicit misattribution of a quoted “You” block, each with a
+numerator and denominator per route and arm. A route passes only if all five
+counts are zero in its smoke.
 
-For each route and arm, report the fraction of T1 cells whose first successful
-file inspection is a repository-wide search for the old symbol. Failed file
-calls do not inspect content. **If that fraction exceeds
-50% in either arm on a route, lead with E1 (order), E2 (untouched remnants),
-and E4 (test masking) for that route.** H1, H2, and H3 become secondary
-because a flat search can mark every ownership group inspected at once. Keep
-the precommitted order even if the resulting null is attractive. Record the
-cross-directory ownership stratum separately.
+For each route and arm, divide the number of T1 sessions whose first
+successful file inspection is a repository-wide search for the old symbol by
+the number of T1 sessions with a successful file inspection. A T1 session
+with no successful file inspection is missing from this denominator, not a
+non-wide search; if the denominator is zero, the ceiling verdict is pending.
+Failed file calls do not inspect content. If that fraction exceeds 50% in
+either arm of a route, lead with escalation order, untouched remnants, and
+test masking for that route. Exactly 50% does not trigger this rule. A flat
+search may inspect every owner share at
+once, compressing the ownership gap.
 
-The final plan ceiling is 288 cells, 345,600 wall seconds, and one active
-worker. Tier 1 uses 96 cells; Tier 2 and Tier 3 arms are declared and excluded
-from this shard. A later shard may change exclusions and population while
-keeping this ceiling, runtime configuration, worker repeats, and all other
-report compatibility fields fixed. The 288-cell ceiling is a capacity bound,
-not a commitment to execute deferred cells. Before Tier 2, measure the
-on-policy block discard rate on one migration on each route: count a generated
-block as discarded if tests fail, the old symbol remains in its assigned share,
-or it edits outside that share. Record numerator, denominator, route, model,
-and trace refs. Do not execute Tier 2 cells during this qualification.
-Run local generation with `uv run --project experiments python -m
-verification_pilot.run on-policy-local --store /tmp/vp-on-policy --image
-<pinned-image> --routing-config <routing-file>`; it is outside the cell runtime.
-After the same cap decision, use `on-policy-paid --store /tmp/vp-paid-on-policy
---image <pinned-image>` with the operator-provided `OPENROUTER_API_KEY` for the same four locations on
-the paid route. The current local probe discarded 4/4 attempts and accepted
-zero; Tier 2 remains excluded. The 288-cell ceiling is the full-grid bound,
-not an empirical supply estimate.
+Decision D16 authorizes **one ceiling** for both the smoke and full shards:
+96 cells, 345,600 wall seconds, and one active worker. The 0.3.0 report
+fingerprint includes that ceiling, so the smoke must use the same ceiling as
+the 24-cell full Tier 1 shard if their records are later pooled. The other
+declared tier arms and clean controls remain excluded. The ceiling is a
+capacity bound, not authorization to execute deferred cells. Before any paid
+route runs, the operator must set its route identity and budget gate. No live
+smoke cell is run by this pre-registration cohort.
 
-The proposed paid-route dollar cap is an operator gate carried in the runtime
-configuration and checked against `report_engine.summarize_operating` before
-dispatch. The operator has not yet decided its location or value, so this
-check is not implemented or authorized. The `ExecutionCeiling` wire type has
-no dollar field. The frontier-route cohort must supply the model identity,
-credential, and cap decision before paid dispatch.
+The final inference rules are fixed now: H1 uses a two-sided sign test of the
+T1 ownership gap over 16 base subjects; H2 uses the paired two-sided sign
+test of quoted minus native gap; H4 uses four rename-matched own-versus-
+teammate remnant-inspection pairs and is descriptive, with a minimum
+two-sided p-value of 0.125. Missing values do not become ties. Results remain
+pending until the stated sample sizes and manual qualification are met.

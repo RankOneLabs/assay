@@ -43,10 +43,38 @@ _LAN_NETWORKS = (
 )
 
 
+def _canonical_relative_path(raw_path: str) -> bool:
+    """Mirror the bridge's safe_relative_path wire spelling rule."""
+    path = PurePosixPath(raw_path)
+    return bool(
+        raw_path
+        and "\\" not in raw_path
+        and not path.is_absolute()
+        and path.parts
+        and ".." not in path.parts
+        and path.as_posix() == raw_path
+    )
+
+
 class ModelRoute(WireModel):
-    endpoint: Literal["https://openrouter.ai/api/v1"] = "https://openrouter.ai/api/v1"
-    model: Literal["anthropic/claude-3-haiku"] = "anthropic/claude-3-haiku"
-    provider: Literal["amazon-bedrock"] = "amazon-bedrock"
+    endpoint: Literal["https://openrouter.ai/api/v1", "http://willie:8900"] = (
+        "https://openrouter.ai/api/v1"
+    )
+    model: Literal["anthropic/claude-3-haiku", "qwen-coder-32b"] = "anthropic/claude-3-haiku"
+    provider: Literal["amazon-bedrock", "smithers-local"] = "amazon-bedrock"
+
+    @model_validator(mode="after")
+    def exact_route(self) -> ModelRoute:
+        if (self.endpoint, self.model, self.provider) not in {
+            ("https://openrouter.ai/api/v1", "anthropic/claude-3-haiku", "amazon-bedrock"),
+            ("http://willie:8900", "qwen-coder-32b", "smithers-local"),
+        }:
+            raise ValueError("model route fields must identify one exact route")
+        return self
+
+    @property
+    def paid_route_reachable(self) -> bool:
+        return self.provider == "amazon-bedrock"
 
 
 class TrialLimits(WireModel):
@@ -83,6 +111,8 @@ class TrialRequest(WireModel):
             raise ValueError("exchange coordinate does not match cell_id")
         if self.exchange.binding.package_digest != self.package_digest:
             raise ValueError("exchange package digest does not match package_digest")
+        if not self.model_route.paid_route_reachable and self.network_policy != "toolchain-only":
+            raise ValueError("local Smithers route requires the network-disabled toolchain posture")
         if self.network_policy == "egress-lan-host-port":
             if self.egress_host is None or self.egress_port is None:
                 raise ValueError("LAN posture requires egress_host and egress_port")
@@ -150,6 +180,11 @@ CandidateCause = Literal[
     # infrastructure ``harness_deadline``: running out of time is the
     # candidate's outcome, not a lost coordinate.
     "agent_deadline",
+    "invalid_tool_output_encoding",
+    "patch_capture_conflict",
+    "non_utf8_path",
+    "workspace_capture_permission",
+    "hard_link_submission",
 ]
 InfrastructureCause = Literal[
     "harness_deadline",
@@ -273,8 +308,7 @@ class ArtifactEntry(WireModel):
 
     @model_validator(mode="after")
     def safe_path(self) -> ArtifactEntry:
-        parts = PurePosixPath(self.path).parts
-        if PurePosixPath(self.path).is_absolute() or any(part in {"", ".", ".."} for part in parts):
+        if not _canonical_relative_path(self.path):
             raise ValueError(f"artifact path is unsafe: {self.path}")
         if self.path == MANIFEST_PATH:
             # Not merely redundant: an entry here would be checked against
@@ -430,12 +464,7 @@ def candidate_tree_digest(manifest: ArtifactManifest, *, artifact_bytes: dict[st
         raise ManifestRejected("candidate has an unexpected path")
     digest = hashlib.sha256()
     for path in sorted(files, key=lambda value: value.encode("utf-8")):
-        parts = PurePosixPath(path).parts
-        if (
-            not path
-            or PurePosixPath(path).is_absolute()
-            or any(part in {"", ".", ".."} for part in parts)
-        ):
+        if not _canonical_relative_path(path):
             raise ManifestRejected(f"candidate file path is unsafe: {path}")
         digest.update(path.encode("utf-8") + b"\x00100644\x00" + files[path] + b"\x00")
     return f"sha256:{digest.hexdigest()}"

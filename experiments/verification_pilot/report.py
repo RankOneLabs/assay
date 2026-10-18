@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import fmean
-from typing import Any
+from typing import Any, cast
 
 from assay.models import (
     ExecutionPlanV2,
@@ -25,9 +25,18 @@ from assay.models import (
 from assay.report_engine import build_report, exact_sign_test, persist_report
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
+from verification_pilot.analysis import (
+    ARMS,
+    MeasureCell,
+    h1_sign_test,
+    h4_rename_pairs,
+    result_tables,
+    wide_search_ceiling,
+)
 from verification_pilot.evaluation import NOT_APPLICABLE, REPORT_CATEGORIES
 from verification_pilot.metrics import calls, scope_contains, successful
 from verification_pilot.migrations import GROUPS, MIGRATIONS
+from verification_pilot.observations import RecordedTrace, observe
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +118,7 @@ def verified_observations(
 def h1_ownership_gap(rows: Iterable[Observation], arm: str) -> dict[str, Any]:
     """One-sample, two-sided exact sign test of T1 ownership gap against zero."""
     selected = [float(r.value) for r in rows if r.arm == arm
-                and r.evaluator_id == "t1_ownership_gap" and r.value != NOT_APPLICABLE]
+                and r.evaluator_id == "pilot_judge" and r.value != NOT_APPLICABLE]
     improved = sum(value > 0 for value in selected)
     regressed = sum(value < 0 for value in selected)
     return {
@@ -195,7 +204,9 @@ def paired_config(
 
 def evaluator_tables(rows: Iterable[Observation]) -> list[dict[str, Any]]:
     counts: Counter[tuple[str, str, str, str, int, str, str]] = Counter(
-        (r.model, r.arm, r.evaluator_id.split("_", 1)[0], r.group,
+        (r.model, r.arm,
+         "t1" if r.evaluator_id == "pilot_judge" else r.evaluator_id.split("_", 1)[0],
+         r.group,
          r.block_position, r.evaluator_id, r.value) for r in rows
     )
     return [{"model": model, "arm": arm, "turn": turn, "remnant_location": group,
@@ -234,47 +245,63 @@ def first_inspection_is_wide_symbol_search(turn: Mapping[str, Any], symbol: str)
     return False
 
 
-def ceiling_effect(
-    store: ObjectStore, manifest_refs: Sequence[str], model: str
-) -> list[dict[str, Any]]:
-    """Share whose first successful T1 inspection searches the whole repo for the old symbol."""
-    totals: Counter[str] = Counter()
-    wide: Counter[str] = Counter()
-    old_by_migration = {migration.name: migration.old_symbol for migration in MIGRATIONS}
+@dataclass(frozen=True, slots=True)
+class _TraceSubject:
+    migration: Any
+    location: str | None
+
+
+def measured_cells(
+    store: ObjectStore, manifest_refs: Sequence[str], model: str,
+) -> tuple[MeasureCell, ...]:
+    """Adapt verified sealed trajectories to the pure pilot analysis input."""
+    migrations = {migration.name: migration for migration in MIGRATIONS}
+    cells: list[MeasureCell] = []
     for ref in manifest_refs:
+        failures = [f for f in verify_manifest(store, ref) if f.code != "incomplete_run"]
+        if failures:
+            raise ValueError(f"invalid manifest {ref}: {failures[0].code}")
         manifest = RunManifest.model_validate(_read(store, ref))
         plan = parse_execution_plan(_read(store, manifest.plan_ref))
         snapshot = StudySnapshot.model_validate(_read(store, plan.snapshot_ref))
-        subjects = {subject.id: _read(store, subject.payload_ref) for subject in snapshot.subjects}
+        subjects = {subject.id: _read(store, subject.payload_ref)
+                    for subject in snapshot.subjects}
         for cell in plan.cells:
-            outcome_ref = manifest.execution_records.get(cell.id)
-            if outcome_ref is None:
+            record_ref = manifest.execution_records.get(cell.id)
+            if record_ref is None:
                 continue
-            outcome = _read(store, outcome_ref)
-            if outcome.get("status") != "succeeded" or not outcome.get("output_ref"):
+            record = _read(store, record_ref)
+            output_ref = record.get("output_ref")
+            output = _read(store, output_ref) if output_ref else None
+            raw_ref = output.get("raw_trajectory_ref") if output is not None else None
+            if raw_ref is None and record.get("trace_ref"):
+                worker_trace = _read(store, record["trace_ref"])
+                raw_ref = worker_trace.get("artifact_refs", {}).get("trajectory.json")
+            if raw_ref is None:
                 continue
-            output = _read(store, outcome["output_ref"])
-            raw = _read(store, output["raw_trajectory_ref"])
-            trajectory = json.loads(base64.b64decode(raw["content_base64"]))
-            turns = trajectory.get("turns", [])
-            if not turns:
-                continue
-            totals[cell.arm_id] += 1
-            symbol = old_by_migration[subjects[cell.subject_id]["migration"]]
-            if first_inspection_is_wide_symbol_search(turns[0], symbol):
-                wide[cell.arm_id] += 1
-    return [{"model": model, "arm": arm, "repository_wide_first": wide[arm],
-             "n": count, "share": wide[arm] / count}
-            for arm, count in sorted(totals.items())]
+            raw = _read(store, raw_ref)
+            trace = cast(RecordedTrace, json.loads(base64.b64decode(
+                raw["content_base64"], validate=True)))
+            payload = subjects[cell.subject_id]
+            migration_name = str(payload["migration"])
+            own_group = str(payload["own_group"])
+            if own_group not in GROUPS:
+                raise ValueError("subject has no valid verifier-owned group")
+            subject = _TraceSubject(migrations[migration_name], payload.get("location"))
+            cells.append(MeasureCell(
+                model, cell.subject_id, migration_name, payload.get("ownership_group"),
+                cell.arm_id, observe(trace, subject), own_group,
+            ))
+    return tuple(cells)
 
 
 def power_statement() -> dict[str, str]:
     return {
-        "H1": "48 paired observations per model in the Tier 1 grid; one-sample sign test by arm.",
-        "H2": "48 paired observations per model in the Tier 1 grid.",
+        "H1": "12 paired observations per model in the active grid; one-sample sign test by arm.",
+        "H2": "12 paired observations per model in the active grid.",
         "H3": "12 of 16 base subjects valid in both arms; deferred Tier 2 data required.",
-        "H4": ("4 migration-matched pairs; below the engine's ten-subject "
-               "inference floor. No engine p-value."),
+        "H4": ("Four migration-matched pairs are planned; no remnant-inspection "
+               "verdict is declared in this foundation shard. No engine p-value."),
     }
 
 
@@ -284,18 +311,26 @@ def model_report(
 ) -> dict[str, Any]:
     """Assemble per-model results; persist each engine comparison separately."""
     rows = verified_observations(store, manifest_refs, model)
-    h2_config = paired_config(store, manifest_refs, evaluator_id="t1_ownership_gap",
+    h2_config = paired_config(store, manifest_refs, evaluator_id="pilot_judge",
                               reference_arm="t1-native", candidate_arm="t1-quoted")
     h2 = build_report(store, h2_config)
     h2_ref = str(persist_report(store, h2_config))
+    analysis = result_tables(measured_cells(store, manifest_refs, model),
+                             own_group=own_group)
+    route = analysis["routes"][0] if analysis["routes"] else {
+        "H1": {arm: h1_sign_test((), arm) for arm in ARMS},
+        "H4": {arm: h4_rename_pairs((), arm, own_group) for arm in ARMS},
+        "ceiling": {arm: wide_search_ceiling((), arm) for arm in ARMS},
+    }
+    ceiling = [{"model": model, **route["ceiling"][arm]} for arm in ARMS]
     result: dict[str, Any] = {
         "model": model, "manifest_refs": list(manifest_refs),
-        "H1": {arm: h1_ownership_gap(rows, arm) for arm in ("t1-native", "t1-quoted")},
+        "H1": route["H1"],
         "H2": {"report_ref": h2_ref, "comparison": h2["comparisons"][0]},
-        "H4": {arm: h4_own_vs_teammate(rows, arm, own_group=own_group)
-               for arm in ("t1-native", "t1-quoted")},
+        "H4": route["H4"],
         "tables": evaluator_tables(rows), "escalation_chart": escalation_chart(rows),
-        "ceiling_effect": ceiling_effect(store, manifest_refs, model),
+        "ceiling_effect": ceiling,
+        "analysis": analysis,
         "cost": h2["costs"], "power": power_statement(),
     }
     if tier2_refs:

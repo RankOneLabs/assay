@@ -81,6 +81,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import shutil
 import signal
 import subprocess
 import sys
@@ -160,7 +161,32 @@ if patch.returncode:
     outcome = {'preflight': result('failed', 'patch_rejected'), 'groups': {}}
 elif tree_digest(root) != payload['expected_tree_digest']:
     outcome = {'preflight': result('unavailable', 'candidate_tree_digest_mismatch'), 'groups': {}}
+elif any(group['restores'] for group in payload['groups']) and (
+    (root / 'tests' / 'visible').is_file()
+    or any(parent.is_file() for group in payload['groups'] if group['restores']
+           for name in group['files'] for parent in (root / name).parents)
+):
+    outcome = {'preflight': result('failed', 'test_path_collision'), 'groups': {}}
 else:
+    def copy_tests(restores):
+        for group in payload['groups']:
+            if group['restores'] != restores:
+                continue
+            for name, source in group['files'].items():
+                target = root / name
+                if not target.resolve().is_relative_to(root.resolve()):
+                    raise ValueError('test path escapes sandbox')
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(source, encoding='utf-8')
+
+    def reset_visible_tests():
+        if any(group['restores'] for group in payload['groups']):
+            visible = root / 'tests' / 'visible'
+            if visible.exists():
+                shutil.rmtree(visible)
+            copy_tests(True)
+
+    reset_visible_tests()
     test_paths = [root / name for group in payload['groups']
                   if not group['restores'] for name in group['files']]
     toolchain = payload['toolchain']
@@ -178,15 +204,6 @@ else:
     except (OSError, subprocess.TimeoutExpired):
         locked = False
 
-    def copy_tests():
-        for group in payload['groups']:
-            for name, source in group['files'].items():
-                target = root / name
-                if not target.resolve().is_relative_to(root.resolve()):
-                    raise ValueError('test path escapes sandbox')
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(source, encoding='utf-8')
-
     def run_groups():
         return {group['name']: run(group['command'], payload['candidate_timeout_s'])
                 for group in payload['groups']}
@@ -197,10 +214,9 @@ else:
     elif not locked:
         outcome = {'preflight': result('unavailable', 'toolchain_unavailable'), 'groups': {}}
     elif toolchain == 'bun':
-        # The candidate tree alone is typechecked and built; frozen tests are
-        # copied in only afterwards, so a hidden test can never fail the
-        # candidate's own typecheck. bun executes TypeScript directly, and
-        # bundling every production module is its build check.
+        # Frozen visible tests are already restored; hidden tests arrive only
+        # after preflight. bun executes TypeScript directly, and bundling every
+        # production module is its build check.
         typecheck = run(['tsc', '--noEmit', '-p', 'tsconfig.json'],
                         payload['candidate_timeout_s'])
         sources = sorted(path.relative_to(root).as_posix() for path in root.rglob('*.ts')
@@ -218,10 +234,9 @@ else:
             outcome = {'preflight': result(build['status'],
                        'build_' + str(build['cause'])), 'groups': {}}
         else:
-            copy_tests()
+            copy_tests(False)
             outcome = {'preflight': result('passed'), 'groups': run_groups()}
     else:
-        copy_tests()
         typecheck = run(['tsc', '--noEmit'], payload['candidate_timeout_s'])
         build_root = Path('/tmp/workflow-build')
         build = (run(['tsc', '--noEmit', 'false', '--emitDeclarationOnly', 'false',
@@ -237,6 +252,7 @@ else:
                      for path in build_root.rglob('*')):
             outcome = {'preflight': result('failed', 'build_output_missing'), 'groups': {}}
         else:
+            copy_tests(False)
             outcome = {'preflight': result('passed'), 'groups': run_groups()}
 sys.stdout.write(json.dumps(outcome, separators=(',', ':')))
 """

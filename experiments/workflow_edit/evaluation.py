@@ -211,7 +211,7 @@ class CellEvaluator:
                 return EvaluationFailed("MismatchedCell", "output belongs to another cell")
             candidate = worker_candidate(self.store, output)
             baseline = input_value["repository"]
-        except (KeyError, TypeError, ValueError) as error:
+        except (KeyError, TypeError, ValueError, ObjectIntegrityError, OSError) as error:
             return EvaluationFailed("MissingCandidate", f"unreadable candidate: {error}")
         submission = CandidateSubmission(
             patch_ref=str(self.store.publish_bytes(candidate.patch)),

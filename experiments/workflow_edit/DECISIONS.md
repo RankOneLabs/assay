@@ -4,6 +4,20 @@ This is the live decision record for the workflow edit study. Later cohorts
 append decisions here as the study takes shape, including dispatch topology and
 the provenance of measured qualification ceilings.
 
+## wf-13 regrade (2026-10-17)
+
+- **D14, fresh evaluation:** The fixed harness changes its configuration digest,
+  so the original authorized plan cannot be replayed. `study.py` reads each
+  previously graded cell's stored `cells[cell_id].patch` from `smoke.json.gz`
+  and evaluates it with the fixed harness and pinned local image. The new
+  `regrade.json.gz` records both harness digests and the results. No model or
+  paid provider is called. All 16 original grades remained unchanged.
+- **Published record:** `publish.py` reproduces the original SMOKE.md section
+  byte for byte, then appends a dated regrade. It derives the paid-cell count
+  from positive accounting amounts. The original hosted “Measured $/cell”
+  figure is now explicitly identified as an estimate based on the local
+  tokenizer ratio; the strict bound remains independently stated.
+
 ## Scaffold
 
 - **Arm names:** The four arm identifiers are `mess-00`, `mess-low`,
@@ -179,12 +193,14 @@ unrelated plan version.
 
 ## Correctness evaluation
 
-- **bun mode:** The evaluator's `bun` toolchain typechecks the candidate tree
-  alone (`tsc --noEmit -p tsconfig.json`), then bundles every production
-  module (`bun build --target=bun`) as the build check, and only then copies
-  the frozen tests in, so a hidden test can never fail the candidate's own
-  typecheck. Group commands must start with the toolchain's runner. Toolchain
-  versions are settings checked inside the sandbox.
+- **D13, frozen tests before preflight:** After checking the patched tree digest,
+  the harness resets `tests/visible/` to exactly the files of the restored
+  visible group, removing candidate edits and additions. It then typechecks
+  (`tsc --noEmit -p tsconfig.json` in bun mode), builds, copies hidden groups,
+  and runs all groups. The same order applies to the non-bun path. This keeps
+  candidate edits to visible tests out of preflight as well as the verdict.
+  Group commands must start with the toolchain's runner. Toolchain versions
+  are settings checked inside the sandbox.
 - **Frozen visible tests:** The visible regression group is the baseline's own
   `tests/visible/` files, restored over the candidate's copies and run by
   name, so editing or adding a visible test cannot change its regression

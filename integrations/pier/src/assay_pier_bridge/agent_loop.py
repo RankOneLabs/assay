@@ -35,6 +35,7 @@ from typing import Any, Literal, NoReturn, Protocol
 
 import httpx
 
+from assay_pier_bridge.identity import digest_bytes
 from assay_pier_bridge.paths import (
     ArtifactCollectionRejected,
     check_submission_scope,
@@ -61,17 +62,6 @@ SYSTEM_PROMPT = (
     "reference answers are never available. Do not seek network access or install "
     "packages."
 )
-PILOT_SYSTEM_PROMPT = (
-    "You are editing one repository copy in /workspace across three user turns. "
-    "Use read_file, search_files, write_file, replace_in_file, and run_command "
-    "to inspect, edit, and check it. At T1 call submit_output with title and body. "
-    "After the next user turn, submit a verdict (complete, incomplete, or unsure), "
-    "remaining_v1, and checks_performed at T2 and again at T3. The repository "
-    "persists between turns. Only this cell's repository is available; hidden "
-    "tests and reference answers are never available. Do not seek network "
-    "access or install packages."
-)
-
 # A tool command may not outlive this, nor the cell's remaining budget.
 MAX_TOOL_SECONDS = 120.0
 # A tmpfs with less than this free is treated as exhausted: a write that hit
@@ -206,8 +196,8 @@ class LoopResult:
     baseline_tree_digest: str
     final_tree_digest: str
     trajectory: dict[str, Any]
-    prompt_tokens: int
-    completion_tokens: int
+    prompt_tokens: int | None
+    completion_tokens: int | None
     cost_usd: float | None
     requests: int
 
@@ -230,6 +220,30 @@ class AgentLoopError(RuntimeError):
         self.rejection = rejection
         self.usage = dict(usage or {})
         super().__init__(cause)
+
+
+class BilledResponseError(ValueError):
+    """A successful HTTP response failed validation after billing was possible."""
+
+    def __init__(self, cause: str, usage: Mapping[str, int | float | None]) -> None:
+        self.usage = dict(usage)
+        super().__init__(cause)
+
+
+def _read_billed_usage(data: Any) -> dict[str, int | float | None]:
+    raw = data.get("usage") if isinstance(data, dict) else None
+    usage = raw if isinstance(raw, dict) else {}
+    cost = usage.get("cost")
+    measured_cost = (
+        float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool)
+        and math.isfinite(cost) and cost >= 0 else None
+    )
+    counts = {
+        key: value if type(value) is int and value >= 0 else None
+        for key in ("prompt_tokens", "completion_tokens")
+        for value in (usage.get(key),)
+    }
+    return {**counts, "cost_usd": measured_cost}
 
 
 class ToolSandbox(Protocol):
@@ -366,6 +380,7 @@ class DockerToolSandbox:
         workspace: Path,
         cache: Path,
         image: str,
+        cell_id: str,
         *,
         tmpfs_storage: bool = False,
         limits: SandboxLimits | None = None,
@@ -373,6 +388,7 @@ class DockerToolSandbox:
         limits = limits or SandboxLimits()
         self.name = f"assay-agent-{uuid.uuid4().hex}"
         self._closed = False
+        self._close_lock = threading.Lock()
         self._workspace = workspace
         self._tmpfs_storage = tmpfs_storage
         mounts = (
@@ -389,6 +405,8 @@ class DockerToolSandbox:
             "-d",
             "--name",
             self.name,
+            "--label",
+            f"assay-cell={cell_id}",
             "--network",
             "none",
             "--read-only",
@@ -491,10 +509,18 @@ class DockerToolSandbox:
         # ``docker cp`` reads the container's layered filesystem and silently
         # returns nothing from a tmpfs mount, so the tree is streamed out.
         archived = subprocess.run(
-            ["docker", "exec", self.name, "tar", "-c", "-f", "-", "-C", "/workspace", "."],
+            [
+                "docker", "exec", "-u", "0:0", self.name, "tar", "-c", "-f", "-",
+                "-C", "/workspace", ".",
+            ],
             capture_output=True, timeout=60, check=False,
         )
         if archived.returncode:
+            if b"permission denied" in archived.stderr.lower():
+                raise ArtifactCollectionRejected(
+                    "workspace_capture_permission", "cannot read candidate workspace",
+                    origin="working_copy",
+                )
             raise RuntimeError("workspace_capture")
         for path in self._workspace.iterdir():
             if path.is_dir() and not path.is_symlink():
@@ -605,8 +631,9 @@ class DockerToolSandbox:
             raise RuntimeError("tool_interrupt")
 
     def close(self) -> None:
-        if not self._closed:
-            self._closed = True
+        with self._close_lock:
+            if self._closed:
+                return
             removed = subprocess.run(
                 ["docker", "rm", "-f", self.name],
                 capture_output=True,
@@ -616,18 +643,20 @@ class DockerToolSandbox:
             )
             if removed.returncode:
                 raise RuntimeError("container_cleanup")
+            self._closed = True
 
 
 class DockerTmpfsToolSandbox(DockerToolSandbox):
     """The declared local sandbox: Docker-enforced tmpfs quotas, no host privileges."""
 
     def __init__(
-        self, workspace: Path, cache: Path, image: str, *, limits: SandboxLimits | None = None
+        self, workspace: Path, cache: Path, image: str, cell_id: str,
+        *, limits: SandboxLimits | None = None
     ) -> None:
-        super().__init__(workspace, cache, image, tmpfs_storage=True, limits=limits)
+        super().__init__(workspace, cache, image, cell_id, tmpfs_storage=True, limits=limits)
 
 
-SandboxFactory = Callable[[Path, Path, str], ToolSandbox]
+SandboxFactory = Callable[[Path, Path, str, str], ToolSandbox]
 
 
 def _tool(name: str, description: str, properties: dict[str, Any]) -> dict[str, Any]:
@@ -737,11 +766,23 @@ CANDIDATE_STOP_CAUSES = frozenset(
 
 
 def _json_bytes(value: Any) -> bytes:
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    try:
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ArtifactCollectionRejected(
+            "invalid_tool_output_encoding", "tool output is not UTF-8 encodable",
+            origin="working_copy",
+        ) from error
 
 
 def _bounded_text(text: str, limit: int) -> tuple[str, bool]:
-    encoded = text.encode("utf-8")
+    try:
+        encoded = text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ArtifactCollectionRejected(
+            "invalid_tool_output_encoding", "tool output is not UTF-8 encodable",
+            origin="working_copy",
+        ) from error
     if len(encoded) <= limit:
         return text, False
     return encoded[:limit].decode("utf-8", errors="ignore"), True
@@ -1122,10 +1163,20 @@ class RepositoryAgentClient:
     max_tool_calls_per_turn: int = 0
     max_tool_calls_per_cell: int = 0
     transport: httpx.BaseTransport | None = None
-    sandbox_factory: SandboxFactory = DockerToolSandbox
-    storage_factory: Callable[[Path, int], CellStorage] = QuotaCellStorage
+    sandbox_factory: SandboxFactory = DockerTmpfsToolSandbox
+    storage_factory: Callable[[Path, int], CellStorage] = DockerTmpfsStagingStorage
+    sandbox_limits: SandboxLimits = field(default_factory=SandboxLimits)
     _used_cells: set[str] = field(default_factory=set, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+    _active_state_lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+    _active_sandbox: ToolSandbox | None = field(default=None, init=False)
+    _active_cell_id: str | None = field(default=None, init=False)
+
+    def cancel_active(self, cell_id: str) -> None:
+        with self._active_state_lock:
+            sandbox = self._active_sandbox if self._active_cell_id == cell_id else None
+        if sandbox is not None:
+            sandbox.close()
 
     def __post_init__(self) -> None:
         if self.model_route.paid_route_reachable:
@@ -1142,14 +1193,14 @@ class RepositoryAgentClient:
             raise ValueError("locked image identity required")
         if self.bounds.max_turns != 20 or min(asdict(self.bounds).values()) < 1:
             raise ValueError("invalid fixed loop bounds")
+        if self.sandbox_limits.storage_mb != self.bounds.max_storage_mb:
+            raise ValueError("sandbox storage quota differs from loop storage bound")
         if self.pilot_mode:
             if len(self.next_user_turns) != 2 or not all(
                 isinstance(prompt, str) and prompt.strip() for prompt in self.next_user_turns
             ):
                 raise ValueError("pilot mode requires two next user turns")
             self.tools = deepcopy(PILOT_TOOLS_T1)
-            if self.system_prompt == SYSTEM_PROMPT:
-                self.system_prompt = PILOT_SYSTEM_PROMPT
             if not self.writable_prefixes:
                 raise ValueError("pilot mode requires writable prefixes")
             if min(self.max_tool_calls_per_turn, self.max_tool_calls_per_cell) < 1:
@@ -1190,9 +1241,11 @@ class RepositoryAgentClient:
 
     def _turn(
         self, messages: list[dict[str, Any]], turn: int, deadline: float | None,
-        tools: list[dict[str, Any]],
+        tools: list[dict[str, Any]], on_dispatch: Callable[[], None] | None = None,
     ) -> ModelTurn:
         if self.completion is not None:
+            if on_dispatch is not None:
+                on_dispatch()
             return self.completion(
                 messages=messages,
                 tools=tools,
@@ -1200,12 +1253,18 @@ class RepositoryAgentClient:
                 turn=turn,
                 deadline=deadline,
             )
-        return self._openrouter_turn(messages, HAIKU_TURN_ROUTE, tools)
+        return self._openrouter_turn(
+            messages, HAIKU_TURN_ROUTE, tools, deadline=deadline, on_dispatch=on_dispatch
+        )
 
     def _openrouter_turn(
         self, messages: list[dict[str, Any]], route: OpenRouterTurnRoute = HAIKU_TURN_ROUTE,
         tools: list[dict[str, Any]] | None = None,
+        *, deadline: float | None = None,
+        on_dispatch: Callable[[], None] | None = None,
     ) -> ModelTurn:
+        if deadline is not None and deadline <= time.monotonic():
+            raise ValueError("agent_deadline")
         body = {
             "model": route.model,
             "messages": messages,
@@ -1247,6 +1306,11 @@ class RepositoryAgentClient:
         with self._http_client() as client:
             if self._transport_retries(client) != 0:
                 raise ValueError("retry_config_violation")
+            timeout_s = 30.0 if deadline is None else min(30.0, deadline - time.monotonic())
+            if timeout_s <= 0:
+                raise ValueError("agent_deadline")
+            if on_dispatch is not None:
+                on_dispatch()
             with client.stream(
                 "POST",
                 chat_completions_url,
@@ -1255,48 +1319,57 @@ class RepositoryAgentClient:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
+                timeout=timeout_s,
             ) as response:
                 if str(response.url) != chat_completions_url or not response.is_success:
                     raise ValueError("provider_response")
                 chunks = bytearray()
+                over_limit = False
                 for chunk in response.iter_bytes():
+                    if deadline is not None and deadline <= time.monotonic():
+                        raise ValueError("agent_deadline")
                     chunks.extend(chunk)
                     if len(chunks) > self.bounds.max_response_bytes:
-                        raise ValueError("response_limit")
-        data = json.loads(chunks)
+                        over_limit = True
+                        break
+        try:
+            data = json.loads(chunks)
+        except (ValueError, UnicodeError) as error:
+            cause = "response_limit" if over_limit else "provider_response"
+            raise BilledResponseError(cause, _read_billed_usage(None)) from error
+        billed_usage = _read_billed_usage(data)
+        if over_limit:
+            raise BilledResponseError("response_limit", billed_usage)
         if (
             not isinstance(data, dict)
             or data.get("model") != route.model
             or data.get("provider") != route.provider_name
         ):
-            raise ValueError("provider_identity")
+            raise BilledResponseError("provider_identity", billed_usage)
         choices, usage = data.get("choices"), data.get("usage")
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(usage, dict):
-            raise ValueError("provider_response")
+            raise BilledResponseError("provider_response", billed_usage)
         choice = choices[0]
         if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
-            raise ValueError("provider_response")
-        cost = usage.get("cost")
-        if (
-            isinstance(cost, bool)
-            or not isinstance(cost, (int, float))
-            or not math.isfinite(cost)
-            or cost < 0
-        ):
-            raise ValueError("provider_usage")
-        for key in ("prompt_tokens", "completion_tokens"):
-            if type(usage.get(key)) is not int or usage[key] < 0:
-                raise ValueError("provider_usage")
+            raise BilledResponseError("provider_response", billed_usage)
+        cost = billed_usage["cost_usd"]
+        if cost is None:
+            raise BilledResponseError("provider_usage", billed_usage)
+        prompt_count = billed_usage["prompt_tokens"]
+        completion_count = billed_usage["completion_tokens"]
+        if type(prompt_count) is not int or type(completion_count) is not int:
+            raise BilledResponseError("provider_usage", billed_usage)
         return ModelTurn(
             message=choice["message"],
             finish_reason=str(choice.get("finish_reason")),
-            prompt_tokens=usage["prompt_tokens"],
-            completion_tokens=usage["completion_tokens"],
+            prompt_tokens=prompt_count,
+            completion_tokens=completion_count,
             cost_usd=float(cost),
         )
 
     def run_cell(
-        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None = None
+        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> LoopResult:
         if not self._lock.acquire(blocking=False):
             raise AgentLoopError("concurrency_limit", {"events": []})
@@ -1304,7 +1377,10 @@ class RepositoryAgentClient:
             if cell_id in self._used_cells:
                 raise AgentLoopError("attempt_limit", {"events": []})
             self._used_cells.add(cell_id)
-            return self._run_once(package=package, deadline=deadline)
+            return self._run_once(
+                cell_id=cell_id, package=package, deadline=deadline,
+                cancel_event=cancel_event,
+            )
         finally:
             self._lock.release()
 
@@ -1327,7 +1403,10 @@ class RepositoryAgentClient:
         captured = submission_patch(baseline, workspace)
         return captured.patch, after, captured.baseline_tree_digest, captured.final_tree_digest
 
-    def _run_once(self, *, package: Mapping[str, str], deadline: float | None) -> LoopResult:
+    def _run_once(
+        self, *, cell_id: str, package: Mapping[str, str], deadline: float | None,
+        cancel_event: threading.Event | None,
+    ) -> LoopResult:
         trajectory: dict[str, Any] = {
             "events": [],
             "messages": [],
@@ -1367,8 +1446,16 @@ class RepositoryAgentClient:
             {"role": "user", "content": instruction},
             *self.message_prefix,
         ]
+        trajectory["messages"] = deepcopy(messages)
+
+        def record_message(message: dict[str, Any]) -> None:
+            messages.append(message)
+            trajectory["messages"].append(deepcopy(message))
+
         prefix_length = len(messages)
-        prompt_tokens = completion_tokens = requests = 0
+        prompt_tokens: int | None = 0
+        completion_tokens: int | None = 0
+        requests = 0
         cell_tool_calls = 0
         logical_turn = 1
         turn_tool_calls = 0
@@ -1393,7 +1480,51 @@ class RepositoryAgentClient:
                 "cost_usd": cost_usd,
             }
 
+        def count_dispatch() -> None:
+            nonlocal requests
+            requests += 1
+            turn_usage: dict[str, int | float | None] = turn_record["usage"]
+            turn_usage["requests"] = int(turn_usage["requests"] or 0) + 1
+
+        def accrue_billed(reading: Mapping[str, int | float | None]) -> None:
+            nonlocal prompt_tokens, completion_tokens, cost_usd
+            turn_usage: dict[str, int | float | None] = turn_record["usage"]
+            for key in ("prompt_tokens", "completion_tokens"):
+                value = reading.get(key)
+                if type(value) is int and value >= 0:
+                    if key == "prompt_tokens":
+                        if prompt_tokens is not None:
+                            prompt_tokens += value
+                    else:
+                        if completion_tokens is not None:
+                            completion_tokens += value
+                    turn_count = turn_usage[key]
+                    if turn_count is not None:
+                        turn_usage[key] = int(turn_count) + value
+                else:
+                    if key == "prompt_tokens":
+                        prompt_tokens = None
+                    else:
+                        completion_tokens = None
+                    turn_usage[key] = None
+            billed_cost = reading.get("cost_usd")
+            if billed_cost is None:
+                cost_usd = None
+                turn_usage["cost_usd"] = None
+            elif cost_usd is not None:
+                cost_usd += float(billed_cost)
+                if turn_usage["cost_usd"] is not None:
+                    turn_usage["cost_usd"] = float(turn_usage["cost_usd"]) + float(billed_cost)
+
+        def mark_cost_unknown() -> None:
+            nonlocal cost_usd
+            cost_usd = None
+            turn_usage: dict[str, int | float | None] = turn_record["usage"]
+            turn_usage["cost_usd"] = None
+
         def remaining() -> float:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ValueError("cancelled")
             if deadline is None:
                 return MAX_TOOL_SECONDS
             left = deadline - time.monotonic()
@@ -1424,6 +1555,26 @@ class RepositoryAgentClient:
                 })
                 oom_kills_seen = total
 
+        def advance_pilot_turn() -> None:
+            nonlocal prefix_length, logical_turn, turn_tool_calls, captured, turn_record
+            record_message({"role": "user", "content": self.next_user_turns[logical_turn - 1]})
+            prefix_length = len(messages)
+            logical_turn += 1
+            turn_tool_calls = 0
+            captured = False
+            turn_record = {
+                "turn": f"T{logical_turn}", "tool_calls": [],
+                "submission": None, "workspace_diff": None,
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0,
+                          "requests": 0,
+                          "cost_usd": 0.0 if cost_usd is not None else None},
+            }
+            trajectory["turns"].append(turn_record)
+
+        def pilot_summary() -> str:
+            first = trajectory["turns"][0]["submission"]
+            return first["title"] if first is not None else ""
+
         try:
             storage.prepare()
             events.append(
@@ -1432,7 +1583,16 @@ class RepositoryAgentClient:
             materialize_under(workspace, repository)
             materialize_under(baseline, repository)
             _prepare_container_writes(workspace, cache)
-            sandbox = self.sandbox_factory(workspace, cache, self.image)
+            remaining()
+            if self.sandbox_factory is DockerTmpfsToolSandbox:
+                sandbox = DockerTmpfsToolSandbox(
+                    workspace, cache, self.image, cell_id, limits=self.sandbox_limits
+                )
+            else:
+                sandbox = self.sandbox_factory(workspace, cache, self.image, cell_id)
+            with self._active_state_lock:
+                self._active_sandbox = sandbox
+                self._active_cell_id = cell_id
             events.append(
                 {
                     "kind": "sandbox_created",
@@ -1452,15 +1612,23 @@ class RepositoryAgentClient:
                 )
                 if len(_json_bytes(messages)) > self.bounds.max_conversation_bytes:
                     raise ValueError("conversation_limit")
-                if len(_json_bytes(messages)) + len(_json_bytes(turn_tools)) > (
-                    self.bounds.max_request_bytes
+                if self.completion is not None and (
+                    len(_json_bytes(messages)) + len(_json_bytes(turn_tools))
+                    > self.bounds.max_request_bytes
                 ):
                     raise ValueError("request_limit")
-                requests += 1  # Count a failed dispatch; never retry it.
                 turn_usage: dict[str, int | float | None] = turn_record["usage"]
-                turn_usage["requests"] = int(turn_usage["requests"] or 0) + 1
                 started = time.monotonic()
-                answer = self._turn(messages, turn, deadline, turn_tools)
+                requests_before = requests
+                try:
+                    answer = self._turn(messages, turn, deadline, turn_tools, count_dispatch)
+                except BilledResponseError as error:
+                    accrue_billed(error.usage)
+                    raise
+                except (ValueError, RuntimeError, OSError, httpx.HTTPError):
+                    if self.model_route.paid_route_reachable and requests > requests_before:
+                        mark_cost_unknown()
+                    raise
                 message = answer.message
                 if (
                     not isinstance(message, dict)
@@ -1475,18 +1643,25 @@ class RepositoryAgentClient:
                         raise ValueError("provider_usage")
                 elif answer.cost_usd is not None:
                     raise ValueError("local_billing_must_be_uncertain")
-                prompt_tokens += answer.prompt_tokens
-                completion_tokens += answer.completion_tokens
-                if cost_usd is not None and answer.cost_usd is not None:
-                    cost_usd += answer.cost_usd
-                turn_usage["prompt_tokens"] = (
-                    int(turn_usage["prompt_tokens"] or 0) + answer.prompt_tokens
-                )
-                turn_usage["completion_tokens"] = (
-                    int(turn_usage["completion_tokens"] or 0) + answer.completion_tokens
-                )
-                if turn_usage["cost_usd"] is not None and answer.cost_usd is not None:
-                    turn_usage["cost_usd"] = float(turn_usage["cost_usd"]) + answer.cost_usd
+                if answer.cost_usd is not None:
+                    accrue_billed({
+                        "prompt_tokens": answer.prompt_tokens,
+                        "completion_tokens": answer.completion_tokens,
+                        "cost_usd": answer.cost_usd,
+                    })
+                else:
+                    if prompt_tokens is not None:
+                        prompt_tokens += answer.prompt_tokens
+                    if completion_tokens is not None:
+                        completion_tokens += answer.completion_tokens
+                    if turn_usage["prompt_tokens"] is not None:
+                        turn_usage["prompt_tokens"] = (
+                            int(turn_usage["prompt_tokens"]) + answer.prompt_tokens
+                        )
+                    if turn_usage["completion_tokens"] is not None:
+                        turn_usage["completion_tokens"] = (
+                            int(turn_usage["completion_tokens"]) + answer.completion_tokens
+                        )
                 calls = message.get("tool_calls") or []
                 events.append({
                     "kind": "model_request", "turn": turn,
@@ -1497,7 +1672,7 @@ class RepositoryAgentClient:
                     "request_bytes": len(_json_bytes(messages)),
                     "seconds": round(time.monotonic() - started, 3),
                     "billing": "uncertain" if answer.cost_usd is None else "measured",
-                    **answer.observations,
+                    "observations": dict(answer.observations),
                 })
                 if (
                     answer.finish_reason == "length"
@@ -1520,14 +1695,20 @@ class RepositoryAgentClient:
                     )
                 replayed = [_replayable_call(call) for call in calls]
                 content = message.get("content")
-                messages.append({
+                record_message({
                     "role": "assistant",
                     "content": content if isinstance(content, str) else None,
                     "tool_calls": replayed,
                 })
                 for call_index, call in enumerate(replayed):
+                    remaining()
                     if self.pilot_mode and turn_tool_calls >= self.max_tool_calls_per_turn:
-                        raise ValueError("turn_tool_call_limit")
+                        for skipped in replayed[call_index:]:
+                            record_message({
+                                "role": "tool", "tool_call_id": skipped["id"],
+                                "content": "turn ended: tool call limit",
+                            })
+                        break
                     if self.pilot_mode and cell_tool_calls >= self.max_tool_calls_per_cell:
                         raise ValueError("cell_tool_call_limit")
                     turn_tool_calls += 1
@@ -1563,33 +1744,16 @@ class RepositoryAgentClient:
                             turn_record["workspace_diff"] = patch.decode("utf-8")
                             turn_record["baseline_tree_digest"] = before_digest
                             turn_record["tree_digest"] = after_digest
-                            trajectory["messages"] = messages
                             events.append({"kind": "submitted", "turn": turn})
                             if self.pilot_mode and logical_turn < 3:
-                                messages.append({
+                                record_message({
                                     "role": "tool", "tool_call_id": call_id,
                                     "content": "submission recorded",
                                 })
-                                messages.append({
-                                    "role": "user",
-                                    "content": self.next_user_turns[logical_turn - 1],
-                                })
-                                prefix_length = len(messages)
-                                logical_turn += 1
-                                turn_tool_calls = 0
-                                captured = False
-                                turn_record = {
-                                    "turn": f"T{logical_turn}", "tool_calls": [],
-                                    "submission": None, "workspace_diff": None,
-                                    "usage": {"prompt_tokens": 0, "completion_tokens": 0,
-                                              "requests": 0,
-                                              "cost_usd": 0.0 if cost_usd is not None else None},
-                                }
-                                trajectory["turns"].append(turn_record)
+                                advance_pilot_turn()
                                 break
                             return LoopResult(
-                                (trajectory["turns"][0]["submission"]["title"]
-                                 if self.pilot_mode else submission["summary"]),
+                                pilot_summary() if self.pilot_mode else submission["summary"],
                                 patch, files, before_digest, after_digest, trajectory,
                                 prompt_tokens, completion_tokens, cost_usd, requests,
                             )
@@ -1610,7 +1774,7 @@ class RepositoryAgentClient:
                                 "limit_seconds": round(limit, 3),
                             })
                             observe_oom_kills(turn, name)
-                            messages.append({
+                            record_message({
                                 "role": "tool", "tool_call_id": call_id,
                                 "content": (
                                     f"error: command exceeded its {limit:.0f}s limit and every "
@@ -1634,7 +1798,7 @@ class RepositoryAgentClient:
                             "kind": "tool_error", "turn": turn,
                             "tool": name if isinstance(name, str) else None, "reason": reason,
                         })
-                        messages.append(
+                        record_message(
                             {"role": "tool", "tool_call_id": call_id, "content": f"error: {reason}"}
                         )
                         tool_trace["returned_text"] = messages[-1]["content"]
@@ -1660,7 +1824,7 @@ class RepositoryAgentClient:
                                 "original_bytes": output.original_bytes,
                             }
                         )
-                    messages.append(
+                    record_message(
                         {"role": "tool", "tool_call_id": call_id, "content": bounded}
                     )
                     exit_match = re.match(r"exit=(-?\d+)\n", bounded)
@@ -1682,6 +1846,27 @@ class RepositoryAgentClient:
                         "exit_ok": output.text.startswith("exit=0\n"),
                         "output_bytes": output.original_bytes,
                     })
+                if self.pilot_mode and cell_tool_calls >= self.max_tool_calls_per_cell:
+                    raise ValueError("cell_tool_call_limit")
+                if self.pilot_mode and turn_tool_calls >= self.max_tool_calls_per_turn:
+                    peaks = capture()
+                    patch, files, before_digest, after_digest = self._observed_work(
+                        baseline, workspace,
+                        resource_cause=_resource_cause(peaks, oom_kills_seen),
+                    )
+                    turn_record.update({
+                        "stop_cause": "turn_tool_call_limit",
+                        "workspace_diff": patch.decode("utf-8"),
+                        "patch_ref": digest_bytes(patch),
+                        "baseline_tree_digest": before_digest,
+                        "tree_digest": after_digest,
+                    })
+                    events.append({"kind": "turn_stopped", "turn": logical_turn,
+                                   "cause": "turn_tool_call_limit"})
+                    if logical_turn < 3:
+                        advance_pilot_turn()
+                        continue
+                    raise ValueError("turn_tool_call_limit")
                 _shrink_conversation(
                     messages, self.bounds.max_conversation_bytes, events, prefix_length
                 )
@@ -1696,7 +1881,6 @@ class RepositoryAgentClient:
             subprocess.SubprocessError,
         ) as error:
             primary_failed = True
-            trajectory["messages"] = messages
             rejection: ArtifactCollectionRejected | None = None
             if isinstance(error, ArtifactCollectionRejected):
                 rejection = error
@@ -1726,8 +1910,17 @@ class RepositoryAgentClient:
                 try:
                     if not captured:
                         capture()
-                    patch = self._observed_work(baseline, workspace, enforce_scope=False)[0]
+                    patch, _, before_digest, after_digest = self._observed_work(
+                        baseline, workspace, enforce_scope=False,
+                    )
                     evidence["candidate.patch"] = patch
+                    if self.pilot_mode:
+                        turn_record.update({
+                            "workspace_diff": patch.decode("utf-8"),
+                            "patch_ref": digest_bytes(patch),
+                            "baseline_tree_digest": before_digest,
+                            "tree_digest": after_digest,
+                        })
                 except (ValueError, RuntimeError, OSError, subprocess.SubprocessError):
                     events.append({"kind": "partial_capture_failed"})
             raise AgentLoopError(
@@ -1741,6 +1934,9 @@ class RepositoryAgentClient:
             except (RuntimeError, OSError, subprocess.SubprocessError):
                 events.append({"kind": "cleanup_failed", "cause": "container_cleanup"})
                 cleanup_cause = "container_cleanup"
+            with self._active_state_lock:
+                self._active_sandbox = None
+                self._active_cell_id = None
             try:
                 storage.close()
             except (RuntimeError, OSError, subprocess.SubprocessError):

@@ -55,7 +55,7 @@ from assay.models import (
 )
 from assay.pier_protocol import CandidateSubmission, RuntimeBinding
 from assay.planning import compile_plan_v2
-from assay.store import ObjectStore
+from assay.store import ObjectIntegrityError, ObjectStore
 from workflow_edit.arms import MESS_00
 from workflow_edit.bridge import (
     LOCAL_ROUTE,
@@ -157,9 +157,11 @@ class CorrectnessEvaluator:
         started = time.monotonic()
         _subject_id, arm_id = cell_arm(coordinate)
         try:
+            if output["cell_id"] != coordinate.cell_id:
+                return EvaluationFailed("MismatchedCell", "output belongs to another cell")
             candidate = worker_candidate(self.store, output)
             baseline = input_value["repository"]
-        except (KeyError, TypeError, ValueError) as error:
+        except (KeyError, TypeError, ValueError, ObjectIntegrityError, OSError) as error:
             return EvaluationFailed("MissingCandidate", f"unreadable candidate: {error}")
         submission = CandidateSubmission(
             patch_ref=str(self.store.publish_bytes(candidate.patch)),

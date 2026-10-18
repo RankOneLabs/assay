@@ -152,7 +152,7 @@ def test_live_configuration_follows_the_routing_file(tmp_path: Path) -> None:
 
 
 class FakeSandbox:
-    def __init__(self, workspace: Path, cache: Path, image: str) -> None:
+    def __init__(self, workspace: Path, cache: Path, image: str, cell_id: str) -> None:
         self.workspace, self.name = workspace, "fake"
         self.observed = {"user": "1000:1000", "network_mode": "none", "readonly_rootfs": True,
                          "memory_bytes": 1536 << 20, "pids_limit": 128, "nano_cpus": 10**9,

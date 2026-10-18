@@ -200,7 +200,17 @@ class AdmissionLedger:
         self.cells = 0
         self.active_cells = 0
         self.requests = 0
-        self.halt: AdmissionHalt | None = None
+        self.cell_halt: AdmissionHalt | None = None
+        self.request_halt: AdmissionHalt | None = None
+
+    @property
+    def halt(self) -> AdmissionHalt | None:
+        """Compatibility with request adapters that publish a billing halt."""
+        return self.request_halt
+
+    @halt.setter
+    def halt(self, value: AdmissionHalt | None) -> None:
+        self.request_halt = value
 
     def configure_requests(
         self,
@@ -222,31 +232,43 @@ class AdmissionLedger:
         return self.ceiling.max_wall_time_seconds - (time.monotonic() - self.started_at)
 
     def reserve(self, kind: Literal["cell", "request"]) -> AdmissionHalt | None:
-        if self.halt is not None:
-            return self.halt
+        if self.request_halt is not None:
+            return self.request_halt
+        remaining = self.remaining_seconds()
+        if remaining is not None and remaining <= 0:
+            self.request_halt = AdmissionHalt(
+                "ceiling_exhausted", "authorized wall time exhausted"
+            )
+            return self.request_halt
         if kind == "cell":
+            if self.cell_halt is not None:
+                return self.cell_halt
             if self.ceiling is None:
                 return None
-            remaining = self.remaining_seconds()
-            if self.cells >= self.ceiling.max_cells or remaining is None or remaining <= 0:
-                self.halt = AdmissionHalt(
-                    "ceiling_exhausted", "authorized cell or wall ceiling exhausted"
+            if self.cells >= self.ceiling.max_cells:
+                self.cell_halt = AdmissionHalt(
+                    "ceiling_exhausted", "authorized cell ceiling exhausted"
                 )
             elif self.active_cells >= self.ceiling.max_fleet_occupancy:
-                self.halt = AdmissionHalt(
+                self.cell_halt = AdmissionHalt(
                     "ceiling_exhausted", "authorized fleet occupancy exhausted"
                 )
             else:
                 self.cells += 1
                 self.active_cells += 1
+            return self.cell_halt
         else:
             if self.max_requests is not None and self.requests >= self.max_requests:
-                self.halt = AdmissionHalt("ceiling_exhausted", "authorized request count exhausted")
+                self.request_halt = AdmissionHalt(
+                    "ceiling_exhausted", "authorized request count exhausted"
+                )
             elif (self.requests + 1) * self.request_cost_bound_usd > self.max_spend_usd:
-                self.halt = AdmissionHalt("budget_exhausted", "insufficient unreserved budget")
+                self.request_halt = AdmissionHalt(
+                    "budget_exhausted", "insufficient unreserved budget"
+                )
             else:
                 self.requests += 1
-        return self.halt
+        return self.request_halt
 
     def release_cell(self) -> None:
         self.active_cells -= 1
@@ -489,7 +511,10 @@ async def execute_plan(
             remaining = admission.remaining_seconds()
             if remaining is not None:
                 if remaining <= 0:
-                    raise AdmissionHalt("ceiling_exhausted", "authorized wall time exhausted")
+                    raise AdmissionHalt(
+                        "ceiling_exhausted", "authorized wall time exhausted",
+                        accounting=Accounting(coverage="unavailable"),
+                    )
                 try:
                     async with asyncio.timeout(remaining):
                         result = await _dispatch_worker(
@@ -619,17 +644,20 @@ async def execute_plan(
                     raise TypeError("evaluator returned an invalid Result")
                 canonical_json(result.detail)
             except TimeoutError as error:
+                timeout_accounting = Accounting(
+                    coverage="uncertain" if called else "unavailable"
+                )
                 if wall_expired():
                     if halt is None:
                         halt = AdmissionHalt("ceiling_exhausted", "authorized wall time exhausted")
                     result = EvaluationFailed(
-                        halt.code, halt.message, accounting=Accounting(coverage="uncertain")
+                        halt.code, halt.message, accounting=timeout_accounting
                     )
                 else:
                     result = EvaluationFailed(
                         type(error).__name__,
                         str(error),
-                        accounting=Accounting(coverage="uncertain"),
+                        accounting=timeout_accounting,
                     )
             except Exception as error:
                 if returned and isinstance(result, EvaluationSuccess | EvaluationFailed):

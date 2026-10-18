@@ -15,8 +15,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from assay.canonical import digest_bytes
 from workflow_edit.fixture import MAX_REPOSITORY_BYTES, MAX_REPOSITORY_FILES, load_fixture
-from workflow_edit.qualify import CELL_TIMEOUT_S, read_evidence
+from workflow_edit.qualify import CELL_TIMEOUT_S, EVIDENCE, read_evidence
 from workflow_edit.settings import Part1AgentSettings
 
 SMOKE_MD = Path(__file__).resolve().parent / "SMOKE.md"
@@ -79,6 +80,11 @@ def cell_metrics(cells: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     completion = [event["completion_tokens"] for event in turns]
     return {
         "cells": len(cells),
+        "paid_cells": sum(
+            (cell.get("accounting") or {}).get("amount") is not None
+            and (cell.get("accounting") or {})["amount"] > 0
+            for cell in cells.values()
+        ),
         "outcomes": dict(sorted(counts.items())),
         "turns": len(turns),
         "turns_per_cell": {
@@ -238,7 +244,7 @@ def _table(headers: Sequence[str], rows: Iterable[Sequence[Any]]) -> list[str]:
     return lines
 
 
-def render() -> str:
+def render_original() -> str:
     smoke, probes = read_evidence("smoke"), read_evidence("probes")
     wake, pricing = read_evidence("wake"), read_evidence("pricing")
     diagnosis = failure_diagnosis(read_evidence("diagnosis"))
@@ -272,7 +278,8 @@ def render() -> str:
         f"- Image: `{smoke['image']}`; fixture identity `{smoke['fixture_identity']}`.",
         f"- Ceiling: {smoke['ceiling']['max_cells']} cells, "
         f"{smoke['ceiling']['max_wall_time_seconds']:,.0f} s wall, occupancy "
-        f"{smoke['ceiling']['max_fleet_occupancy']}. Paid cells: 0. Per-turn billing: "
+        f"{smoke['ceiling']['max_fleet_occupancy']}. Paid cells: {m['paid_cells']}. "
+        "Per-turn billing: "
         f"{', '.join(m['billing'])} (Smithers prices no turn; local cost is unpriced, not "
         f"zero). Cell cost coverage: "
         + ", ".join(f"{n} {coverage}" for coverage, n in m["cell_coverage"].items()) + ".",
@@ -427,6 +434,84 @@ def render() -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def render_regraded() -> str:
+    """Append corrections while preserving the original qualification record."""
+    regrade = read_evidence("regrade")
+    if regrade["smoke_sha256"] != digest_bytes((EVIDENCE / "smoke.json.gz").read_bytes()):
+        raise ValueError("regrade smoke_sha256 does not match the current smoke.json.gz")
+    smoke = read_evidence("smoke")
+    changes = regrade["changed_grades"]
+    metrics = cell_metrics(smoke["cells"])
+    paid_cells = metrics["paid_cells"]
+    hosted = hosted_worst_case(
+        read_evidence("pricing"),
+        bytes_per_token_floor=metrics["bytes_per_prompt_token"]["min"],
+        settings=Part1AgentSettings(),
+    )
+    lines = [
+        f"## Regraded ({regrade['regraded_at']})",
+        "",
+        "The committed patches were evaluated again with the fixed workflow correctness",
+        "harness. The original result above remains the historical record. This run used",
+        f"the same pinned image (`{regrade['image']}`) and no paid provider request.",
+        f"Original harness: `{regrade['original_harness_sha256']}`; fixed harness: "
+        f"`{regrade['harness_sha256']}`.",
+        "",
+        f"{len(regrade['evaluations'])} previously graded candidates were regraded; "
+        f"{len(changes)} grades changed.",
+        "",
+    ]
+    if changes:
+        rows = []
+        for cell_id, change in sorted(changes.items()):
+            before, after = change["before"], change["after"]
+
+            def describe(group: Mapping[str, Any]) -> str:
+                status = str(group["status"])
+                cause = group.get("cause")
+                return status + (f" ({cause})" if cause else "")
+
+            groups = [
+                f"{name}: {describe(before['groups'][name])} to "
+                f"{describe(after['groups'][name])}"
+                for name in sorted(before["groups"])
+                if before["groups"][name] != after["groups"][name]
+            ]
+            reason = "; ".join(groups) or f"cause: {before['cause']} to {after['cause']}"
+            rows.append((cell_id, before["verdict"], after["verdict"], reason))
+        lines.extend(_table(("Cell", "Original", "Regraded", "Changed groups and cause"), rows))
+        lines.append("")
+    lines.extend([
+        "The fixed harness restores frozen visible tests before typecheck and build,",
+        (
+            "then runs the same frozen test groups. The changes above name each changed grade."
+            if changes
+            else "then runs the same frozen test groups. No stored candidate's grade changed."
+        ),
+        "",
+        f"Cost correction: Paid cells: {paid_cells}, counted from cells with a positive",
+        "recorded accounting amount. The original hosted “Measured $/cell” column",
+        "is an estimate derived from the local tokenizer's smallest observed",
+        "request-bytes-per-prompt-token ratio; it is not a hosted measurement.",
+        "The “Strict $/cell” column is the independent upper bound.",
+        "",
+        *_table(
+            ("Endpoint", "Strict $/cell", "Local tokenizer estimate $/cell"),
+            (
+                (row["provider"], round(row["strict_usd"], 3),
+                 round(row["measured_usd"], 3))
+                for row in hosted["endpoints"]
+            ),
+        ),
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def render() -> str:
+    return render_original() + "\n" + render_regraded()
 
 
 def main() -> None:

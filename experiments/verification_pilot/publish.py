@@ -10,40 +10,12 @@ from typing import Any
 from assay.review.export import MAX_EXPORT_BYTES, ExportError, export_review
 from assay.store import ObjectStore
 from assay.verify import export_bundle, verify_bundle
+from verification_pilot.render import (
+    merge_study_tables,
+    read_study_state,
+    render_study_pages,
+)
 from verification_pilot.report import model_report
-
-
-def _publish_qualified_ceiling(page: Path, model: str, rows: list[dict[str, Any]]) -> None:
-    """Fill the route's cells after its manual smoke qualification."""
-    text = page.read_text(encoding="utf-8")
-    start = "<!-- ceiling-table:start -->"
-    end = "<!-- ceiling-table:end -->"
-    before, marker, remaining = text.partition(start)
-    if not marker or end not in remaining:
-        raise ValueError("study page has no ceiling table markers")
-    current, _, after = remaining.partition(end)
-    lines = current.strip().splitlines()
-    by_arm = {str(row["arm"]): row for row in rows}
-    if set(by_arm) != {"t1-native", "t1-quoted"}:
-        raise ValueError("qualified route requires both Tier 1 ceiling cells")
-
-    def cell(arm: str) -> str:
-        row = by_arm[arm]
-        count, n = int(row["repository_wide_first"]), int(row["n"])
-        if n <= 0:
-            raise ValueError("qualified route has no observed Tier 1 cells")
-        return f"{count}/{n} ({count / n:.1%})"
-
-    replacement = f"| {model} | {cell('t1-native')} | {cell('t1-quoted')} | qualified |"
-    route_prefix = f"| {model} |"
-    for index, line in enumerate(lines):
-        if line.startswith(route_prefix):
-            lines[index] = replacement
-            break
-    else:
-        lines.append(replacement)
-    page.write_text(before + start + "\n" + "\n".join(lines) + "\n" + end + after,
-                    encoding="utf-8")
 
 
 def _write_review_export(
@@ -104,8 +76,21 @@ def publish_model(
     (destination / "report.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    tables = result["analysis"]
+    qualified_routes: frozenset[str] = frozenset()
     if qualified:
         page = study_page or (Path(__file__).resolve().parents[2]
                               / "studies/verification-pilot/README.md")
-        _publish_qualified_ceiling(page, model, result["ceiling_effect"])
+        supporting_page = page.with_name("supporting-data.md")
+        if not supporting_page.exists() and page.exists() and "| qualified |" in page.read_text():
+            raise ValueError("published study page lacks recoverable route tables")
+        previous, prior_qualified = read_study_state(supporting_page, own_group=own_group)
+        tables = merge_study_tables(previous, tables)
+        qualified_routes = prior_qualified | frozenset({model})
+    main, supporting = render_study_pages(tables, qualified_routes=qualified_routes)
+    (destination / "study.md").write_text(main, encoding="utf-8")
+    (destination / "supporting-data.md").write_text(supporting, encoding="utf-8")
+    if qualified:
+        page.write_text(main, encoding="utf-8")
+        supporting_page.write_text(supporting, encoding="utf-8")
     return result

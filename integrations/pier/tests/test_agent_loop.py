@@ -8,11 +8,14 @@ import sys
 import tarfile
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
+import assay_pier_bridge.agent_loop as agent_loop
 import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
@@ -20,6 +23,7 @@ from assay_pier_bridge.agent_loop import (
     HAIKU_TURN_ROUTE,
     PILOT_TOOLS_REVIEW,
     PILOT_TOOLS_T1,
+    SYSTEM_PROMPT,
     TOOLS,
     AgentLoopError,
     ContainerStartError,
@@ -110,6 +114,24 @@ def test_paid_turn_uses_the_current_pilot_tool_schema(tmp_path: Path) -> None:
     assert captured[0]["tools"] == PILOT_TOOLS_REVIEW
 
 
+def test_paid_turn_forwards_deadline_to_openrouter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client(tmp_path, lambda request: httpx.Response(500))
+    seen: list[float | None] = []
+
+    def fake_openrouter(*args: Any, deadline: float | None = None,
+                        on_dispatch: Any = None) -> ModelTurn:
+        seen.append(deadline)
+        return ModelTurn(message={}, finish_reason="stop", prompt_tokens=0,
+                         completion_tokens=0, cost_usd=0.0)
+
+    monkeypatch.setattr(client, "_openrouter_turn", fake_openrouter)
+    deadline = time.monotonic() + 20
+    client._turn([], 1, deadline, TOOLS)
+    assert seen == [deadline]
+
+
 def test_haiku_turn_uses_caller_loop_bounds(tmp_path: Path) -> None:
     captured: list[bytes] = []
 
@@ -190,7 +212,7 @@ class FakeSandbox:
     oom_kill_count = 0
     late_oom_kills = 0
 
-    def __init__(self, workspace: Path, cache: Path, image: str) -> None:
+    def __init__(self, workspace: Path, cache: Path, image: str, cell_id: str) -> None:
         self.workspace = workspace
         self.cache = cache
         self.name = f"container-{len(self.created)}"
@@ -410,8 +432,8 @@ def test_failed_pilot_dispatch_counts_in_turn_usage(tmp_path: Path) -> None:
 
 def test_stopped_later_turn_recaptures_tmpfs_workspace(tmp_path: Path) -> None:
     class StagedSandbox(FakeSandbox):
-        def __init__(self, workspace: Path, cache: Path, image: str) -> None:
-            super().__init__(workspace, cache, image)
+        def __init__(self, workspace: Path, cache: Path, image: str, cell_id: str) -> None:
+            super().__init__(workspace, cache, image, cell_id)
             self.host_workspace = workspace
             self.workspace = workspace.parent / "container_workspace"
             shutil.copytree(workspace, self.workspace)
@@ -433,7 +455,7 @@ def test_stopped_later_turn_recaptures_tmpfs_workspace(tmp_path: Path) -> None:
             package={"instruction.md": "Edit", "workspace/src/a.ts": "original\n"},
         )
     assert failure.value.cause == "no_tool_call"
-    assert failure.value.trajectory["turns"][1]["workspace_diff"] is None
+    assert "+second" in failure.value.trajectory["turns"][1]["workspace_diff"]
     assert b"+second" in failure.value.evidence["candidate.patch"]
 
 
@@ -483,17 +505,41 @@ def test_pilot_search_scope_is_structural_in_trace(tmp_path: Path) -> None:
     assert search["exit_code"] == 0
 
 
-def test_pilot_tool_call_caps_have_typed_causes(tmp_path: Path) -> None:
-    calls = [_call("run_command", {"command": "true"}, number) for number in range(16)]
-    with pytest.raises(AgentLoopError) as per_turn:
-        _pilot(tmp_path, Scripted(calls)).run_cell(
-            cell_id="s:a:w0", package={"instruction.md": "Work"}
-        )
-    assert per_turn.value.cause == "turn_tool_call_limit"
-    assert len(per_turn.value.trajectory["turns"][0]["tool_calls"]) == 15
-    assert per_turn.value.trajectory["turns"][0]["workspace_diff"] is None
-    assert per_turn.value.cause in CANDIDATE_STOP_CAUSES
+def test_pilot_mode_neither_defines_nor_swaps_in_a_system_prompt(tmp_path: Path) -> None:
+    """G14: the experiment owns its prompt text, so the bridge must not carry one.
 
+    The deleted swap-in fired precisely when a pilot caller passed the non-pilot
+    ``SYSTEM_PROMPT``, which is why that is the prompt this guard passes in.
+    """
+    assert not hasattr(agent_loop, "PILOT_SYSTEM_PROMPT")
+    client = _pilot(tmp_path, Scripted(), system_prompt=SYSTEM_PROMPT)
+    assert client.system_prompt == SYSTEM_PROMPT
+
+
+def test_pilot_turn_tool_call_cap_ends_only_that_turn(tmp_path: Path) -> None:
+    calls = [_call("run_command", {"command": "true"}, number) for number in range(16)]
+    completion = Scripted(
+        calls,
+        [_call("submit_output", {"verdict": "unsure", "remaining_v1": "x",
+                                  "checks_performed": "read"}, 17)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "test"}, 18)],
+    )
+    capped = _pilot(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Work"}
+    )
+    first = capped.trajectory["turns"][0]
+    assert first["stop_cause"] == "turn_tool_call_limit"
+    assert first["submission"] is None
+    assert len(first["tool_calls"]) == 15
+    assert first["patch_ref"].startswith("sha256:")
+    assert first["tree_digest"] == first["baseline_tree_digest"]
+    assert capped.trajectory["turns"][1]["submission"]["verdict"] == "unsure"
+    assert capped.summary == ""
+    assert completion.seen[1]["messages"][-1]["content"] == "Review your first submission"
+
+
+def test_pilot_cell_tool_call_cap_ends_the_cell(tmp_path: Path) -> None:
     def commands(count: int, start: int) -> list[dict[str, Any]]:
         return [_call("run_command", {"command": "true"}, number)
                 for number in range(start, start + count)]
@@ -511,8 +557,34 @@ def test_pilot_tool_call_caps_have_typed_causes(tmp_path: Path) -> None:
         )
     assert per_cell.value.cause == "cell_tool_call_limit"
     assert sum(len(turn["tool_calls"]) for turn in per_cell.value.trajectory["turns"]) == 40
-    assert per_cell.value.trajectory["turns"][-1]["workspace_diff"] is None
+    assert per_cell.value.trajectory["turns"][-1]["stop_cause"] == "cell_tool_call_limit"
+    assert per_cell.value.trajectory["turns"][-1]["patch_ref"].startswith("sha256:")
     assert per_cell.value.cause in CANDIDATE_STOP_CAUSES
+
+
+def test_pilot_model_turn_limit_records_cell_stop(tmp_path: Path) -> None:
+    completion = Scripted([_call("run_command", {"command": "true"}, 1)])
+    with pytest.raises(AgentLoopError) as failure:
+        _local(
+            tmp_path, completion, pilot_mode=True,
+            next_user_turns=("Review", "Check"), writable_prefixes=("src/", "tests/"),
+            max_tool_calls_per_turn=40, max_tool_calls_per_cell=40,
+        ).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Work"}
+        )
+    assert failure.value.cause == "turn_limit"
+    assert failure.value.trajectory["turns"][0]["stop_cause"] == "turn_limit"
+    assert len(completion.seen) == 20
+
+
+def test_pilot_deadline_records_distinct_cell_stop(tmp_path: Path) -> None:
+    with pytest.raises(AgentLoopError) as failure:
+        _pilot(tmp_path, Scripted([_call("run_command", {"command": "true"}, 1)])).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Work"},
+            deadline=time.monotonic() - 1,
+        )
+    assert failure.value.cause == "agent_deadline"
+    assert failure.value.trajectory["turns"][0]["stop_cause"] == "agent_deadline"
 
 
 def test_pilot_truncated_output_and_scope_evidence(tmp_path: Path) -> None:
@@ -650,6 +722,43 @@ def test_shrink_keeps_declared_prefix_and_raises_typed_cause() -> None:
     assert failure.value.cause == "conversation_limit"
 
 
+def test_pilot_session_remains_pinned_past_shrink_threshold(tmp_path: Path) -> None:
+    prefix = (
+        {"role": "assistant", "content": "handoff"},
+        {"role": "tool", "tool_call_id": "handoff", "content": "account" * 100},
+        {"role": "user", "content": "Verify the whole migration"},
+    )
+    completion = Scripted([_call("submit_output", {"title": "Done", "body": ""}, 1)])
+    with pytest.raises(AgentLoopError) as failure:
+        _pilot(
+            tmp_path, completion, message_prefix=prefix,
+            bounds=replace(LoopBounds(), max_conversation_bytes=100),
+        ).run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.cause == "conversation_limit"
+    assert completion.seen == []
+    assert failure.value.trajectory["messages"][2:] == list(prefix)
+
+
+def test_mid_cell_shrink_preserves_recorded_transcript(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("run_command", {"command": "true"}, 1)],
+        [_call("run_command", {"command": "true"}, 2)],
+        [_call("submit_output", {"summary": "done"}, 3)],
+    )
+    client = _local(
+        tmp_path, completion, system_prompt="S",
+        bounds=replace(LoopBounds(), max_conversation_bytes=450),
+    )
+    result = client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert any(e["kind"] == "conversation_truncated" for e in result.trajectory["events"])
+    recorded = result.trajectory["messages"]
+    assert [m["tool_call_id"] for m in recorded if m["role"] == "tool"] == [
+        "call-1", "call-2"
+    ]
+    assert all(m["tool_call_id"] != "call-1" for m in completion.seen[2]["messages"]
+               if m["role"] == "tool")
+
+
 def test_local_route_requires_an_injected_completion_and_no_key(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="injected turn completion"):
         _local(tmp_path, None)
@@ -675,11 +784,29 @@ def test_local_turns_record_observations_and_uncertain_billing(tmp_path: Path) -
     assert b"+two" in result.patch
     assert result.baseline_tree_digest != result.final_tree_digest
     model_events = [e for e in result.trajectory["events"] if e["kind"] == "model_request"]
-    assert [e["smithers_job_id"] for e in model_events] == ["job-1", "job-2"]
+    assert [e["observations"]["smithers_job_id"] for e in model_events] == ["job-1", "job-2"]
     assert all(e["billing"] == "uncertain" for e in model_events)
     # The replayed assistant turn carries exactly the portable tool-call fields.
     replayed = completion.seen[1]["messages"][2]
     assert replayed["tool_calls"][0].keys() == {"id", "type", "function"}
+
+
+def test_observations_cannot_replace_model_event_fields(tmp_path: Path) -> None:
+    def completion(**kwargs: Any) -> ModelTurn:
+        return ModelTurn(
+            message={
+                "role": "assistant", "tool_calls": [_call("submit_output", {"summary": "ok"}, 1)]
+            },
+            finish_reason="tool_calls", prompt_tokens=7, completion_tokens=3,
+            cost_usd=None, observations={"kind": "forged", "prompt_tokens": 999},
+        )
+
+    result = _local(tmp_path, completion).run_cell(
+        cell_id="s:a:w0", package={"instruction.md": "Edit"}
+    )
+    event = next(e for e in result.trajectory["events"] if e["kind"] == "model_request")
+    assert event["prompt_tokens"] == 7
+    assert event["observations"] == {"kind": "forged", "prompt_tokens": 999}
 
 
 def test_tool_call_mistakes_go_back_to_the_model(tmp_path: Path) -> None:
@@ -1088,8 +1215,8 @@ def test_replace_in_file_refusals_change_nothing_and_reach_the_model(
     outside.write_text("a = 1\n")
 
     class LinkingSandbox(FakeSandbox):
-        def __init__(self, workspace: Path, cache: Path, image: str) -> None:
-            super().__init__(workspace, cache, image)
+        def __init__(self, workspace: Path, cache: Path, image: str, cell_id: str) -> None:
+            super().__init__(workspace, cache, image, cell_id)
             (workspace / "src" / "link.ts").symlink_to(outside)
 
     completion = Scripted(
@@ -1237,7 +1364,130 @@ def test_resolved_config_observes_constructed_transport_retries(tmp_path: Path) 
     with pytest.raises(AgentLoopError, match="retry_config_violation") as failure:
         client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
     assert failure.value.trajectory["config"]["transport_retries"] == 2
-    assert failure.value.trajectory["events"][-1]["requests"] == 1
+    assert failure.value.trajectory["events"][-1]["requests"] == 0
+
+
+def test_full_provider_envelope_limit_does_not_count_a_request(tmp_path: Path) -> None:
+    dispatched = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal dispatched
+        dispatched += 1
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "ok"}, 1))
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "Edit"},
+    ]
+    compact_size = sum(len(json.dumps(value, separators=(",", ":")).encode())
+                       for value in (messages, TOOLS))
+    client = _client(tmp_path, handler, bounds=replace(LoopBounds(),
+                                                      max_request_bytes=compact_size + 1))
+    with pytest.raises(AgentLoopError, match="request_limit") as failure:
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.usage["requests"] == 0
+    assert failure.value.usage["cost_usd"] == 0.0
+    assert failure.value.trajectory["turns"][0]["usage"]["requests"] == 0
+    assert dispatched == 0
+
+
+@pytest.mark.parametrize("failure_kind", ["shape", "identity", "response_limit", "cost"])
+def test_billed_200_failure_keeps_turn_and_cell_usage(
+    tmp_path: Path, failure_kind: str
+) -> None:
+    body = _answer("submit_output", {"summary": "ok"}, 1)
+    bounds = LoopBounds()
+    if failure_kind == "shape":
+        body["choices"] = []
+    elif failure_kind == "identity":
+        body["model"] = "wrong/model"
+    elif failure_kind == "response_limit":
+        bounds = replace(bounds, max_response_bytes=1)
+    else:
+        del body["usage"]["cost"]
+
+    client = _client(tmp_path, lambda request: httpx.Response(200, json=body), bounds=bounds)
+    with pytest.raises(AgentLoopError) as failure:
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.cause == {
+        "shape": "provider_response", "identity": "provider_identity",
+        "response_limit": "response_limit", "cost": "provider_usage",
+    }[failure_kind]
+    expected_cost = None if failure_kind == "cost" else 0.001
+    assert failure.value.usage == {
+        "prompt_tokens": 10, "completion_tokens": 5, "requests": 1,
+        "cost_usd": expected_cost,
+    }
+    assert failure.value.trajectory["turns"][0]["usage"] == failure.value.usage
+
+
+@pytest.mark.parametrize(("missing_field", "bad_value"), [
+    ("completion_tokens", None), ("prompt_tokens", "not-a-count"),
+])
+@pytest.mark.parametrize("earlier_response", [False, True])
+def test_billed_200_unknown_token_count_keeps_readable_usage(
+    tmp_path: Path, missing_field: str, bad_value: object, earlier_response: bool,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if earlier_response and calls == 1:
+            return httpx.Response(200, json=_answer("run_command", {"command": "true"}, 1))
+        body = _answer("submit_output", {"summary": "ok"}, calls)
+        if bad_value is None:
+            del body["usage"][missing_field]
+        else:
+            body["usage"][missing_field] = bad_value
+        return httpx.Response(200, json=body)
+
+    with pytest.raises(AgentLoopError, match="provider_usage") as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    expected = {
+        "prompt_tokens": None if missing_field == "prompt_tokens" else 10 * calls,
+        "completion_tokens": None if missing_field == "completion_tokens" else 5 * calls,
+        "requests": calls,
+        "cost_usd": 0.001 * calls,
+    }
+    assert failure.value.usage == expected
+    assert failure.value.trajectory["turns"][0]["usage"] == expected
+
+
+@pytest.mark.parametrize("read_error", [httpx.ReadError, httpx.ReadTimeout])
+@pytest.mark.parametrize("earlier_response", [False, True])
+def test_read_failure_after_dispatch_marks_cost_unknown(
+    tmp_path: Path, read_error: type[httpx.RequestError], earlier_response: bool,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if earlier_response and calls == 1:
+            return httpx.Response(200, json=_answer("run_command", {"command": "true"}, 1))
+
+        class BrokenStream(httpx.SyncByteStream):
+            def __iter__(self) -> Iterator[bytes]:
+                yield b'{"partial":'
+                raise read_error("response read failed", request=request)
+
+        return httpx.Response(200, stream=BrokenStream())
+
+    with pytest.raises(AgentLoopError, match="transport_failure") as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    expected = {
+        "prompt_tokens": 10 if earlier_response else 0,
+        "completion_tokens": 5 if earlier_response else 0,
+        "requests": calls,
+        "cost_usd": None,
+    }
+    assert failure.value.usage == expected
+    assert failure.value.trajectory["turns"][0]["usage"] == expected
 
 
 @pytest.mark.parametrize(
@@ -1295,18 +1545,75 @@ def test_docker_sandbox_mounts_only_neutral_cell_directories(
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     workspace, cache = tmp_path / "workspace", tmp_path / "cache"
-    sandbox = DockerToolSandbox(workspace, cache, "locked-image")
+    sandbox = DockerToolSandbox(workspace, cache, "locked-image", "s:a:w0")
     assert sandbox.observed["network_mode"] == "none"
     assert sandbox.observed["user"] == "1000:1000"
     sandbox.close()
     command = commands[0]
     assert command[:3] == ["docker", "run", "-d"]
     assert command[command.index("--network") + 1] == "none"
+    assert command[command.index("--label") + 1] == "assay-cell=s:a:w0"
     assert f"{workspace}:/workspace:rw" in command
     assert f"{cache}:/cache:rw" in command
     assert "HOME=/cache" in command
     assert not any("hidden" in arg for arg in command)
     assert commands[-1][:3] == ["docker", "rm", "-f"]
+
+
+def test_concurrent_sandbox_close_removes_container_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered_removal = Event()
+    release_removal = Event()
+    second_started = Event()
+    removals: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        if command[:3] == ["docker", "rm", "-f"]:
+            removals.append(command)
+            entered_removal.set()
+            assert release_removal.wait(2)
+        stdout = _inspect_stdout() if command[:2] == ["docker", "inspect"] else "ok"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    sandbox = DockerToolSandbox(tmp_path / "workspace", tmp_path / "cache", "img", "s:a:w0")
+
+    def second_close() -> None:
+        second_started.set()
+        sandbox.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(sandbox.close)
+        assert entered_removal.wait(2)
+        second = pool.submit(second_close)
+        assert second_started.wait(2)
+        time.sleep(0.05)
+        release_removal.set()
+        first.result(timeout=2)
+        second.result(timeout=2)
+    assert len(removals) == 1
+
+
+def test_failed_sandbox_close_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempts = 0
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        nonlocal attempts
+        if command[:3] == ["docker", "rm", "-f"]:
+            attempts += 1
+            return type("Result", (), {"returncode": int(attempts == 1)})()
+        stdout = _inspect_stdout() if command[:2] == ["docker", "inspect"] else "ok"
+        return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    sandbox = DockerToolSandbox(tmp_path / "workspace", tmp_path / "cache", "img", "s:a:w0")
+    with pytest.raises(RuntimeError, match="container_cleanup"):
+        sandbox.close()
+    sandbox.close()
+    assert attempts == 2
 
 
 def test_tmpfs_sandbox_takes_its_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1320,7 +1627,7 @@ def test_tmpfs_sandbox_takes_its_limits(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     limits = SandboxLimits(memory_mb=900, pids=40, cpus=2.0, workspace_mb=100, cache_mb=50,
                            tmp_mb=25)
-    DockerToolSandbox(tmp_path, tmp_path, "img", tmpfs_storage=True, limits=limits)
+    DockerToolSandbox(tmp_path, tmp_path, "img", "s:a:w0", tmpfs_storage=True, limits=limits)
     run = commands[0]
     assert "/workspace:size=100m,mode=1777" in run and "/cache:size=50m,mode=1777" in run
     assert "/tmp:size=25m" in run
@@ -1349,7 +1656,7 @@ def test_tmpfs_archive_failure_removes_started_container(
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     monkeypatch.setattr("assay_pier_bridge.agent_loop.tarfile.open", fail_archive)
     with pytest.raises(ContainerStartError):
-        DockerToolSandbox(tmp_path, tmp_path, "locked-image", tmpfs_storage=True)
+        DockerToolSandbox(tmp_path, tmp_path, "locked-image", "s:a:w0", tmpfs_storage=True)
     assert commands[0][:3] == ["docker", "run", "-d"]
     assert commands[-1][:3] == ["docker", "rm", "-f"]
 
@@ -1367,7 +1674,7 @@ def test_tmpfs_transfer_timeout_removes_started_container(
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     with pytest.raises(ContainerStartError):
-        DockerToolSandbox(tmp_path, tmp_path, "locked-image", tmpfs_storage=True)
+        DockerToolSandbox(tmp_path, tmp_path, "locked-image", "s:a:w0", tmpfs_storage=True)
     assert commands[-1][:3] == ["docker", "rm", "-f"]
 
 
@@ -1405,7 +1712,7 @@ def test_tmpfs_capture_streams_the_tree_and_replaces_staging(
     archive = _tar([directory, info], {"./src/new.txt": content})
 
     def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        assert command[:3] == ["docker", "exec", "fake-container"]
+        assert command[:5] == ["docker", "exec", "-u", "0:0", "fake-container"]
         return subprocess.CompletedProcess(command, 0, archive, b"")
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
@@ -1522,7 +1829,7 @@ def test_failed_container_start_keeps_named_cause_and_records_cleanup(
 
     monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
     with pytest.raises(ContainerStartError) as start:
-        DockerToolSandbox(tmp_path / "workspace", tmp_path / "cache", "locked-image")
+        DockerToolSandbox(tmp_path / "workspace", tmp_path / "cache", "locked-image", "s:a:w0")
     assert start.value.cleanup_failed
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1557,3 +1864,33 @@ def test_docker_tool_output_is_streamed_with_a_host_memory_cap(
     assert output.original_bytes == len("exit=0\n") + 2_000_000
     assert len(output.text.encode()) <= 64
     assert output.text.startswith("exit=0\n")
+
+
+def test_tmpfs_capture_permission_failure_has_candidate_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sandbox = DockerToolSandbox.__new__(DockerToolSandbox)
+    sandbox.name = "fake-container"
+    sandbox._tmpfs_storage = True
+    sandbox._workspace = tmp_path
+    sandbox.execute = lambda *a, **k: ToolOutput(  # type: ignore[method-assign]
+        "exit=0\n1\n2\n0\n5000\n6000\n", 25, False
+    )
+    monkeypatch.setattr(
+        "assay_pier_bridge.agent_loop.subprocess.run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv, 1, b"", b"tar: Permission denied"
+        ),
+    )
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        sandbox.capture_workspace()
+    assert rejected.value.cause == "workspace_capture_permission"
+
+
+def test_archive_hard_link_has_distinct_candidate_cause(tmp_path: Path) -> None:
+    member = tarfile.TarInfo("linked.txt")
+    member.type = tarfile.LNKTYPE
+    member.linkname = "inside.txt"
+    with pytest.raises(ArtifactCollectionRejected) as rejected:
+        extract_workspace_archive(_tar([member]), tmp_path)
+    assert rejected.value.cause == "hard_link_submission"

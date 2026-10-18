@@ -235,10 +235,11 @@ class TrialRequest(ClosedModel):
 
 
 class TrialUsage(ClosedModel):
-    prompt_tokens: int = Field(ge=0)
-    completion_tokens: int = Field(ge=0)
+    prompt_tokens: int | None = Field(ge=0)
+    completion_tokens: int | None = Field(ge=0)
     cost_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
-    requests: int = Field(ge=0)
+    # Worker evidence may report tokens without an observed request count.
+    requests: int | None = Field(default=None, ge=0)
 
 
 class EffectiveEnforcement(ClosedModel):
@@ -296,6 +297,11 @@ CandidateCause = Literal[
     # infrastructure ``harness_deadline``: running out of time is the
     # candidate's outcome, not a lost coordinate.
     "agent_deadline",
+    "invalid_tool_output_encoding",
+    "patch_capture_conflict",
+    "non_utf8_path",
+    "workspace_capture_permission",
+    "hard_link_submission",
 ]
 InfrastructureCause = Literal[
     "harness_deadline",
@@ -392,6 +398,8 @@ class TrialHandle(Protocol):
         """
 
     def run(self) -> TrialResult: ...
+
+    def cancel(self) -> None: ...
 
     def effective_enforcement(self) -> EffectiveEnforcement: ...
 

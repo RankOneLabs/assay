@@ -13,7 +13,8 @@ import json
 import os
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any, cast
@@ -22,7 +23,15 @@ from workflow_edit.bridge import LOCAL_ROUTE
 
 from assay.adapters.smithers import SmithersFactory
 from assay.canonical import digest_bytes
-from assay.execution import EvaluationResult, RunFailed, WorkerResult, WorkerSuccess, execute_plan
+from assay.execution import (
+    EvaluationResult,
+    RunFailed,
+    RunResult,
+    RunSucceeded,
+    WorkerResult,
+    WorkerSuccess,
+    execute_plan,
+)
 from assay.models import CellCoordinate, EvaluationCoordinate, RuntimeProfile
 from assay.store import ObjectStore
 from verification_pilot.arms import ALL_ARMS
@@ -38,7 +47,11 @@ from verification_pilot.bridge import (
 )
 from verification_pilot.evaluation import PilotEvaluator
 from verification_pilot.fixture import load_fixture
-from verification_pilot.ground_truth import GroundTruth, Location, Remnant, build_specimens
+from verification_pilot.fixtures import base_subjects
+from verification_pilot.ground_truth import GroundTruth
+from verification_pilot.ground_truth import subject_truth as fixture_subject_truth
+from verification_pilot.inputs import T2_TEXT, T3_TEXT
+from verification_pilot.observations import RecordedTrace, observe
 from verification_pilot.settings import VerificationPilotSettings
 from verification_pilot.study import PilotSubject, PreparedPilot, compile_pilot_plan, pilot_subjects
 
@@ -47,10 +60,10 @@ def measure_on_policy(
     *, image: str, runs_root: Path, routing_config: Path, route: str,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """Generate one migration's four blocks outside the cell runtime."""
+    """Generate one migration's three ownership blocks outside the cell runtime."""
     fixture = load_fixture()
     subjects = [s for s in pilot_subjects(fixture)
-                if s.migration.name == "json_value" and s.rotation == 0]
+                if s.migration.name == "stage_run_id" and s.group is not None]
     if route == "smithers-local":
         if api_key is not None:
             raise ValueError("local route cannot receive an OpenRouter credential")
@@ -79,7 +92,7 @@ def measure_on_policy(
             completion=(SmithersTurnCompletion(
                 factory, f"on-policy-v2:{runs_root.name}:{subject.id}",
                 authorized=authorized) if factory is not None else None),
-            next_user_turns=("Review the migration.", "Submit your final finding."),
+            next_user_turns=(T2_TEXT, T3_TEXT),
             api_key=api_key,
             sandbox_factory=partial(DockerTmpfsToolSandbox, limits=SandboxLimits()),
             storage_factory=DockerTmpfsStagingStorage,
@@ -124,7 +137,7 @@ def measure_on_policy(
         except Exception as error:
             results.append({"subject_id": subject.id, "discard": True,
                             "error": f"{type(error).__name__}: {error}"})
-    return {"route": route, "model": model_route.model, "migration": "json_value",
+    return {"route": route, "model": model_route.model, "migration": "stage_run_id",
             "discarded": sum(bool(item["discard"]) for item in results),
             "attempted": len(results),
             "submitted": sum("block" in item for item in results),
@@ -140,20 +153,10 @@ def measure_local_on_policy(
 
 
 def subject_truth(subject: PilotSubject) -> GroundTruth:
-    """Locate the single injected old spelling by comparing against the renamed tree."""
+    """Find the operator-held truth for one fixture-derived subject."""
     fixture = load_fixture()
-    original = fixture.renamed[subject.migration.name][subject.location].splitlines()
-    changed = subject.repository[subject.location].splitlines()
-    lines = [index for index, (left, right) in enumerate(zip(original, changed, strict=True), 1)
-             if left != right]
-    if len(lines) != 1:
-        raise ValueError(f"{subject.id}: expected one changed line")
-    location = Location(subject.migration.name, subject.location, lines[0],
-                        subject.migration.old_symbol, subject.group)
-    remnant = Remnant("fallback_object_key" if subject.migration.kind == "object_key"
-                      else "stale_type_reference", location)
-    _, fixture_truth = build_specimens(fixture)
-    return GroundTruth(cast(Any, (remnant, remnant, remnant)), fixture_truth.decoys)
+    source = next(item for item in base_subjects() if item.id == subject.id)
+    return fixture_subject_truth(source, fixture)
 
 
 @dataclass
@@ -165,7 +168,7 @@ class GridEvaluator:
     def configuration(self) -> dict[str, Any]:
         from verification_pilot.evaluation import EVALUATOR_IDS
 
-        return {"id_set": list(EVALUATOR_IDS), "version": "section-10-v1"}
+        return {"id_set": list(EVALUATOR_IDS), "version": "fixture-derived-v2"}
 
     async def evaluate(self, *, input_value: Any, output: Any,
                        coordinate: EvaluationCoordinate) -> EvaluationResult:
@@ -195,7 +198,9 @@ class ScriptedWorker:
         ]
         trajectory: dict[str, Any] = {"turns": [
             {"turn": f"T{index}", "tool_calls": [], "submission": submission,
-             "workspace_diff": None}
+             "workspace_diff": "",
+             "usage": {"prompt_tokens": 0, "completion_tokens": 0,
+                       "requests": 0, "cost_usd": None}}
             for index, submission in enumerate(submissions, 1)
         ]}
 
@@ -211,7 +216,58 @@ class ScriptedWorker:
         })
 
 
-async def run_scripted(store: ObjectStore) -> tuple[PreparedPilot, Any]:
+def save_run_trace(
+    store: ObjectStore, result: RunResult, archive_root: Path,
+    subjects: Mapping[str, PilotSubject],
+) -> Path | None:
+    """Save cell traces and derived measures under raw/runs/<run_id>."""
+    if result.manifest is None or result.manifest_ref is None:
+        return None
+    manifest = result.manifest
+    destination = archive_root / manifest.run_id
+    destination.mkdir(parents=True, exist_ok=False)
+    (destination / "manifest.json").write_bytes(store.read_bytes(result.manifest_ref))
+    traces = destination / "traces"
+    traces.mkdir()
+    index: dict[str, dict[str, str | None]] = {}
+    for number, (cell_id, record_ref) in enumerate(sorted(manifest.execution_records.items()), 1):
+        record = json.loads(store.read_bytes(record_ref))
+        entry: dict[str, str | None] = {"record_ref": str(record_ref), "status": record["status"]}
+        trace_ref = record.get("trace_ref")
+        if trace_ref is not None:
+            trace_name = f"{number:03d}-worker.json"
+            (traces / trace_name).write_bytes(store.read_bytes(trace_ref))
+            entry["worker_trace"] = trace_name
+        output_ref = record.get("output_ref")
+        output = json.loads(store.read_bytes(output_ref)) if output_ref is not None else None
+        raw_ref = output.get("raw_trajectory_ref") if output is not None else None
+        if raw_ref is None and trace_ref is not None:
+            worker_trace = json.loads(store.read_bytes(trace_ref))
+            raw_ref = worker_trace.get("artifact_refs", {}).get("trajectory.json")
+        if raw_ref is not None:
+            envelope = json.loads(store.read_bytes(raw_ref))
+            trajectory = base64.b64decode(envelope["content_base64"], validate=True)
+            trace_name = f"{number:03d}-trajectory.json"
+            (traces / trace_name).write_bytes(trajectory)
+            entry["trajectory"] = trace_name
+            trace = cast(RecordedTrace, json.loads(trajectory))
+            subject_id = cell_id.split(":", 1)[0]
+            measures = [asdict(item) for item in observe(trace, subjects[subject_id])]
+            measures_name = f"{number:03d}-measures.json"
+            (traces / measures_name).write_text(
+                json.dumps(measures, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+            )
+            entry["measures"] = measures_name
+        index[cell_id] = entry
+    (destination / "index.json").write_text(
+        json.dumps(index, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+    return destination
+
+
+async def run_scripted(
+    store: ObjectStore, *, archive_root: Path | None = None
+) -> tuple[PreparedPilot, Any]:
     subjects = pilot_subjects()
     runtime = RuntimeProfile(id="scripted", version="1",
                              configuration_ref=str(store.publish_json({"scripted": True})))
@@ -228,12 +284,15 @@ async def run_scripted(store: ObjectStore) -> tuple[PreparedPilot, Any]:
         workers={arm.id: worker for arm in prepared.snapshot.arms},
         evaluators={declaration.id: evaluator for declaration in prepared.snapshot.evaluators},
     )
+    if isinstance(result, RunFailed | RunSucceeded):
+        save_run_trace(store, result, archive_root or store.root.parent / "runs", by_id)
     return prepared, result
 
 
 async def run_live(
     store: ObjectStore, *, image: str, runs_root: Path, routing_config: Path,
-    route: str, smoke: bool = False, api_key: str | None = None
+    route: str, smoke: bool = False, api_key: str | None = None,
+    archive_root: Path | None = None,
 ) -> tuple[PreparedPilot, Any]:
     subjects = pilot_subjects()
     if route == "smithers-local":
@@ -257,8 +316,8 @@ async def run_live(
         settings=VerificationPilotSettings(), factory=factory, api_key=api_key,
     )
     worker, runtime = pilot_worker(store, bridge)
-    smoke_ids = tuple(s.id for s in subjects if s.rotation == 0 and
-                      s.migration.name in {"json_value", "stage_instance_id"})
+    smoke_ids = tuple(s.id for s in subjects if s.group is not None and
+                      s.migration.name in {"stage_run_id", "workflow_execution_id"})
     prepared = compile_pilot_plan(store, runtime,
                                   worker_configuration=worker.configuration("t1-native"),
                                   worker_configurations={a: worker.configuration(a)
@@ -274,6 +333,8 @@ async def run_live(
         workers={arm.id: worker for arm in prepared.snapshot.arms},
         evaluators={declaration.id: evaluator for declaration in prepared.snapshot.evaluators},
     )
+    if isinstance(result, RunFailed | RunSucceeded):
+        save_run_trace(store, result, archive_root or store.root.parent / "runs", by_id)
     return prepared, result
 
 
@@ -289,6 +350,7 @@ def main() -> None:
                         default="smithers-local")
     args = parser.parse_args()
     store = ObjectStore(args.store)
+    archive_root = Path(__file__).resolve().parent / "raw" / "runs"
     if args.command in {"on-policy-local", "on-policy-paid"}:
         if not args.image:
             parser.error("on-policy generation requires --image")
@@ -302,7 +364,7 @@ def main() -> None:
         print(json.dumps(evidence))
         return
     if args.command == "scripted":
-        prepared, result = asyncio.run(run_scripted(store))
+        prepared, result = asyncio.run(run_scripted(store, archive_root=archive_root))
     else:
         if not args.image:
             parser.error("live runs require --image")
@@ -311,6 +373,7 @@ def main() -> None:
             routing_config=args.routing_config, route=args.route,
             smoke=args.command == "live-smoke",
             api_key=os.environ.get("OPENROUTER_API_KEY") if args.route == "openrouter" else None,
+            archive_root=archive_root,
         ))
     print(json.dumps({"plan_ref": prepared.authorization,
                       "result": type(result).__name__,

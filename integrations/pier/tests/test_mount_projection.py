@@ -67,6 +67,47 @@ def test_run_arguments_bind_a_host_visible_quota_directory(tmp_path: Path) -> No
     assert not any("/scratch:size=" in arg for arg in args)
     assert args[args.index("--memory") + 1] == "256m"
     assert args[args.index("--network") + 1] == "none"
+    assert args[args.index("--cap-drop") + 1] == "ALL"
+    assert args[args.index("--security-opt") + 1] == "no-new-privileges"
+
+
+def test_container_does_not_inherit_ambient_openrouter_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "ambient-paid-key")
+    handle = _handle(tmp_path)
+    assert handle._openrouter_api_key is None
+    assert "--env-file" not in handle._docker_run_args(handle._request.limits)
+
+
+def test_pre_run_cancellation_never_starts_docker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handle = _handle(tmp_path)
+    commands: list[list[str]] = []
+    monkeypatch.setattr("assay_pier_bridge.container._run", lambda argv, **kwargs: (
+        commands.append(argv)
+    ))
+    handle.cancel()
+    from assay_pier_bridge.runtime import TrialCancelledError
+
+    with pytest.raises(TrialCancelledError):
+        handle.run()
+    assert commands == []
+
+
+def test_repeated_cancel_removes_a_started_container_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    handle = _handle(tmp_path)
+    handle._started = True
+    removed: list[str] = []
+    monkeypatch.setattr("assay_pier_bridge.container._force_remove", lambda name: (
+        removed.append(name) or True
+    ))
+    handle.cancel()
+    handle.cancel()
+    assert removed == [handle._name]
 
 
 def test_declared_and_inspected_controls_must_match(tmp_path: Path) -> None:
@@ -296,3 +337,23 @@ def test_distinct_repository_paths_that_merely_share_a_suffix_are_kept() -> None
         "instruction.md": SEALED_INSTRUCTION,
         "workspace/instruction.md": "nested\n",
     }
+
+
+def test_mount_validation_precedes_all_host_directory_creation(tmp_path: Path) -> None:
+    package = {
+        "instruction.md": SEALED_INSTRUCTION,
+        "workspace/instruction.md": REPOSITORY_INSTRUCTION,
+    }
+    digest = package_digest(package)
+    request = TrialRequest(
+        cell_id="s1:a1:w0", package_digest=digest,
+        exchange=exchange_for("s1:a1:w0", digest), model_route=ModelRoute(),
+        limits=TrialLimits(cpu=1, memory_mb=256, pids=32, timeout_s=20, storage_mb=64),
+    )
+    runs_root = tmp_path / "never-created"
+    with pytest.raises(ValueError, match="package entries"):
+        DockerTrialHandle(
+            image="unused", name="trial", request=request, package=package,
+            command=["/bin/true"], runs_root=runs_root,
+        )
+    assert not runs_root.exists()

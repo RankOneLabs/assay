@@ -41,7 +41,13 @@ from assay.store import ObjectStore
 from workflow_edit.arms import ARM_IDS, MESS_00, MESS_HIGH, MESS_LOW, MESS_MID
 from workflow_edit.evaluation import CellEvaluator
 from workflow_edit.fixture import SMOKE_EDIT_SUBJECT_ID, load_fixture
-from workflow_edit.qualify import CorrectnessEvaluator, Prepared, WorkflowEditWorker, run
+from workflow_edit.qualify import (
+    CorrectnessEvaluator,
+    Prepared,
+    WorkflowEditWorker,
+    read_evidence,
+    run,
+)
 from workflow_edit.qualify import fixture_manifest as smoke_manifest
 from workflow_edit.study import (
     STUDY_SCHEDULE,
@@ -49,9 +55,40 @@ from workflow_edit.study import (
     StudySubject,
     check_fixture,
     plan_study,
+    regrade_wf13,
 )
 
 SUBJECT = "synthetic-pointer"
+
+
+@pytest.mark.asyncio
+async def test_regrade_uses_stored_patch_and_fixed_runner() -> None:
+    smoke = read_evidence("smoke")
+    cell_id = sorted(smoke["evaluations"])[0]
+    smoke = {**smoke, "evaluations": {cell_id: smoke["evaluations"][cell_id]}}
+    patch = smoke["cells"][cell_id]["patch"]
+
+    class RegradeRunner:
+        settings = WorkflowRunnerSettings(image=smoke["image"], toolchain="bun")
+
+        def __init__(self) -> None:
+            self.seen_patch: str | None = None
+
+        def configuration(self) -> dict[str, str]:
+            return {"harness_sha256": "sha256:" + "f" * 64}
+
+        async def run(self, **kwargs: Any) -> WorkflowCorrectnessResult:
+            self.seen_patch = kwargs["patch"]
+            assert kwargs["baseline_tree_digest"] == workflow_tree_digest(kwargs["baseline"])
+            return WorkflowCorrectnessResult(
+                "correct", tuple(GroupResult(group.name, "passed") for group in kwargs["groups"])
+            )
+
+    runner = RegradeRunner()
+    result = await regrade_wf13(smoke, runner)  # type: ignore[arg-type]
+    assert runner.seen_patch == patch
+    assert list(result["evaluations"]) == [cell_id]
+    assert result["changed_grades"][cell_id]["after"]["verdict"] == "correct"
 N = 4
 REPEATS = 4
 IMAGE = "sha256:" + "a" * 64
@@ -103,8 +140,9 @@ def _manifest(store: ObjectStore, trees: dict[str, dict[str, str]]) -> FixtureMa
             for name, group in groups.items()}
 
     def evidence(label: str) -> dict[str, str]:
-        return {"outcome": "failed" if label == "feature" else "passed",
-                "evidence": _digest_of(store, {"record": label})}
+        outcome = "failed" if label == "feature" else "passed"
+        return {"outcome": outcome,
+                "evidence": _digest_of(store, {"record": label, "outcome": outcome})}
 
     return FixtureManifestV2.model_validate({
         "schema_version": "assay-fixture-manifest/0.2.0",
@@ -307,26 +345,78 @@ def test_grid_validation_refuses_the_smoke_subject_before_authorization(tmp_path
 def test_fixture_trees_must_match_the_manifest(tmp_path: Path) -> None:
     _store, fixture = _study(tmp_path, **{MESS_MID: _tree(MESS_HIGH)})
     with pytest.raises(ValueError, match="mess-mid tree differs"):
-        check_fixture(fixture, image=IMAGE, routing_digest=ROUTING)
+        check_fixture(fixture, store=_store, image=IMAGE, routing_digest=ROUTING)
     _store, fixture = _study(tmp_path, **{MESS_LOW: {}})
     missing = StudyFixture(fixture.manifest, (StudySubject(
         SUBJECT, {arm: tree for arm, tree in fixture.subjects[0].realizations.items()
                   if arm != MESS_LOW}),))
     with pytest.raises(ValueError, match="one realization per arm"):
-        check_fixture(missing, image=IMAGE, routing_digest=ROUTING)
+        check_fixture(missing, store=_store, image=IMAGE, routing_digest=ROUTING)
 
 
 def test_fixture_must_be_qualified_and_bound_to_image_and_routing(tmp_path: Path) -> None:
     _store, fixture = _study(tmp_path)
     with pytest.raises(ValueError, match="another image"):
-        check_fixture(fixture, image="sha256:" + "d" * 64, routing_digest=ROUTING)
+        check_fixture(fixture, store=_store, image="sha256:" + "d" * 64, routing_digest=ROUTING)
     with pytest.raises(ValueError, match="another routing"):
-        check_fixture(fixture, image=IMAGE, routing_digest=None)
+        check_fixture(fixture, store=_store, image=IMAGE, routing_digest=None)
     wire = fixture.manifest.model_dump(mode="json")
     wire["tasks"][0]["arms"]["mess-low"]["qualification"]["feature_fails"]["outcome"] = "passed"
     unqualified = StudyFixture(FixtureManifestV2.model_validate(wire), fixture.subjects)
     with pytest.raises(ValueError, match="mess-low has not qualified"):
-        check_fixture(unqualified, image=IMAGE, routing_digest=ROUTING)
+        check_fixture(unqualified, store=_store, image=IMAGE, routing_digest=ROUTING)
+
+
+def test_fixture_qualification_must_match_verified_evidence(tmp_path: Path) -> None:
+    store, fixture = _study(tmp_path)
+    wire = fixture.manifest.model_dump(mode="json")
+    result = wire["tasks"][0]["arms"][MESS_LOW]["qualification"]["baseline_passes"]
+    result["evidence"] = _digest_of(store, {"outcome": "failed"})
+    with pytest.raises(ValueError, match="baseline_passes evidence mismatch"):
+        check_fixture(
+            StudyFixture(FixtureManifestV2.model_validate(wire), fixture.subjects),
+            store=store,
+            image=IMAGE,
+            routing_digest=ROUTING,
+        )
+    corrupt = store.objects / result["evidence"].removeprefix("sha256:")
+    corrupt.write_bytes(b'{"outcome":"passed"}')
+    with pytest.raises(ValueError, match="baseline_passes evidence mismatch"):
+        check_fixture(
+            StudyFixture(FixtureManifestV2.model_validate(wire), fixture.subjects),
+            store=store,
+            image=IMAGE,
+            routing_digest=ROUTING,
+        )
+
+
+def test_fixture_visible_coverage_and_hidden_tree_paths(tmp_path: Path) -> None:
+    store, fixture = _study(tmp_path)
+    wire = fixture.manifest.model_dump(mode="json")
+    group = WorkflowTestGroup(
+        name="visible_regression", files={}, command=("bun", "test"), restores=True
+    )
+    wire["tasks"][0]["visible_tests"][0]["digest"] = _digest_of(
+        store, group.model_dump(mode="json")
+    )
+    with pytest.raises(ValueError, match="visible group lacks coverage"):
+        check_fixture(
+            StudyFixture(FixtureManifestV2.model_validate(wire), fixture.subjects),
+            store=store,
+            image=IMAGE,
+            routing_digest=ROUTING,
+        )
+    tree = _tree(MESS_00) | {"tests/hidden/regression.test.ts": "// leaked"}
+    trees = dict(fixture.subjects[0].realizations) | {MESS_00: tree}
+    wire = fixture.manifest.model_dump(mode="json")
+    wire["tasks"][0]["arms"][MESS_00]["tree_digest"] = workflow_tree_digest(tree)
+    with pytest.raises(ValueError, match="contains hidden tests"):
+        check_fixture(
+            StudyFixture(FixtureManifestV2.model_validate(wire), (StudySubject(SUBJECT, trees),)),
+            store=store,
+            image=IMAGE,
+            routing_digest=ROUTING,
+        )
 
 
 def test_fixture_must_declare_every_study_test_group(tmp_path: Path) -> None:
@@ -336,7 +426,7 @@ def test_fixture_must_declare_every_study_test_group(tmp_path: Path) -> None:
     task["hidden_tests"] = [g for g in task["hidden_tests"] if g["name"] != "new_behavior"]
     dropped = StudyFixture(FixtureManifestV2.model_validate(wire), fixture.subjects)
     with pytest.raises(ValueError, match="lacks study test groups: new_behavior"):
-        check_fixture(dropped, image=IMAGE, routing_digest=ROUTING)
+        check_fixture(dropped, store=_store, image=IMAGE, routing_digest=ROUTING)
     # A hidden group declared visible is missing as a hidden group.
     wire = fixture.manifest.model_dump(mode="json")
     task = wire["tasks"][0]
@@ -345,7 +435,7 @@ def test_fixture_must_declare_every_study_test_group(tmp_path: Path) -> None:
     task["hidden_tests"] = [g for g in task["hidden_tests"] if g not in moved]
     exposed = StudyFixture(FixtureManifestV2.model_validate(wire), fixture.subjects)
     with pytest.raises(ValueError, match="lacks study test groups: hidden_regression"):
-        check_fixture(exposed, image=IMAGE, routing_digest=ROUTING)
+        check_fixture(exposed, store=_store, image=IMAGE, routing_digest=ROUTING)
 
 
 @pytest.mark.asyncio
@@ -469,3 +559,48 @@ async def test_smoke_evaluator_reads_the_baseline_digest_from_worker_evidence(
     )
     assert wrong.reason_codes == ("baseline_digest_mismatch",)
     assert len(runner.calls) == 1
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("evaluator_kind", ["study", "smoke"])
+@pytest.mark.parametrize("failure", ["foreign", "integrity", "io"])
+async def test_evaluators_reject_foreign_and_unreadable_worker_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, evaluator_kind: str, failure: str
+) -> None:
+    store, fixture = _study(tmp_path)
+    smoke = load_fixture()
+    runner = RecordingRunner()
+    if evaluator_kind == "study":
+        evaluator = CellEvaluator(store, fixture.manifest, runner)  # type: ignore[arg-type]
+        repository = _tree(MESS_00)
+        subject = SUBJECT
+    else:
+        evaluator = CorrectnessEvaluator(
+            store,
+            smoke,
+            smoke_manifest(store, smoke, image=IMAGE, routing_digest=ROUTING),
+            runner,  # type: ignore[arg-type]
+        )
+        repository = smoke.repository
+        subject = SMOKE_EDIT_SUBJECT_ID
+    coordinate = EvaluationCoordinate(
+        cell_id=f"{subject}:{MESS_00}:w0", evaluator_id="correctness", evaluator_repeat=0
+    )
+    output = _output(
+        store, coordinate.cell_id, repository, baseline_digest=workflow_tree_digest(repository)
+    )
+    if failure == "foreign":
+        output["cell_id"] = f"{subject}:{MESS_LOW}:w0"
+    elif failure == "integrity":
+        (store.objects / output["result_ref"].removeprefix("sha256:")).write_bytes(b"corrupt")
+    else:
+
+        def unreadable(ref: str) -> bytes:
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr(store, "read_bytes", unreadable)
+    result = await evaluator.evaluate(
+        input_value={"repository": repository}, output=output, coordinate=coordinate
+    )
+    assert type(result).__name__ == "EvaluationFailed"
+    assert result.error_type == ("MismatchedCell" if failure == "foreign" else "MissingCandidate")
+    assert not runner.calls
