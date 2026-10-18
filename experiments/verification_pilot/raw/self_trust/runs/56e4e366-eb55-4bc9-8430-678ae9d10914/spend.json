@@ -1,0 +1,8 @@
+{
+  "halt": "billing_uncertain",
+  "max_spend_usd": "1.5",
+  "prompt_token_slack": 4096,
+  "refused_requests": 0,
+  "requests": 12,
+  "spent_usd": "0.139141500"
+}

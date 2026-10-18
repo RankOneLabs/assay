@@ -12,6 +12,8 @@ Commands, from ``experiments/``:
 - ``attribution-order ...``: the same matched pairs in the two quoted arms
   that put the omission holder's log first or last, so attribution and log
   position vary separately. Twelve cells.
+- ``remeasure --archive DIR ... --image DIGEST``: re-derive archived measures
+  from their trajectories after a measure is added or changed.
 - ``cells --subject ID ... --arm ARM ...``: any explicit shard on the paid
   route, for the later calibration steps.
 
@@ -44,7 +46,7 @@ from verification_pilot.run import (
 )
 from verification_pilot.self_trust.bridge import SelfTrustBridgeClient, self_trust_worker
 from verification_pilot.self_trust.evaluation import SelfTrustEvaluator, measures
-from verification_pilot.self_trust.settings import LOCAL_CELL_SECONDS, SelfTrustLocalSettings
+from verification_pilot.self_trust.settings import CELL_SECONDS, SelfTrustSettings
 from verification_pilot.self_trust.study import (
     ARMS,
     ATTRIBUTION_ORDER_ARMS,
@@ -55,7 +57,6 @@ from verification_pilot.self_trust.study import (
     refactor_calibration_ids,
     self_trust_subjects,
 )
-from verification_pilot.settings import VerificationPilotSettings
 
 ARCHIVE_ROOT = Path(__file__).resolve().parents[1] / "raw" / "self_trust" / "runs"
 
@@ -111,11 +112,11 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path,
             image=image, runs_root=runs_root, run_label="self-trust-local",
             model_route=ModelRoute(endpoint="http://willie:8900", model=local_model,  # type: ignore[arg-type]
                                    provider="smithers-local"),
-            subjects=dict(by_id), settings=SelfTrustLocalSettings(),
+            subjects=dict(by_id), settings=SelfTrustSettings(),
             factory=SmithersFactory(model=local_model, machine="mcbain",
                                     routing_config=routing_config,
                                     dispatch_url="http://willie:8900"),
-            timeout_s=LOCAL_CELL_SECONDS,
+            timeout_s=CELL_SECONDS,
         )
     else:
         if not api_key or any(char.isspace() for char in api_key):
@@ -125,7 +126,8 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path,
         bridge = SelfTrustBridgeClient(
             image=image, runs_root=runs_root, run_label="self-trust",
             model_route=paid_model_route(paid_route), subjects=dict(by_id),
-            settings=VerificationPilotSettings(), api_key=api_key, spend_gate=spend_gate,
+            settings=SelfTrustSettings(), api_key=api_key, spend_gate=spend_gate,
+            timeout_s=CELL_SECONDS,
         )
     worker, runtime = self_trust_worker(store, bridge)
     prepared = compile_self_trust_plan(
@@ -139,11 +141,28 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path,
     return result, destination
 
 
+def remeasure(archive: Path, image: str) -> int:
+    """Re-derive every measures file of one archive from its own trajectories."""
+    by_id = {s.id: s for s in self_trust_subjects()}
+    index = json.loads((archive / "index.json").read_text(encoding="utf-8"))
+    rewritten = 0
+    for cell_id, entry in sorted(index.items()):
+        if "trajectory" not in entry or "measures" not in entry:
+            continue
+        trace = json.loads((archive / "traces" / entry["trajectory"]).read_text(encoding="utf-8"))
+        rows = measures(by_id[cell_id.split(":", 1)[0]], trace, image)
+        (archive / "traces" / entry["measures"]).write_text(
+            json.dumps(rows, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        rewritten += 1
+    return rewritten
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("scripted", "calibrate", "calibrate-refactor",
-                                            "attribution-order", "cells"))
-    parser.add_argument("--store", type=Path, required=True)
+                                            "attribution-order", "cells", "remeasure"))
+    parser.add_argument("--archive", type=Path, action="append", default=[])
+    parser.add_argument("--store", type=Path, default=None)
     parser.add_argument("--image", default="")
     parser.add_argument("--runs-root", type=Path, default=None)
     parser.add_argument("--paid-route", choices=sorted(PAID_ROUTES), default=None)
@@ -162,6 +181,13 @@ def main() -> None:
     parser.add_argument("--subject", action="append", default=[])
     parser.add_argument("--arm", action="append", choices=ARMS, default=[])
     args = parser.parse_args()
+    if args.command == "remeasure":
+        if not args.image or not args.archive:
+            parser.error("remeasure needs --image and --archive")
+        print(json.dumps({str(path): remeasure(path, args.image) for path in args.archive}))
+        return
+    if args.store is None:
+        parser.error("--store is required")
     store = ObjectStore(args.store)
     if args.command == "scripted":
         if not args.image:

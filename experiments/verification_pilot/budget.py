@@ -1,11 +1,22 @@
 """Operator dollar cap for the pilot's paid OpenRouter route.
 
 Each paid request reserves its worst-case price before dispatch and settles to
-the provider's billed cost afterwards. The worst case counts every request
-byte as one prompt token, plus a fixed slack for provider-side formatting,
-priced at the route's pinned ``max_price``; completion is priced at the
-request's ``max_tokens``. A request that the remaining cap cannot cover is
-refused before it is sent, and the cell stops with ``budget_exhausted``.
+the provider's billed cost afterwards. The worst case counts
+``PROMPT_TOKENS_PER_BYTE`` prompt tokens for every request byte, plus a fixed
+slack for provider-side formatting, priced at the route's pinned
+``max_price``; completion is priced at the request's ``max_tokens``.
+
+The ratio is calibrated, not assumed. Counting a token per byte made each
+reservation of a 200 KB self-trust request about three times its real
+price, so caps halted runs with most of their money unspent. Across the
+1,846 billed requests recorded by 2026-10-18 (2 KB to 308 KB), ``0.6 * bytes
++ 4096`` exceeds every billed prompt; above 100 KB no request passed 0.41
+tokens per byte. ``tests/test_budget.py`` re-checks this against every
+committed archive. A request billed above its reservation still halts the
+run, so a provider that tokenizes more densely is caught, not absorbed.
+
+A request that the remaining cap cannot cover is refused before it is sent,
+and the cell stops with ``budget_exhausted``.
 
 A dispatched request with no billed cost, or one billed above its reservation,
 keeps the larger amount charged, stops its cell, and halts the run with
@@ -42,6 +53,7 @@ from assay_pier_bridge.agent_loop import (  # noqa: E402
 # Provider-side tokens the request bytes do not show (tool-use preamble,
 # per-message framing). Generous on purpose: it only widens the reservation.
 PROMPT_TOKEN_SLACK = 4_096
+PROMPT_TOKENS_PER_BYTE = Decimal("0.6")
 MILLION = Decimal(1_000_000)
 
 Halt = Literal["budget_exhausted", "billing_uncertain"]
@@ -51,8 +63,8 @@ def request_cost_bound(
     route: OpenRouterTurnRoute, *, request_bytes: int, max_output_tokens: int
 ) -> Decimal:
     """Worst-case billed price of one request under the route's max_price."""
-    prompt = Decimal(request_bytes + PROMPT_TOKEN_SLACK) * Decimal(
-        str(route.max_prompt_price_per_million))
+    prompt_tokens = Decimal(request_bytes) * PROMPT_TOKENS_PER_BYTE + PROMPT_TOKEN_SLACK
+    prompt = prompt_tokens * Decimal(str(route.max_prompt_price_per_million))
     completion = Decimal(max_output_tokens) * Decimal(
         str(route.max_completion_price_per_million))
     return (prompt + completion) / MILLION
@@ -110,7 +122,8 @@ class SpendGate:
         with self._lock:
             return {"max_spend_usd": str(self.max_spend_usd), "spent_usd": str(self.spent_usd),
                     "requests": self.requests, "refused_requests": self.refused,
-                    "halt": self.halt, "prompt_token_slack": PROMPT_TOKEN_SLACK}
+                    "halt": self.halt, "prompt_token_slack": PROMPT_TOKEN_SLACK,
+                    "prompt_tokens_per_byte": str(PROMPT_TOKENS_PER_BYTE)}
 
 
 @dataclass

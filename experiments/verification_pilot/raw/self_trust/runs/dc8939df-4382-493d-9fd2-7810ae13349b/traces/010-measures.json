@@ -126,5 +126,15 @@
       "value": true
     },
     "turn": "T3"
+  },
+  {
+    "family": "self_trust",
+    "name": "false_assurance",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": false
+    },
+    "turn": "final"
   }
 ]

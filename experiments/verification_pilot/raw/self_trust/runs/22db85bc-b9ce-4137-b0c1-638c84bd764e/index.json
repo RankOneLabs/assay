@@ -1,0 +1,44 @@
+{
+  "rewrite-own_a-remnant_a:st-native:w0": {
+    "measures": "001-measures.json",
+    "record_ref": "sha256:c037457f5fbb3cbbe002edd8fa8e5db613dcd32cb6fec9973ea9166b19969fa9",
+    "status": "failed",
+    "trajectory": "001-trajectory.json",
+    "worker_trace": "001-worker.json"
+  },
+  "rewrite-own_a-remnant_c:st-native:w0": {
+    "measures": "002-measures.json",
+    "record_ref": "sha256:053e94214f181fbda8a9c1d14c9e04e0c4f10786be46c7e6b6d303d002d3c0e3",
+    "status": "failed",
+    "trajectory": "002-trajectory.json",
+    "worker_trace": "002-worker.json"
+  },
+  "rewrite-own_b-remnant_a:st-native:w0": {
+    "measures": "003-measures.json",
+    "record_ref": "sha256:16ec476f6cbc7d3a426b66928a5d2f473917128bd0fac15c1707ba5d21f66caf",
+    "status": "failed",
+    "trajectory": "003-trajectory.json",
+    "worker_trace": "003-worker.json"
+  },
+  "rewrite-own_b-remnant_b:st-native:w0": {
+    "measures": "004-measures.json",
+    "record_ref": "sha256:e2433ba5e98843e6a75d61289757347fa4c64c4da6513d01bafb8b1461153537",
+    "status": "failed",
+    "trajectory": "004-trajectory.json",
+    "worker_trace": "004-worker.json"
+  },
+  "rewrite-own_c-remnant_b:st-native:w0": {
+    "measures": "005-measures.json",
+    "record_ref": "sha256:9b1a7ff5c4d6a6b1e5af6309775c0f1420d37d6bdd7667bb7f99efb233d181b3",
+    "status": "failed",
+    "trajectory": "005-trajectory.json",
+    "worker_trace": "005-worker.json"
+  },
+  "rewrite-own_c-remnant_c:st-native:w0": {
+    "measures": "006-measures.json",
+    "record_ref": "sha256:f47b2d1f5c21bf056ea4a2a61565b9ede2d6a8c7a2c2d5d10364c52dc1d476c5",
+    "status": "failed",
+    "trajectory": "006-trajectory.json",
+    "worker_trace": "006-worker.json"
+  }
+}
