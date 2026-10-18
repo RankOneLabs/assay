@@ -10,12 +10,10 @@ The live smoke is pre-registered as **2 routes × 4 type renames × 2 handoff
 presentations × 1 planted owner share (group_a) = 16 cells**, eight per route.
 It uses one worker repeat. The four rename-matched cases allow inspection of
 the H4 contrast after the full shard, while both presentations expose the
-handoff-placement failure mode. The current `run live-smoke` helper still
-selects two renames and three planted owners (12 cells per route); it does
-not implement this registered selection. The `pilot-foundation` cohort owns
-that selector in `run.py`. Before executing live smoke, it must select the
-four `group_a` subjects and both T1 arms, and test the exact eight cells per
-route and shared D16 ceiling. This cohort makes no provider request.
+handoff-placement failure mode. `run live-smoke` implements this selection:
+`study.smoke_subject_ids` picks the four `group_a` subjects, and both T1 arms
+give exactly eight cells per route under the shared D16 ceiling, as
+`tests/test_study.py` checks.
 The snapshot retains all 16 base subjects while excluding cells outside the
 smoke shard. Select the four `group_a` subjects for each route. Read every
 trajectory, tool result, submission, and workspace diff
@@ -41,8 +39,16 @@ fingerprint includes that ceiling, so the smoke must use the same ceiling as
 the 24-cell full Tier 1 shard if their records are later pooled. The other
 declared tier arms and clean controls remain excluded. The ceiling is a
 capacity bound, not authorization to execute deferred cells. Before any paid
-route runs, the operator must set its route identity and budget gate. No live
-smoke cell is run by this pre-registration cohort.
+route runs, the operator must set its route identity and budget gate. The paid
+route refuses to start without `--max-spend-usd`. `budget.py` reserves each
+request's worst-case price before dispatch: every request byte is counted as a
+prompt token, plus slack, at the route's pinned `max_price`. It then settles
+to the billed cost. A request the remaining cap cannot cover is never sent.
+Its cell stops, and the run halts with `budget_exhausted`. An unknown or
+over-reservation charge halts with `billing_uncertain`. The spend record is
+saved as `spend.json` beside the run archive. The cap is an operator
+spending decision, kept out of the runtime fingerprint so differently capped
+shards still pool. The local route takes no cap.
 
 The final inference rules are fixed now: H1 uses a two-sided sign test of the
 T1 ownership gap over 16 base subjects; H2 uses the paired two-sided sign
