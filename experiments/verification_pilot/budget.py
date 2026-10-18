@@ -8,9 +8,9 @@ request's ``max_tokens``. A request that the remaining cap cannot cover is
 refused before it is sent, and the cell stops with ``budget_exhausted``.
 
 A dispatched request with no billed cost, or one billed above its reservation,
-keeps the larger amount charged and halts the run with ``billing_uncertain``,
-so an unknown charge never becomes a zero. Once halted, no new cell is
-admitted.
+keeps the larger amount charged, stops its cell, and halts the run with
+``billing_uncertain``, so an unknown charge never becomes a zero. Once
+halted, no new cell is admitted.
 
 The cap is an operator spending decision, not a study condition: it is kept
 out of the runtime fingerprint, so a smoke and a full shard with different
@@ -161,4 +161,8 @@ class BudgetedAgentClient(RepositoryAgentClient):
                 gate.release(bound)
             raise
         gate.settle(bound, turn.cost_usd)
+        if gate.halt == "billing_uncertain":
+            # A billed cost the reservation did not cover breaks the cap's
+            # guarantee; the charge is kept and the cell stops here.
+            raise ValueError("billing_uncertain")
         return turn

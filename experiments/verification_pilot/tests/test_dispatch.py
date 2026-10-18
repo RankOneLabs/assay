@@ -131,6 +131,33 @@ def test_cell_stopped_by_the_cap_halts_the_run() -> None:
     assert halted.value.trace == {"stopped": True}
 
 
+def test_successful_cell_with_uncertain_billing_halts_the_run() -> None:
+    from assay.execution import Accounting, AdmissionHalt, WorkerSuccess
+
+    subject = pilot_subjects()[0]
+    gate = SpendGate(Decimal("1"))
+    accounting = Accounting(coverage="uncertain")
+
+    class UncertainSuccess:
+        async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> Any:
+            gate.halt = "billing_uncertain"
+            return WorkerSuccess({"cell_id": coordinate.id}, trace={"submitted": True},
+                                 accounting=accounting)
+
+    class SubjectMap:
+        subjects = {subject.id: subject}
+        spend_gate = gate
+
+    worker = PilotWorker(adapter=UncertainSuccess(), bridge=SubjectMap())  # type: ignore[arg-type]
+    cell = CellCoordinate(subject_id=subject.id, arm_id="t1-native", worker_repeat=0,
+                          realization_ref="sha256:" + "0" * 64)
+    with pytest.raises(AdmissionHalt) as halted:
+        asyncio.run(worker.run_cell(input_value=_input(subject), coordinate=cell))
+    assert halted.value.code == "billing_uncertain"
+    assert halted.value.trace == {"submitted": True}
+    assert halted.value.accounting == accounting
+
+
 def _input(subject: Any) -> dict[str, Any]:
     from verification_pilot.arms import placement_for
     from verification_pilot.prompts import task_prompt

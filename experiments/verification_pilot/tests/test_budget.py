@@ -83,6 +83,16 @@ def test_budgeted_turn_settles_to_the_billed_cost(tmp_path: Path) -> None:
     assert gate.halt is None
 
 
+def test_response_billed_above_its_reservation_stops_the_cell(tmp_path: Path) -> None:
+    gate = SpendGate(Decimal("5"))
+    client = _client(tmp_path, gate, lambda request: _billed(2.0))
+    with pytest.raises(ValueError, match="billing_uncertain"):
+        client._openrouter_turn(MESSAGES)
+    assert gate.halt == "billing_uncertain"
+    assert gate.spent_usd == Decimal("2.0")
+    assert gate.reserved_usd == 0
+
+
 def test_request_over_the_cap_is_never_sent(tmp_path: Path) -> None:
     sent: list[bytes] = []
 

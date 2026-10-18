@@ -217,8 +217,9 @@ class PilotWorker:
         if gate is not None and gate.halt is not None:
             raise AdmissionHalt(gate.halt, f"spend cap halted the run: {gate.halt}")
         result = await self.adapter.run_cell(input_value=input_value, coordinate=coordinate)
-        if gate is not None and gate.halt is not None and isinstance(result, WorkerFailure):
-            # The stopped cell keeps its trace; no later cell is admitted.
+        if gate is not None and gate.halt is not None:
+            # The cell keeps its trace and accounting; no later cell is admitted,
+            # and the run cannot report success with its spend ledger halted.
             raise AdmissionHalt(gate.halt, f"spend cap halted the run: {gate.halt}",
                                 accounting=result.accounting, trace=result.trace)
         return result
