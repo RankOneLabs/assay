@@ -47,6 +47,12 @@ class Concept:
     remnants: tuple[Remnant, Remnant, Remnant]  # dealt to group_a, group_b, group_c
 
     @property
+    def names(self) -> tuple[str, str]:
+        """The concept's old and new names, as prose."""
+        old, new = self.title.split(" to ")
+        return old, new
+
+    @property
     def old_type(self) -> str:
         return self.spellings[0][0]
 

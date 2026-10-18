@@ -1,0 +1,1094 @@
+{
+  "image": "sha256:4fadd5ab5e0b9cd472a1bfd3115d1b41a968c28a7f415770f1753bf6af697a90",
+  "logs": {
+    "execution_unit-group_a-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e RunUnitId -e run_unit_id -e runUnitIdForTest -e runUnitIdFor src/decision/commands.ts src/decision/ids.ts src/domain/run-event.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bRunUnitId\\b/ExecutionUnitId/g' -e 's/\\brunUnitIdForTest\\b/executionUnitIdForTest/g' -e 's/\\brunUnitIdFor\\b/executionUnitIdFor/g' src/decision/commands.ts src/decision/ids.ts src/domain/run-event.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\brun_unit_id\\b/execution_unit_id/g' src/decision/ids.ts src/domain/run-event.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "      readonly execution_unit_id: ExecutionUnitId;\n      readonly unit_id: UnitId;\n      readonly parameters: JsonValue;\n      readonly depends_on: readonly UnitId[];",
+            "old": "      readonly run_unit_id: ExecutionUnitId;\n      readonly unit_id: UnitId;\n      readonly parameters: JsonValue;\n      readonly depends_on: readonly UnitId[];",
+            "path": "src/decision/commands.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "      readonly execution_unit_id: ExecutionUnitId;",
+            "old": "      readonly run_unit_id: ExecutionUnitId;",
+            "path": "src/decision/commands.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  | { readonly kind: \"mark_unit_satisfied\"; readonly execution_unit_id: ExecutionUnitId }",
+            "old": "  | { readonly kind: \"mark_unit_satisfied\"; readonly run_unit_id: ExecutionUnitId }",
+            "path": "src/decision/commands.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  | { readonly kind: \"start_work\"; readonly work_order_id: WorkOrderId; readonly execution_unit_id: ExecutionUnitId }",
+            "old": "  | { readonly kind: \"start_work\"; readonly work_order_id: WorkOrderId; readonly run_unit_id: ExecutionUnitId }",
+            "path": "src/decision/commands.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  | { readonly kind: \"recheck\"; readonly record_version: RunRecordVersion; readonly started: readonly { readonly id: WorkOrderId; readonly execution_unit_id: ExecutionUnitId }[] }",
+            "old": "  | { readonly kind: \"recheck\"; readonly record_version: RunRecordVersion; readonly started: readonly { readonly id: WorkOrderId; readonly run_unit_id: ExecutionUnitId }[] }",
+            "path": "src/decision/commands.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw RunUnitId src/decision/commands.ts src/decision/ids.ts src/domain/run-event.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/commands.ts\nsrc/decision/ids.ts\nsrc/domain/run-event.ts\ntests/visible/decision/snapshot-builder.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/decision/commands.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/commands.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/commands.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/commands.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/commands.ts",
+        "exit=1\n"
+      ]
+    },
+    "execution_unit-group_a-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e RunUnitId -e run_unit_id -e runUnitIdForTest -e runUnitIdFor src/decision/commands.ts src/decision/ids.ts src/domain/run-event.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bRunUnitId\\b/ExecutionUnitId/g' -e 's/\\brunUnitIdForTest\\b/executionUnitIdForTest/g' -e 's/\\brunUnitIdFor\\b/executionUnitIdFor/g' src/decision/commands.ts src/decision/ids.ts src/domain/run-event.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\brun_unit_id\\b/execution_unit_id/g' src/decision/ids.ts src/domain/run-event.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "      readonly execution_unit_id: ExecutionUnitId;\n      readonly unit_id: UnitId;\n      readonly parameters: JsonValue;\n      readonly depends_on: readonly UnitId[];",
+            "old": "      readonly run_unit_id: ExecutionUnitId;\n      readonly unit_id: UnitId;\n      readonly parameters: JsonValue;\n      readonly depends_on: readonly UnitId[];",
+            "path": "src/decision/commands.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "      readonly execution_unit_id: ExecutionUnitId;",
+            "old": "      readonly run_unit_id: ExecutionUnitId;",
+            "path": "src/decision/commands.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  | { readonly kind: \"mark_unit_satisfied\"; readonly execution_unit_id: ExecutionUnitId }",
+            "old": "  | { readonly kind: \"mark_unit_satisfied\"; readonly run_unit_id: ExecutionUnitId }",
+            "path": "src/decision/commands.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  | { readonly kind: \"start_work\"; readonly work_order_id: WorkOrderId; readonly execution_unit_id: ExecutionUnitId }",
+            "old": "  | { readonly kind: \"start_work\"; readonly work_order_id: WorkOrderId; readonly run_unit_id: ExecutionUnitId }",
+            "path": "src/decision/commands.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw RunUnitId src/decision/commands.ts src/decision/ids.ts src/domain/run-event.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/commands.ts\nsrc/decision/ids.ts\nsrc/domain/run-event.ts\ntests/visible/decision/snapshot-builder.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/decision/commands.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/commands.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/commands.ts",
+        "exit=0\nreplaced 1 occurrence in src/decision/commands.ts",
+        "exit=1\n"
+      ]
+    },
+    "execution_unit-group_b-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e RunUnitId -e run_unit_id -e runUnitIdForTest -e runUnitIdFor src/decision/snapshot.ts src/domain/operator-projections.ts src/domain/wait.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bRunUnitId\\b/ExecutionUnitId/g' -e 's/\\brunUnitIdForTest\\b/executionUnitIdForTest/g' -e 's/\\brunUnitIdFor\\b/executionUnitIdFor/g' src/decision/snapshot.ts src/domain/operator-projections.ts src/domain/wait.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\brun_unit_id\\b/execution_unit_id/g' src/decision/snapshot.ts src/domain/wait.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly execution_unit_id: ExecutionUnitId;",
+            "old": "  readonly run_unit_id: ExecutionUnitId;",
+            "path": "src/domain/operator-projections.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw RunUnitId src/decision/snapshot.ts src/domain/operator-projections.ts src/domain/wait.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/snapshot.ts\nsrc/domain/operator-projections.ts\nsrc/domain/wait.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/operator-projections.ts",
+        "exit=1\n"
+      ]
+    },
+    "execution_unit-group_b-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e RunUnitId -e run_unit_id -e runUnitIdForTest -e runUnitIdFor src/decision/snapshot.ts src/domain/operator-projections.ts src/domain/wait.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bRunUnitId\\b/ExecutionUnitId/g' -e 's/\\brunUnitIdForTest\\b/executionUnitIdForTest/g' -e 's/\\brunUnitIdFor\\b/executionUnitIdFor/g' src/decision/snapshot.ts src/domain/operator-projections.ts src/domain/wait.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\brun_unit_id\\b/execution_unit_id/g' src/decision/snapshot.ts src/domain/wait.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw RunUnitId src/decision/snapshot.ts src/domain/operator-projections.ts src/domain/wait.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/snapshot.ts\nsrc/domain/operator-projections.ts\nsrc/domain/wait.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=1\n"
+      ]
+    },
+    "execution_unit-group_c-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e RunUnitId -e run_unit_id -e runUnitIdForTest -e runUnitIdFor src/decision/derive.ts src/domain/primitives.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bRunUnitId\\b/ExecutionUnitId/g' -e 's/\\brunUnitIdForTest\\b/executionUnitIdForTest/g' -e 's/\\brunUnitIdFor\\b/executionUnitIdFor/g' src/decision/derive.ts src/domain/primitives.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\brun_unit_id\\b/execution_unit_id/g' src/decision/derive.ts src/domain/primitives.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly execution_unit_id: ExecutionUnitId;\n  readonly identity: OutputSlotIdentity;",
+            "old": "  readonly run_unit_id: ExecutionUnitId;\n  readonly identity: OutputSlotIdentity;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly execution_unit_id: ExecutionUnitId;\n  readonly reason: WorkOrderReason;",
+            "old": "  readonly run_unit_id: ExecutionUnitId;\n  readonly reason: WorkOrderReason;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly execution_unit_id: ExecutionUnitId;\n  readonly input_snapshot: readonly ArtifactEnvelope[];",
+            "old": "  readonly run_unit_id: ExecutionUnitId;\n  readonly input_snapshot: readonly ArtifactEnvelope[];",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  | { readonly kind: \"run_unit\"; readonly execution_unit_id: ExecutionUnitId }",
+            "old": "  | { readonly kind: \"run_unit\"; readonly run_unit_id: ExecutionUnitId }",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly execution_unit_id: ExecutionUnitId;",
+            "old": "  readonly run_unit_id: ExecutionUnitId;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly execution_unit_id: ExecutionUnitId | null;",
+            "old": "  readonly run_unit_id: ExecutionUnitId | null;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw RunUnitId src/decision/derive.ts src/domain/primitives.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/derive.ts\nsrc/domain/primitives.ts\nsrc/domain/run-record.ts\ntests/visible/decision/derive.test.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=1\n"
+      ]
+    },
+    "execution_unit-group_c-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e RunUnitId -e run_unit_id -e runUnitIdForTest -e runUnitIdFor src/decision/derive.ts src/domain/primitives.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bRunUnitId\\b/ExecutionUnitId/g' -e 's/\\brunUnitIdForTest\\b/executionUnitIdForTest/g' -e 's/\\brunUnitIdFor\\b/executionUnitIdFor/g' src/decision/derive.ts src/domain/primitives.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\brun_unit_id\\b/execution_unit_id/g' src/decision/derive.ts src/domain/primitives.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly execution_unit_id: ExecutionUnitId;\n  readonly identity: OutputSlotIdentity;",
+            "old": "  readonly run_unit_id: ExecutionUnitId;\n  readonly identity: OutputSlotIdentity;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly execution_unit_id: ExecutionUnitId;\n  readonly reason: WorkOrderReason;",
+            "old": "  readonly run_unit_id: ExecutionUnitId;\n  readonly reason: WorkOrderReason;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  | { readonly kind: \"run_unit\"; readonly execution_unit_id: ExecutionUnitId }",
+            "old": "  | { readonly kind: \"run_unit\"; readonly run_unit_id: ExecutionUnitId }",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly execution_unit_id: ExecutionUnitId;\n  readonly unit_id: UnitId;",
+            "old": "  readonly run_unit_id: ExecutionUnitId;\n  readonly unit_id: UnitId;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly execution_unit_id: ExecutionUnitId | null;",
+            "old": "  readonly run_unit_id: ExecutionUnitId | null;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw RunUnitId src/decision/derive.ts src/domain/primitives.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/derive.ts\nsrc/domain/primitives.ts\nsrc/domain/run-record.ts\ntests/visible/decision/derive.test.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=1\n"
+      ]
+    },
+    "stage_run-group_a-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e StageInstanceId -e stage_instance_id -e stageInstanceIdFor -e stageInstanceId -e STAGE_INSTANCE_ID src/decision/commands.ts src/decision/snapshot.ts src/domain/artifacts.ts src/domain/operator-projections.ts src/domain/run-record.ts src/domain/wait.ts tests/visible/decision/derive.test.ts tests/visible/resolve-execution.test.ts workflow-config/prompts/dev-flow/assessor_v2.md workflow-config/prompts/dev-flow/spec_analyzer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bStageInstanceId\\b/StageRunId/g' -e 's/\\bstageInstanceIdFor\\b/stageRunIdFor/g' -e 's/\\bstageInstanceId\\b/stageRunId/g' -e 's/\\bSTAGE_INSTANCE_ID\\b/STAGE_RUN_ID/g' src/decision/commands.ts src/decision/snapshot.ts src/domain/artifacts.ts src/domain/operator-projections.ts src/domain/run-record.ts src/domain/wait.ts tests/visible/decision/derive.test.ts tests/visible/resolve-execution.test.ts workflow-config/prompts/dev-flow/assessor_v2.md workflow-config/prompts/dev-flow/spec_analyzer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bstage_instance_id\\b/stage_run_id/g' src/decision/commands.ts src/decision/snapshot.ts src/domain/operator-projections.ts src/domain/run-record.ts src/domain/wait.ts tests/visible/decision/derive.test.ts tests/visible/resolve-execution.test.ts workflow-config/prompts/dev-flow/assessor_v2.md workflow-config/prompts/dev-flow/spec_analyzer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly stage_run_id: StageRunId;\n  readonly execution_id: ExecutionId;\n  readonly unit_id: UnitId;\n  readonly output_name: string;\n  readonly collection_key?: import(\"./primitives\").OutputCollectionKey | null;",
+            "old": "  readonly stage_instance_id: StageRunId;\n  readonly execution_id: ExecutionId;\n  readonly unit_id: UnitId;\n  readonly output_name: string;\n  readonly collection_key?: import(\"./primitives\").OutputCollectionKey | null;",
+            "path": "src/domain/artifacts.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly stage_run_id: StageRunId;",
+            "old": "  readonly stage_instance_id: StageRunId;",
+            "path": "src/domain/artifacts.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw StageInstanceId src/decision/commands.ts src/decision/snapshot.ts src/domain/artifacts.ts src/domain/operator-projections.ts src/domain/run-record.ts src/domain/wait.ts tests/visible/decision/derive.test.ts tests/visible/resolve-execution.test.ts workflow-config/prompts/dev-flow/assessor_v2.md workflow-config/prompts/dev-flow/spec_analyzer_v2.md"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/commands.ts\nsrc/decision/snapshot.ts\nsrc/domain/artifacts.ts\nsrc/domain/operator-projections.ts\nsrc/domain/run-record.ts\nsrc/domain/wait.ts\ntests/visible/decision/derive.test.ts\ntests/visible/resolve-execution.test.ts\nworkflow-config/prompts/dev-flow/assessor_v2.md\nworkflow-config/prompts/dev-flow/spec_analyzer_v2.md\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/artifacts.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/artifacts.ts",
+        "exit=1\n"
+      ]
+    },
+    "stage_run-group_a-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e StageInstanceId -e stage_instance_id -e stageInstanceIdFor -e stageInstanceId -e STAGE_INSTANCE_ID src/decision/commands.ts src/decision/snapshot.ts src/domain/artifacts.ts src/domain/operator-projections.ts src/domain/run-record.ts src/domain/wait.ts tests/visible/decision/derive.test.ts tests/visible/resolve-execution.test.ts workflow-config/prompts/dev-flow/assessor_v2.md workflow-config/prompts/dev-flow/spec_analyzer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bStageInstanceId\\b/StageRunId/g' -e 's/\\bstageInstanceIdFor\\b/stageRunIdFor/g' -e 's/\\bstageInstanceId\\b/stageRunId/g' -e 's/\\bSTAGE_INSTANCE_ID\\b/STAGE_RUN_ID/g' src/decision/commands.ts src/decision/snapshot.ts src/domain/artifacts.ts src/domain/operator-projections.ts src/domain/run-record.ts src/domain/wait.ts tests/visible/decision/derive.test.ts tests/visible/resolve-execution.test.ts workflow-config/prompts/dev-flow/assessor_v2.md workflow-config/prompts/dev-flow/spec_analyzer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bstage_instance_id\\b/stage_run_id/g' src/decision/commands.ts src/decision/snapshot.ts src/domain/operator-projections.ts src/domain/run-record.ts src/domain/wait.ts tests/visible/decision/derive.test.ts tests/visible/resolve-execution.test.ts workflow-config/prompts/dev-flow/assessor_v2.md workflow-config/prompts/dev-flow/spec_analyzer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly stage_run_id: StageRunId;\n  readonly execution_id: ExecutionId;\n  readonly unit_id: UnitId;\n  readonly output_name: string;\n  readonly artifact_type: ArtifactTypeId;",
+            "old": "  readonly stage_instance_id: StageRunId;\n  readonly execution_id: ExecutionId;\n  readonly unit_id: UnitId;\n  readonly output_name: string;\n  readonly artifact_type: ArtifactTypeId;",
+            "path": "src/domain/artifacts.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw StageInstanceId src/decision/commands.ts src/decision/snapshot.ts src/domain/artifacts.ts src/domain/operator-projections.ts src/domain/run-record.ts src/domain/wait.ts tests/visible/decision/derive.test.ts tests/visible/resolve-execution.test.ts workflow-config/prompts/dev-flow/assessor_v2.md workflow-config/prompts/dev-flow/spec_analyzer_v2.md"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/commands.ts\nsrc/decision/snapshot.ts\nsrc/domain/artifacts.ts\nsrc/domain/operator-projections.ts\nsrc/domain/run-record.ts\nsrc/domain/wait.ts\ntests/visible/decision/derive.test.ts\ntests/visible/resolve-execution.test.ts\nworkflow-config/prompts/dev-flow/assessor_v2.md\nworkflow-config/prompts/dev-flow/spec_analyzer_v2.md\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/artifacts.ts",
+        "exit=1\n"
+      ]
+    },
+    "stage_run-group_b-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e StageInstanceId -e stage_instance_id -e stageInstanceIdFor -e stageInstanceId -e STAGE_INSTANCE_ID src/decision/derive.ts src/domain/cohort-pull-request.ts src/domain/delegated-session.ts src/domain/primitives.ts src/domain/runs.ts src/domain/workflow.ts tests/visible/decision/snapshot-builder.ts workflow-config/definitions/dev_flow_v11.json workflow-config/prompts/dev-flow/build_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bStageInstanceId\\b/StageRunId/g' -e 's/\\bstageInstanceIdFor\\b/stageRunIdFor/g' -e 's/\\bstageInstanceId\\b/stageRunId/g' -e 's/\\bSTAGE_INSTANCE_ID\\b/STAGE_RUN_ID/g' src/decision/derive.ts src/domain/cohort-pull-request.ts src/domain/delegated-session.ts src/domain/primitives.ts src/domain/runs.ts src/domain/workflow.ts tests/visible/decision/snapshot-builder.ts workflow-config/definitions/dev_flow_v11.json workflow-config/prompts/dev-flow/build_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bstage_instance_id\\b/stage_run_id/g' src/decision/derive.ts src/domain/delegated-session.ts src/domain/primitives.ts src/domain/runs.ts src/domain/workflow.ts tests/visible/decision/snapshot-builder.ts workflow-config/definitions/dev_flow_v11.json workflow-config/prompts/dev-flow/build_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly stage_run_id: StageRunId;\n  readonly unit_id: UnitId;\n  readonly repository_key: string;\n  readonly handoff_artifact_id: ArtifactId;",
+            "old": "  readonly stage_instance_id: StageRunId;\n  readonly unit_id: UnitId;\n  readonly repository_key: string;\n  readonly handoff_artifact_id: ArtifactId;",
+            "path": "src/domain/cohort-pull-request.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly stage_run_id: StageRunId;\n  readonly unit_id: UnitId;\n  readonly repository_key: string;\n  /** Where the build reported opening the pull request. */",
+            "old": "  readonly stage_instance_id: StageRunId;\n  readonly unit_id: UnitId;\n  readonly repository_key: string;\n  /** Where the build reported opening the pull request. */",
+            "path": "src/domain/cohort-pull-request.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly stage_run_id: StageRunId;",
+            "old": "  readonly stage_instance_id: StageRunId;",
+            "path": "src/domain/cohort-pull-request.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "    run_id: input.expected.run_id, stage_run_id: input.expected.stage_instance_id, unit_id: input.expected.unit_id,",
+            "old": "    run_id: input.expected.run_id, stage_instance_id: input.expected.stage_instance_id, unit_id: input.expected.unit_id,",
+            "path": "src/domain/cohort-pull-request.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "    run_id: input.expected.run_id, stage_run_id: input.expected.stage_run_id, unit_id: input.expected.unit_id,",
+            "old": "    run_id: input.expected.run_id, stage_run_id: input.expected.stage_instance_id, unit_id: input.expected.unit_id,",
+            "path": "src/domain/cohort-pull-request.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw StageInstanceId src/decision/derive.ts src/domain/cohort-pull-request.ts src/domain/delegated-session.ts src/domain/primitives.ts src/domain/runs.ts src/domain/workflow.ts tests/visible/decision/snapshot-builder.ts workflow-config/definitions/dev_flow_v11.json workflow-config/prompts/dev-flow/build_v2.md"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/derive.ts\nsrc/domain/cohort-pull-request.ts\nsrc/domain/delegated-session.ts\nsrc/domain/primitives.ts\nsrc/domain/runs.ts\nsrc/domain/workflow.ts\ntests/visible/decision/snapshot-builder.ts\nworkflow-config/definitions/dev_flow_v11.json\nworkflow-config/prompts/dev-flow/build_v2.md\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/cohort-pull-request.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/cohort-pull-request.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/cohort-pull-request.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/cohort-pull-request.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/cohort-pull-request.ts",
+        "exit=1\n"
+      ]
+    },
+    "stage_run-group_b-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e StageInstanceId -e stage_instance_id -e stageInstanceIdFor -e stageInstanceId -e STAGE_INSTANCE_ID src/decision/derive.ts src/domain/cohort-pull-request.ts src/domain/delegated-session.ts src/domain/primitives.ts src/domain/runs.ts src/domain/workflow.ts tests/visible/decision/snapshot-builder.ts workflow-config/definitions/dev_flow_v11.json workflow-config/prompts/dev-flow/build_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bStageInstanceId\\b/StageRunId/g' -e 's/\\bstageInstanceIdFor\\b/stageRunIdFor/g' -e 's/\\bstageInstanceId\\b/stageRunId/g' -e 's/\\bSTAGE_INSTANCE_ID\\b/STAGE_RUN_ID/g' src/decision/derive.ts src/domain/cohort-pull-request.ts src/domain/delegated-session.ts src/domain/primitives.ts src/domain/runs.ts src/domain/workflow.ts tests/visible/decision/snapshot-builder.ts workflow-config/definitions/dev_flow_v11.json workflow-config/prompts/dev-flow/build_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bstage_instance_id\\b/stage_run_id/g' src/decision/derive.ts src/domain/delegated-session.ts src/domain/primitives.ts src/domain/runs.ts src/domain/workflow.ts tests/visible/decision/snapshot-builder.ts workflow-config/definitions/dev_flow_v11.json workflow-config/prompts/dev-flow/build_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly stage_run_id: StageRunId;\n  readonly unit_id: UnitId;\n  readonly repository_key: string;\n  /** Where the build reported opening the pull request. */",
+            "old": "  readonly stage_instance_id: StageRunId;\n  readonly unit_id: UnitId;\n  readonly repository_key: string;\n  /** Where the build reported opening the pull request. */",
+            "path": "src/domain/cohort-pull-request.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly stage_run_id: StageRunId;\n  readonly unit_id: UnitId;\n  readonly repository_key: string;\n  /** Null only for rows written before handoff identity was persisted. */",
+            "old": "  readonly stage_instance_id: StageRunId;\n  readonly unit_id: UnitId;\n  readonly repository_key: string;\n  /** Null only for rows written before handoff identity was persisted. */",
+            "path": "src/domain/cohort-pull-request.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "    run_id: input.expected.run_id, stage_run_id: input.expected.stage_instance_id, unit_id: input.expected.unit_id,",
+            "old": "    run_id: input.expected.run_id, stage_instance_id: input.expected.stage_instance_id, unit_id: input.expected.unit_id,",
+            "path": "src/domain/cohort-pull-request.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "    run_id: input.expected.run_id, stage_run_id: input.expected.stage_run_id, unit_id: input.expected.unit_id,",
+            "old": "    run_id: input.expected.run_id, stage_run_id: input.expected.stage_instance_id, unit_id: input.expected.unit_id,",
+            "path": "src/domain/cohort-pull-request.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw StageInstanceId src/decision/derive.ts src/domain/cohort-pull-request.ts src/domain/delegated-session.ts src/domain/primitives.ts src/domain/runs.ts src/domain/workflow.ts tests/visible/decision/snapshot-builder.ts workflow-config/definitions/dev_flow_v11.json workflow-config/prompts/dev-flow/build_v2.md"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/derive.ts\nsrc/domain/cohort-pull-request.ts\nsrc/domain/delegated-session.ts\nsrc/domain/primitives.ts\nsrc/domain/runs.ts\nsrc/domain/workflow.ts\ntests/visible/decision/snapshot-builder.ts\nworkflow-config/definitions/dev_flow_v11.json\nworkflow-config/prompts/dev-flow/build_v2.md\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/cohort-pull-request.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/cohort-pull-request.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/cohort-pull-request.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/cohort-pull-request.ts",
+        "exit=1\n"
+      ]
+    },
+    "stage_run-group_c-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e StageInstanceId -e stage_instance_id -e stageInstanceIdFor -e stageInstanceId -e STAGE_INSTANCE_ID src/compiler/resolve-execution.ts src/decision/ids.ts src/domain/execution.ts src/domain/gates.ts src/domain/run-event.ts src/domain/session-hold.ts src/seed/dev-flow-v14.ts tests/visible/dev-flow-stage-contracts.test.ts workflow-config/definitions/dev_flow_v14.json workflow-config/prompts/dev-flow/plan_writer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bStageInstanceId\\b/StageRunId/g' -e 's/\\bstageInstanceIdFor\\b/stageRunIdFor/g' -e 's/\\bstageInstanceId\\b/stageRunId/g' -e 's/\\bSTAGE_INSTANCE_ID\\b/STAGE_RUN_ID/g' src/compiler/resolve-execution.ts src/decision/ids.ts src/domain/execution.ts src/domain/gates.ts src/domain/run-event.ts src/domain/session-hold.ts src/seed/dev-flow-v14.ts tests/visible/dev-flow-stage-contracts.test.ts workflow-config/definitions/dev_flow_v14.json workflow-config/prompts/dev-flow/plan_writer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bstage_instance_id\\b/stage_run_id/g' src/compiler/resolve-execution.ts src/decision/ids.ts src/domain/gates.ts src/domain/run-event.ts src/domain/session-hold.ts src/seed/dev-flow-v14.ts tests/visible/dev-flow-stage-contracts.test.ts workflow-config/definitions/dev_flow_v14.json workflow-config/prompts/dev-flow/plan_writer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly stage_run_id: StageRunId;",
+            "old": "  readonly stage_instance_id: StageRunId;",
+            "path": "src/domain/execution.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw StageInstanceId src/compiler/resolve-execution.ts src/decision/ids.ts src/domain/execution.ts src/domain/gates.ts src/domain/run-event.ts src/domain/session-hold.ts src/seed/dev-flow-v14.ts tests/visible/dev-flow-stage-contracts.test.ts workflow-config/definitions/dev_flow_v14.json workflow-config/prompts/dev-flow/plan_writer_v2.md"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/compiler/resolve-execution.ts\nsrc/decision/ids.ts\nsrc/domain/execution.ts\nsrc/domain/gates.ts\nsrc/domain/run-event.ts\nsrc/domain/session-hold.ts\nsrc/seed/dev-flow-v14.ts\ntests/visible/dev-flow-stage-contracts.test.ts\nworkflow-config/definitions/dev_flow_v14.json\nworkflow-config/prompts/dev-flow/plan_writer_v2.md\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/execution.ts",
+        "exit=1\n"
+      ]
+    },
+    "stage_run-group_c-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e StageInstanceId -e stage_instance_id -e stageInstanceIdFor -e stageInstanceId -e STAGE_INSTANCE_ID src/compiler/resolve-execution.ts src/decision/ids.ts src/domain/execution.ts src/domain/gates.ts src/domain/run-event.ts src/domain/session-hold.ts src/seed/dev-flow-v14.ts tests/visible/dev-flow-stage-contracts.test.ts workflow-config/definitions/dev_flow_v14.json workflow-config/prompts/dev-flow/plan_writer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bStageInstanceId\\b/StageRunId/g' -e 's/\\bstageInstanceIdFor\\b/stageRunIdFor/g' -e 's/\\bstageInstanceId\\b/stageRunId/g' -e 's/\\bSTAGE_INSTANCE_ID\\b/STAGE_RUN_ID/g' src/compiler/resolve-execution.ts src/decision/ids.ts src/domain/execution.ts src/domain/gates.ts src/domain/run-event.ts src/domain/session-hold.ts src/seed/dev-flow-v14.ts tests/visible/dev-flow-stage-contracts.test.ts workflow-config/definitions/dev_flow_v14.json workflow-config/prompts/dev-flow/plan_writer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bstage_instance_id\\b/stage_run_id/g' src/compiler/resolve-execution.ts src/decision/ids.ts src/domain/gates.ts src/domain/run-event.ts src/domain/session-hold.ts src/seed/dev-flow-v14.ts tests/visible/dev-flow-stage-contracts.test.ts workflow-config/definitions/dev_flow_v14.json workflow-config/prompts/dev-flow/plan_writer_v2.md"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw StageInstanceId src/compiler/resolve-execution.ts src/decision/ids.ts src/domain/execution.ts src/domain/gates.ts src/domain/run-event.ts src/domain/session-hold.ts src/seed/dev-flow-v14.ts tests/visible/dev-flow-stage-contracts.test.ts workflow-config/definitions/dev_flow_v14.json workflow-config/prompts/dev-flow/plan_writer_v2.md"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/compiler/resolve-execution.ts\nsrc/decision/ids.ts\nsrc/domain/execution.ts\nsrc/domain/gates.ts\nsrc/domain/run-event.ts\nsrc/domain/session-hold.ts\nsrc/seed/dev-flow-v14.ts\ntests/visible/dev-flow-stage-contracts.test.ts\nworkflow-config/definitions/dev_flow_v14.json\nworkflow-config/prompts/dev-flow/plan_writer_v2.md\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=1\n"
+      ]
+    },
+    "task_order-group_a-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e WorkOrderId -e work_order_id -e workOrderIdFor -e workOrderId src/decision/derive.ts src/domain/operator-projections.ts src/domain/primitives.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bWorkOrderId\\b/TaskOrderId/g' -e 's/\\bworkOrderIdFor\\b/taskOrderIdFor/g' -e 's/\\bworkOrderId\\b/taskOrderId/g' src/decision/derive.ts src/domain/operator-projections.ts src/domain/primitives.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bwork_order_id\\b/task_order_id/g' src/decision/derive.ts src/domain/primitives.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": " * `executor_attachment.task_order_id` is a PRIMARY KEY, so every attempt keeps",
+            "old": " * `executor_attachment.work_order_id` is a PRIMARY KEY, so every attempt keeps",
+            "path": "src/domain/operator-projections.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId;\n  /** `oakridge.executor_attachment.external_reference->>'session_id'` (0011:91) \u2014 kbbl's session id, not a domain uuid. */",
+            "old": "  readonly work_order_id: TaskOrderId;\n  /** `oakridge.executor_attachment.external_reference->>'session_id'` (0011:91) \u2014 kbbl's session id, not a domain uuid. */",
+            "path": "src/domain/operator-projections.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId;",
+            "old": "  readonly work_order_id: TaskOrderId;",
+            "path": "src/domain/operator-projections.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw WorkOrderId src/decision/derive.ts src/domain/operator-projections.ts src/domain/primitives.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/derive.ts\nsrc/domain/operator-projections.ts\nsrc/domain/primitives.ts\ntests/visible/decision/snapshot-builder.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/operator-projections.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/operator-projections.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/operator-projections.ts",
+        "exit=1\n"
+      ]
+    },
+    "task_order-group_a-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e WorkOrderId -e work_order_id -e workOrderIdFor -e workOrderId src/decision/derive.ts src/domain/operator-projections.ts src/domain/primitives.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bWorkOrderId\\b/TaskOrderId/g' -e 's/\\bworkOrderIdFor\\b/taskOrderIdFor/g' -e 's/\\bworkOrderId\\b/taskOrderId/g' src/decision/derive.ts src/domain/operator-projections.ts src/domain/primitives.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bwork_order_id\\b/task_order_id/g' src/decision/derive.ts src/domain/primitives.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": " * `executor_attachment.task_order_id` is a PRIMARY KEY, so every attempt keeps",
+            "old": " * `executor_attachment.work_order_id` is a PRIMARY KEY, so every attempt keeps",
+            "path": "src/domain/operator-projections.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId;\n}",
+            "old": "  readonly work_order_id: TaskOrderId;\n}",
+            "path": "src/domain/operator-projections.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw WorkOrderId src/decision/derive.ts src/domain/operator-projections.ts src/domain/primitives.ts tests/visible/decision/snapshot-builder.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/derive.ts\nsrc/domain/operator-projections.ts\nsrc/domain/primitives.ts\ntests/visible/decision/snapshot-builder.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/operator-projections.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/operator-projections.ts",
+        "exit=1\n"
+      ]
+    },
+    "task_order-group_b-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e WorkOrderId -e work_order_id -e workOrderIdFor -e workOrderId src/decision/ids.ts src/domain/repository-refs.ts src/domain/run-event.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bWorkOrderId\\b/TaskOrderId/g' -e 's/\\bworkOrderIdFor\\b/taskOrderIdFor/g' -e 's/\\bworkOrderId\\b/taskOrderId/g' src/decision/ids.ts src/domain/repository-refs.ts src/domain/run-event.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bwork_order_id\\b/task_order_id/g' src/decision/ids.ts src/domain/run-event.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly publication?: { readonly task_order_id: string; readonly capability: string };",
+            "old": "  readonly publication?: { readonly work_order_id: string; readonly capability: string };",
+            "path": "src/domain/repository-refs.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "    const taskOrderId = readJsonPointer(rawPublication, \"/task_order_id\");",
+            "old": "    const taskOrderId = readJsonPointer(rawPublication, \"/work_order_id\");",
+            "path": "src/domain/repository-refs.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "    publication = { task_order_id: taskOrderId, capability };",
+            "old": "    publication = { work_order_id: taskOrderId, capability };",
+            "path": "src/domain/repository-refs.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw WorkOrderId src/decision/ids.ts src/domain/repository-refs.ts src/domain/run-event.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/ids.ts\nsrc/domain/repository-refs.ts\nsrc/domain/run-event.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/repository-refs.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/repository-refs.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/repository-refs.ts",
+        "exit=1\n"
+      ]
+    },
+    "task_order-group_b-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e WorkOrderId -e work_order_id -e workOrderIdFor -e workOrderId src/decision/ids.ts src/domain/repository-refs.ts src/domain/run-event.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bWorkOrderId\\b/TaskOrderId/g' -e 's/\\bworkOrderIdFor\\b/taskOrderIdFor/g' -e 's/\\bworkOrderId\\b/taskOrderId/g' src/decision/ids.ts src/domain/repository-refs.ts src/domain/run-event.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bwork_order_id\\b/task_order_id/g' src/decision/ids.ts src/domain/run-event.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly publication?: { readonly task_order_id: string; readonly capability: string };",
+            "old": "  readonly publication?: { readonly work_order_id: string; readonly capability: string };",
+            "path": "src/domain/repository-refs.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "    publication = { task_order_id: taskOrderId, capability };",
+            "old": "    publication = { work_order_id: taskOrderId, capability };",
+            "path": "src/domain/repository-refs.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw WorkOrderId src/decision/ids.ts src/domain/repository-refs.ts src/domain/run-event.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/ids.ts\nsrc/domain/repository-refs.ts\nsrc/domain/run-event.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/repository-refs.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/repository-refs.ts",
+        "exit=1\n"
+      ]
+    },
+    "task_order-group_c-clean": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e WorkOrderId -e work_order_id -e workOrderIdFor -e workOrderId src/decision/commands.ts src/domain/artifacts.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bWorkOrderId\\b/TaskOrderId/g' -e 's/\\bworkOrderIdFor\\b/taskOrderIdFor/g' -e 's/\\bworkOrderId\\b/taskOrderId/g' src/decision/commands.ts src/domain/artifacts.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bwork_order_id\\b/task_order_id/g' src/decision/commands.ts src/domain/artifacts.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId;\n  readonly executor_type: string;\n  readonly external_reference: ExternalExecutionReference | null;",
+            "old": "  readonly work_order_id: TaskOrderId;\n  readonly executor_type: string;\n  readonly external_reference: ExternalExecutionReference | null;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId;\n  readonly work_order_workflow_id: string;",
+            "old": "  readonly work_order_id: TaskOrderId;\n  readonly work_order_workflow_id: string;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId;\n  readonly executor_type: string;",
+            "old": "  readonly work_order_id: TaskOrderId;\n  readonly executor_type: string;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId;",
+            "old": "  readonly work_order_id: TaskOrderId;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId | null;",
+            "old": "  readonly work_order_id: TaskOrderId | null;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw WorkOrderId src/decision/commands.ts src/domain/artifacts.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/commands.ts\nsrc/domain/artifacts.ts\nsrc/domain/run-record.ts\ntests/visible/decision/derive.test.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=1\n"
+      ]
+    },
+    "task_order-group_c-remnant": {
+      "calls": [
+        {
+          "arguments": {
+            "command": "grep -lw -e WorkOrderId -e work_order_id -e workOrderIdFor -e workOrderId src/decision/commands.ts src/domain/artifacts.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i -e 's/\\bWorkOrderId\\b/TaskOrderId/g' -e 's/\\bworkOrderIdFor\\b/taskOrderIdFor/g' -e 's/\\bworkOrderId\\b/taskOrderId/g' src/decision/commands.ts src/domain/artifacts.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "command": "sed -i '/legacy wire key/!s/\\bwork_order_id\\b/task_order_id/g' src/decision/commands.ts src/domain/artifacts.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId;\n  readonly work_order_workflow_id: string;",
+            "old": "  readonly work_order_id: TaskOrderId;\n  readonly work_order_workflow_id: string;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId;\n  readonly executor_type: string;\n  readonly external_reference: ExternalExecutionReference;",
+            "old": "  readonly work_order_id: TaskOrderId;\n  readonly executor_type: string;\n  readonly external_reference: ExternalExecutionReference;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId;\n  readonly capability_hash: string;",
+            "old": "  readonly work_order_id: TaskOrderId;\n  readonly capability_hash: string;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "new": "  readonly task_order_id: TaskOrderId | null;",
+            "old": "  readonly work_order_id: TaskOrderId | null;",
+            "path": "src/domain/run-record.ts"
+          },
+          "name": "replace_in_file"
+        },
+        {
+          "arguments": {
+            "command": "grep -nw WorkOrderId src/decision/commands.ts src/domain/artifacts.ts src/domain/run-record.ts tests/visible/decision/derive.test.ts"
+          },
+          "name": "run_command"
+        }
+      ],
+      "outputs": [
+        "exit=0\nsrc/decision/commands.ts\nsrc/domain/artifacts.ts\nsrc/domain/run-record.ts\ntests/visible/decision/derive.test.ts\n",
+        "exit=0\n",
+        "exit=0\n",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=0\nreplaced 1 occurrence in src/domain/run-record.ts",
+        "exit=1\n"
+      ]
+    }
+  }
+}
