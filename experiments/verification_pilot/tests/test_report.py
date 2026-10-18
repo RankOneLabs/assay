@@ -94,16 +94,20 @@ def test_cross_model_table_keeps_routes_separate() -> None:
 
 def test_failed_cell_archive_keeps_partial_trajectory(tmp_path: Path) -> None:
     store = ObjectStore(tmp_path / "store")
+    subject = pilot_subjects()[0]
     trajectory = {"turns": [{
         "turn": "T1", "stop_cause": "deadline", "patch_ref": "sha256:partial",
         "tree_digest": "observed-tree", "baseline_tree_digest": "baseline-tree",
+        "submission": None, "workspace_diff": "", "tool_calls": [],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 2,
+                  "requests": 1, "cost_usd": 0.12},
     }]}
     trajectory_bytes = json.dumps(trajectory).encode()
     raw_ref = store.publish_json({
         "content_base64": base64.b64encode(trajectory_bytes).decode("ascii"),
     })
     trace_ref = store.publish_json({"artifact_refs": {"trajectory.json": str(raw_ref)}})
-    cell_id = "subject:t1-native:w0"
+    cell_id = f"{subject.id}:t1-native:w0"
     record_ref = store.publish_json({
         "status": "failed", "output_ref": None, "trace_ref": str(trace_ref),
     })
@@ -115,13 +119,21 @@ def test_failed_cell_archive_keeps_partial_trajectory(tmp_path: Path) -> None:
     manifest_ref = store.publish_json(manifest.model_dump(mode="json"))
     result = RunFailed("DeadlineExceeded", "deadline", manifest, manifest_ref)
 
-    archive = save_run_trace(store, result, tmp_path / "raw" / "runs")
+    archive = save_run_trace(store, result, tmp_path / "raw" / "runs",
+                             {subject.id: subject})
 
     assert archive is not None
     index = json.loads((archive / "index.json").read_text())
     assert index[cell_id]["status"] == "failed"
     assert index[cell_id]["trajectory"] == "001-trajectory.json"
     assert json.loads((archive / "traces" / "001-trajectory.json").read_bytes()) == trajectory
+    assert index[cell_id]["measures"] == "001-measures.json"
+    measures = json.loads((archive / "traces" / "001-measures.json").read_text())
+    assert {item["family"] for item in measures} == {"inspection"}
+    assert next(item["result"]["value"] for item in measures
+                if item["name"] == "stop_cause") == "deadline"
+    assert next(item["result"]["value"] for item in measures
+                if item["name"] == "cost_usd") == 0.12
 
 
 @pytest.mark.asyncio
@@ -132,6 +144,12 @@ async def test_scripted_grid_builds_paired_h2_and_separate_model_report(tmp_path
     archive = tmp_path / "runs" / run.manifest.run_id
     assert (archive / "manifest.json").read_bytes() == store.read_bytes(run.manifest_ref)
     assert list((archive / "traces").glob("*-trajectory.json"))
+    assert list((archive / "traces").glob("*-measures.json"))
+    index = json.loads((archive / "index.json").read_text())
+    first = next(iter(index.values()))
+    measures = json.loads((archive / "traces" / first["measures"]).read_text())
+    assert {item["family"] for item in measures} == {"inspection", "claim", "verdict"}
+    assert {item["turn"] for item in measures} == {"T1", "T2", "T3"}
     ref = str(run.manifest_ref)
     config = paired_config(store, (ref,), evaluator_id="pilot_judge",
                            reference_arm="t1-native", candidate_arm="t1-quoted")

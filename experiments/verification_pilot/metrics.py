@@ -6,6 +6,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from verification_pilot.fixtures import whole_word_pattern
 from verification_pilot.ground_truth import Remnant
 from verification_pilot.migrations import Migration, OwnershipGroup
 
@@ -153,9 +154,7 @@ def remnant_repaired(diff: str | None, remnant: Remnant) -> bool:
     """Require the original remnant line to lose its exact old token."""
     if diff is None or not changed_line(diff, remnant.location.path, remnant.location.line):
         return False
-    old_token = re.compile(
-        rf"(?<![A-Za-z0-9_]){re.escape(remnant.location.symbol)}(?![A-Za-z0-9_])"
-    )
+    old_token = whole_word_pattern(remnant.location.symbol)
     current: str | None = None
     old_line = 0
     removed: list[tuple[int, str]] = []

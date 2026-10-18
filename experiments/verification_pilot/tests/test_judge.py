@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 from jig.core.types import LLMResponse, ToolCall, Usage
 
 from assay.adapters.consistency import CompletionNotSent
@@ -131,6 +132,34 @@ def test_judge_retains_accounting_on_invalid_response_and_sent_failure(tmp_path:
                                                "output_tokens": 4}
             assert result.accounting.amount == 0.25
         assert factory.client.closed
+
+
+@pytest.mark.parametrize("submitted", ["5", '"x"', '[{"label": 1}]'])
+def test_non_object_json_is_parse_failure_with_measured_cost(
+    tmp_path: Path, submitted: str,
+) -> None:
+    store = ObjectStore(tmp_path)
+    output = _sealed(store, {"turns": [
+        {"turn": "T1", "submission": {"title": "Review"}, "tool_calls": []},
+    ]})
+
+    class NonObjectClient(FakeClient):
+        async def complete_result(self, params: Any) -> LLMResponse | WorkerFailure:
+            return LLMResponse("", [ToolCall("judge", "submit_output", {"source": submitted})],
+                               Usage(3, 4, 0.25), 1, JUDGE_ROUTE.model)
+
+    factory = FakeFactory()
+    factory.client = NonObjectClient()
+    result = asyncio.run(PilotJudge(store, cast(Any, factory)).evaluate(
+        input_value={}, output=output,
+        coordinate=EvaluationCoordinate(cell_id="pilot:arm:w0", evaluator_id="t1_claim",
+                                        evaluator_repeat=0)))
+    assert isinstance(result, EvaluationFailed)
+    assert result.error_type == "JudgeInputOrResponse"
+    assert result.accounting.usage == {"llm_calls": 1, "input_tokens": 3, "output_tokens": 4}
+    assert result.accounting.amount == 0.25
+    assert result.accounting.coverage == "measured"
+    assert factory.client.closed
 
 
 def test_seeded_twenty_percent_hand_audit_reports_agreement() -> None:
