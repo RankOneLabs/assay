@@ -10,6 +10,15 @@ from assay.execution import RunFailed, RunSucceeded, execute_plan
 from assay.models import RunManifest, RuntimeProfile
 from assay.report_engine import ReportError, build_report
 from assay.store import ObjectStore
+from verification_pilot.analysis import (
+    MeasureCell,
+    h1_sign_test,
+    h2_paired_sign_test,
+    h4_rename_pairs,
+    result_tables,
+    wide_search_ceiling,
+)
+from verification_pilot.observations import Measured, TurnMeasure
 from verification_pilot.report import (
     Observation,
     cross_model_table,
@@ -27,6 +36,62 @@ from verification_pilot.run import (
     subject_truth,
 )
 from verification_pilot.study import compile_pilot_plan, pilot_subjects
+
+
+def _cell(subject: str, migration: str, group: str, arm: str, *,
+          gap: float = 1.0, inspected: bool = True,
+          wide: bool = False) -> MeasureCell:
+    measures = tuple(TurnMeasure("T1", "inspection", name, Measured("measured", item))
+                     for name, item in (("ownership_gap", gap),
+                                        ("remnant_path_inspected", inspected),
+                                        ("first_inspection_is_wide_search", wide)))
+    return MeasureCell("fixture", subject, migration, group, arm, measures)
+
+
+def test_analysis_h1_n16_exact_sign_and_missing_boundary() -> None:
+    rows = [_cell(f"s{i}", f"m{i // 4}", "group_a", "t1-native",
+                  gap=1 if i < 16 else -1) for i in range(16)]
+    result = h1_sign_test(rows, "t1-native")
+    assert result["n"] == 16
+    assert result["p_value"] == 2 / 2**16
+    assert h1_sign_test(rows[:-1], "t1-native")["p_value"] is None
+    assert h1_sign_test([*rows[:-1], _cell("s15", "m3", "group_a",
+                                            "t1-native", gap=-1)], "t1-native")[
+        "p_value"] == 2 * (1 + 16) / 2**16
+
+
+def test_analysis_h2_paired_sign_uses_matching_subjects() -> None:
+    rows: list[MeasureCell] = []
+    for i in range(4):
+        rows.extend((_cell(f"s{i}", "m", "group_a", "t1-native", gap=0),
+                     _cell(f"s{i}", "m", "group_a", "t1-quoted",
+                           gap=1 if i < 3 else 0)))
+    result = h2_paired_sign_test(rows)
+    assert (result["n"], result["improved"], result["ties"]) == (4, 3, 1)
+    assert result["p_value"] == 0.25
+
+
+def test_analysis_h4_four_pair_floor_boundary() -> None:
+    rows = [_cell(f"{migration}-{group}", migration, group, "t1-native",
+                  inspected=group == "group_a")
+            for migration in ("a", "b", "c", "d")
+            for group in ("group_a", "group_b", "group_c")]
+    result = h4_rename_pairs(rows, "t1-native", "group_a")
+    assert result["n"] == 4
+    assert result["p_value"] == result["p_floor"] == 0.125
+    assert result["decision"] == "descriptive_only"
+    assert h4_rename_pairs(rows[:-3], "t1-native", "group_a")["p_value"] is None
+
+
+def test_analysis_wide_search_strict_half_boundary_and_tables() -> None:
+    rows = [_cell(f"s{i}", "m", "group_a", "t1-native", wide=i < 2)
+            for i in range(4)]
+    assert wide_search_ceiling(rows, "t1-native")["exceeds_half"] is False
+    assert wide_search_ceiling(rows[:-1], "t1-native")["exceeds_half"] is True
+    tables = result_tables(rows)
+    assert tables["routes"][0]["ceiling"]["t1-native"]["share"] == 0.5
+    assert any(row["measure"] == "first_inspection_is_wide_search"
+               for row in tables["measures"])
 
 
 def test_h1_exact_one_sample_sign_test_against_zero() -> None:

@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import fmean
-from typing import Any
+from typing import Any, cast
 
 from assay.models import (
     ExecutionPlanV2,
@@ -25,9 +25,11 @@ from assay.models import (
 from assay.report_engine import build_report, exact_sign_test, persist_report
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
+from verification_pilot.analysis import MeasureCell, result_tables
 from verification_pilot.evaluation import NOT_APPLICABLE, REPORT_CATEGORIES
 from verification_pilot.metrics import calls, scope_contains, successful
 from verification_pilot.migrations import GROUPS, MIGRATIONS
+from verification_pilot.observations import RecordedTrace, observe
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +272,47 @@ def ceiling_effect(
             for arm, count in sorted(totals.items())]
 
 
+@dataclass(frozen=True, slots=True)
+class _TraceSubject:
+    migration: Any
+    location: str | None
+
+
+def measured_cells(
+    store: ObjectStore, manifest_refs: Sequence[str], model: str,
+) -> tuple[MeasureCell, ...]:
+    """Adapt verified sealed trajectories to the pure pilot analysis input."""
+    migrations = {migration.name: migration for migration in MIGRATIONS}
+    cells: list[MeasureCell] = []
+    for ref in manifest_refs:
+        failures = [f for f in verify_manifest(store, ref) if f.code != "incomplete_run"]
+        if failures:
+            raise ValueError(f"invalid manifest {ref}: {failures[0].code}")
+        manifest = RunManifest.model_validate(_read(store, ref))
+        plan = parse_execution_plan(_read(store, manifest.plan_ref))
+        snapshot = StudySnapshot.model_validate(_read(store, plan.snapshot_ref))
+        subjects = {subject.id: _read(store, subject.payload_ref)
+                    for subject in snapshot.subjects}
+        for cell in plan.cells:
+            record_ref = manifest.execution_records.get(cell.id)
+            if record_ref is None:
+                continue
+            record = _read(store, record_ref)
+            if not record.get("output_ref"):
+                continue
+            output = _read(store, record["output_ref"])
+            raw = _read(store, output["raw_trajectory_ref"])
+            trace = cast(RecordedTrace, json.loads(base64.b64decode(raw["content_base64"])))
+            payload = subjects[cell.subject_id]
+            migration_name = str(payload["migration"])
+            subject = _TraceSubject(migrations[migration_name], payload.get("location"))
+            cells.append(MeasureCell(
+                model, cell.subject_id, migration_name, payload.get("ownership_group"),
+                cell.arm_id, observe(trace, subject),
+            ))
+    return tuple(cells)
+
+
 def power_statement() -> dict[str, str]:
     return {
         "H1": "12 paired observations per model in the active grid; one-sample sign test by arm.",
@@ -298,6 +341,7 @@ def model_report(
                for arm in ("t1-native", "t1-quoted")},
         "tables": evaluator_tables(rows), "escalation_chart": escalation_chart(rows),
         "ceiling_effect": ceiling_effect(store, manifest_refs, model),
+        "analysis": result_tables(measured_cells(store, manifest_refs, model)),
         "cost": h2["costs"], "power": power_statement(),
     }
     if tier2_refs:
