@@ -1,0 +1,46 @@
+{
+  "cases": {
+    "clean": {
+      "hidden": {
+        "group_a": true,
+        "group_b": true
+      },
+      "holds": true,
+      "tree_digest": "sha256:9e4fbd1c64a62449b1a7f63f0d7c36f47e902fff6ff6e13004fdbf1b2e88922d",
+      "tsc": 0,
+      "visible": 0
+    },
+    "omit-group_a": {
+      "hidden": {
+        "group_a": false,
+        "group_b": true
+      },
+      "holds": true,
+      "tree_digest": "sha256:9c66f09a651666345ee61aca4086a7d06f1a3bca764315eed41884863d94f074",
+      "tsc": 0,
+      "visible": 0
+    },
+    "omit-group_b": {
+      "hidden": {
+        "group_a": true,
+        "group_b": false
+      },
+      "holds": true,
+      "tree_digest": "sha256:f1b7ca8febf9034f4711a062f6396c0eb923649e99d8c9a8dc9ce7ad3c253302",
+      "tsc": 0,
+      "visible": 0
+    },
+    "start": {
+      "hidden": {
+        "group_a": false,
+        "group_b": false
+      },
+      "holds": true,
+      "tree_digest": "sha256:7a7666c5f0b7d89c22d4ca953e483e4f803fff87f4ba3b13f7c62bc44a60df13",
+      "tsc": 2,
+      "visible": 0
+    }
+  },
+  "holds": true,
+  "image": "sha256:4fadd5ab5e0b9cd472a1bfd3115d1b41a968c28a7f415770f1753bf6af697a90"
+}

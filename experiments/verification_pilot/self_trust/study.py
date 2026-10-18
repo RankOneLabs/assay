@@ -31,7 +31,7 @@ from assay.store import ObjectStore
 from verification_pilot.fixtures import GROUPS, OwnershipGroup, read_raw_repository
 from verification_pilot.self_trust.concepts import CONCEPTS, Concept, subject_repository
 from verification_pilot.self_trust.evaluation import EVALUATOR_ID, VERDICTS
-from verification_pilot.self_trust.ladder import REFACTOR, REWRITE
+from verification_pilot.self_trust.ladder import REFACTOR, REWRITE, REWRITE_1, REWRITE_2, RUNGS
 from verification_pilot.self_trust.refactor_session import LogOrder
 from verification_pilot.self_trust.refactor_session import task_text as refactor_task_text
 from verification_pilot.self_trust.session import Placement, task_text
@@ -59,7 +59,7 @@ def order_for(arm_id: str) -> LogOrder:
     return _ORDERS[arm_id]
 
 
-Fixture = Literal["rename", "refactor", "rewrite"]
+Fixture = Literal["rename", "refactor", "rewrite", "rewrite1", "rewrite2"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,15 +107,15 @@ def self_trust_subjects() -> tuple[SelfTrustSubject, ...]:
         )
         for concept in CONCEPTS for own in GROUPS for remnant in (*GROUPS, None))
     ladder: list[SelfTrustSubject] = []
-    for rung in (REFACTOR, REWRITE):
-        trees = {remnant: rung.subject_tree(remnant) for remnant in (*GROUPS, None)}
+    for rung in (REFACTOR, REWRITE, REWRITE_1, REWRITE_2):
+        trees = {remnant: rung.subject_tree(remnant) for remnant in (*rung.order, None)}
         ladder += [
             SelfTrustSubject(
                 id=subject_id(rung.name, own, remnant), concept=None, own=own,
                 remnant_owner=remnant, task=refactor_task_text(own, rung),
                 repository=trees[remnant], fixture=cast(Fixture, rung.name),
             )
-            for own in GROUPS for remnant in (*GROUPS, None)]
+            for own in GROUPS for remnant in (*rung.order, None)]
     return renames + tuple(ladder)
 
 
@@ -128,17 +128,26 @@ def calibration_subject_ids(subjects: tuple[SelfTrustSubject, ...],
 
 def refactor_calibration_ids(subjects: tuple[SelfTrustSubject, ...],
                              rung: str = "refactor") -> tuple[str, ...]:
-    """The first refactor signal: a matched own/teammate pair per omission location.
+    """The matched own/teammate pairs for a rung: one per share that can hold the omission.
 
-    For each share holding the omission, one cell where that share is the
-    model's own and one where the next share is, so the omission's file and
-    line are fixed and only its author differs.
+    For each such share, one cell where it is the model's own and one where it
+    is not, so the omission's file and line are fixed and only its author
+    differs. With two or more shares the other owner is the next share in the
+    rung; a one-share rung's other cell has the model verify a teammate's work.
     """
     by_id = {s.id: s for s in subjects}
-    pairs = [(subject_id(rung, remnant, remnant),
-              subject_id(rung, GROUPS[(GROUPS.index(remnant) + 1) % 3], remnant))
-             for remnant in GROUPS]
-    ids = tuple(item for pair in pairs for item in pair)
+    order = RUNGS[rung].order if rung in RUNGS else GROUPS
+
+    # A three-share rung keeps the pairing S was first run with, in group order.
+    holders = GROUPS if len(order) == 3 else order
+
+    def teammate(holder: OwnershipGroup) -> OwnershipGroup:
+        pool = order if len(order) == 2 else GROUPS
+        return pool[(pool.index(holder) + 1) % len(pool)]
+
+    ids = tuple(item for holder in holders
+                for item in (subject_id(rung, holder, holder),
+                             subject_id(rung, teammate(holder), holder)))
     if not all(item in by_id for item in ids):
         raise ValueError("refactor subjects are missing")
     return ids
@@ -156,7 +165,7 @@ def compile_self_trust_plan(
     worker_configurations: Mapping[str, dict[str, Any]],
     active_subject_ids: tuple[str, ...], active_arms: tuple[str, ...] = ARMS,
     subjects_data: tuple[SelfTrustSubject, ...] | None = None,
-    ceiling: ExecutionCeiling = CEILING,
+    ceiling: ExecutionCeiling = CEILING, worker_repeats: int = 1,
 ) -> PreparedSelfTrust:
     subjects_data = subjects_data or self_trust_subjects()
     known = {item.id for item in subjects_data}
@@ -224,12 +233,12 @@ def compile_self_trust_plan(
                   reason="Coordinate outside this self-trust shard")
         for item in subjects_data for arm_id in ARMS
         if item.id not in active_subject_ids or arm_id not in active_arms)
-    base = compile_plan_v2(snapshot, snapshot_ref=snapshot_ref, worker_repeats=1,
+    base = compile_plan_v2(snapshot, snapshot_ref=snapshot_ref, worker_repeats=worker_repeats,
                            exclusions=exclusions, runtime=runtime, concurrency=1)
     plan = ExecutionPlanV3.model_validate({**base.model_dump(mode="json"),
                                             "schema_version": "assay-execution-plan/0.3.0",
                                             "ceiling": ceiling.model_dump(mode="json")})
-    expected = len(active_subject_ids) * len(active_arms)
+    expected = len(active_subject_ids) * len(active_arms) * worker_repeats
     if len(plan.cells) != expected or len(plan.cells) > ceiling.max_cells:
         raise ValueError(f"plan has {len(plan.cells)} cells, expected {expected}")
     plan_bytes = canonical_json(plan.model_dump(mode="json"))

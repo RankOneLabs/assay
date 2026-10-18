@@ -29,7 +29,7 @@ import difflib
 from dataclasses import dataclass
 from pathlib import Path
 
-from verification_pilot.fixtures import GROUPS, OwnershipGroup
+from verification_pilot.fixtures import OwnershipGroup
 from verification_pilot.self_trust.logs import PlannedCall
 
 RAW = Path(__file__).resolve().parents[1] / "raw" / "rewrite_repo"
@@ -129,12 +129,19 @@ def start_tree() -> dict[str, str]:
     return trees()[0]
 
 
-def subject_tree(remnant_owner: OwnershipGroup | None) -> dict[str, str]:
-    """The rewrite done, with at most one share's change left out."""
-    if remnant_owner is not None and remnant_owner not in GROUPS:
-        raise ValueError(f"unknown share {remnant_owner}")
+def subject_tree(remnant_owner: OwnershipGroup | None,
+                 through: tuple[OwnershipGroup, ...] = ORDER) -> dict[str, str]:
+    """The shares in ``through`` done, with at most one share's change left out.
+
+    A prefix of ``ORDER`` is a smaller rung of the same rewrite: every prefix
+    leaves a tree that typechecks and passes its tests.
+    """
+    if through != ORDER[:len(through)]:
+        raise ValueError("a rung of the rewrite is a prefix of its share order")
+    if remnant_owner is not None and remnant_owner not in through:
+        raise ValueError(f"share {remnant_owner} is not part of this rung")
     tree = start_tree()
-    for group in ORDER:
+    for group in through:
         for path, content in target_files(group, omit=group == remnant_owner).items():
             if content is None:
                 tree.pop(path, None)
@@ -209,20 +216,22 @@ def plan_share(tree: dict[str, str], group: OwnershipGroup, *, omit: bool) -> li
     return calls
 
 
-HIDDEN_TESTS = '''import { expect, test } from "bun:test";
+_HIDDEN_HEADER = '''import { expect, test } from "bun:test";
+'''
 
-import { derive } from "../../src/decision/derive";
-import { reconcileCohortEvidence, type CohortPullRequestDependencies } from "../../src/runtime/cohort-pull-request";
-import { availableBrief, fanOutDefinition, snapshot } from "../decision/snapshot-builder";
-
-test("group_a: two driver artifacts minting one unit_id are a contradiction", () => {
+HIDDEN_BLOCKS: dict[OwnershipGroup, str] = {
+    "group_a": '''
+test("group_a: two driver artifacts minting one unit_id are a contradiction", async () => {
+  const { derive } = await import("../../src/decision/derive");
+  const { availableBrief, fanOutDefinition, snapshot } = await import("../decision/snapshot-builder");
   const definition = fanOutDefinition({ stage_key: "build", over_input: "brief" });
   const first = availableBrief("rollout", [], "artifact-1");
   const second = availableBrief("rollout", [], "artifact-2");
   const result = derive(snapshot({ definition, available_artifacts: [first, second] }));
   expect(result.ok ? null : result.error).toMatchObject({ kind: "malformed_driver_artifact", stage_key: "build" });
 });
-
+''',
+    "group_b": '''
 test("group_b: a repository-provisioning stage that declares two outputs is refused", async () => {
   const { resolveWorkOrder } = await import("../../src/runtime/resolve-work-order");
   const stage = {
@@ -240,8 +249,10 @@ test("group_b: a repository-provisioning stage that declares two outputs is refu
   const dependencies = { load_prompt_template: async () => "", find_work_order_attachment: async () => null };
   await expect(resolveWorkOrder(input as never, dependencies as never)).rejects.toThrow("must declare one repository refs output");
 });
-
+''',
+    "group_c": '''
 test("group_c: confirming a cohort's merge wakes its run, as every other release path does", async () => {
+  const { reconcileCohortEvidence } = await import("../../src/runtime/cohort-pull-request");
   const wakes: string[] = [];
   const dependencies = {
     now: () => "2026-08-29T12:00:00.000Z",
@@ -257,10 +268,19 @@ test("group_c: confirming a cohort's merge wakes its run, as every other release
       complete_handoff_artifact: async () => ({ kind: "completed", run_id: "run-1", record_version: 4 }),
     },
     send_run_wake: async (run_id: string) => { wakes.push(run_id); },
-  } as unknown as CohortPullRequestDependencies;
-  const result = await reconcileCohortEvidence(dependencies, "stage-1" as never, "web" as never,
+  };
+  const result = await reconcileCohortEvidence(dependencies as never, "stage-1" as never, "web" as never,
     { kind: "operator_confirmation", idempotency_key: "k", operator_comment: "merged" });
   expect(result.ok ? result.value.resolution.kind : result.error).toBe("completed");
   expect(wakes).toEqual(["run-1"]);
 });
-'''
+''',
+}
+
+
+def hidden_tests(through: tuple[OwnershipGroup, ...] = ORDER) -> str:
+    """The hidden tests for the shares a rung includes."""
+    return _HIDDEN_HEADER + "".join(HIDDEN_BLOCKS[group] for group in through)
+
+
+HIDDEN_TESTS = hidden_tests()

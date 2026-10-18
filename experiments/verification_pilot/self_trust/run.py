@@ -97,8 +97,8 @@ async def run_scripted(store: ObjectStore, archive_root: Path,
 async def run_live(store: ObjectStore, *, image: str, runs_root: Path,
                    paid_route: str | None, api_key: str | None, spend_gate: SpendGate | None,
                    subject_ids: tuple[str, ...], arms: tuple[str, ...], archive_root: Path,
-                   local_model: str | None = None,
-                   routing_config: Path | None = None) -> tuple[Any, Path | None]:
+                   local_model: str | None = None, routing_config: Path | None = None,
+                   repeats: int = 1) -> tuple[Any, Path | None]:
     """One shard on the paid route, or on the free local route when ``local_model`` is set."""
     subjects = self_trust_subjects()
     by_id = {s.id: s for s in subjects}
@@ -130,7 +130,8 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path,
     worker, runtime = self_trust_worker(store, bridge)
     prepared = compile_self_trust_plan(
         store, runtime, worker_configurations={arm: worker.configuration(arm) for arm in ARMS},
-        active_subject_ids=subject_ids, active_arms=arms, subjects_data=subjects)
+        active_subject_ids=subject_ids, active_arms=arms, subjects_data=subjects,
+        worker_repeats=repeats)
     result, destination = await _execute(store, prepared, worker, by_id, archive_root, image)
     if destination is not None and spend_gate is not None:
         (destination / "spend.json").write_text(
@@ -148,13 +149,16 @@ def main() -> None:
     parser.add_argument("--paid-route", choices=sorted(PAID_ROUTES), default=None)
     parser.add_argument("--max-spend-usd", type=_spend_cap, default=None)
     parser.add_argument("--concept", default="stage_run")
-    parser.add_argument("--rung", choices=("refactor", "rewrite"), default="refactor",
+    parser.add_argument("--rung", choices=("refactor", "rewrite1", "rewrite2", "rewrite"),
+                        default="refactor",
                         help="size-ladder rung for calibrate-refactor and attribution-order: "
                              "S (refactor) or L (rewrite)")
     parser.add_argument("--local-model", choices=("qwen3.6-27b", "qwen-coder-32b"), default=None,
                         help="run on the free local Smithers route instead of the paid route")
     parser.add_argument("--routing-config", type=Path,
                         default=Path("~/codes/rol/smithers/routing_config.yaml"))
+    parser.add_argument("--repeats", type=int, default=1,
+                        help="worker repeats per cell, for rungs with few matched pairs")
     parser.add_argument("--subject", action="append", default=[])
     parser.add_argument("--arm", action="append", choices=ARMS, default=[])
     args = parser.parse_args()
@@ -189,7 +193,8 @@ def main() -> None:
         store, image=args.image, runs_root=args.runs_root, paid_route=args.paid_route,
         api_key=None if local else os.environ.get("OPENROUTER_API_KEY", ""), spend_gate=gate,
         subject_ids=subject_ids, arms=arms, archive_root=ARCHIVE_ROOT,
-        local_model=args.local_model, routing_config=args.routing_config.expanduser()))
+        local_model=args.local_model, routing_config=args.routing_config.expanduser(),
+        repeats=args.repeats))
     print(json.dumps({"result": type(result).__name__,
                       "error": result.message if isinstance(result, RunFailed) else None,
                       "manifest_ref": str(result.manifest_ref) if result.manifest_ref else None,

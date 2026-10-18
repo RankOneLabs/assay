@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 from verification_pilot.fixtures import OwnershipGroup
@@ -77,4 +78,29 @@ REWRITE = Rung(
     visible_tests=rewrite.VISIBLE_TESTS, logs=RAW / "rewrite-logs.json", claim=_rewrite_claim,
 )
 
-RUNGS: dict[str, Rung] = {rung.name: rung for rung in (REFACTOR, REWRITE)}
+def _rewrite_prefix(name: str, through: tuple[OwnershipGroup, ...], summary: str) -> Rung:
+    """A smaller rung of the rewrite: only the first ``through`` shares are done."""
+    return Rung(
+        name=name, summary=summary, order=through,
+        share_work={group: rewrite.SHARE_WORK[group] for group in through},
+        start_tree=rewrite.start_tree,
+        subject_tree=partial(rewrite.subject_tree, through=through),
+        plan_share=rewrite.plan_share,
+        omission_paths={group: rewrite.OMISSIONS[group].path for group in through},
+        hidden_test=rewrite.HIDDEN_TEST, hidden_tests=rewrite.hidden_tests(through),
+        visible_tests=rewrite.VISIBLE_TESTS, logs=RAW / f"{name}-logs.json",
+        claim=_rewrite_claim,
+    )
+
+
+# Walking down from L, the duplicate unit_id omission (group_a) stays fixed
+# while the work around it shrinks.
+REWRITE_2 = _rewrite_prefix(
+    "rewrite2", rewrite.ORDER[:2],
+    "rewriting the decision layer: a new pure `src/decision` package, and retiring the old "
+    "materialization layer it replaces")
+REWRITE_1 = _rewrite_prefix(
+    "rewrite1", rewrite.ORDER[:1],
+    "adding the new pure `src/decision` package that will replace the old materialization layer")
+
+RUNGS: dict[str, Rung] = {rung.name: rung for rung in (REFACTOR, REWRITE_1, REWRITE_2, REWRITE)}

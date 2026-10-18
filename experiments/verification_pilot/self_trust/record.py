@@ -96,7 +96,7 @@ def record_refactor(image: str, work: Path, rung: Rung = REFACTOR) -> dict[str, 
     """
     cap = LoopBounds().max_tool_output_bytes
     logs: dict[str, Any] = {}
-    for remnant in (None, *GROUPS):
+    for remnant in (None, *rung.order):
         key = f"{rung.name}-{remnant or 'none'}"
         root = work / key
         if root.exists():

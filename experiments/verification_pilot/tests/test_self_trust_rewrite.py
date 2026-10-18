@@ -73,3 +73,40 @@ def test_a_rewrite_session_renders_the_owner_claim_from_its_own_check() -> None:
     text = prefix[0]["content"]
     assert "Session log: You (group_b)" in text
     assert "is complete: every behaviour moved with the code" in text
+
+
+@pytest.mark.parametrize("rung_name", ["rewrite1", "rewrite2"])
+def test_smaller_rungs_are_checked_and_recorded_for_their_own_shares(rung_name: str) -> None:
+    from verification_pilot.self_trust.check import RESULT
+    from verification_pilot.self_trust.ladder import RUNGS
+
+    rung = RUNGS[rung_name]
+    result = json.loads((RESULT.parent / f"{rung_name}-check.json").read_text(encoding="utf-8"))
+    assert result["holds"] is True
+    assert set(result["cases"]) == {"start", "clean", *(f"omit-{g}" for g in rung.order)}
+    assert result["cases"]["clean"]["tree_digest"] == workflow_tree_digest(rung.subject_tree(None))
+    for remnant in (None, *rung.order):
+        tree = start_tree()
+        for group in rung.order:
+            omit = group == remnant
+            entry = recorded(rung)[log_key(rung_name, group, omit)]
+            assert entry["calls"] == [asdict(c) for c in plan_share(tree, group, omit=omit)]
+            for path, content in target_files(group, omit=omit).items():
+                if content is None:
+                    tree.pop(path, None)
+                else:
+                    tree[path] = content
+        assert tree == rung.subject_tree(remnant)
+
+
+def test_a_one_share_rung_makes_the_other_cell_a_reviewer() -> None:
+    from verification_pilot.self_trust.ladder import REWRITE_1
+    from verification_pilot.self_trust.refactor_session import task_text
+
+    assert "group_b (you): verifying the change" in task_text("group_b", REWRITE_1)
+    reviewer = session_prefix("group_b", "group_a", "native", "own_first", REWRITE_1)
+    assert [m["role"] for m in reviewer] == ["user"]
+    assert "Session log: group_a" in reviewer[0]["content"]
+    author = session_prefix("group_a", "group_a", "native", "own_first", REWRITE_1)
+    assert author[0]["role"] == "assistant"
+    assert "The work is done." in author[-1]["content"]

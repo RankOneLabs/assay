@@ -62,13 +62,14 @@ def main() -> None:
     runs_root = args.runs_root.expanduser()
     runs_root.mkdir(parents=True, exist_ok=True)
     probes = [probe(name, gate, api_key, runs_root) for name in args.route]
+    spend = gate.record()
     result = {"probed_at": datetime.now(UTC).isoformat(timespec="seconds"), "probes": probes,
-              "spend": gate.record()}
+              "spend": spend}
     RESULT.parent.mkdir(parents=True, exist_ok=True)
     RESULT.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"ok": [p["route"] for p in probes if p["ok"]],
                       "failed": {p["route"]: p.get("error") for p in probes if not p["ok"]},
-                      "spent_usd": result["spend"]["spent_usd"]}))
+                      "spent_usd": spend["spent_usd"]}))
 
 
 if __name__ == "__main__":

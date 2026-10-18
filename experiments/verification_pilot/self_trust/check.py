@@ -112,7 +112,7 @@ def run_refactor_check(image: str, rung_name: str = "refactor") -> dict[str, Any
 
     rung = RUNGS[rung_name]
     trees = {"start": rung.start_tree(), "clean": rung.subject_tree(None),
-             **{f"omit-{group}": rung.subject_tree(group) for group in GROUPS}}
+             **{f"omit-{group}": rung.subject_tree(group) for group in rung.order}}
     results: dict[str, Any] = {}
     for name, tree in trees.items():
         checks = run_checks(tree, image, rung)
@@ -133,11 +133,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
     parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--fixture", choices=("rename", "refactor", "rewrite"), default="rename")
+    parser.add_argument("--fixture", default="rename",
+                        choices=("rename", "refactor", "rewrite1", "rewrite2", "rewrite"))
     args = parser.parse_args()
-    if args.fixture in ("refactor", "rewrite"):
+    if args.fixture != "rename":
         refactor = run_refactor_check(args.image, args.fixture)
-        target = REFACTOR_RESULT if args.fixture == "refactor" else REWRITE_RESULT
+        target = RESULT.parent / f"{args.fixture}-check.json"
         target.write_text(json.dumps(refactor, indent=2, sort_keys=True) + "\n",
                           encoding="utf-8")
         print(json.dumps({"holds": refactor["holds"]}))

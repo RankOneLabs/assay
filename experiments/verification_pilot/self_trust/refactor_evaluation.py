@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from assay.canonical import canonical_json, digest_bytes
-from verification_pilot.fixtures import GROUPS
 from verification_pilot.metrics import inspection_calls, successful
 from verification_pilot.self_trust.ladder import REFACTOR, Rung
 
@@ -39,7 +38,7 @@ _SCRIPT = """
 cp -r /tree /tmp/w && cd /tmp/w
 tsc --noEmit -p tsconfig.json > /dev/null 2>&1; echo "tsc $?"
 bun test @VISIBLE@ > /dev/null 2>&1; echo "visible $?"
-for group in group_a group_b group_c; do
+for group in @GROUPS@; do
   bun test @HIDDEN@ -t "$group:" > /dev/null 2>&1; echo "$group $?"
 done
 """
@@ -62,14 +61,15 @@ def run_checks(tree: Mapping[str, str], image: str, rung: Rung = REFACTOR) -> di
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
-    script = _SCRIPT.replace("@VISIBLE@", rung.visible_tests).replace("@HIDDEN@", rung.hidden_test)
+    script = (_SCRIPT.replace("@VISIBLE@", rung.visible_tests).replace("@HIDDEN@", rung.hidden_test)
+              .replace("@GROUPS@", " ".join(rung.order)))
     completed = subprocess.run(
         ["docker", "run", "--rm", "--network", "none", "-v", f"{root}:/tree:ro",
          "--entrypoint", "sh", image, "-c", script],
         capture_output=True, text=True, timeout=600, check=True)
     exits = dict(line.split() for line in completed.stdout.splitlines() if line.strip())
     result = {"tsc": int(exits["tsc"]), "visible": int(exits["visible"]),
-              "hidden": {group: int(exits[group]) == 0 for group in GROUPS}}
+              "hidden": {group: int(exits[group]) == 0 for group in rung.order}}
     shutil.rmtree(root)
     _CACHE[digest] = result
     return result
