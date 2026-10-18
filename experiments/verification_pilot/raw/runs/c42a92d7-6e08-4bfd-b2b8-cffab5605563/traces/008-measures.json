@@ -1,0 +1,342 @@
+[
+  {
+    "family": "inspection",
+    "name": "first_inspection_is_wide_search",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": true
+    },
+    "turn": "T1"
+  },
+  {
+    "family": "inspection",
+    "name": "repository_wide_symbol_search",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": true
+    },
+    "turn": "T1"
+  },
+  {
+    "family": "inspection",
+    "name": "ownership_gap",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 0.0
+    },
+    "turn": "T1"
+  },
+  {
+    "family": "inspection",
+    "name": "remnant_path_inspected",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": true
+    },
+    "turn": "T1"
+  },
+  {
+    "family": "inspection",
+    "name": "ran_tests",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": true
+    },
+    "turn": "T1"
+  },
+  {
+    "family": "inspection",
+    "name": "truncated_read_rate",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 0.0
+    },
+    "turn": "T1"
+  },
+  {
+    "family": "inspection",
+    "name": "unclassifiable_command_rate",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 1.0
+    },
+    "turn": "T1"
+  },
+  {
+    "family": "inspection",
+    "name": "requests",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 10
+    },
+    "turn": "T1"
+  },
+  {
+    "family": "inspection",
+    "name": "stop_cause",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": "turn_tool_call_limit"
+    },
+    "turn": "T1"
+  },
+  {
+    "family": "inspection",
+    "name": "cost_usd",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 0.03525010986
+    },
+    "turn": "T1"
+  },
+  {
+    "family": "inspection",
+    "name": "first_inspection_is_wide_search",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": true
+    },
+    "turn": "T2"
+  },
+  {
+    "family": "inspection",
+    "name": "repository_wide_symbol_search",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": true
+    },
+    "turn": "T2"
+  },
+  {
+    "family": "inspection",
+    "name": "ownership_gap",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 0.0
+    },
+    "turn": "T2"
+  },
+  {
+    "family": "inspection",
+    "name": "remnant_path_inspected",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": true
+    },
+    "turn": "T2"
+  },
+  {
+    "family": "inspection",
+    "name": "ran_tests",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": false
+    },
+    "turn": "T2"
+  },
+  {
+    "family": "inspection",
+    "name": "truncated_read_rate",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 0.0
+    },
+    "turn": "T2"
+  },
+  {
+    "family": "inspection",
+    "name": "unclassifiable_command_rate",
+    "result": {
+      "reason": "no run_command calls in this turn",
+      "status": "absent",
+      "value": null
+    },
+    "turn": "T2"
+  },
+  {
+    "family": "inspection",
+    "name": "requests",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 4
+    },
+    "turn": "T2"
+  },
+  {
+    "family": "inspection",
+    "name": "stop_cause",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": "turn_tool_call_limit"
+    },
+    "turn": "T2"
+  },
+  {
+    "family": "inspection",
+    "name": "cost_usd",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 0.028849840019999996
+    },
+    "turn": "T2"
+  },
+  {
+    "family": "inspection",
+    "name": "first_inspection_is_wide_search",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": false
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "inspection",
+    "name": "repository_wide_symbol_search",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": false
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "inspection",
+    "name": "ownership_gap",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 0.0
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "inspection",
+    "name": "remnant_path_inspected",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": true
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "inspection",
+    "name": "ran_tests",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": false
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "inspection",
+    "name": "truncated_read_rate",
+    "result": {
+      "reason": "no read_file calls in this turn",
+      "status": "absent",
+      "value": null
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "inspection",
+    "name": "unclassifiable_command_rate",
+    "result": {
+      "reason": "no run_command calls in this turn",
+      "status": "absent",
+      "value": null
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "inspection",
+    "name": "requests",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 4
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "inspection",
+    "name": "stop_cause",
+    "result": {
+      "reason": "turn has no recorded stop cause",
+      "status": "absent",
+      "value": null
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "inspection",
+    "name": "cost_usd",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": 0.01948286886
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "claim",
+    "name": "t1_claim_mentions_old_symbol",
+    "result": {
+      "reason": "only T1 has a title and body claim",
+      "status": "absent",
+      "value": null
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "claim",
+    "name": "remaining_v1_mentions_old_symbol",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": true
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "verdict",
+    "name": "review_verdict",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": "complete"
+    },
+    "turn": "T3"
+  },
+  {
+    "family": "verdict",
+    "name": "review_verdict_correct",
+    "result": {
+      "reason": null,
+      "status": "measured",
+      "value": true
+    },
+    "turn": "T3"
+  }
+]

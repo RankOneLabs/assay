@@ -34,6 +34,7 @@ READ_VALUE_OPTIONS = {"head": frozenset({"-n", "-c"}), "tail": frozenset({"-n", 
                       "nl": frozenset({"-b", "-w", "-s", "-v", "-i"}),
                       "sed": frozenset({"-e", "-f"}), "awk": frozenset({"-F", "-v", "-f"})}
 _OPERATORS = frozenset({";", "|", "||", "&", "&&", "(", ")", ";;", "|&"})
+_REDIRECTION_CHARS = frozenset("<>&")
 _UNSAFE_PATH = re.compile(r"[*?\[\]$`{}~]")
 
 
@@ -62,7 +63,9 @@ def _segments(command: str) -> list[list[str]]:
                 result.append(current)
             current = []
             continue
-        if token[0] in "<>" or token in (">&", "&>"):
+        # Only an unquoted redirection is all punctuation; a quoted word such
+        # as '<div' or the empty pattern of grep -c "" is an operand.
+        if token and set(token) <= _REDIRECTION_CHARS and set(token) & set("<>"):
             if current and current[-1].isdigit() and index > 0 and tokens[index - 1].isdigit():
                 current.pop()
             skip_next = True
