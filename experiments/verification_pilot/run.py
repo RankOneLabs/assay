@@ -299,6 +299,26 @@ def save_run_trace(
     return destination
 
 
+def remeasure_archive(archive: Path, subjects: Mapping[str, PilotSubject]) -> int:
+    """Re-derive every archived measures file from its own trajectory (D18).
+
+    Measures are a pure function of a trajectory and its subject, so a
+    measure-definition change re-scores a recorded run without a re-run.
+    """
+    index = json.loads((archive / "index.json").read_text(encoding="utf-8"))
+    rewritten = 0
+    for cell_id, entry in sorted(index.items()):
+        if "trajectory" not in entry or "measures" not in entry:
+            continue
+        trace = cast(RecordedTrace, json.loads(
+            (archive / "traces" / entry["trajectory"]).read_text(encoding="utf-8")))
+        measures = [asdict(item) for item in observe(trace, subjects[cell_id.split(":", 1)[0]])]
+        (archive / "traces" / entry["measures"]).write_text(
+            json.dumps(measures, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        rewritten += 1
+    return rewritten
+
+
 async def run_scripted(
     store: ObjectStore, *, archive_root: Path | None = None
 ) -> tuple[PreparedPilot, Any]:
@@ -391,8 +411,10 @@ def _spend_cap(value: str) -> Decimal:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("scripted", "live", "live-smoke",
-                                            "on-policy-local", "on-policy-paid"))
-    parser.add_argument("--store", type=Path, required=True)
+                                            "on-policy-local", "on-policy-paid", "remeasure"))
+    parser.add_argument("--store", type=Path)
+    parser.add_argument("--archive", type=Path, action="append", default=[],
+                        help="raw/runs/<run_id> directory to re-derive measures for")
     parser.add_argument("--image", default="")
     parser.add_argument("--runs-root", type=Path, default=Path("/tmp/verification-pilot-runs"))
     parser.add_argument("--routing-config", type=Path, default=Path("/tmp/routing.yaml"))
@@ -403,6 +425,14 @@ def main() -> None:
     parser.add_argument("--max-spend-usd", type=_spend_cap, default=None,
                         help="run-wide dollar cap; required on the paid route")
     args = parser.parse_args()
+    if args.command == "remeasure":
+        if not args.archive:
+            parser.error("remeasure requires --archive")
+        by_id = {subject.id: subject for subject in pilot_subjects()}
+        print(json.dumps({str(path): remeasure_archive(path, by_id) for path in args.archive}))
+        return
+    if args.store is None:
+        parser.error("--store is required")
     paid = args.command == "on-policy-paid" or (
         args.command in {"live", "live-smoke"} and args.route == "openrouter")
     if paid and args.max_spend_usd is None:

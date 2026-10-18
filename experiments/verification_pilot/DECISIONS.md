@@ -81,3 +81,40 @@ returns its error text as the tool result. The model can then recover, and
 that exit does not fail a route. Each route still reports model-caused tool
 errors and tool-call-limit stops beside the five counts. Every call counts
 toward the 15-per-turn and 40-per-cell limits.
+
+D18 (2026-10-18): read-only shell commands count as file inspections. The
+first screening route, Sonnet 5.5, inspected the native-arm repository
+entirely through `run_command` (`git status; grep -rn WorkOrderId .`). The
+registered measures count only `read_file` and `search_files`, so all four
+native sessions scored an ownership gap of 1.0 and no remnant inspection,
+although the transcripts show a repository-wide search of the old symbol.
+Any capable model that prefers the shell would bias H1 and H4 the same way.
+
+`shell_inspection.py` turns each recognized segment of a successful
+`run_command` into the equivalent virtual call, placed where that command
+ran:
+- `grep`, `egrep`, `fgrep`, `rg` and `git grep` become searches.
+- `cat`, `head`, `tail`, `nl`, `sed -n` and `awk` with explicit operands
+  become reads.
+
+The parse is quote-aware and fails closed. These are not inspections:
+- a pipe-only `grep`;
+- a glob or variable path;
+- `sed -i`, or a redirection target;
+- a path outside `/workspace`;
+- anything that does not tokenize.
+
+The command must have exited 0, or 1 for a lone search segment. Search
+queries obey the existing rule: the old symbol must appear as a whole word,
+so a case-insensitive regex such as `workflow_?run_?id` does not count. Line
+ranges are unchanged, so a shell read does not satisfy the line-level
+`remnant_read`.
+
+Measures are a pure function of a trajectory, so
+`python -m verification_pilot.run remeasure --archive raw/runs/<run_id>`
+re-derives archived measures without re-running. Re-scoring changes only
+Sonnet's four native sessions: first wide search goes from absent to true,
+ownership gap from 1.0 to 0.0, and remnant inspection from false to true.
+The local Qwen run is unchanged. The bridge also now records the text of a
+reply that ends a cell without a tool call, as `reply_without_tool_call`, so
+the manual read can see it.
