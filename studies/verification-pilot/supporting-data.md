@@ -8,7 +8,7 @@ The pinned 62-file Oakridge slice supplies four type renames with 20, 18, 10, an
 
 ## Inference table
 
-H1 is a two-sided sign test of T1 ownership gap over 16 base subjects. H2 is a paired two-sided sign test of quoted minus native gap. H4 compares own versus teammate remnant inspection within each of four renames; its smallest attainable two-sided p-value is 0.125 and it remains descriptive. Ties are excluded from sign-test denominators.
+H1 is a two-sided sign test of T1 ownership gap over 16 base subjects. H2 is a paired two-sided sign test of quoted minus native gap. H4 compares own versus teammate remnant inspection within each of four renames; its smallest attainable two-sided p-value is 0.125 and it remains descriptive. Ties are excluded from sign-test denominators. The active Tier 1 shard has 12 planted subjects per arm; H1 stays pending until all 16 base subjects, including clean controls, have observations.
 
 | Route | H1 observed | H1 p | H2 pairs | H2 p | H4 pairs | H4 p |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
