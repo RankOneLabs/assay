@@ -57,12 +57,15 @@ def test_paid_smoke_compiles_the_guarded_route_without_dispatch(
         store, image="sha256:" + "a" * 64, runs_root=tmp_path / "runs",
         routing_config=tmp_path / "unused.yaml", route="openrouter",
         smoke=True, api_key="test-key", spend_gate=SpendGate(Decimal("2")),
+        paid_route="sonnet-5.5",
     ))
     assert result == "no-dispatch"
     plan = json.loads(prepared.plan_bytes)
     assert len(plan["cells"]) == 8
     configuration = json.loads(store.read_bytes(plan["runtime"]["configuration_ref"]))
-    assert configuration["model_route"]["provider"] == "amazon-bedrock"
+    assert configuration["model_route"] == {"endpoint": "https://openrouter.ai/api/v1",
+                                            "model": "anthropic/claude-sonnet-5.5",
+                                            "provider": "amazon-bedrock"}
     assert configuration["turns"]["backend"] == "openrouter"
     assert "test-key" not in json.dumps(configuration)
 
@@ -81,7 +84,17 @@ def test_paid_route_requires_a_spend_cap(tmp_path: Path) -> None:
         asyncio.run(run_live(
             ObjectStore(tmp_path / "store"), image="sha256:" + "a" * 64,
             runs_root=tmp_path / "runs", routing_config=tmp_path / "unused.yaml",
+            route="openrouter", smoke=True, api_key="test-key", paid_route="sonnet-5.5",
+        ))
+
+
+def test_paid_route_requires_a_named_screening_route(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="paid route requires one of"):
+        asyncio.run(run_live(
+            ObjectStore(tmp_path / "store"), image="sha256:" + "a" * 64,
+            runs_root=tmp_path / "runs", routing_config=tmp_path / "unused.yaml",
             route="openrouter", smoke=True, api_key="test-key",
+            spend_gate=SpendGate(Decimal("2")),
         ))
 
 

@@ -160,3 +160,62 @@ def test_local_route_takes_no_spend_gate(tmp_path: Path) -> None:
             completion=lambda **_: None,  # type: ignore[arg-type,return-value]
             next_user_turns=(T2_TEXT, T3_TEXT), spend_gate=SpendGate(Decimal("1")),
         )
+
+
+@pytest.mark.parametrize("name", ["sonnet-5.5", "gpt-6.1-sol", "gemini-4-argon", "qwen3.8",
+                                  "deepseek-v4-pro", "kimi-k2.7-code"])
+def test_screening_route_sends_its_own_pinned_endpoint(tmp_path: Path, name: str) -> None:
+    from assay_pier_bridge.agent_loop import PAID_TURN_ROUTES
+
+    from verification_pilot.run import paid_model_route
+
+    route = paid_model_route(name)
+    turn_route = PAID_TURN_ROUTES[(route.model, route.provider)]
+    sent: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            "model": route.model, "provider": turn_route.provider_name,
+            "choices": [{"message": {"role": "assistant", "content": "ok"},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2, "cost": 0.0001},
+        })
+
+    gate = SpendGate(Decimal("1"))
+    client = BudgetedAgentClient(api_key="test-key", image="test-image", runs_root=tmp_path,
+                                 model_route=route, transport=httpx.MockTransport(respond),
+                                 spend_gate=gate)
+    turn = client._turn(MESSAGES, 1, None, client.tools)
+    assert turn.cost_usd == 0.0001
+    body = sent[0]
+    assert body["model"] == route.model
+    assert body["provider"]["only"] == body["provider"]["order"] == [route.provider]
+    assert body["provider"]["zdr"] is True
+    assert body["provider"]["allow_fallbacks"] is False
+    assert body["provider"]["max_price"] == {
+        "prompt": turn_route.max_prompt_price_per_million,
+        "completion": turn_route.max_completion_price_per_million, "request": 0}
+    assert gate.spent_usd == Decimal("0.0001")
+
+
+def test_response_from_another_provider_is_refused(tmp_path: Path) -> None:
+    from verification_pilot.run import paid_model_route
+
+    route = paid_model_route("deepseek-v4-pro")
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "model": route.model, "provider": "Novita",
+            "choices": [{"message": {"role": "assistant", "content": "ok"},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2, "cost": 0.0001},
+        })
+
+    gate = SpendGate(Decimal("1"))
+    client = BudgetedAgentClient(api_key="test-key", image="test-image", runs_root=tmp_path,
+                                 model_route=route, transport=httpx.MockTransport(respond),
+                                 spend_gate=gate)
+    with pytest.raises(ValueError, match="provider_identity"):
+        client._turn(MESSAGES, 1, None, client.tools)
+    assert gate.spent_usd == Decimal("0.0001")

@@ -250,3 +250,31 @@ def test_publication_does_not_charge_the_manifest_to_the_artifact_count(
     artifacts = {"a": b"", "b": b"", MANIFEST_PATH: b"{}"}
     refs = _publish_available_artifacts(ObjectStore(tmp_path / ".assay"), artifacts)
     assert refs.keys() == artifacts.keys()
+
+
+def _accepted_routes(model: Any) -> set[tuple[str, str, str]]:
+    fields = model.model_fields
+    accepted = set()
+    for endpoint in get_args(fields["endpoint"].annotation):
+        for name in get_args(fields["model"].annotation):
+            for provider in get_args(fields["provider"].annotation):
+                try:
+                    model(endpoint=endpoint, model=name, provider=provider)
+                except ValueError:
+                    continue
+                accepted.add((endpoint, name, provider))
+    return accepted
+
+
+def test_core_and_bridge_accept_the_same_exact_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "integrations/pier/src"))
+    from assay_pier_bridge import protocol as bridge
+    from assay_pier_bridge.agent_loop import PAID_TURN_ROUTES
+
+    accepted = _accepted_routes(ModelRoute)
+    assert accepted == _accepted_routes(bridge.ModelRoute)
+    paid = {route for route in accepted if route[0] == "https://openrouter.ai/api/v1"}
+    assert paid == {(turn.endpoint, *key) for key, turn in PAID_TURN_ROUTES.items()}
+    for endpoint, name, provider in accepted:
+        route = ModelRoute(endpoint=endpoint, model=name, provider=provider)  # type: ignore[arg-type]
+        assert route.paid_route_reachable is (provider != "smithers-local")

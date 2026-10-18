@@ -238,3 +238,13 @@ def test_effective_enforcement_rejects_dirty_teardown() -> None:
 def test_effective_enforcement_allows_incomplete_teardown_with_residue() -> None:
     residual = effective(teardown_completed=False, containers_remaining=1)
     assert residual.containers_remaining == 1
+
+
+def test_screening_routes_are_paid_and_mixed_fields_are_refused() -> None:
+    sonnet = ModelRoute(model="anthropic/claude-sonnet-5.5", provider="amazon-bedrock")
+    assert sonnet.paid_route_reachable is True
+    with pytest.raises(ValidationError, match="one exact route"):
+        ModelRoute(model="anthropic/claude-sonnet-5.5", provider="siliconflow/fp8")
+    with pytest.raises(ValidationError, match="one exact route"):
+        ModelRoute(endpoint="http://willie:8900", model="deepseek/deepseek-v4-pro",
+                   provider="siliconflow/fp8")
