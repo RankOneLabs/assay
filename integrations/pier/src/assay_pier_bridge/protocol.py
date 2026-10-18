@@ -85,7 +85,8 @@ class ModelRoute(ClosedModel):
         "https://openrouter.ai/api/v1"
     )
     model: Literal[
-        "anthropic/claude-3-haiku", "qwen-coder-32b", "anthropic/claude-sonnet-5.5",
+        "anthropic/claude-3-haiku", "qwen-coder-32b", "qwen3.6-27b",
+        "anthropic/claude-sonnet-5.5",
         "openai/gpt-6.1-sol", "google/gemini-4-argon", "qwen/qwen3.8-2.4t-a95b",
         "deepseek/deepseek-v4-pro", "moonshotai/kimi-k2.7-code",
     ] = "anthropic/claude-3-haiku"
@@ -109,6 +110,7 @@ class ModelRoute(ClosedModel):
             ("https://openrouter.ai/api/v1", "deepseek/deepseek-v4-pro", "siliconflow/fp8"),
             ("https://openrouter.ai/api/v1", "moonshotai/kimi-k2.7-code", "moonshotai/int4"),
             ("http://willie:8900", "qwen-coder-32b", "smithers-local"),
+            ("http://willie:8900", "qwen3.6-27b", "smithers-local"),
         }:
             raise ValueError("model route fields must identify one exact route")
         return self
