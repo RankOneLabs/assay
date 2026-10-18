@@ -201,6 +201,17 @@ PAID_TURN_ROUTES: dict[tuple[str, str], OpenRouterTurnRoute] = {
                          1.502, 3.135),
         _screening_route("moonshotai/kimi-k2.7-code", "moonshotai/int4", "Moonshot AI",
                          0.95, 4.0),
+        # Self-trust small models. Haiku and Luna list a long-context tier (above
+        # 100k and 272k prompt tokens); max_price pins that tier so a long cell is
+        # billed at it rather than refused partway through.
+        _screening_route("anthropic/claude-haiku-5.5", "amazon-bedrock", "Amazon Bedrock",
+                         0.5, 2.5),
+        _screening_route("openai/gpt-6-luna", "azure", "Azure", 0.2, 0.75),
+        _screening_route("google/gemini-3.8-flash", "google-vertex/global", "Google",
+                         0.75, 3.75),
+        _screening_route("qwen/qwen3.8-27b", "deepinfra/bf16", "DeepInfra", 0.15, 1.875),
+        _screening_route("openai/gpt-oss-20b", "deepinfra/bf16", "DeepInfra", 0.03, 0.14),
+        _screening_route("mistralai/ministral-14b-2512", "mistral/zdr", "Mistral", 0.2, 0.2),
     )
 }
 

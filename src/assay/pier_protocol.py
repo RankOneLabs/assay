@@ -65,10 +65,12 @@ class ModelRoute(WireModel):
         "anthropic/claude-sonnet-5.5",
         "openai/gpt-6.1-sol", "google/gemini-4-argon", "qwen/qwen3.8-2.4t-a95b",
         "deepseek/deepseek-v4-pro", "moonshotai/kimi-k2.7-code",
+        "anthropic/claude-haiku-5.5", "openai/gpt-6-luna", "google/gemini-3.8-flash",
+        "qwen/qwen3.8-27b", "openai/gpt-oss-20b", "mistralai/ministral-14b-2512",
     ] = "anthropic/claude-3-haiku"
     provider: Literal[
         "amazon-bedrock", "smithers-local", "azure/us", "google-vertex/global",
-        "siliconflow/fp8", "moonshotai/int4",
+        "siliconflow/fp8", "moonshotai/int4", "azure", "deepinfra/bf16", "mistral/zdr",
     ] = "amazon-bedrock"
 
     @model_validator(mode="after")
@@ -84,6 +86,13 @@ class ModelRoute(WireModel):
             ("https://openrouter.ai/api/v1", "qwen/qwen3.8-2.4t-a95b", "siliconflow/fp8"),
             ("https://openrouter.ai/api/v1", "deepseek/deepseek-v4-pro", "siliconflow/fp8"),
             ("https://openrouter.ai/api/v1", "moonshotai/kimi-k2.7-code", "moonshotai/int4"),
+            # Self-trust small-model routes; ZDR catalogue checked 2026-10-18.
+            ("https://openrouter.ai/api/v1", "anthropic/claude-haiku-5.5", "amazon-bedrock"),
+            ("https://openrouter.ai/api/v1", "openai/gpt-6-luna", "azure"),
+            ("https://openrouter.ai/api/v1", "google/gemini-3.8-flash", "google-vertex/global"),
+            ("https://openrouter.ai/api/v1", "qwen/qwen3.8-27b", "deepinfra/bf16"),
+            ("https://openrouter.ai/api/v1", "openai/gpt-oss-20b", "deepinfra/bf16"),
+            ("https://openrouter.ai/api/v1", "mistralai/ministral-14b-2512", "mistral/zdr"),
             ("http://willie:8900", "qwen-coder-32b", "smithers-local"),
             ("http://willie:8900", "qwen3.6-27b", "smithers-local"),
         }:
