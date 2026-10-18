@@ -13,6 +13,7 @@ import pytest
 from workflow_edit import bridge
 
 from assay.adapters.smithers import SmithersFactory
+from verification_pilot.analysis import result_tables
 from verification_pilot.arms import arm
 from verification_pilot.migrations import MIGRATIONS
 from verification_pilot.prompts import (
@@ -21,10 +22,80 @@ from verification_pilot.prompts import (
     T1_MESSAGE,
     task_prompt,
 )
-from verification_pilot.render import block_text, render_prefix, request_messages
+from verification_pilot.render import (
+    block_text,
+    render_prefix,
+    render_study_pages,
+    request_messages,
+)
 from verification_pilot.session import ContributorBlock, contributor_blocks, rotated_blocks
 
 agent_loop = importlib.import_module("assay_pier_bridge.agent_loop")
+
+
+def test_study_pages_are_generated_from_analysis_fixture() -> None:
+    from verification_pilot.analysis import MeasureCell
+    from verification_pilot.observations import Measured, TurnMeasure
+
+    root = Path(__file__).resolve().parents[3]
+    pending = render_study_pages(result_tables((), own_group="group_a"))
+    assert pending[0] == (root / "studies/verification-pilot/README.md").read_text()
+    assert pending[1] == (root / "studies/verification-pilot/supporting-data.md").read_text()
+    measures = (TurnMeasure("T1", "inspection", "first_inspection_is_wide_search",
+                            Measured("measured", True)),
+                TurnMeasure("T1", "inspection", "ownership_gap", Measured("measured", 1)),
+                TurnMeasure("T1", "inspection", "remnant_path_inspected",
+                            Measured("measured", True)))
+    fixture = result_tables((MeasureCell("fixture", "s1", "rename", "group_a",
+                                         "t1-native", measures, "group_a"),),
+                            own_group="group_a")
+    main, supporting = render_study_pages(fixture)
+    row = "| fixture | 1/1 (100.0%) | pending (0 observed) | exceeded | qualification pending |"
+    assert row in main
+    assert row in supporting
+    assert "| fixture | 1/16 | pending | 0 | pending | 0/4 | pending |" in supporting
+    assert "H4 uses group_a as the verifier-owned group" in supporting
+
+
+def test_study_pages_print_exact_half_as_within_ceiling() -> None:
+    from verification_pilot.analysis import MeasureCell
+    from verification_pilot.observations import Measured, TurnMeasure
+
+    cells = tuple(
+        MeasureCell("fixture", f"{arm}-{index}", "rename", "group_a", arm,
+                    (TurnMeasure("T1", "inspection", "first_inspection_is_wide_search",
+                                 Measured("measured", index == 0)),), "group_a")
+        for arm in ("t1-native", "t1-quoted") for index in range(2)
+    )
+    main, supporting = render_study_pages(
+        result_tables(cells, own_group="group_a"),
+        qualified_routes=frozenset({"fixture"}),
+    )
+    row = "| fixture | 1/2 (50.0%) | 1/2 (50.0%) | within ceiling | qualified |"
+    assert row in main
+    assert row in supporting
+
+
+def test_unqualified_route_hides_all_inference_p_values() -> None:
+    from verification_pilot.analysis import MeasureCell
+    from verification_pilot.observations import Measured, TurnMeasure
+
+    cells = tuple(
+        MeasureCell("fixture", "subject", "rename", "group_a", arm,
+                    (TurnMeasure("T1", "inspection", "first_inspection_is_wide_search",
+                                 Measured("measured", False)),), "group_a")
+        for arm in ("t1-native", "t1-quoted")
+    )
+    tables = result_tables(cells, own_group="group_a")
+    route = tables["routes"][0]
+    route["H1"]["t1-native"]["p_value"] = 0.125
+    route["H2"]["p_value"] = 0.25
+    route["H4"]["t1-native"]["p_value"] = 0.5
+    _, supporting = render_study_pages(tables)
+    assert "| fixture | 0/16 | pending | 0 | pending | 0/4 | pending |" in supporting
+    _, qualified_supporting = render_study_pages(
+        tables, qualified_routes=frozenset({"fixture"}))
+    assert "| fixture | 0/16 | 0.125 | 0 | 0.25 | 0/4 | 0.5 |" in qualified_supporting
 
 
 def test_placements_carry_identical_block_text() -> None:

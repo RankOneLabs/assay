@@ -17,3 +17,8 @@ Run `pytest experiments/verification_pilot/tests` for pilot checks. The
 model-free scripted command and the live qualification gate are documented in
 `SMOKE.md`. Results must remain marked pending until a qualified live route
 has reviewed records.
+
+`analysis.py` computes the pilot's pure H1, H2, H4, and wide-search rules from
+`observations.py` measures. `render.py` generates both study pages from its
+result tables; run `uv run --project experiments python -m verification_pilot.render`
+to refresh the pending pages after changing the renderer.
