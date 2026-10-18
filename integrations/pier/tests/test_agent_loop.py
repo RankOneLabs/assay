@@ -21,6 +21,7 @@ import pytest
 from assay_pier_bridge.agent_loop import (
     CANDIDATE_STOP_CAUSES,
     HAIKU_TURN_ROUTE,
+    MODEL_REQUEST_SECONDS,
     PILOT_TOOLS_REVIEW,
     PILOT_TOOLS_T1,
     SYSTEM_PROMPT,
@@ -1522,6 +1523,21 @@ def test_transport_failure_consumes_attempt_without_retry(tmp_path: Path) -> Non
         client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
     assert failure.value.cause == "transport_failure"
     assert calls == 1
+    assert failure.value.trajectory["events"][-1]["error"] == "ConnectError"
+
+
+def test_model_request_waits_past_thirty_seconds(tmp_path: Path) -> None:
+    # A 30 s read timeout stopped a slow paid request after dispatch, which
+    # halts the run as billing_uncertain; requests now get MODEL_REQUEST_SECONDS.
+    timeouts: list[dict[str, float]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        timeouts.append(request.extensions["timeout"])
+        return httpx.Response(200, json=_answer("submit_output", {"summary": "ok"}, 1))
+
+    _client(tmp_path, handler).run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert timeouts
+    assert 30 < timeouts[0]["read"] <= MODEL_REQUEST_SECONDS
 
 
 def _inspect_stdout() -> str:

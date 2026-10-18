@@ -157,3 +157,18 @@ budget, under a $5 cap. That is about twice the expected cost: three times
 the $0.73 smoke. No `submit_output` nudge is added. The no-tool-call reviews
 were five of 48 screen sessions, none of them Gemini's, so the protocol stays
 as registered.
+
+D20 (2026-10-18): the Gemini full shard is not re-run. Run `fb497b6d` halted
+after three cells ($0.35) with `billing_uncertain`: cell four's second request
+ended in `transport_failure` after dispatch, so its charge was unknown and the
+gate stopped the run as designed. The likely cause is the bridge's 30-second
+model-request timeout, which Gemini's shard latency approached (26 s observed).
+That timeout is now `MODEL_REQUEST_SECONDS = 120`, still capped by the cell
+deadline. A transport stop now records the exception type.
+
+The three completed cells match the smoke. Every smoke on all seven routes,
+the local one included, scored an ownership gap of 0.0 with the planted
+remnant inspected in every session. The first repository-wide grep surfaces
+every owner's files at once, and the remnant breaks `tsc`, so this design is
+at ceiling and a full shard would not inform H1 or H2. The next step is a
+harder remnant design, not more cells of this one.

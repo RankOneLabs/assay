@@ -64,6 +64,10 @@ SYSTEM_PROMPT = (
 )
 # A tool command may not outlive this, nor the cell's remaining budget.
 MAX_TOOL_SECONDS = 120.0
+# One model request's wall-clock bound, still capped by the cell deadline. A
+# paid request that times out after dispatch has an unknown charge and halts
+# the run (billing_uncertain), so this sits well above observed latency.
+MODEL_REQUEST_SECONDS = 120.0
 # A tmpfs with less than this free is treated as exhausted: a write that hit
 # ENOSPC leaves a partial block, not exactly zero.
 EXHAUSTED_FREE_KB = 1024
@@ -1344,7 +1348,8 @@ class RepositoryAgentClient:
         with self._http_client() as client:
             if self._transport_retries(client) != 0:
                 raise ValueError("retry_config_violation")
-            timeout_s = 30.0 if deadline is None else min(30.0, deadline - time.monotonic())
+            timeout_s = (MODEL_REQUEST_SECONDS if deadline is None
+                         else min(MODEL_REQUEST_SECONDS, deadline - time.monotonic()))
             if timeout_s <= 0:
                 raise ValueError("agent_deadline")
             if on_dispatch is not None:
@@ -1950,7 +1955,10 @@ class RepositoryAgentClient:
             else:
                 cause = "sandbox_failure"
             turn_record["stop_cause"] = cause
-            events.append({"kind": "stopped", "cause": cause, "requests": requests})
+            stopped: dict[str, Any] = {"kind": "stopped", "cause": cause, "requests": requests}
+            if isinstance(error, httpx.HTTPError):
+                stopped["error"] = type(error).__name__
+            events.append(stopped)
             evidence: dict[str, bytes] = {}
             if sandbox is not None and rejection is None:
                 # A cell that never submitted still did work. Retain it as
