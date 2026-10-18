@@ -33,6 +33,7 @@ from verification_pilot.report import (
 from verification_pilot.run import (
     GridEvaluator,
     ScriptedWorker,
+    archive_manifest,
     run_scripted,
     save_run_trace,
     subject_truth,
@@ -229,6 +230,12 @@ def test_failed_cell_archive_keeps_partial_trajectory(tmp_path: Path) -> None:
                 if item["name"] == "stop_cause") == "deadline"
     assert next(item["result"]["value"] for item in measures
                 if item["name"] == "cost_usd") == 0.12
+
+    # A run whose save failed is re-archived from the store to the same bytes.
+    again = archive_manifest(store, str(manifest_ref), tmp_path / "again", {subject.id: subject})
+    for name in ("manifest.json", "index.json", "traces/001-trajectory.json",
+                 "traces/001-measures.json"):
+        assert (again / name).read_bytes() == (archive / name).read_bytes()
 
 
 def test_failed_cell_retained_trajectory_counts_successful_t1_inspection(

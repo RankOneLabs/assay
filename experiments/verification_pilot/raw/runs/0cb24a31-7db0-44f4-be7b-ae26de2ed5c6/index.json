@@ -1,0 +1,58 @@
+{
+  "execution_unit_id-group_a:t1-native:w0": {
+    "measures": "001-measures.json",
+    "record_ref": "sha256:abcb463b0618e0fbd19182029cd401f4ee8dd90bec72946e068a16a48a3b84ec",
+    "status": "failed",
+    "trajectory": "001-trajectory.json",
+    "worker_trace": "001-worker.json"
+  },
+  "execution_unit_id-group_a:t1-quoted:w0": {
+    "measures": "002-measures.json",
+    "record_ref": "sha256:d0cc9bc6003643e8666e57e7d6ceb350d1ed3eaf3580efc535097344b6b2c54a",
+    "status": "succeeded",
+    "trajectory": "002-trajectory.json",
+    "worker_trace": "002-worker.json"
+  },
+  "stage_run_id-group_a:t1-native:w0": {
+    "measures": "003-measures.json",
+    "record_ref": "sha256:307a84d9e31feb90e62a1bdb364e2662bfaec9f38cc64f30fbd53a8a5a4f8594",
+    "status": "failed",
+    "trajectory": "003-trajectory.json",
+    "worker_trace": "003-worker.json"
+  },
+  "stage_run_id-group_a:t1-quoted:w0": {
+    "measures": "004-measures.json",
+    "record_ref": "sha256:e7c82ab6f9af8dcbfd1e22e6c57f08a77ee31c0621aa11fdf59dc0e4e6aad2cf",
+    "status": "succeeded",
+    "trajectory": "004-trajectory.json",
+    "worker_trace": "004-worker.json"
+  },
+  "task_order_id-group_a:t1-native:w0": {
+    "measures": "005-measures.json",
+    "record_ref": "sha256:216ef2e46c536aefc0c3051a2b84f55f98557e10e2423c52501cdd160bd82f92",
+    "status": "succeeded",
+    "trajectory": "005-trajectory.json",
+    "worker_trace": "005-worker.json"
+  },
+  "task_order_id-group_a:t1-quoted:w0": {
+    "measures": "006-measures.json",
+    "record_ref": "sha256:a0ab0cf098b7b97a6072eea8bc61823e463fa8d7b93fdc78de0b78e1c517512c",
+    "status": "failed",
+    "trajectory": "006-trajectory.json",
+    "worker_trace": "006-worker.json"
+  },
+  "workflow_execution_id-group_a:t1-native:w0": {
+    "measures": "007-measures.json",
+    "record_ref": "sha256:961cee6e387c408294611837b66f369d442bdcef851211c9fafb63229d2193b7",
+    "status": "succeeded",
+    "trajectory": "007-trajectory.json",
+    "worker_trace": "007-worker.json"
+  },
+  "workflow_execution_id-group_a:t1-quoted:w0": {
+    "measures": "008-measures.json",
+    "record_ref": "sha256:c1b47429d61b4ab47d8aa21ea5b73a0f3ced5f5d6c9beecc112a0d5f3c30844b",
+    "status": "failed",
+    "trajectory": "008-trajectory.json",
+    "worker_trace": "008-worker.json"
+  }
+}

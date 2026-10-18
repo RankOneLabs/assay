@@ -257,14 +257,24 @@ def save_run_trace(
     """Save cell traces and derived measures under raw/runs/<run_id>."""
     if result.manifest is None or result.manifest_ref is None:
         return None
-    manifest = result.manifest
-    destination = archive_root / manifest.run_id
+    return archive_manifest(store, str(result.manifest_ref), archive_root, subjects)
+
+
+def archive_manifest(
+    store: ObjectStore, manifest_ref: str, archive_root: Path,
+    subjects: Mapping[str, PilotSubject],
+) -> Path:
+    """Archive one stored run manifest; a run whose save failed is re-archived from the store."""
+    manifest_bytes = store.read_bytes(manifest_ref)
+    manifest = json.loads(manifest_bytes)
+    destination: Path = archive_root / str(manifest["run_id"])
     destination.mkdir(parents=True, exist_ok=False)
-    (destination / "manifest.json").write_bytes(store.read_bytes(result.manifest_ref))
+    (destination / "manifest.json").write_bytes(manifest_bytes)
     traces = destination / "traces"
     traces.mkdir()
     index: dict[str, dict[str, str | None]] = {}
-    for number, (cell_id, record_ref) in enumerate(sorted(manifest.execution_records.items()), 1):
+    for number, (cell_id, record_ref) in enumerate(sorted(manifest["execution_records"].items()),
+                                                   1):
         record = json.loads(store.read_bytes(record_ref))
         entry: dict[str, str | None] = {"record_ref": str(record_ref), "status": record["status"]}
         trace_ref = record.get("trace_ref")
@@ -411,10 +421,13 @@ def _spend_cap(value: str) -> Decimal:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("scripted", "live", "live-smoke",
-                                            "on-policy-local", "on-policy-paid", "remeasure"))
+                                            "on-policy-local", "on-policy-paid", "remeasure",
+                                            "archive"))
     parser.add_argument("--store", type=Path)
     parser.add_argument("--archive", type=Path, action="append", default=[],
                         help="raw/runs/<run_id> directory to re-derive measures for")
+    parser.add_argument("--manifest-ref", default=None,
+                        help="stored run manifest to archive under raw/runs")
     parser.add_argument("--image", default="")
     parser.add_argument("--runs-root", type=Path, default=Path("/tmp/verification-pilot-runs"))
     parser.add_argument("--routing-config", type=Path, default=Path("/tmp/routing.yaml"))
@@ -433,6 +446,14 @@ def main() -> None:
         return
     if args.store is None:
         parser.error("--store is required")
+    if args.command == "archive":
+        if args.manifest_ref is None:
+            parser.error("archive requires --manifest-ref")
+        by_id = {subject.id: subject for subject in pilot_subjects()}
+        root = Path(__file__).resolve().parent / "raw" / "runs"
+        print(json.dumps({"archive": str(archive_manifest(
+            ObjectStore(args.store), args.manifest_ref, root, by_id))}))
+        return
     paid = args.command == "on-policy-paid" or (
         args.command in {"live", "live-smoke"} and args.route == "openrouter")
     if paid and args.max_spend_usd is None:

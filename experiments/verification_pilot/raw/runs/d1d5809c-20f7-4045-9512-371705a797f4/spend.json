@@ -1,0 +1,9 @@
+{
+  "halt": null,
+  "max_spend_usd": "2.49",
+  "prompt_token_slack": 4096,
+  "refused_requests": null,
+  "requests": 154,
+  "source": "reconstructed from per-turn billed usage in the trajectories; the gate's own record was lost when archiving crashed (shell_inspection empty-token bug). The same sum matches the gate's spend.json exactly on the other five screen archives.",
+  "spent_usd": "1.29475"
+}

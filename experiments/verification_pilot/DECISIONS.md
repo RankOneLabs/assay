@@ -118,3 +118,35 @@ ownership gap from 1.0 to 0.0, and remnant inspection from false to true.
 The local Qwen run is unchanged. The bridge also now records the text of a
 reply that ends a cell without a tool call, as `reply_without_tool_call`, so
 the manual read can see it.
+
+D17 screen result (2026-10-18): all six candidates ran the registered smoke on
+image `sha256:4fadd5ab…` (`d560099`). The whole screen spent $4.96 of the $15,
+probe included. Counts are sessions out of four per arm, native / quoted.
+
+| Route | Archive | USD | No-tool-call | Tool-call-limit stop | 20-request stop | T3 submitted | First wide search |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sonnet-5.5` | `b3708099` | 0.94 | 1 / 2 | 0 / 0 | 0 / 0 | 3 / 2 | 4 / 4 |
+| `gemini-4-argon` | `4d6e0d8a` | 0.73 | 0 / 0 | 1 / 0 | 0 / 0 | 4 / 4 | 4 / 4 |
+| `gpt-6.1-sol` | `5300d6c5` | 0.78 | 0 / 1 | 0 / 1 | 0 / 0 | 4 / 3 | 3 / 4 |
+| `qwen3.8` | `d1d5809c` | 1.29 | 0 / 0 | 4 / 4 | 2 / 4 | 2 / 0 | 2 / 3 |
+| `deepseek-v4-pro` | `c42a92d7` | 0.87 | 1 / 0 | 3 / 4 | 2 / 0 | 1 / 3 | 3 / 3 |
+| `kimi-k2.7-code` | `0cb24a31` | 0.35 | 0 / 0 | 3 / 3 | 2 / 2 | 2 / 2 | 4 / 4 |
+
+Every route recorded zero conversation-limit hits and zero harness tool
+failures. The manual read found no refusals and no misattribution of the quoted
+handoff. The one refusal-wording flag, in DeepSeek, is working prose ("Let me
+double-check…"). Model-caused tool errors were zero except for Qwen3.8 (1 / 12)
+and DeepSeek (4 / 2). Each no-tool-call completion is a T2 or T3 review written
+as prose instead of a `submit_output` call. Three routes count zero on all five
+counts and qualify: Gemini 4 Argon, Qwen3.8 and Kimi K2.7 Code. Qwen3.8 and
+Kimi reach the tool-call limit in most sessions; Qwen3.8 submits no T1 at all,
+and Kimi submits T1 in two of eight sessions. Every qualified route has at
+least one arm above 50% first wide search, so the ceiling rule applies.
+
+The Qwen3.8 run completed, but archiving it crashed on an empty shell token
+(`grep -c ""`), so its `spend.json` was lost. `run archive --manifest-ref`
+rebuilt the archive from the store, matching the partial copy byte for byte.
+Its spend is the sum of the billed per-turn usage, the same sum that matches
+the gate's record exactly on the other five routes. The parser fix also stops
+treating a quoted word that begins with `<` or `>` as a redirection. Re-scoring
+every archive changed no committed measures.

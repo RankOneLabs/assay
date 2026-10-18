@@ -30,6 +30,7 @@ def _derived(command: str, exit_code: int = 0) -> list[tuple[str, dict[str, str]
     ("cd src && head -n 20 a.ts ../tests/b.ts",
      [("read_file", {"path": "src/a.ts"}), ("read_file", {"path": "tests/b.ts"})]),
     ("cat /workspace/docs/migration.md", [("read_file", {"path": "docs/migration.md"})]),
+    ("grep -rn '<WorkOrderId' src", [("search_files", {"query": "<WorkOrderId", "scope": "src"})]),
 ])
 def test_recognized_inspections(command: str, expected: list[Any]) -> None:
     assert _derived(command) == expected
@@ -44,6 +45,7 @@ def test_recognized_inspections(command: str, expected: list[Any]) -> None:
     "grep Foo .",                       # non-recursive grep of a directory
     "cat ../../etc/passwd",             # escapes the workspace
     "echo 'unterminated",               # does not tokenize
+    'tsc --listFiles 2>&1 | grep -c ""',  # an empty pattern over a pipe
 ])
 def test_unrecognized_commands_are_not_inspections(command: str) -> None:
     assert _derived(command) == []
