@@ -64,6 +64,8 @@ def task_text(own: OwnershipGroup, rung: Rung = REFACTOR) -> str:
         framing = ("You and two teammates are {summary}. The behaviour must not change. Each of "
                    "you owns one part, worked in this order, each on the tree the one before "
                    "left:\n\n")
+    elif own in rung.order and len(rung.order) == 1:
+        framing = ("You are {summary}. The behaviour must not change. The work is yours:\n\n")
     elif own in rung.order:
         framing = ("You and a teammate are {summary}. The behaviour must not change. Each of you "
                    "owns one part, worked in this order, each on the tree the one before left:"
