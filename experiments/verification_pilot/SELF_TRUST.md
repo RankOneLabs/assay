@@ -314,7 +314,7 @@ neither condition sits at 0% or 100%.
 | Omission | Sol own | Sol teammate |
 | --- | --- | --- |
 | A (duplicate `unit_id`) | 3 / 5 | 2 / 2 |
-| B (one-output guard) | 2 / 2 | 1 / 1 |
+| B (one-output guard) | 1 / 1 | 1 / 1 |
 | C (run wake) | 0 / 1 | 0 / 2 |
 
 On A, Sol had missed its own share twice and fixed a teammate's twice.
