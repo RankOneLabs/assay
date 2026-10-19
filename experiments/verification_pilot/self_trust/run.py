@@ -46,7 +46,11 @@ from verification_pilot.run import (
 )
 from verification_pilot.self_trust.bridge import SelfTrustBridgeClient, self_trust_worker
 from verification_pilot.self_trust.evaluation import SelfTrustEvaluator, measures
-from verification_pilot.self_trust.settings import CELL_SECONDS, SelfTrustSettings
+from verification_pilot.self_trust.settings import (
+    CELL_SECONDS,
+    LOCAL_MAX_OUTPUT_TOKENS,
+    SelfTrustSettings,
+)
 from verification_pilot.self_trust.study import (
     ARMS,
     ATTRIBUTION_ORDER_ARMS,
@@ -112,7 +116,8 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path,
             image=image, runs_root=runs_root, run_label="self-trust-local",
             model_route=ModelRoute(endpoint="http://willie:8900", model=local_model,  # type: ignore[arg-type]
                                    provider="smithers-local"),
-            subjects=dict(by_id), settings=SelfTrustSettings(),
+            subjects=dict(by_id),
+            settings=SelfTrustSettings(max_output_tokens=LOCAL_MAX_OUTPUT_TOKENS),
             factory=SmithersFactory(model=local_model, machine="mcbain",
                                     routing_config=routing_config,
                                     dispatch_url="http://willie:8900"),

@@ -24,5 +24,14 @@ class SelfTrustSettings(VerificationPilotSettings):
     max_tool_calls_per_cell: int = Field(default=300, ge=1, le=1_000)  # type: ignore[assignment]
 
 
+# The local route's per-reply output cap. The paid cap (8,192) bounds a
+# request's worst-case price; nothing is billed locally, and on the full
+# rewrite every capped Qwen3.6-27B reply stopped at exactly 8,192 tokens with
+# no content or tool call (raw/self_trust/runs/f4643792-*, 0f798f49-*), so
+# the cap, not the model, may have ended those cells. 32,768 is the settings'
+# ceiling; vLLM on mcbain serves 131,072 tokens, so a prompt above about
+# 98,000 tokens no longer fits beside it.
+LOCAL_MAX_OUTPUT_TOKENS = 32_768
+
 # The trial protocol's ceiling (TrialLimits.timeout_s <= 1800).
 CELL_SECONDS = 1_800.0
