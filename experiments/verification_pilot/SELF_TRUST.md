@@ -395,3 +395,56 @@ needed more room. The route forces `tool_choice: "required"`; whether vLLM's
 constrained tool-call decoding loops there is untested. The local route
 stays a broken route, not a result.
 
+
+## A matched move/rewrite pair, and a real move (2026-10-19)
+
+S and rewrite0 differ in more than the kind of change: different code,
+different guards. Three one-share fixtures (`self_trust/fixtures.py`) test
+the kind of change alone, and one omission an agent really shipped:
+
+- **forge-move** and **forge-rewrite** start from one slice of Oakridge
+  `6499e1cb` and move the pull-request reconcilers into `src/forge`
+  (938 and 1,004 lines written). The rewrite also rebuilds both
+  reconcilers' checks as rule lists over a new `src/forge/rules.ts`. Both
+  leave out the final reconciler's refusal of a "merged" observation with
+  no `merged_at`; the cohort reconciler keeps it. One hidden test serves both.
+- **resume146** is Oakridge #146 (`5a10285f`, 2,097 lines) as it shipped:
+  moving resume-parent lookup into the Claude Code adapter dropped the
+  parent model's allowlist check, which #153 restored.
+
+They run in a derived image (`self_trust/image`, `sha256:ff0edbdf…`): the
+earlier image plus Hono, which kbbl's server imports. Two matched pairs
+at three repeats each, $7.85 billed.
+
+| Fixture | Gemini 4 Argon | Gemini 3.8 Flash | Archives |
+|---|---|---|---|
+| forge-move | 6 / 6 | none usable | `80206567`; `b9814d1a`, `121df55a` |
+| forge-rewrite | 6 / 6 | 5 / 5 | `bfd8a263`; `5976c4f9` |
+| resume146 | 0 / 6, 5 "complete" | 0 / 6, 5 "complete" | `ffe47efa`; `eb94295c` |
+
+Flash's forge-move runs both stopped on request 16 of the first cell with
+an unbilled provider error (`provider_response`), so it has no result. One
+Flash forge-rewrite cell was cut by the cap and is excluded (its tree was
+fixed).
+
+The pair did not separate. The rewrite was caught as often as the move,
+and the real move was missed every time. What decides it is not the kind
+of change but whether the omission can be paired line to line with what it
+replaced:
+
+- In forge-rewrite each old `else if` became one named rule with the same
+  detail message, in the same order, and the deleted files were read into
+  the author's history before they were removed. The verifiers said so:
+  they compared `FINAL_RULES` against "the original `if/else if` chain"
+  and against the twin `COHORT_RULES`. The rewrite was a checklist.
+- In #146 the old check was not deleted: it stayed in the sessions
+  handler's fallback for callers without a registry. The new lookup is a
+  differently shaped loop in another package. Every verifier checked
+  structure (tsc, the 61 tests, that `core/` no longer imports the
+  adapter); none compared the new lookup's behaviour with the old one's.
+
+So "moves are caught, rewrites are missed" was a proxy. The finding that
+holds is the narrower one this document already led with: models verify a
+refactor as a local diff, and catch an omission when the old line and its
+missing copy can be matched; when they cannot, they miss it and usually
+call the work complete. That held on a real omission, shipped and reviewed.

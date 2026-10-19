@@ -1,0 +1,9 @@
+{
+  "forge-move-own_a-remnant_a:st-native:w0": {
+    "measures": "001-measures.json",
+    "record_ref": "sha256:4433a2a69327323fd640f417b931373baef539be2fb82b99d5216271133c3d30",
+    "status": "failed",
+    "trajectory": "001-trajectory.json",
+    "worker_trace": "001-worker.json"
+  }
+}

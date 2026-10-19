@@ -1,0 +1,44 @@
+{
+  "forge-rewrite-own_a-remnant_a:st-native:w0": {
+    "measures": "001-measures.json",
+    "record_ref": "sha256:175f49ee136277ab920f946f8421aa5e30f058350211a9959eb80c9b5191e57e",
+    "status": "succeeded",
+    "trajectory": "001-trajectory.json",
+    "worker_trace": "001-worker.json"
+  },
+  "forge-rewrite-own_a-remnant_a:st-native:w1": {
+    "measures": "002-measures.json",
+    "record_ref": "sha256:84bc701f4467644662af8a1754731e745c7b10a09234b99fbeec30410052b059",
+    "status": "succeeded",
+    "trajectory": "002-trajectory.json",
+    "worker_trace": "002-worker.json"
+  },
+  "forge-rewrite-own_a-remnant_a:st-native:w2": {
+    "measures": "003-measures.json",
+    "record_ref": "sha256:d74e80ae3d10febc0c9116dc6f4c439f919fb9d64568b079004d02d6dccf8837",
+    "status": "succeeded",
+    "trajectory": "003-trajectory.json",
+    "worker_trace": "003-worker.json"
+  },
+  "forge-rewrite-own_b-remnant_a:st-native:w0": {
+    "measures": "004-measures.json",
+    "record_ref": "sha256:0a0c6c9ef73db43cbc2c3fddd60c708adb7d89623205f0e8da3aa8ca3fc51c75",
+    "status": "succeeded",
+    "trajectory": "004-trajectory.json",
+    "worker_trace": "004-worker.json"
+  },
+  "forge-rewrite-own_b-remnant_a:st-native:w1": {
+    "measures": "005-measures.json",
+    "record_ref": "sha256:3453feb0fa26cf9cc37dd52b051f91fa427608fe377b28f88e9cf20ca50f7f21",
+    "status": "succeeded",
+    "trajectory": "005-trajectory.json",
+    "worker_trace": "005-worker.json"
+  },
+  "forge-rewrite-own_b-remnant_a:st-native:w2": {
+    "measures": "006-measures.json",
+    "record_ref": "sha256:dd36aa666dfd1a513b5c09464caae7f6d059db4c2842f7318bb80fb65c45b023",
+    "status": "succeeded",
+    "trajectory": "006-trajectory.json",
+    "worker_trace": "006-worker.json"
+  }
+}
