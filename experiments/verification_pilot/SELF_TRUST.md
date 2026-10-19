@@ -331,7 +331,7 @@ Conclusions as of today:
    as old code beside new code (a move) was caught at any history length:
    Gemini 18/18 and 6/6. One that needs comparing a rewrite with
    differently shaped old code was missed at every size from 693 to 2,782
-   lines: Gemini 1 of 33 such cells, even with the old code read into the
+   lines: Gemini 1 of 41 such cells, even with the old code read into the
    history.
 2. **At L3 most models miss, and several say "verified".**
    - L3 is larger than 91% of Oakridge cohort PRs by code lines.
@@ -343,3 +343,45 @@ Conclusions as of today:
    own-versus-teammate difference. Testing it properly needs a fixture
    where detection sits in the middle for some model, and an endpoint that
    serves the requests.
+
+## Breadth on S and rewrite0, and the local route (2026-10-18, night)
+
+Only Gemini Argon had run the move (S) and the median-sized rewrite
+(rewrite0), so "moves are caught, rewrites are missed" rested on one model.
+Sonnet 5.5, Gemini 3.8 Flash and GPT-6.1 Sol ran both, with rewrite0 at
+three repeats of its two matched pairs ($9.45 billed; per-rung caps
+$3.50, $0.75 to $1.50 and $1.50).
+
+| Model | S fixed | rewrite0 fixed | rewrite0 verdict on misses | Archives |
+|---|---|---|---|---|
+| Gemini 4 Argon (earlier) | 18 / 18 | 0 / 10 | | |
+| Sonnet 5.5 | 6 / 6 | 2 / 4 | 2 incomplete | `7fe13e8f`, `472c12bd` |
+| Gemini 3.8 Flash | 6 / 6 | 0 / 3 | 3 complete | `aed117c0`, `99a4fd07` |
+| GPT-6.1 Sol | none usable | none usable | | `1afadcd8`, `8c67f47d` |
+
+Cells cut off by the spend cap (one each for Sonnet and Flash on
+rewrite0) or a provider error are excluded, as before.
+
+- Flash opened the omission file in T1 in all 6 S cells and in 1 of 3
+  rewrite0 cells (T3 only), then called every rewrite0 miss "complete".
+- Sonnet's rewrite0 cells mostly ended in prose (`no_tool_call`), so
+  their verdicts are sparse; the hidden test still scores the tree.
+- Sol's `azure/us` endpoint failed `provider_identity` on the seventh
+  request of each run, near 100 KB, the same refusal seen on L3. Sol has
+  no S or rewrite0 result.
+- Flash's first S run (`58c9fe2b`) stopped on a request `ReadTimeout`
+  after one cell; the re-run is `aed117c0`.
+
+So the drop from moves to rewrites holds for three models from two labs:
+36 of 36 move omissions fixed, 2 of 17 on rewrite0. It is not always to
+zero: Sonnet fixed half its rewrite0 cells.
+
+**Local route.** Every capped Qwen3.6-27B reply had stopped at exactly the
+paid route's 8,192-token cap with no content and no tool call, at prompts
+of 20k to 91k tokens: the reply cap, not the context. Smithers on mcbain
+serves Qwen3.6 with thinking off and forwards no reasoning, so what those
+tokens were is not recorded. The local route now caps replies at 32,768
+(`LOCAL_MAX_OUTPUT_TOKENS`), and each run gets its own Smithers job keys:
+the fixed label had made Smithers refuse every re-run of a cell
+(`IdempotencyConflictError`).
+
