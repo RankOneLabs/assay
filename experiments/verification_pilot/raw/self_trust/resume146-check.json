@@ -1,0 +1,33 @@
+{
+  "cases": {
+    "clean": {
+      "hidden": {
+        "group_a": true
+      },
+      "holds": true,
+      "tree_digest": "sha256:942f06c9b4e487c1c1f6f67ef74d8ed24a07fcef381ebe1c3b2954dd2d969ea4",
+      "tsc": 0,
+      "visible": 0
+    },
+    "omit-group_a": {
+      "hidden": {
+        "group_a": false
+      },
+      "holds": true,
+      "tree_digest": "sha256:4782b2189629a291e99676ffe2f0a7d35bb17f79f69daba749001f5a2dfe8e02",
+      "tsc": 0,
+      "visible": 0
+    },
+    "start": {
+      "hidden": {
+        "group_a": false
+      },
+      "holds": true,
+      "tree_digest": "sha256:c2556fc9a89f45cf6c996d01081f8767a776584ea50781e87b8cd91f17b2b231",
+      "tsc": 0,
+      "visible": 0
+    }
+  },
+  "holds": true,
+  "image": "sha256:ff0edbdfca1e89954bf429dde6f0172ba47e1f525831b41b4621374f0969de9a"
+}

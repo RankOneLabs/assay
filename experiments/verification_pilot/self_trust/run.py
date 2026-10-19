@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import json
 import os
+import uuid
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -46,7 +47,11 @@ from verification_pilot.run import (
 )
 from verification_pilot.self_trust.bridge import SelfTrustBridgeClient, self_trust_worker
 from verification_pilot.self_trust.evaluation import SelfTrustEvaluator, measures
-from verification_pilot.self_trust.settings import CELL_SECONDS, SelfTrustSettings
+from verification_pilot.self_trust.settings import (
+    CELL_SECONDS,
+    LOCAL_MAX_OUTPUT_TOKENS,
+    SelfTrustSettings,
+)
 from verification_pilot.self_trust.study import (
     ARMS,
     ATTRIBUTION_ORDER_ARMS,
@@ -109,10 +114,15 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path,
         if routing_config is None:
             raise ValueError("the local route needs the Smithers routing config")
         bridge = SelfTrustBridgeClient(
-            image=image, runs_root=runs_root, run_label="self-trust-local",
+            image=image, runs_root=runs_root,
+            # Smithers keys each job by label, cell and turn and refuses a
+            # changed body under a seen key, so a fixed label made any re-run of
+            # a cell fail. The label is outside the worker fingerprint.
+            run_label=f"self-trust-local-{uuid.uuid4()}",
             model_route=ModelRoute(endpoint="http://willie:8900", model=local_model,  # type: ignore[arg-type]
                                    provider="smithers-local"),
-            subjects=dict(by_id), settings=SelfTrustSettings(),
+            subjects=dict(by_id),
+            settings=SelfTrustSettings(max_output_tokens=LOCAL_MAX_OUTPUT_TOKENS),
             factory=SmithersFactory(model=local_model, machine="mcbain",
                                     routing_config=routing_config,
                                     dispatch_url="http://willie:8900"),
@@ -170,7 +180,8 @@ def main() -> None:
     parser.add_argument("--concept", default="stage_run")
     parser.add_argument("--rung", choices=("refactor", "refactor-long", "rewrite0", "rewrite0-read",
                                            "rewrite1",
-                                           "rewrite2", "rewrite"),
+                                           "rewrite2", "rewrite", "forge-move", "forge-rewrite",
+                                           "resume146"),
                         default="refactor",
                         help="size-ladder rung for calibrate-refactor and attribution-order: "
                              "S (refactor) or L (rewrite)")
