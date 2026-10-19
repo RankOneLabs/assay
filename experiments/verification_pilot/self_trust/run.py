@@ -180,7 +180,8 @@ def main() -> None:
     parser.add_argument("--concept", default="stage_run")
     parser.add_argument("--rung", choices=("refactor", "refactor-long", "rewrite0", "rewrite0-read",
                                            "rewrite1",
-                                           "rewrite2", "rewrite"),
+                                           "rewrite2", "rewrite", "forge-move", "forge-rewrite",
+                                           "resume146"),
                         default="refactor",
                         help="size-ladder rung for calibrate-refactor and attribution-order: "
                              "S (refactor) or L (rewrite)")

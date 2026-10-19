@@ -136,7 +136,8 @@ def main() -> None:
     parser.add_argument("--fixture", default="rename",
                         choices=("rename", "refactor", "refactor-long", "rewrite0", "rewrite0-read",
                                  "rewrite1",
-                                 "rewrite2", "rewrite"))
+                                 "rewrite2", "rewrite", "forge-move", "forge-rewrite",
+                                 "resume146"))
     args = parser.parse_args()
     if args.fixture != "rename":
         refactor = run_refactor_check(args.image, args.fixture)
