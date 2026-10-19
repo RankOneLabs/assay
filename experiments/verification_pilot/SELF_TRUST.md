@@ -385,3 +385,13 @@ tokens were is not recorded. The local route now caps replies at 32,768
 the fixed label had made Smithers refuse every re-run of a cell
 (`IdempotencyConflictError`).
 
+The re-run at 32,768 (`70e00fa0`, full rewrite) did not fix it. Every reply
+that came back was short (at most 487 output tokens), and all six cells
+stopped on Smithers' 900-second job deadline
+(`model_dispatch:AcceptanceDeadlineExceeded`) after 7 to 35 requests, with
+none fixed and one "complete" over the omission. A reply that runs to the
+deadline instead of the cap fits a generation that never ends, not one that
+needed more room. The route forces `tool_choice: "required"`; whether vLLM's
+constrained tool-call decoding loops there is untested. The local route
+stays a broken route, not a result.
+
