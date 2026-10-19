@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import json
 import os
+import uuid
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -113,7 +114,11 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path,
         if routing_config is None:
             raise ValueError("the local route needs the Smithers routing config")
         bridge = SelfTrustBridgeClient(
-            image=image, runs_root=runs_root, run_label="self-trust-local",
+            image=image, runs_root=runs_root,
+            # Smithers keys each job by label, cell and turn and refuses a
+            # changed body under a seen key, so a fixed label made any re-run of
+            # a cell fail. The label is outside the worker fingerprint.
+            run_label=f"self-trust-local-{uuid.uuid4()}",
             model_route=ModelRoute(endpoint="http://willie:8900", model=local_model,  # type: ignore[arg-type]
                                    provider="smithers-local"),
             subjects=dict(by_id),
