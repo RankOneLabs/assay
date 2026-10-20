@@ -13,8 +13,9 @@ the check, even in median-sized PRs, and often signed the work off as complete.
 | Oakridge #146, a real move that reshaped the code and shipped the omission | 0 of 12, with 10 signed off as "complete" |
 | A real 2,782-line rewrite, larger than 91% of Oakridge PRs | 8 of 75 (12 models; 10 restored none) |
 
-So the kind of change is not what matters. What matters is whether each old
-check has a visible counterpart in the new code.
+The split follows whether each old check has a visible counterpart in the new
+code, not whether the change is a move or a rewrite. These sessions point to
+that explanation but don't isolate it (see Finding 2).
 
 [Supporting data](./supporting-data.md) covers the method, the exclusion rule,
 the internal fixture names, how to reproduce a session and where every number
@@ -115,7 +116,7 @@ the rewrite it did so in 1 of 3, and only in its last turn. It called all three
 rewrite misses "complete". Sonnet shows the same drop, though a smaller one. GPT-6.1
 Sol has no result here, because its endpoints refused requests near 100 KB.
 
-## Finding 2: what decides it is whether old and new line up
+## Finding 2: what decides it seems to be whether old and new line up
 
 The 436-line move and the 693-line rewrite are different code with different
 checks, so they don't isolate the kind of change. Three more refactors do:
@@ -131,16 +132,22 @@ final reconciler's refusal of a "merged" report with no `merged_at`. #146 is
 real. The move dropped the allowlist check on the resumed parent's model, and
 PR #153 restored it.
 
-- **The rewrite was caught because it still read as a checklist.** Each old
+- **The rewrite was caught, and it still read as a checklist.** Each old
   `else if` became one named rule, with the same message, in the same order.
   The agents compared the rule list against "the original `if/else if` chain".
-- **#146 was missed because nothing lined up.** The old check survived in a
-  legacy fallback, and the new lookup is a differently shaped loop in another
-  package. Every agent checked `tsc`, the 61 tests and the import boundaries.
-  None compared the old lookup with the new one.
+- **#146 was missed, and nothing in it lined up.** The new lookup is a
+  differently shaped loop in another package. Every agent checked `tsc`, the
+  61 tests and the import boundaries, and none compared the old lookup with the
+  new one.
 
 No refactor here changes how well old and new line up while holding everything
 else fixed. These sessions point to that explanation but don't isolate it.
+#146 also differs from the reconciler pair in two other ways. The old check
+survived in a legacy fallback, so a search for it still finds it in the
+codebase, which an agent could read as evidence that it was kept. And at 2,097
+lines, #146 is about twice the size of either reconciler refactor. Either
+difference could explain part of the miss.
+
 Flash's two runs of the plain move both stopped at request 16 on an unbilled
 provider error. Sonnet did not run these three refactors.
 
