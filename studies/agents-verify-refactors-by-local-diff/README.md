@@ -116,7 +116,7 @@ the rewrite it did so in 1 of 3, and only in its last turn. It called all three
 rewrite misses "complete". Sonnet shows the same drop, though a smaller one. GPT-6.1
 Sol has no result here, because its endpoints refused requests near 100 KB.
 
-## Finding 2: what decides it is whether old and new line up
+## Finding 2: what decides it seems to be whether old and new line up
 
 The 436-line move and the 693-line rewrite are different code with different
 checks, so they don't isolate the kind of change. Three more refactors do:
@@ -132,7 +132,7 @@ final reconciler's refusal of a "merged" report with no `merged_at`. #146 is
 real. The move dropped the allowlist check on the resumed parent's model, and
 PR #153 restored it.
 
-- **The rewrite was caught because it still read as a checklist.** Each old
+- **The rewrite was caught, and it still read as a checklist.** Each old
   `else if` became one named rule, with the same message, in the same order.
   The agents compared the rule list against "the original `if/else if` chain".
 - **#146 was missed, and nothing in it lined up.** The new lookup is a
