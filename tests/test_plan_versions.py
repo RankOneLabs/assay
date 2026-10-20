@@ -1,4 +1,4 @@
-"""Dual-version assay-execution-plan/0.1.0 and /0.2.0 contract behavior."""
+"""Versioned execution-plan contract behavior."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from assay.canonical import canonical_json, digest_bytes
 from assay.models import (
     ExecutionPlan,
     ExecutionPlanV2,
+    ExecutionPlanV3,
     RuntimeProfile,
     parse_execution_plan,
     plan_runtime_identity,
@@ -49,9 +50,20 @@ def test_parse_execution_plan_selects_the_matching_model_before_validating(
     }
     assert isinstance(parse_execution_plan(v2_plan), ExecutionPlanV2)
 
+    v3_plan = {
+        **v2_plan,
+        "schema_version": "assay-execution-plan/0.3.0",
+        "ceiling": {
+            "max_cells": 2,
+            "max_wall_time_seconds": 30,
+            "max_fleet_occupancy": 1,
+        },
+    }
+    assert isinstance(parse_execution_plan(v3_plan), ExecutionPlanV3)
+
 
 @pytest.mark.parametrize(
-    "schema_version", ["assay-execution-plan/0.3.0", "assay-execution-plan/0.1", "", "garbage"]
+    "schema_version", ["assay-execution-plan/0.4.0", "assay-execution-plan/0.1", "", "garbage"]
 )
 def test_parse_execution_plan_rejects_unknown_versions(schema_version: str) -> None:
     with pytest.raises(ValidationError):
@@ -135,9 +147,7 @@ def test_reference_closure_requires_the_runtime_configuration_object(tmp_path: P
     study = execution_fixture(store, subject_ids=("s0", "s1")).snapshot
     snapshot_ref = str(store.publish_json(study.model_dump(mode="json")))
     runtime = _runtime(store)
-    plan = compile_plan_v2(
-        study, snapshot_ref=snapshot_ref, worker_repeats=2, runtime=runtime
-    )
+    plan = compile_plan_v2(study, snapshot_ref=snapshot_ref, worker_repeats=2, runtime=runtime)
     for declaration in (*study.arms, *study.evaluators):
         store.publish_json(declaration.model_dump(mode="json"))
     store.publish_json([arm.conditions for arm in sorted(study.arms, key=lambda item: item.id)])
@@ -160,9 +170,7 @@ def test_plan_runtime_identity_projects_legacy_and_generic_plans(tmp_path: Path)
     study = fixture.snapshot
     snapshot_ref = str(store.publish_json(study.model_dump(mode="json")))
     runtime = _runtime(store, id="pier", version="2.0.0")
-    v2_plan = compile_plan_v2(
-        study, snapshot_ref=snapshot_ref, worker_repeats=2, runtime=runtime
-    )
+    v2_plan = compile_plan_v2(study, snapshot_ref=snapshot_ref, worker_repeats=2, runtime=runtime)
     assert plan_runtime_identity(v2_plan) == (None, "pier", "2.0.0")
     assert plan_runtime_identity(None) == (None, None, None)
 

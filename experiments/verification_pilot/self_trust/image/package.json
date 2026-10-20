@@ -1,0 +1,8 @@
+{
+  "name": "self-trust-sandbox-extras",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "hono": "4.12.16"
+  }
+}

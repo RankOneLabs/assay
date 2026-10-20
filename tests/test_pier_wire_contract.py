@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args, get_origin
 
 import pytest
 
@@ -27,6 +27,16 @@ from assay.pier_protocol import (
     MAX_AGGREGATE_ARTIFACT_BYTES,
     MAX_ARTIFACT_BYTES,
     MAX_ARTIFACT_COUNT,
+    CandidateCause,
+    CandidateFailure,
+    CandidateSubmission,
+    EffectiveEnforcement,
+    InfrastructureCause,
+    InfrastructureFailure,
+    ModelRoute,
+    NetworkPolicy,
+    TrialLimits,
+    TrialRequest,
     trial_name_for,
 )
 from assay.store import ObjectStore
@@ -36,6 +46,114 @@ FIXTURE = Path(__file__).parent / "fixtures" / "pier_wire_contract.json"
 
 def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def _field_contract(model: type[Any]) -> dict[str, tuple[Any, ...]]:
+    def type_shape(annotation: Any) -> Any:
+        origin = get_origin(annotation)
+        if origin is None:
+            return getattr(annotation, "__name__", repr(annotation))
+        return (str(origin), tuple(type_shape(value) if isinstance(value, type) or
+                                    get_origin(value) is not None else value
+                                    for value in get_args(annotation)))
+
+    return {
+        name: (
+            type_shape(field.annotation),
+            tuple(sorted(
+                (key, value)
+                for rule in field.metadata
+                for key in ("gt", "ge", "lt", "le", "pattern", "min_length",
+                            "max_length", "strict", "allow_inf_nan")
+                if (value := getattr(rule, key, None)) is not None
+            )),
+            field.is_required(),
+            field.default if not field.is_required() else None,
+        )
+        for name, field in model.model_fields.items()
+    }
+
+
+def test_core_and_bridge_field_types_constraints_and_routes_agree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "integrations/pier/src"))
+    from assay_pier_bridge import protocol as bridge
+
+    # Intended differences: bridge ClosedModel is strict; core WireModel uses
+    # allow_inf_nan=False and freeze_payloads. Bridge CellId is Annotated,
+    # while core cell_id has an inline Field pattern. These base-model and
+    # declaration differences do not change the field's wire constraints.
+    # Validators are checked only for the route and local-posture behaviors
+    # asserted below; unrelated future validators need their own behavior tests.
+    for core_model, bridge_model in (
+        (TrialRequest, bridge.TrialRequest),
+        (TrialLimits, bridge.TrialLimits),
+        (EffectiveEnforcement, bridge.EffectiveEnforcement),
+        (ModelRoute, bridge.ModelRoute),
+    ):
+        assert _field_contract(core_model) == _field_contract(bridge_model)
+
+    paid = {"endpoint": "https://openrouter.ai/api/v1", "model": "anthropic/claude-3-haiku",
+            "provider": "amazon-bedrock"}
+    local = {"endpoint": "http://willie:8900", "model": "qwen-coder-32b",
+             "provider": "smithers-local"}
+    for route in (paid, local):
+        assert ModelRoute.model_validate(route).model_dump() == route
+        assert bridge.ModelRoute.model_validate(route).model_dump() == route
+    for route in ({**paid, "model": local["model"]}, {**local, "provider": paid["provider"]}):
+        for model in (ModelRoute, bridge.ModelRoute):
+            with pytest.raises(ValueError):
+                model.model_validate(route)
+
+    sample = {**_fixture()["trial_envelope"]["sample_request"],
+              "egress_host": None, "egress_port": None,
+              "network_policy": "egress-openrouter-only"}
+    for model in (TrialRequest, bridge.TrialRequest):
+        with pytest.raises(ValueError, match="toolchain posture"):
+            model.model_validate({**sample, "model_route": local})
+        assert model.model_validate({**sample, "model_route": local,
+                                     "network_policy": "toolchain-only"}).model_route.provider == (
+                                         "smithers-local"
+                                     )
+
+
+def test_trial_envelope_revision_matches_the_shared_fixture() -> None:
+    envelope = _fixture()["trial_envelope"]
+    assert set(get_args(NetworkPolicy)) == set(envelope["network_policies"])
+    request = TrialRequest.model_validate(envelope["sample_request"])
+    assert request.model_dump() == envelope["sample_request"]
+    assert request.schema_version == envelope["schema_version"]
+    assert set(get_args(CandidateCause)) == set(envelope["candidate_causes"])
+    assert set(get_args(InfrastructureCause)) == set(envelope["infrastructure_causes"])
+    assert {
+        kind
+        for outcome in (CandidateSubmission, CandidateFailure, InfrastructureFailure)
+        for kind in get_args(outcome.model_fields["kind"].annotation)
+    } == set(envelope["result_outcomes"])
+
+
+@pytest.mark.parametrize(
+    ("host", "allowed"),
+    [
+        ("10.0.0.1", True),
+        ("172.16.0.1", True),
+        ("192.168.1.10", True),
+        ("169.254.169.254", False),
+        ("127.0.0.1", False),
+        ("100.64.0.1", False),
+    ],
+)
+def test_lan_egress_host_requires_rfc1918_address(host: str, allowed: bool) -> None:
+    request = {
+        **_fixture()["trial_envelope"]["sample_request"],
+        "egress_host": host,
+    }
+    if allowed:
+        assert TrialRequest.model_validate(request).egress_host == host
+    else:
+        with pytest.raises(ValueError, match="LAN IPv4 address"):
+            TrialRequest.model_validate(request)
 
 
 def _coordinate(case: dict[str, Any]) -> CellCoordinate:
@@ -132,3 +250,31 @@ def test_publication_does_not_charge_the_manifest_to_the_artifact_count(
     artifacts = {"a": b"", "b": b"", MANIFEST_PATH: b"{}"}
     refs = _publish_available_artifacts(ObjectStore(tmp_path / ".assay"), artifacts)
     assert refs.keys() == artifacts.keys()
+
+
+def _accepted_routes(model: Any) -> set[tuple[str, str, str]]:
+    fields = model.model_fields
+    accepted = set()
+    for endpoint in get_args(fields["endpoint"].annotation):
+        for name in get_args(fields["model"].annotation):
+            for provider in get_args(fields["provider"].annotation):
+                try:
+                    model(endpoint=endpoint, model=name, provider=provider)
+                except ValueError:
+                    continue
+                accepted.add((endpoint, name, provider))
+    return accepted
+
+
+def test_core_and_bridge_accept_the_same_exact_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "integrations/pier/src"))
+    from assay_pier_bridge import protocol as bridge
+    from assay_pier_bridge.agent_loop import PAID_TURN_ROUTES
+
+    accepted = _accepted_routes(ModelRoute)
+    assert accepted == _accepted_routes(bridge.ModelRoute)
+    paid = {route for route in accepted if route[0] == "https://openrouter.ai/api/v1"}
+    assert paid == {(turn.endpoint, *key) for key, turn in PAID_TURN_ROUTES.items()}
+    for endpoint, name, provider in accepted:
+        route = ModelRoute(endpoint=endpoint, model=name, provider=provider)  # type: ignore[arg-type]
+        assert route.paid_route_reachable is (provider != "smithers-local")

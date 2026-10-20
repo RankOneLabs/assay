@@ -1,0 +1,30 @@
+{
+  "execution_unit_id-group_a:t1-native:w0": {
+    "measures": "001-measures.json",
+    "record_ref": "sha256:df6c3673417bdd32d4d80dde9b07d21449b14d724617c4d2f6710a6512eeade7",
+    "status": "succeeded",
+    "trajectory": "001-trajectory.json",
+    "worker_trace": "001-worker.json"
+  },
+  "execution_unit_id-group_a:t1-quoted:w0": {
+    "measures": "002-measures.json",
+    "record_ref": "sha256:28f1a665f6f9211ff67f2b9b8a88adce47ae4d03ff9b0051017260d4a85b15bc",
+    "status": "succeeded",
+    "trajectory": "002-trajectory.json",
+    "worker_trace": "002-worker.json"
+  },
+  "execution_unit_id-group_b:t1-native:w0": {
+    "measures": "003-measures.json",
+    "record_ref": "sha256:593e548d8200f81c0587d2611d06d6982570e4de29b8a293a309c4a7d518d606",
+    "status": "succeeded",
+    "trajectory": "003-trajectory.json",
+    "worker_trace": "003-worker.json"
+  },
+  "execution_unit_id-group_b:t1-quoted:w0": {
+    "measures": "004-measures.json",
+    "record_ref": "sha256:06bf98b7a9391e6f9ab308e41a7b1edf5c7afaf47500bb0dc2e54d70ec48dbb6",
+    "status": "failed",
+    "trajectory": "004-trajectory.json",
+    "worker_trace": "004-worker.json"
+  }
+}

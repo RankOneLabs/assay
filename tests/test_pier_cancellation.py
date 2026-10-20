@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 import paa_contracts
@@ -26,7 +29,7 @@ from assay.models import (
     StudySnapshot,
     Subject,
 )
-from assay.pier_protocol import PierExchange, RuntimeBinding
+from assay.pier_protocol import InfrastructureFailure, PierExchange, RuntimeBinding
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 
@@ -56,6 +59,8 @@ class _HangingHandle:
         partial: Mapping[str, bytes] | None = None,
     ) -> None:
         self.teardown_called = False
+        self.cancel_called = False
+        self.events: list[str] = []
         self.teardown_started = asyncio.Event()
         self._cleanup_confirms = cleanup_confirms
         self._partial = partial
@@ -65,11 +70,12 @@ class _HangingHandle:
 
         # Block the worker thread indefinitely; only cancellation + our own
         # teardown call ever ends this trial, mirroring a stuck container.
-        while not self.teardown_called:
+        while not self.cancel_called:
             time.sleep(0.01)
         raise RuntimeError("trial cancelled")
 
     def teardown(self) -> BridgeEffectiveEnforcement:
+        self.events.append("teardown")
         self.teardown_called = True
         if self._cleanup_confirms:
             return BridgeEffectiveEnforcement(
@@ -80,7 +86,12 @@ class _HangingHandle:
         )
 
     def partial_artifacts(self) -> Mapping[str, bytes]:
+        self.events.append("partial")
         return self._partial if self._partial is not None else {}
+
+    def cancel(self) -> None:
+        self.events.append("cancel")
+        self.cancel_called = True
 
 
 class _CancellingBridge:
@@ -135,6 +146,46 @@ def _find_cancellation_trace(store: ObjectStore) -> dict[str, Any] | None:
     return None
 
 
+def test_bridge_calls_do_not_depend_on_the_event_loops_default_executor(tmp_path: Path) -> None:
+    class RejectDefaultExecutor(ThreadPoolExecutor):
+        def submit(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("the adapter used the event loop's default executor")
+
+    class Handle:
+        def __init__(self, exchange: PierExchange) -> None:
+            self.exchange = exchange
+
+        def run(self) -> BridgeTrialResult:
+            return BridgeTrialResult(
+                exchange=self.exchange,
+                outcome=InfrastructureFailure(cause="unexpected_exception", detail="probe"),
+                usage=None, artifacts={},
+            )
+
+        def cancel(self) -> None:
+            pass
+
+        def teardown(self) -> BridgeEffectiveEnforcement:
+            return BridgeEffectiveEnforcement(
+                containers_remaining=0, child_processes_remaining=0, teardown_completed=True
+            )
+
+    class Bridge:
+        def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> Handle:
+            return Handle(exchange)
+
+    async def exercise() -> WorkerFailure:
+        asyncio.get_running_loop().set_default_executor(RejectDefaultExecutor())
+        result = await _adapter(tmp_path, Bridge()).run_cell(
+            input_value={"task": "do it", "repository": {"a.py": "x = 1\n"}},
+            coordinate=_coordinate(),
+        )
+        assert isinstance(result, WorkerFailure)
+        return result
+
+    asyncio.run(exercise())
+
+
 async def _run_and_cancel(tmp_path: Path, bridge: Any) -> ObjectStore:
     adapter = _adapter(tmp_path, bridge)
     task = asyncio.create_task(
@@ -167,6 +218,7 @@ async def test_cancellation_tears_down_the_bridge_handle_within_the_bounded_wind
         await task
     assert bridge.handle is not None
     assert bridge.handle.teardown_called, "cancellation must tear the bridge handle down"
+    assert bridge.handle.events[:3] == ["cancel", "teardown", "partial"]
 
 
 async def test_cancellation_leaves_no_orphan_bridge_handle(tmp_path: Path) -> None:
@@ -222,12 +274,115 @@ async def test_cancellation_recovers_available_partial_artifacts(tmp_path: Path)
     assert ref in closure
 
 
+async def test_cancellation_retains_artifacts_returned_by_completed_run(tmp_path: Path) -> None:
+    trajectory = b'{"steps":["cancelled"]}'
+
+    class Handle:
+        def __init__(self, exchange: PierExchange) -> None:
+            self.exchange = exchange
+            self.started = Event()
+            self.cancelled = Event()
+
+        def run(self) -> BridgeTrialResult:
+            self.started.set()
+            assert self.cancelled.wait(2)
+            return BridgeTrialResult(
+                exchange=self.exchange,
+                outcome=InfrastructureFailure(cause="unexpected_exception", detail="cancelled"),
+                usage=None,
+                artifacts={"trajectory.json": trajectory},
+            )
+
+        def cancel(self) -> None:
+            self.cancelled.set()
+
+        def teardown(self) -> BridgeEffectiveEnforcement:
+            return BridgeEffectiveEnforcement(
+                containers_remaining=0, child_processes_remaining=0, teardown_completed=True
+            )
+
+    class Bridge:
+        handle: Handle | None = None
+
+        def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> Handle:
+            self.handle = Handle(exchange)
+            return self.handle
+
+    bridge = Bridge()
+    adapter = _adapter(tmp_path, bridge)
+    task = asyncio.create_task(adapter.run_cell(
+        input_value={"task": "do it", "repository": {"a.py": "x = 1\n"}},
+        coordinate=_coordinate(),
+    ))
+    for _ in range(200):
+        if bridge.handle is not None and bridge.handle.started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail("bridge run did not start")
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    trace = _find_cancellation_trace(adapter.store)
+    assert trace is not None
+    ref = trace["partial_artifact_refs"]["trajectory.json"]
+    envelope = json.loads(adapter.store.read_bytes(ref))
+    assert base64.b64decode(envelope["content_base64"]) == trajectory
+
+
 async def test_cancellation_with_no_partial_evidence_records_no_refs(tmp_path: Path) -> None:
     """A handle with nothing recoverable publishes no spurious artifact refs."""
     store = await _run_and_cancel(tmp_path, _CancellingBridge())
     trace = _find_cancellation_trace(store)
     assert trace is not None
     assert trace["partial_artifact_refs"] == {}
+
+
+async def test_bridge_exception_publishes_artifacts_carried_by_typed_error(tmp_path: Path) -> None:
+    class Rejected(RuntimeError):
+        def __init__(self) -> None:
+            super().__init__("candidate rejected")
+            self.artifacts = {"output": b"retained bytes"}
+
+    class Handle:
+        def run(self) -> BridgeTrialResult:
+            raise Rejected()
+
+        def teardown(self) -> BridgeEffectiveEnforcement:
+            return BridgeEffectiveEnforcement(
+                containers_remaining=0, child_processes_remaining=0, teardown_completed=True
+            )
+
+    class Bridge:
+        def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> Handle:
+            return Handle()
+
+    adapter = _adapter(tmp_path, Bridge())
+    result = await adapter.run_cell(
+        input_value={"task": "do it", "repository": {"a.py": "x = 1\n"}},
+        coordinate=_coordinate(),
+    )
+    assert isinstance(result, WorkerFailure)
+    assert result.trace is not None
+    ref = result.trace["artifact_refs"]["output"]
+    envelope = json.loads(adapter.store.read_bytes(ref))
+    assert envelope["content_base64"] == "cmV0YWluZWQgYnl0ZXM="
+
+
+def test_raw_worktree_rejection_is_namespaced_before_publication() -> None:
+    class Rejected(RuntimeError):
+        origin = "working_copy"
+        artifacts = {"output": b"working-copy bytes"}
+
+    class Handle:
+        def partial_artifacts(self) -> dict[str, bytes]:
+            return {"output": b"submission bytes", "rejected_worktree/output": b"spoof"}
+
+    recovered = PierAdapter._recover_partial_artifacts(Handle(), Rejected())  # type: ignore[arg-type]
+    assert recovered == {
+        "output": b"submission bytes",
+        "rejected_worktree/output": b"working-copy bytes",
+    }
 
 
 async def test_blank_task_rejected_before_dispatch_reports_unavailable_accounting(

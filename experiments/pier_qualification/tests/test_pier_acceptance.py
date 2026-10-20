@@ -29,7 +29,9 @@ integration, it does not execute it for money.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -59,13 +61,6 @@ ROOT = Path(__file__).resolve().parents[3]
 QUALIFY_SCRIPT = ROOT / "integrations" / "pier" / "scripts" / "qualify_local.py"
 _PAID_APPROVAL_ENV = PIER_PAID_APPROVAL_ENV
 _PAID_CREDENTIAL_ENV = PIER_PAID_CREDENTIAL_ENV
-# Docker server version and the locally-built bridge image's digest are the
-# only two measured identities qualify_local.py compares that are
-# legitimately host/build-dependent (integrations/pier/README.md flags the
-# image digest as explicitly non-reproducible across machines); every other
-# comparison (lock digest, pinned revisions, uid/gid, route, trial limits)
-# is reproducible from this checkout alone and must always match.
-_HOST_DEPENDENT_PROBES = ("docker_available", "image_identity")
 
 
 def _load_qualify_local() -> ModuleType:
@@ -226,60 +221,127 @@ def test_qualify_local_never_reads_or_needs_a_provider_credential() -> None:
     assert "os.environ" not in text and "os.getenv" not in text
 
 
-def _docker_daemon_reachable() -> bool:
-    """False for both an unreachable daemon and a missing ``docker`` CLI.
+def _require_docker_daemon() -> None:
+    """Skip only where Docker is not installed; fail on a daemon that misbehaves.
 
-    A bare ``subprocess.run(["docker", ...])`` raises ``FileNotFoundError``
-    when the executable itself is absent, which would otherwise blow up
-    collection instead of skipping -- exactly the credential-free-suite
-    contradiction this helper exists to prevent.
+    A missing ``docker`` CLI is the one environment this credential-free suite
+    may skip in, and ``ASSAY_REQUIRE_DOCKER`` turns even that into a failure
+    where Docker is expected (CI). A daemon that errors or does not answer in
+    time fails the test with its output: a skip there would report green for
+    exactly the condition worth seeing. This runs inside the test, not as an
+    import-time ``skipif``, so a slow daemon fails one test rather than erroring
+    collection for the whole suite.
     """
+    if shutil.which("docker") is None:
+        if os.environ.get("ASSAY_REQUIRE_DOCKER"):
+            pytest.fail("ASSAY_REQUIRE_DOCKER is set but the docker CLI is not installed")
+        pytest.skip("docker CLI is not installed in this environment")
     try:
-        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10, check=False)
-    except FileNotFoundError:
-        return False
-    return result.returncode == 0
+        result = subprocess.run(
+            ["docker", "info"], capture_output=True, text=True, timeout=30, check=False
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("`docker info` did not answer within 30 s")
+    assert result.returncode == 0, f"docker daemon is not reachable:\n{result.stderr[-2000:]}"
 
 
-@pytest.mark.skipif(
-    not _docker_daemon_reachable(),
-    reason="docker daemon is not reachable in this environment",
-)
-def test_qualify_local_emits_an_inventory_after_every_probe_passes(tmp_path: Path) -> None:
-    """End to end against the real local Docker daemon -- with one caveat.
+def _require_passwordless_mount() -> None:
+    """The real trial needs a host mount, which must work without a prompt."""
+    if os.geteuid() == 0:
+        return
 
-    Docker server version and the built bridge image's digest are the two
-    measured identities qualify_local.py compares that are legitimately
-    host/build-dependent (see ``_HOST_DEPENDENT_PROBES``); a machine that is
-    not the one reference machine ``EXPECTED_DOCKER_VERSION``/
-    ``PIER_BRIDGE_IMAGE_DIGEST`` were pinned from can therefore fail here
-    for exactly that reason and no other -- still proving every probe up to
-    that point ran for real, and that no inventory is published either way.
-    """
-    output_dir = tmp_path / ".assay-pier-qualification"
+    def unavailable(reason: str) -> None:
+        message = f"passwordless sudo mount is unavailable: {reason}"
+        if os.environ.get("ASSAY_REQUIRE_DOCKER"):
+            pytest.fail(message)
+        pytest.skip(message)
+
+    mount = shutil.which("mount")
+    sudo = shutil.which("sudo")
+    if mount is None or sudo is None:
+        unavailable("mount or sudo is not installed")
+        return
     result = subprocess.run(
-        [
-            sys.executable,
-            str(QUALIFY_SCRIPT),
-            "--output-dir",
-            str(output_dir),
-            "--image-tag",
-            "assay-pier-bridge:test-acceptance",
-        ],
+        [sudo, "-n", "-l", mount], capture_output=True, text=True, timeout=10, check=False
+    )
+    if result.returncode != 0:
+        reason = result.stderr.strip() or result.stdout.strip()
+        unavailable(reason)
+
+
+@pytest.mark.parametrize("required", [False, True], ids=["local", "required"])
+@pytest.mark.parametrize("sudo_available", [False, True], ids=["missing-sudo", "denied"])
+def test_mount_prerequisite_respects_required_mode(
+    monkeypatch: pytest.MonkeyPatch, required: bool, sudo_available: bool
+) -> None:
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(
+        shutil, "which",
+        lambda name: f"/usr/bin/{name}" if name != "sudo" or sudo_available else None,
+    )
+    if required:
+        monkeypatch.setenv("ASSAY_REQUIRE_DOCKER", "1")
+    else:
+        monkeypatch.delenv("ASSAY_REQUIRE_DOCKER", raising=False)
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0], returncode=1, stdout="", stderr="sudo: a password is required"
+        ),
+    )
+
+    expected = pytest.fail.Exception if required else pytest.skip.Exception
+    with pytest.raises(expected, match="passwordless sudo mount is unavailable"):
+        _require_passwordless_mount()
+
+
+def test_qualify_local_emits_an_inventory_after_every_probe_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qualify_local: ModuleType
+) -> None:
+    """Qualify an actual prebuilt image and require every probe to pass."""
+    _require_docker_daemon()
+    _require_passwordless_mount()
+    image_tag = "assay-pier-bridge:test-acceptance"
+    build = subprocess.run(
+        ["docker", "build", "-t", image_tag, str(ROOT / "integrations" / "pier")],
         capture_output=True,
         text=True,
         timeout=600,
-        env={**os.environ, "OPENROUTER_API_KEY": ""},
+        check=False,
     )
-    if result.returncode == 0:
-        assert "qualified: sha256:" in result.stdout
-        objects = list((output_dir / "objects" / "sha256").iterdir())
-        assert objects, "qualify_local.py reported success but published no inventory object"
-        return
+    assert build.returncode == 0, f"bridge image build failed:\n{build.stderr[-4000:]}"
+    inspect = subprocess.run(
+        ["docker", "image", "inspect", "--format", "{{.Id}}", image_tag],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert inspect.returncode == 0, f"prebuilt bridge image is missing: {inspect.stderr}"
+    observed_digest = inspect.stdout.strip()
+    assert observed_digest.startswith("sha256:") and len(observed_digest) == 71
+    version = subprocess.run(
+        ["docker", "version", "--format", "{{.Server.Version}}"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert version.returncode == 0, version.stderr
 
-    combined = result.stdout + result.stderr
-    assert any(f"FAIL [{probe}]" in combined for probe in _HOST_DEPENDENT_PROBES), combined
-    assert not output_dir.exists(), "a failed qualification must never publish an inventory"
+    # Only the test's expected host/build identities vary. The production
+    # constants remain pinned; all qualification probes still run for real.
+    monkeypatch.setattr(qualify_local, "PIER_BRIDGE_IMAGE_DIGEST", observed_digest)
+    monkeypatch.setattr(qualify_local, "EXPECTED_DOCKER_VERSION", version.stdout.strip())
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    output_dir = tmp_path / ".assay-pier-qualification"
+    assert qualify_local.run_qualification(output_dir=output_dir, image_tag=image_tag) == 0
+    objects = list((output_dir / "objects" / "sha256").iterdir())
+    assert len(objects) == 1, "qualify_local.py must publish exactly one inventory object"
+    inventory = json.loads(objects[0].read_bytes())
+    assert inventory["bridge"]["bridge_image_digest"] == observed_digest
+    assert inventory["measured"]["docker_version"] == version.stdout.strip()
+    assert inventory["measured"]["network_none_verified"] is True
 
 
 def _raise_qualification_failed(probe: str, module: ModuleType) -> Any:
@@ -300,6 +362,65 @@ _PROBE_ATTRIBUTES = (
     "probe_fake_boundary",
     "_probe_adapter_boundary",
 )
+
+
+def test_qualification_rejects_a_stale_paid_image_pin(
+    monkeypatch: pytest.MonkeyPatch, qualify_local: ModuleType
+) -> None:
+    from assay_pier_bridge import identity
+
+    m = qualify_local.Measurements(
+        pier_revision="0.3.1",
+        mini_swe_agent_revision="a83fcae",
+        lock_digest="sha256:" + "a" * 64,
+    )
+    monkeypatch.setattr(identity, "observed_image_digest", lambda ref: "sha256:" + "b" * 64)
+
+    with pytest.raises(qualify_local.QualificationFailed, match="ImageDigestMismatchError"):
+        qualify_local.probe_image_identity(m, image_tag="bridge:test")
+
+
+def test_qualification_uses_the_prebuilt_image(
+    monkeypatch: pytest.MonkeyPatch, qualify_local: ModuleType
+) -> None:
+    from assay_pier_bridge import identity
+    from pier_qualification.pier_experiment import PIER_BRIDGE_IMAGE_DIGEST
+
+    m = qualify_local.Measurements(
+        pier_revision="0.3.1",
+        mini_swe_agent_revision="a83fcae",
+        lock_digest="sha256:" + "a" * 64,
+    )
+    monkeypatch.setattr(identity, "observed_image_digest", lambda ref: PIER_BRIDGE_IMAGE_DIGEST)
+    monkeypatch.setattr(
+        qualify_local,
+        "_run",
+        lambda *args, **kwargs: pytest.fail("qualification must not rebuild the pinned image"),
+    )
+
+    qualify_local.probe_image_identity(m, image_tag="bridge:test")
+
+    assert m.bridge_image_digest == PIER_BRIDGE_IMAGE_DIGEST
+
+
+def test_inventory_producer_reinspects_image_before_publication(
+    monkeypatch: pytest.MonkeyPatch, qualify_local: ModuleType
+) -> None:
+    from assay_pier_bridge import identity
+
+    m = qualify_local.Measurements(
+        pier_revision="0.3.1",
+        mini_swe_agent_revision="a83fcae",
+        lock_digest="sha256:" + "a" * 64,
+        bridge_image_digest="sha256:" + "b" * 64,
+        docker_version="28.0.0",
+        uid=1000,
+        gid=1000,
+    )
+    monkeypatch.setattr(identity, "observed_image_digest", lambda ref: "sha256:" + "c" * 64)
+
+    with pytest.raises(qualify_local.QualificationFailed, match="ImageDigestMismatchError"):
+        qualify_local._build_inventory(m, image_tag="bridge:test")
 
 
 @pytest.mark.parametrize("probe_attribute", _PROBE_ATTRIBUTES)

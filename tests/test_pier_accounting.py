@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,16 @@ from assay.models import (
     StudySnapshot,
     Subject,
 )
-from assay.pier_protocol import ArtifactEntry, ArtifactManifest, PierExchange, RuntimeBinding
+from assay.pier_protocol import (
+    ArtifactEntry,
+    ArtifactManifest,
+    CandidateFailure,
+    CandidateSubmission,
+    PierExchange,
+    RuntimeBinding,
+    bind_exchange,
+    candidate_tree_digest,
+)
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 
@@ -58,13 +68,39 @@ def _manifest_and_artifacts(exchange: PierExchange) -> tuple[ArtifactManifest, d
     """
     contents = {
         "raw_trajectory.json": b'{"steps": []}',
-        "candidate.txt": b"final answer",
+        "candidate-index.json": canonical_json(["a.py", "b.py"]),
+        "candidate_files/a.py": b"final answer\n",
+        "candidate_files/b.py": b"more output\n",
+        "candidate.patch": b"patch bytes",
+        "tree-digest.txt": b"",
         "result.json": b'{"passed": true, "exit_status": "Submitted"}',
         "configuration.json": b'{"model": "x"}',
     }
+    candidate_entries = tuple(
+        ArtifactEntry(
+            path=path,
+            kind="candidate",
+            size_bytes=len(contents[path]),
+            checksum=digest_bytes(contents[path]),
+            utf8=True,
+        )
+        for path in ("candidate-index.json", "candidate_files/a.py", "candidate_files/b.py")
+    )
+    candidate_manifest = ArtifactManifest(
+        exchange=exchange,
+        entries=candidate_entries,
+        aggregate_bytes=sum(entry.size_bytes for entry in candidate_entries),
+    )
+    contents["tree-digest.txt"] = candidate_tree_digest(
+        candidate_manifest, artifact_bytes=contents
+    ).encode("ascii")
     kinds = {
         "raw_trajectory.json": "raw_trajectory",
-        "candidate.txt": "candidate",
+        "candidate-index.json": "candidate",
+        "candidate_files/a.py": "candidate",
+        "candidate_files/b.py": "candidate",
+        "candidate.patch": "patch",
+        "tree-digest.txt": "tree_digest",
         "result.json": "result",
         "configuration.json": "configuration",
     }
@@ -115,10 +151,11 @@ class _FixedBridge:
         return _Handle(
             BridgeTrialResult(
                 exchange=exchange,
-                status="succeeded",
-                submission_ref=digest_bytes(artifacts["candidate.txt"]),
-                error_type=None,
-                error_message=None,
+                outcome=CandidateSubmission(
+                    patch_ref=digest_bytes(artifacts["candidate.patch"]),
+                    tree_digest=artifacts["tree-digest.txt"].decode("ascii"),
+                    baseline_tree_digest="sha256:" + "0" * 64,
+                ),
                 usage=self.usage,
                 artifacts=artifacts,
             )
@@ -175,6 +212,47 @@ async def test_uncertain_accounting_when_dispatched_without_usage(tmp_path: Path
     assert result.accounting.amount is None
 
 
+def test_paid_unreadable_cost_is_uncertain_while_local_cost_is_unavailable() -> None:
+    from assay.adapters.pier import _accounting_from_usage
+
+    local = _accounting_from_usage({"prompt_tokens": 12, "completion_tokens": 7, "cost_usd": None})
+    assert local.usage == {"prompt_tokens": 12, "completion_tokens": 7}
+    assert local.amount is None
+    assert local.coverage == "unavailable"
+    assert _accounting_from_usage(
+        {"prompt_tokens": 12, "completion_tokens": 7, "cost_usd": None},
+        paid_route=True,
+    ).coverage == "uncertain"
+    assert _accounting_from_usage({"prompt_tokens": 12}).coverage == "uncertain"
+
+
+@pytest.mark.parametrize(
+    ("route", "coverage"),
+    [
+        ({"endpoint": "https://openrouter.ai/api/v1", "model": "anthropic/claude-3-haiku",
+          "provider": "amazon-bedrock"}, "uncertain"),
+        ({"endpoint": "http://willie:8900", "model": "qwen-coder-32b",
+          "provider": "smithers-local"}, "unavailable"),
+    ],
+)
+def test_adapter_uses_model_route_contract_for_cost_coverage(
+    tmp_path: Path, route: dict[str, str], coverage: str,
+) -> None:
+    adapter = replace(_adapter(tmp_path, _FixedBridge(usage=None)), model_route=route)
+    exchange = bind_exchange(coordinate=_coordinate(), binding=adapter.binding)
+    result = adapter._settle(
+        exchange,
+        BridgeTrialResult(
+            exchange=exchange,
+            outcome=CandidateFailure(cause="no_submission"),
+            usage={"prompt_tokens": 12, "cost_usd": None},
+            artifacts={},
+        ),
+        cleanup_incomplete=False,
+    )
+    assert result.accounting.coverage == coverage
+
+
 async def test_nonnumeric_cost_usd_is_uncertain_not_a_raised_error(tmp_path: Path) -> None:
     """``BridgeTrialResult`` is a local dataclass with no runtime validation of
     ``usage``; a malformed ``cost_usd`` must not raise out of ``_settle``."""
@@ -207,19 +285,23 @@ async def test_repository_entry_with_traversal_path_is_rejected(tmp_path: Path) 
 
 
 async def test_submission_ref_mismatched_with_candidate_bytes_is_rejected(tmp_path: Path) -> None:
-    """A bridge that reports success for a submission_ref not matching the
-    declared candidate bytes must not be accepted."""
+    """A bridge that reports a tree digest unlike its manifest-bound candidate
+    files must reach the SubmissionMismatch gate and be rejected."""
 
     class _LyingBridge:
         def create(self, *, exchange: PierExchange, package: dict[str, str]) -> PierBridgeHandle:
-            _, artifacts = _manifest_and_artifacts(exchange)
+            manifest, artifacts = _manifest_and_artifacts(exchange)
+            assert candidate_tree_digest(manifest, artifact_bytes=artifacts) == artifacts[
+                "tree-digest.txt"
+            ].decode("ascii")
             return _Handle(
                 BridgeTrialResult(
                     exchange=exchange,
-                    status="succeeded",
-                    submission_ref="sha256:" + "9" * 64,
-                    error_type=None,
-                    error_message=None,
+                    outcome=CandidateSubmission(
+                        patch_ref=digest_bytes(artifacts["candidate.patch"]),
+                        tree_digest="sha256:" + "9" * 64,
+                        baseline_tree_digest="sha256:" + "0" * 64,
+                    ),
                     usage=None,
                     artifacts=artifacts,
                 )

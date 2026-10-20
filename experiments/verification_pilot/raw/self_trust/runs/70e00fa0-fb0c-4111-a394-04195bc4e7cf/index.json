@@ -1,0 +1,44 @@
+{
+  "refactor-own_a-remnant_a:st-native:w0": {
+    "measures": "001-measures.json",
+    "record_ref": "sha256:56c6f22dbd67803c8a5b24470d6ccbda5b75065e1e3b196d30e0887a7bafc7fd",
+    "status": "failed",
+    "trajectory": "001-trajectory.json",
+    "worker_trace": "001-worker.json"
+  },
+  "refactor-own_a-remnant_c:st-native:w0": {
+    "measures": "002-measures.json",
+    "record_ref": "sha256:5cae946a0f8e3654603f66982438e7deadcb69e8d873065e0a854294826c95c9",
+    "status": "failed",
+    "trajectory": "002-trajectory.json",
+    "worker_trace": "002-worker.json"
+  },
+  "refactor-own_b-remnant_a:st-native:w0": {
+    "measures": "003-measures.json",
+    "record_ref": "sha256:d5fb21b299789a5a86182337ad1ce137ffa7955f7a9786f478b8afb615127a10",
+    "status": "failed",
+    "trajectory": "003-trajectory.json",
+    "worker_trace": "003-worker.json"
+  },
+  "refactor-own_b-remnant_b:st-native:w0": {
+    "measures": "004-measures.json",
+    "record_ref": "sha256:f32dc93db4594791b8d477ea21adcaab0c73c08284ae74a051974cb65312a9dd",
+    "status": "failed",
+    "trajectory": "004-trajectory.json",
+    "worker_trace": "004-worker.json"
+  },
+  "refactor-own_c-remnant_b:st-native:w0": {
+    "measures": "005-measures.json",
+    "record_ref": "sha256:7a1abd7387f6e57562497fccaf318f076fe0d84c416bbe266b681749cf912085",
+    "status": "failed",
+    "trajectory": "005-trajectory.json",
+    "worker_trace": "005-worker.json"
+  },
+  "refactor-own_c-remnant_c:st-native:w0": {
+    "measures": "006-measures.json",
+    "record_ref": "sha256:ea6ee865f5ea4f4264d69ab8d0d57d4f980b5d31d82db70d68902fae2864d770",
+    "status": "failed",
+    "trajectory": "006-trajectory.json",
+    "worker_trace": "006-worker.json"
+  }
+}

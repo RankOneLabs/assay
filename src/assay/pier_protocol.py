@@ -16,9 +16,11 @@ one (see ``integrations/pier/README.md``).
 
 from __future__ import annotations
 
+import hashlib
 import json
+from ipaddress import IPv4Address, IPv4Network
 from pathlib import PurePosixPath
-from typing import Final, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import Field, model_validator
 
@@ -29,7 +31,218 @@ MAX_ARTIFACT_BYTES = 8_000_000
 MAX_AGGREGATE_ARTIFACT_BYTES = 32_000_000
 MAX_ARTIFACT_COUNT = 1_024
 
-ArtifactKind = Literal["raw_trajectory", "candidate", "result", "configuration", "transcript"]
+ArtifactKind = Literal[
+    "raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration", "transcript"
+]
+NetworkPolicy = Literal["egress-openrouter-only", "egress-lan-host-port", "toolchain-only"]
+TRIAL_SCHEMA_VERSION = "assay-pier-trial/0.4.0"
+_LAN_NETWORKS = (
+    IPv4Network("10.0.0.0/8"),
+    IPv4Network("172.16.0.0/12"),
+    IPv4Network("192.168.0.0/16"),
+)
+
+
+def _canonical_relative_path(raw_path: str) -> bool:
+    """Mirror the bridge's safe_relative_path wire spelling rule."""
+    path = PurePosixPath(raw_path)
+    return bool(
+        raw_path
+        and "\\" not in raw_path
+        and not path.is_absolute()
+        and path.parts
+        and ".." not in path.parts
+        and path.as_posix() == raw_path
+    )
+
+
+class ModelRoute(WireModel):
+    endpoint: Literal["https://openrouter.ai/api/v1", "http://willie:8900"] = (
+        "https://openrouter.ai/api/v1"
+    )
+    model: Literal[
+        "anthropic/claude-3-haiku", "qwen-coder-32b", "qwen3.6-27b",
+        "anthropic/claude-sonnet-5.5",
+        "openai/gpt-6.1-sol", "google/gemini-4-argon", "qwen/qwen3.8-2.4t-a95b",
+        "deepseek/deepseek-v4-pro", "moonshotai/kimi-k2.7-code",
+        "anthropic/claude-haiku-5.5", "openai/gpt-6-luna", "google/gemini-3.8-flash",
+        "qwen/qwen3.8-27b", "openai/gpt-oss-20b", "mistralai/ministral-14b-2512",
+    ] = "anthropic/claude-3-haiku"
+    provider: Literal[
+        "amazon-bedrock", "smithers-local", "azure/us", "google-vertex/global",
+        "siliconflow/fp8", "moonshotai/int4", "azure", "deepinfra/bf16", "mistral/zdr", "azure/eu",
+    ] = "amazon-bedrock"
+
+    @model_validator(mode="after")
+    def exact_route(self) -> ModelRoute:
+        if (self.endpoint, self.model, self.provider) not in {
+            ("https://openrouter.ai/api/v1", "anthropic/claude-3-haiku", "amazon-bedrock"),
+            # Verification-pilot screening routes; OpenRouter ZDR catalogue checked
+            # 2026-10-18. Claude 3 Haiku above has had no endpoints since 2026-09-30
+            # and stays only so recorded wire fixtures still validate.
+            ("https://openrouter.ai/api/v1", "anthropic/claude-sonnet-5.5", "amazon-bedrock"),
+            ("https://openrouter.ai/api/v1", "openai/gpt-6.1-sol", "azure/us"),
+            ("https://openrouter.ai/api/v1", "openai/gpt-6.1-sol", "azure/eu"),
+            ("https://openrouter.ai/api/v1", "google/gemini-4-argon", "google-vertex/global"),
+            ("https://openrouter.ai/api/v1", "qwen/qwen3.8-2.4t-a95b", "siliconflow/fp8"),
+            ("https://openrouter.ai/api/v1", "deepseek/deepseek-v4-pro", "siliconflow/fp8"),
+            ("https://openrouter.ai/api/v1", "moonshotai/kimi-k2.7-code", "moonshotai/int4"),
+            # Self-trust small-model routes; ZDR catalogue checked 2026-10-18.
+            ("https://openrouter.ai/api/v1", "anthropic/claude-haiku-5.5", "amazon-bedrock"),
+            ("https://openrouter.ai/api/v1", "openai/gpt-6-luna", "azure"),
+            ("https://openrouter.ai/api/v1", "google/gemini-3.8-flash", "google-vertex/global"),
+            ("https://openrouter.ai/api/v1", "qwen/qwen3.8-27b", "deepinfra/bf16"),
+            ("https://openrouter.ai/api/v1", "openai/gpt-oss-20b", "deepinfra/bf16"),
+            ("https://openrouter.ai/api/v1", "mistralai/ministral-14b-2512", "mistral/zdr"),
+            ("http://willie:8900", "qwen-coder-32b", "smithers-local"),
+            ("http://willie:8900", "qwen3.6-27b", "smithers-local"),
+        }:
+            raise ValueError("model route fields must identify one exact route")
+        return self
+
+    @property
+    def paid_route_reachable(self) -> bool:
+        return self.endpoint == "https://openrouter.ai/api/v1"
+
+
+class TrialLimits(WireModel):
+    cpu: float = Field(gt=0, le=8, allow_inf_nan=False)
+    # Wire ranges only; the workflow-edit values are qualified in
+    # experiments/workflow_edit/SMOKE.md.
+    memory_mb: int = Field(ge=64, le=8192)
+    pids: int = Field(ge=1, le=256)
+    timeout_s: float = Field(gt=0, le=1800, allow_inf_nan=False)
+    storage_mb: int = Field(ge=16, le=8192)
+
+    @model_validator(mode="after")
+    def separate_budgets(self) -> TrialLimits:
+        if self.memory_mb <= self.storage_mb:
+            raise ValueError("memory_mb must exceed storage_mb")
+        return self
+
+
+class TrialRequest(WireModel):
+    schema_version: Literal["assay-pier-trial/0.4.0"] = "assay-pier-trial/0.4.0"
+    cell_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*:w[0-9]+$")
+    package_digest: Sha256Ref
+    exchange: PierExchange
+    model_route: ModelRoute
+    limits: TrialLimits
+    verify: Literal[False] = False
+    network_policy: NetworkPolicy = "egress-openrouter-only"
+    egress_host: str | None = None
+    egress_port: int | None = Field(default=None, ge=1, le=65535)
+
+    @model_validator(mode="after")
+    def closed_egress(self) -> TrialRequest:
+        if self.exchange.coordinate.id != self.cell_id:
+            raise ValueError("exchange coordinate does not match cell_id")
+        if self.exchange.binding.package_digest != self.package_digest:
+            raise ValueError("exchange package digest does not match package_digest")
+        if not self.model_route.paid_route_reachable and self.network_policy != "toolchain-only":
+            raise ValueError("local Smithers route requires the network-disabled toolchain posture")
+        if self.network_policy == "egress-lan-host-port":
+            if self.egress_host is None or self.egress_port is None:
+                raise ValueError("LAN posture requires egress_host and egress_port")
+            try:
+                address = IPv4Address(self.egress_host)
+            except ValueError as error:
+                raise ValueError("egress_host must be a LAN IPv4 address") from error
+            if not any(address in network for network in _LAN_NETWORKS):
+                raise ValueError("egress_host must be a LAN IPv4 address")
+        elif self.egress_host is not None or self.egress_port is not None:
+            raise ValueError("egress_host and egress_port require the LAN posture")
+        return self
+
+
+class EffectiveEnforcement(WireModel):
+    uid: int = Field(ge=0)
+    gid: int = Field(ge=0)
+    workspace_read_only: bool
+    root_read_only: bool = False
+    submission_mount: str = Field(pattern=r"^/submission$")
+    scratch_mount: str = Field(pattern=r"^/scratch$")
+    scratch_mount_kind: str = "unknown"
+    scratch_quota_mb: int = Field(default=0, ge=0)
+    network_policy: str = Field(min_length=1)
+    cpu_limit: float = Field(ge=0, allow_inf_nan=False)
+    memory_limit_mb: int = Field(ge=0)
+    pids_limit: int = Field(ge=0)
+    storage_limit_mb: int = Field(ge=0)
+    containers_remaining: int = Field(ge=0)
+    child_processes_remaining: int = Field(ge=0)
+    teardown_completed: bool
+
+    @model_validator(mode="after")
+    def clean_teardown(self) -> EffectiveEnforcement:
+        if self.teardown_completed and (
+            self.containers_remaining != 0 or self.child_processes_remaining != 0
+        ):
+            raise ValueError("teardown cannot be complete with resources still remaining")
+        return self
+
+
+class CandidateSubmission(WireModel):
+    kind: Literal["candidate"] = "candidate"
+    patch_ref: Sha256Ref
+    tree_digest: Sha256Ref
+    baseline_tree_digest: Sha256Ref
+
+
+CandidateCause = Literal[
+    "no_submission",
+    "symlink_submission",
+    "traversal",
+    "escaping_symlink",
+    "binary_payload",
+    "oversized_artifact",
+    "aggregate_artifact_limit",
+    "entry_limit",
+    "out_of_scope_edit",
+    "tampering",
+    "candidate_test_timeout",
+    "nonzero_exit",
+    "storage_exhausted",
+    "memory_limit",
+    # The cell's own budget ran out inside the agent loop. Distinct from the
+    # infrastructure ``harness_deadline``: running out of time is the
+    # candidate's outcome, not a lost coordinate.
+    "agent_deadline",
+    "invalid_tool_output_encoding",
+    "patch_capture_conflict",
+    "non_utf8_path",
+    "workspace_capture_permission",
+    "hard_link_submission",
+]
+InfrastructureCause = Literal[
+    "harness_deadline",
+    "cancelled",
+    "container_start",
+    "enforcement",
+    "unexpected_exception",
+    "mismatched_cell",
+]
+
+
+class CandidateFailure(WireModel):
+    kind: Literal["candidate_failure"] = "candidate_failure"
+    cause: CandidateCause
+    detail: str = ""
+    exception_type: str | None = None
+
+
+class InfrastructureFailure(WireModel):
+    kind: Literal["infrastructure_failure"] = "infrastructure_failure"
+    cause: InfrastructureCause
+    detail: str = ""
+    exception_type: str | None = None
+
+
+TrialOutcome = Annotated[
+    CandidateSubmission | CandidateFailure | InfrastructureFailure,
+    Field(discriminator="kind"),
+]
+
 
 # The manifest is what binds artifacts; it is never one of them. A "manifest"
 # kind used to be required here and no honest bridge could satisfy it: the
@@ -42,10 +255,10 @@ ArtifactKind = Literal["raw_trajectory", "candidate", "result", "configuration",
 # self-checksum, so the kind is gone and the path is reserved instead.
 MANIFEST_PATH: Final = "manifest.json"
 
-# The four checked artifacts a success is bound to; "transcript" (ATIF) is an
+# The checked artifacts a success is bound to; "transcript" (ATIF) is an
 # optional derived view and is deliberately excluded from this set.
 REQUIRED_SUCCESS_KINDS: frozenset[str] = frozenset(
-    {"raw_trajectory", "candidate", "result", "configuration"}
+    {"raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration"}
 )
 
 
@@ -95,6 +308,9 @@ def bind_exchange(*, coordinate: CellCoordinate, binding: RuntimeBinding) -> Pie
     )
 
 
+TrialRequest.model_rebuild()
+
+
 def exchanges_match(expected: PierExchange, actual: PierExchange) -> bool:
     """A bridge response is only ever accepted against the exact exchange it was sent for."""
     return expected == actual
@@ -120,8 +336,7 @@ class ArtifactEntry(WireModel):
 
     @model_validator(mode="after")
     def safe_path(self) -> ArtifactEntry:
-        parts = PurePosixPath(self.path).parts
-        if PurePosixPath(self.path).is_absolute() or any(part in {"", ".", ".."} for part in parts):
+        if not _canonical_relative_path(self.path):
             raise ValueError(f"artifact path is unsafe: {self.path}")
         if self.path == MANIFEST_PATH:
             # Not merely redundant: an entry here would be checked against
@@ -158,9 +373,9 @@ class ArtifactManifest(WireModel):
     which is the only place actual artifact content is trusted.
     """
 
-    schema_version: Literal[
-        "assay-pier-artifact-manifest/0.1.0"
-    ] = "assay-pier-artifact-manifest/0.1.0"
+    schema_version: Literal["assay-pier-artifact-manifest/0.2.0"] = (
+        "assay-pier-artifact-manifest/0.2.0"
+    )
     exchange: PierExchange
     entries: tuple[ArtifactEntry, ...]
     aggregate_bytes: int = Field(ge=0, le=MAX_AGGREGATE_ARTIFACT_BYTES, strict=True)
@@ -172,6 +387,9 @@ class ArtifactManifest(WireModel):
         paths = [entry.path for entry in self.entries]
         if len(set(paths)) != len(paths):
             raise ValueError("duplicate artifact path in manifest")
+        singular_kinds = [entry.kind for entry in self.entries if entry.kind != "candidate"]
+        if len(set(singular_kinds)) != len(singular_kinds):
+            raise ValueError("duplicate singular artifact kind in manifest")
         # Distinct paths may legitimately carry identical bytes (e.g. an
         # empty candidate and an empty transcript) -- the object store
         # already dedupes by content, and neither the bridge model nor this
@@ -191,6 +409,10 @@ class ArtifactManifest(WireModel):
         return self.kinds() >= REQUIRED_SUCCESS_KINDS
 
     def entry(self, kind: ArtifactKind) -> ArtifactEntry | None:
+        if kind == "candidate":
+            for candidate in self.entries:
+                if candidate.kind == kind and candidate.path == "candidate-index.json":
+                    return candidate
         for candidate in self.entries:
             if candidate.kind == kind:
                 return candidate
@@ -238,17 +460,53 @@ def verify_artifact_bytes(manifest: ArtifactManifest, *, artifact_bytes: dict[st
                 ) from error
 
 
+def candidate_tree_digest(manifest: ArtifactManifest, *, artifact_bytes: dict[str, bytes]) -> str:
+    """Recompute the observed tree from the manifest's candidate file entries."""
+    indexes = [
+        entry
+        for entry in manifest.entries
+        if entry.kind == "candidate" and entry.path == "candidate-index.json"
+    ]
+    if len(indexes) != 1:
+        raise ManifestRejected("candidate index is missing")
+    index = indexes[0]
+    try:
+        listed = json.loads(artifact_bytes[index.path])
+    except (KeyError, ValueError) as error:
+        raise ManifestRejected("candidate index is invalid") from error
+    if not isinstance(listed, list) or any(not isinstance(path, str) for path in listed):
+        raise ManifestRejected("candidate index must list file paths")
+    files = {
+        entry.path.removeprefix("candidate_files/"): artifact_bytes[entry.path]
+        for entry in manifest.entries
+        if entry.kind == "candidate" and entry.path.startswith("candidate_files/")
+    }
+    if len(listed) != len(set(listed)) or set(listed) != set(files):
+        raise ManifestRejected("candidate index does not match candidate files")
+    if any(
+        entry.kind == "candidate"
+        and entry.path != "candidate-index.json"
+        and not entry.path.startswith("candidate_files/")
+        for entry in manifest.entries
+    ):
+        raise ManifestRejected("candidate has an unexpected path")
+    digest = hashlib.sha256()
+    for path in sorted(files, key=lambda value: value.encode("utf-8")):
+        if not _canonical_relative_path(path):
+            raise ManifestRejected(f"candidate file path is unsafe: {path}")
+        digest.update(path.encode("utf-8") + b"\x00100644\x00" + files[path] + b"\x00")
+    return f"sha256:{digest.hexdigest()}"
+
+
 def reject_on_binding_mismatch(expected: RuntimeBinding, actual: RuntimeBinding) -> None:
     if expected != actual:
         raise ManifestRejected("bridge response binding differs from the authorized runtime")
 
 
 # mini-swe-agent's own terminal signal for the agent loop: only this exact
-# value means the agent actually produced and submitted a candidate. Every
-# other value (e.g. "LimitsExceeded", "Error") is a partial/failed run, and
-# Pier's own reported failure (a non-"succeeded" ``status``, a set
-# ``error_type``, or a missing ``submission_ref``) is independently terminal.
+# value means the agent produced and submitted a candidate.
 SUCCEEDED_EXIT_STATUS = "Submitted"
+
 
 # The real bridge's ``TrialResult`` (integrations/pier's
 # ``assay_pier_bridge.protocol.TrialResult``) has no top-level field for
@@ -266,8 +524,8 @@ def mini_exit_status_from_result_bytes(result_bytes: bytes | None) -> str | None
 
     Returns ``None`` on anything but a clean top-level string value -- missing
     bytes, non-UTF-8, non-JSON, a non-object payload, or a non-string value.
-    ``bridge_reports_failure`` treats ``None`` as "not the succeeded sentinel",
-    so a malformed or absent result artifact is conservatively a failure.
+    ``None`` is not the succeeded sentinel, so a malformed or absent result
+    artifact is conservatively a failure.
     """
     if result_bytes is None:
         return None
@@ -279,25 +537,6 @@ def mini_exit_status_from_result_bytes(result_bytes: bytes | None) -> str | None
         return None
     status = value.get("exit_status")
     return status if isinstance(status, str) else None
-
-
-def bridge_reports_failure(
-    *,
-    status: str,
-    submission_ref: str | None,
-    error_type: str | None,
-    mini_exit_status: str | None,
-) -> bool:
-    """Both Pier's own trial status and mini's embedded exit_status must pass.
-
-    Mirrors ``assay_pier_bridge.protocol.TrialResult``'s own consistency rule
-    (a "succeeded" trial has a submission and no error; anything else is a
-    failure) as an independent, defense-in-depth check on this side of the
-    isolation boundary -- a bridge response is never trusted structurally
-    just because it claims ``status="succeeded"``.
-    """
-    pier_signal_ok = status == "succeeded" and submission_ref is not None and error_type is None
-    return not pier_signal_ok or mini_exit_status != SUCCEEDED_EXIT_STATUS
 
 
 __all__ = [
@@ -315,7 +554,6 @@ __all__ = [
     "PierExchange",
     "RuntimeBinding",
     "bind_exchange",
-    "bridge_reports_failure",
     "exchanges_match",
     "mini_exit_status_from_result_bytes",
     "reject_on_binding_mismatch",

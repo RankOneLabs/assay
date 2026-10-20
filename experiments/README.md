@@ -24,7 +24,9 @@ service credential.
 | directory | contents |
 |---|---|
 | [`consistency_pilot`](consistency_pilot) | code-consistency pilots and the DRY experiment |
+| [`verification_pilot`](verification_pilot/README.md) | Verification pilot study and checks |
 | [`pier_qualification`](pier_qualification/README.md) | Pier runtime qualification and study runner |
 | [`typesafe_relevance`](typesafe_relevance/README.md) | Typesafe relevance study |
 | [`code_metrics`](code_metrics) | code-metrics experiment helpers |
 | [`oakridge_history`](oakridge_history/README.md) | Oakridge history study inputs and pattern guards |
+| [`workflow_edit`](workflow_edit/README.md) | Workflow edit study arms and worker grid validation |

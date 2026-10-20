@@ -1,0 +1,9 @@
+{
+  "halt": null,
+  "max_spend_usd": "1",
+  "prompt_token_slack": 4096,
+  "prompt_tokens_per_byte": "0.6",
+  "refused_requests": 0,
+  "requests": 29,
+  "spent_usd": "0.5592396"
+}

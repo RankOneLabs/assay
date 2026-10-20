@@ -1,0 +1,8 @@
+{
+  "halt": "budget_exhausted",
+  "max_spend_usd": "2.5",
+  "prompt_token_slack": 4096,
+  "refused_requests": 1,
+  "requests": 58,
+  "spent_usd": "1.935678"
+}

@@ -1,0 +1,160 @@
+{
+  "$defs": {
+    "TreatmentSite": {
+      "additionalProperties": false,
+      "description": "A path and description of one intentional treatment location.",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "description"
+      ],
+      "title": "TreatmentSite",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "All identity-bearing inputs of a fixture, with hidden assets by digest only.\n\n``observed_runtime_image_digest`` is the digest inspected from the built\nimage, not a value declared before the build. Hidden tests, patches, and\nrubric cannot be inlined in this closed wire shape.",
+  "properties": {
+    "schema_version": {
+      "const": "assay-fixture-manifest/0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "checkpoint_sha": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Checkpoint Sha",
+      "type": "string"
+    },
+    "included_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Included Paths",
+      "type": "array"
+    },
+    "excluded_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Excluded Paths",
+      "type": "array"
+    },
+    "dependency_lock_digests": {
+      "additionalProperties": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Dependency Lock Digests",
+      "type": "object"
+    },
+    "observed_runtime_image_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Observed Runtime Image Digest",
+      "type": "string"
+    },
+    "normalization_diff": {
+      "title": "Normalization Diff",
+      "type": "string"
+    },
+    "treatment_site_inventory": {
+      "items": {
+        "$ref": "#/$defs/TreatmentSite"
+      },
+      "title": "Treatment Site Inventory",
+      "type": "array"
+    },
+    "per_arm_tree_digests": {
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9_.-]*$": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "title": "Per Arm Tree Digests",
+      "type": "object"
+    },
+    "transformation_version": {
+      "minLength": 1,
+      "title": "Transformation Version",
+      "type": "string"
+    },
+    "equivalence_test_version": {
+      "minLength": 1,
+      "title": "Equivalence Test Version",
+      "type": "string"
+    },
+    "task_prompt": {
+      "minLength": 1,
+      "title": "Task Prompt",
+      "type": "string"
+    },
+    "hidden_tests": {
+      "items": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Hidden Tests",
+      "type": "array"
+    },
+    "reference_patch": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Reference Patch",
+      "type": "string"
+    },
+    "negative_patches": {
+      "items": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Negative Patches",
+      "type": "array"
+    },
+    "rubric": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Rubric",
+      "type": "string"
+    },
+    "routing_config_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Routing Config Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "checkpoint_sha",
+    "included_paths",
+    "excluded_paths",
+    "dependency_lock_digests",
+    "observed_runtime_image_digest",
+    "normalization_diff",
+    "treatment_site_inventory",
+    "per_arm_tree_digests",
+    "transformation_version",
+    "equivalence_test_version",
+    "task_prompt",
+    "hidden_tests",
+    "reference_patch",
+    "negative_patches",
+    "rubric",
+    "routing_config_digest"
+  ],
+  "title": "FixtureManifest",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-fixture-manifest.schema.json"
+}

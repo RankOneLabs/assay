@@ -8,7 +8,7 @@ import pytest
 from code_metrics_fixtures import stub_jscpd
 from jsonschema import Draft202012Validator
 
-from assay.code_metrics import analyze, compare, graph, measure
+from assay.code_metrics import analyze, compare, graph, measure, tools
 from assay.code_metrics.api import CodeMetricsConfig
 from assay.code_metrics.components import ComponentConfig
 from assay.code_metrics.errors import EmptyComponentPattern
@@ -30,6 +30,72 @@ def test_absolute_report_and_partial_graph() -> None:
     assert report.coverage.languages[0].files_without_module == ("solo.py",)
     assert "excluded_directories" not in CodeMetricsConfig.__dataclass_fields__
     assert report.configuration.excluded_directories == ()
+
+
+def test_legacy_python_only_ignores_typescript_and_runs_mypy_without_python(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    original = tools._mypy
+
+    def tracked(root: Path) -> int | None:
+        nonlocal calls
+        calls += 1
+        return original(root)
+
+    monkeypatch.setattr(tools, "_mypy", tracked)
+    report = analyze(
+        {"a.ts": "export const a = 1;\n"}, config=CodeMetricsConfig(legacy_python_only=True)
+    )
+    assert report.existing_metrics.mypy_errors == 0
+    assert report.coverage.languages[2].files_seen == 0
+    assert calls == 1
+
+
+def test_legacy_comparison_ignores_typescript_only_change() -> None:
+    comparison = compare(
+        {}, {"a.ts": "export const a = 1;\n"},
+        config=CodeMetricsConfig(legacy_python_only=True),
+    )
+    assert comparison.after.existing_metrics.jscpd_clones is None
+    assert comparison.new_code.new_lines is None
+    assert comparison.patch.code_lines.delta == 0
+    assert comparison.patch.added_lines == 0
+    assert comparison.patch.removed_lines == 0
+
+
+def test_legacy_comparison_exposes_mypy_delta_from_empty_snapshot() -> None:
+    comparison = compare(
+        {}, {"a.py": 'x: int = "bad"\n'},
+        config=CodeMetricsConfig(legacy_python_only=True),
+    )
+    mypy = next(delta for delta in comparison.deltas if delta.metric == "mypy.errors")
+    assert (mypy.before, mypy.after, mypy.delta) == (0, 1, 1)
+
+
+def test_legacy_and_v2_same_python_digest_have_separate_cache_entries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def clone_counts(root: Path, config: object) -> dict[str, object]:
+        return {
+            "jscpd.clones": int(config.legacy_python_only),  # type: ignore[attr-defined]
+            "jscpd.duplicated_lines": 0,
+            "typescript.clones": 0,
+            "typescript.duplicated_lines": 0,
+            "cloned_lines": {},
+        }
+
+    monkeypatch.setattr(tools, "_jscpd", clone_counts)
+    tools._CACHE.clear()
+    try:
+        snapshot = {"a.py": "x = 1\n"}
+        v2 = analyze(snapshot)
+        legacy = analyze(snapshot, config=CodeMetricsConfig(legacy_python_only=True))
+        assert v2.existing_metrics.jscpd_clones == 0
+        assert legacy.existing_metrics.jscpd_clones == 1
+        assert len(tools._CACHE) == 2
+    finally:
+        tools._CACHE.clear()
 
 
 def test_package_initializer_wins_over_same_named_module() -> None:
@@ -65,7 +131,8 @@ def test_compared_component_may_exist_on_one_side() -> None:
     assert added.components_added == ("plugins",)
     assert removed.components_removed == ("plugins",)
     assert comparison.before.configuration.unmatched_patterns[0].model_dump() == {
-        "component": "plugins", "pattern": "src/pkg/plugins/*"
+        "component": "plugins",
+        "pattern": "src/pkg/plugins/*",
     }
     assert comparison.after.configuration.unmatched_patterns == ()
     with pytest.raises(EmptyComponentPattern, match="missing"):
@@ -90,18 +157,20 @@ def test_allow_unmatched_patterns_on_analyze_and_compare() -> None:
     ):
         analyze(PACKAGE, config=CodeMetricsConfig(components=config.components))
     report = analyze(PACKAGE, config=config)
-    assert report.schema_version == "assay-code-metrics-report/0.5.0"
+    assert report.schema_version == "assay-code-metrics-report/0.6.0"
     assert report.configuration.allow_unmatched_patterns is True
     expected = ({"component": "missing", "pattern": "missing/*"},)
     assert tuple(item.model_dump() for item in report.configuration.unmatched_patterns) == expected
     comparison = compare(PACKAGE, PACKAGE, config=config)
-    assert comparison.schema_version == "assay-code-metrics-comparison/0.6.0"
-    assert tuple(
-        item.model_dump() for item in comparison.before.configuration.unmatched_patterns
-    ) == expected
-    assert tuple(
-        item.model_dump() for item in comparison.after.configuration.unmatched_patterns
-    ) == expected
+    assert comparison.schema_version == "assay-code-metrics-comparison/0.7.0"
+    assert (
+        tuple(item.model_dump() for item in comparison.before.configuration.unmatched_patterns)
+        == expected
+    )
+    assert (
+        tuple(item.model_dump() for item in comparison.after.configuration.unmatched_patterns)
+        == expected
+    )
 
 
 @pytest.mark.parametrize("allow", [False, True])
@@ -113,7 +182,8 @@ def test_one_sided_pattern_resolution_is_reported_on_its_own_side(allow: bool) -
     )
     comparison = compare(PACKAGE, after, config=config)
     assert comparison.before.configuration.unmatched_patterns[0].model_dump() == {
-        "component": "plugins", "pattern": "src/pkg/plugins/*"
+        "component": "plugins",
+        "pattern": "src/pkg/plugins/*",
     }
     assert comparison.after.configuration.unmatched_patterns == ()
 
@@ -137,6 +207,7 @@ def test_mi_shared_intersection_and_explicit_structure() -> None:
     assert mi.shared_file_count == 2
     assert result.structural_changes.modules_added == ("pkg.new", "pkg.second")
     assert result.structural_changes.modules_removed == ("pkg.old",)
+    assert result.patch.changed_modules == ("pkg.a",)
     assert result.model_dump()["structural_changes"]["modules_added"] == ("pkg.new", "pkg.second")
     assert result.new_code.new_lines == 3
     version = result.schema_version.rsplit("/", 1)[1].rsplit(".", 1)[0]
@@ -265,14 +336,19 @@ def test_snapshot_without_python_has_null_python_metrics() -> None:
     report = analyze(typescript)
     metrics = report.existing_metrics.model_dump()
     assert metrics.pop("maintainability_index") == {}
-    assert set(metrics.values()) == {None}
+    assert {value for key, value in metrics.items() if not key.startswith("jscpd_")} == {None}
+    assert metrics["jscpd_clones"] == 0
+    assert metrics["jscpd_duplicated_lines"] == 0
     comparison = compare(typescript, PACKAGE)
-    assert {entry.before for entry in comparison.deltas} == {None}
-    assert {entry.delta for entry in comparison.deltas} == {None}
+    python_deltas = (entry for entry in comparison.deltas if not entry.metric.startswith("jscpd."))
+    assert {entry.before for entry in python_deltas} == {None}
+    assert {
+        entry.delta for entry in comparison.deltas if not entry.metric.startswith("jscpd.")
+    } == {None}
     assert comparison.new_code.new_lines == 1
     reverse = compare(PACKAGE, typescript)
-    assert reverse.new_code.model_dump() == dict.fromkeys(
-        ("new_lines", "new_duplicated_lines", "new_max_nesting_depth")
-    )
+    assert reverse.new_code.new_lines == 1
+    assert reverse.new_code.new_duplicated_lines == 0
+    assert reverse.new_code.new_max_nesting_depth is None
     # The legacy mapping still counts a side without Python as zero.
     assert measure(typescript, PACKAGE)["radon.sloc"] == 1

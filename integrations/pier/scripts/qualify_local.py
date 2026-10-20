@@ -2,8 +2,8 @@
 """Run every Pier qualification probe locally; emit an inventory only if all pass.
 
 Credential-free and paid-execution-free: this script never sets ``OPENROUTER_API_KEY``,
-never dials out to OpenRouter, and never calls ``run_pier_*``. It only builds and runs
-the locked bridge image against the local Docker daemon and exercises the core-side
+never dials out to OpenRouter, and never calls ``run_pier_*``. It inspects and runs
+an already-built locked bridge image against the local Docker daemon and exercises the core-side
 Pier adapter/protocol machinery against fakes -- exactly the surfaces the acceptance
 matrix in ``experiments/pier_qualification/tests/test_pier_acceptance.py`` also
 exercises without a real provider.
@@ -46,20 +46,36 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(REPO_ROOT / "experiments"))
 sys.path.insert(0, str(BRIDGE_ROOT / "src"))
 
-import httpx  # noqa: E402
+import httpx  # noqa: E402, I001
 from assay_pier_bridge.container import (  # noqa: E402
     DockerTrialClient,
     docker_available,
     package_digest,
 )
-from assay_pier_bridge.protocol import ModelRoute, TrialLimits, TrialRequest  # noqa: E402
+from assay_pier_bridge.identity import (  # noqa: E402
+    ImageDigestMismatchError,
+    ImageInspectionError,
+    bind_bridge_identity,
+)
+from assay_pier_bridge.protocol import (  # noqa: E402
+    CandidateFailure as BridgeCandidateFailure,
+    CandidateSubmission as BridgeCandidateSubmission,
+    CellCoordinate as BridgeCellCoordinate,
+    ModelRoute,
+    PierExchange as BridgePierExchange,
+    RuntimeBinding as BridgeRuntimeBinding,
+    TrialLimits,
+    TrialRequest,
+)
 from assay_pier_bridge.provider import (  # noqa: E402
     MODEL,
+    PROVIDER,
     PROVIDER_NAME,
     GuardedOpenRouterClient,
     GuardedRouteError,
 )
 from assay_pier_bridge.runtime import BridgeRuntime, TrialAlreadyRequestedError  # noqa: E402
+from assay_pier_bridge.paths import tree_digest  # noqa: E402
 from pier_qualification.pier_experiment import (  # noqa: E402
     EXPECTED_BRIDGE_LOCK_DIGEST,
     EXPECTED_DOCKER_VERSION,
@@ -84,6 +100,7 @@ from assay.pier_protocol import (  # noqa: E402
     ArtifactEntry,
     ArtifactKind,
     ArtifactManifest,
+    CandidateSubmission,
     PierExchange,
     RuntimeBinding,
 )
@@ -95,6 +112,28 @@ from assay.runtime_inventory import (  # noqa: E402
 from assay.store import ObjectStore  # noqa: E402
 
 _ZERO_REF = "sha256:" + "0" * 64
+
+
+def _probe_exchange(cell_id: str, digest: str) -> BridgePierExchange:
+    subject, arm, repeat = cell_id.split(":")
+    coordinate = BridgeCellCoordinate(
+        subject_id=subject,
+        arm_id=arm,
+        worker_repeat=int(repeat[1:]),
+        realization_ref=_ZERO_REF,
+    )
+    return BridgePierExchange(
+        coordinate=coordinate,
+        binding=BridgeRuntimeBinding(
+            runtime_version=EXPECTED_BRIDGE_LOCK_DIGEST,
+            image_digest=_ZERO_REF,
+            configuration_ref=_ZERO_REF,
+            package_digest=digest,
+        ),
+        trial_name=f"{subject}-{arm}-{repeat}",
+    )
+
+
 _ORPHAN_PREFIX = "assay-pier-"
 # ModelRoute's fields are exact Literal types (mypy cannot check a
 # **Mapping[str, str] unpacking against them), so the route is still a
@@ -171,12 +210,13 @@ def _no_stray_containers(prefix: str = _ORPHAN_PREFIX) -> bool:
 
 def probe_pinned_revisions(m: Measurements) -> None:
     text = (BRIDGE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    pier_match = re.search(r'datacurve-pier==([0-9.]+)', text)
+    pier_match = re.search(r"datacurve-pier==([0-9.]+)", text)
     mini_match = re.search(r"mini-swe-agent\.git@([0-9a-f]{40})", text)
     if not pier_match or not mini_match:
         raise QualificationFailed(
-            "pinned_revisions", "integrations/pier/pyproject.toml no longer pins an exact "
-            "Pier version or mini-swe-agent commit"
+            "pinned_revisions",
+            "integrations/pier/pyproject.toml no longer pins an exact "
+            "Pier version or mini-swe-agent commit",
         )
     m.pier_revision = pier_match.group(1)
     m.mini_swe_agent_revision = mini_match.group(1)
@@ -229,26 +269,20 @@ def probe_docker_available(m: Measurements) -> None:
 
 
 def probe_image_identity(m: Measurements, *, image_tag: str) -> None:
-    build = _run(["docker", "build", "-t", image_tag, str(BRIDGE_ROOT)], timeout=600)
-    if build.returncode != 0:
-        raise QualificationFailed(
-            "image_identity", f"bridge image build failed:\n{build.stderr[-4000:]}"
+    assert m.pier_revision and m.mini_swe_agent_revision and m.lock_digest
+    try:
+        identity = bind_bridge_identity(
+            {
+                "pier_revision": m.pier_revision,
+                "mini_swe_agent_revision": m.mini_swe_agent_revision,
+                "lock_digest": m.lock_digest,
+                "bridge_image_digest": PIER_BRIDGE_IMAGE_DIGEST,
+            },
+            image_tag,
         )
-    inspect = _run(["docker", "inspect", "--format", "{{.Id}}", image_tag], timeout=10)
-    if inspect.returncode != 0:
-        raise QualificationFailed(
-            "image_identity", f"docker inspect failed: {inspect.stderr[-500:]}"
-        )
-    image_id = inspect.stdout.strip()
-    if re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None:
-        raise QualificationFailed("image_identity", f"unexpected image id shape: {image_id!r}")
-    m.bridge_image_digest = image_id
-    if m.bridge_image_digest != PIER_BRIDGE_IMAGE_DIGEST:
-        raise QualificationFailed(
-            "image_identity",
-            f"bridge image digest {m.bridge_image_digest!r} does not match the digest "
-            f"pier_experiment.py requires for paid execution ({PIER_BRIDGE_IMAGE_DIGEST!r})",
-        )
+    except (ImageInspectionError, ImageDigestMismatchError) as error:
+        raise QualificationFailed("image_identity", f"{type(error).__name__}: {error}") from error
+    m.bridge_image_digest = identity.bridge_image_digest
 
 
 def probe_no_reinstall(image_tag: str) -> None:
@@ -285,14 +319,15 @@ def probe_trial_lifecycle(m: Measurements, *, image_tag: str) -> None:
     request = TrialRequest(
         cell_id="qualify:local:w0",
         package_digest=package_digest(_TRIAL_PACKAGE),
+        exchange=_probe_exchange("qualify:local:w0", package_digest(_TRIAL_PACKAGE)),
         model_route=_ROUTE,
         limits=_production_trial_limits(),
     )
     result = runtime.run_cell(request)
-    if result.status != "succeeded":
+    if not isinstance(result.outcome, BridgeCandidateSubmission):
         raise QualificationFailed(
             "trial_lifecycle",
-            f"qualification trial did not succeed: {result.status}/{result.error_message}",
+            f"qualification trial did not succeed: {result.outcome}",
         )
     effective = result.effective
     if effective.uid != EXPECTED_UID or effective.gid != EXPECTED_GID:
@@ -370,8 +405,8 @@ def probe_storage_enforcement(image_tag: str) -> None:
         command=[
             "/bin/sh",
             "-c",
-            "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null 2>&1; "
-            "printf '%s' \"$?\" > /submission/output",
+            "dd if=/dev/zero of=/scratch/big bs=1M count=64 >/dev/null; "
+            'status=$?; printf \'%s\' "$status" > /submission/output; exit "$status"',
         ],
         # Same explicit-empty-credential guarantee as probe_trial_lifecycle.
         openrouter_api_key="",
@@ -380,16 +415,20 @@ def probe_storage_enforcement(image_tag: str) -> None:
     request = TrialRequest(
         cell_id="qualify:local:w1",
         package_digest=package_digest(_TRIAL_PACKAGE),
+        exchange=_probe_exchange("qualify:local:w1", package_digest(_TRIAL_PACKAGE)),
         model_route=_ROUTE,
         limits=TrialLimits(
             cpu=1, memory_mb=256, pids=32, timeout_s=30, storage_mb=_STORAGE_PROBE_LIMIT_MB
         ),
     )
     result = runtime.run_cell(request)
-    if result.status != "succeeded":
+    if (
+        not isinstance(result.outcome, BridgeCandidateFailure)
+        or result.outcome.cause != "storage_exhausted"
+    ):
         raise QualificationFailed(
             "storage_enforcement",
-            f"storage probe trial did not succeed: {result.status}/{result.error_message}",
+            f"storage probe did not report trial ENOSPC: {result.outcome}",
         )
     if not result.effective.teardown_completed or result.effective.containers_remaining != 0:
         raise QualificationFailed(
@@ -400,12 +439,6 @@ def probe_storage_enforcement(image_tag: str) -> None:
             "storage_enforcement",
             f"docker reported enforcing a {result.effective.storage_limit_mb}m scratch "
             f"limit, not the declared {_STORAGE_PROBE_LIMIT_MB}m",
-        )
-    if result.submission_ref == digest_bytes(b"0"):
-        raise QualificationFailed(
-            "storage_enforcement",
-            "a write past the declared scratch limit did not fail -- the storage cap "
-            "is not actually enforced",
         )
     if not _no_stray_containers():
         raise QualificationFailed(
@@ -447,7 +480,7 @@ def probe_fake_boundary() -> None:
     # The bridge's own guarded route identity must still be the exact route
     # paid execution is configured to call -- a drift here would mean this
     # probe validates a boundary no real paid trial actually uses.
-    if PIER_MODEL_ROUTE["model"] != MODEL or PIER_MODEL_ROUTE["provider"] != PROVIDER_NAME:
+    if PIER_MODEL_ROUTE["model"] != MODEL or PIER_MODEL_ROUTE["provider"] != PROVIDER:
         raise QualificationFailed(
             "fake_boundary",
             "the bridge's guarded route model/provider no longer matches the route "
@@ -498,9 +531,11 @@ def probe_fake_boundary() -> None:
 
 def _artifact_entries_and_bytes(
     exchange: PierExchange, *, tamper_candidate: bool
-) -> tuple[tuple[ArtifactEntry, ...], dict[str, bytes], str]:
+) -> tuple[tuple[ArtifactEntry, ...], dict[str, bytes], str, str]:
     raw_trajectory = json.dumps({"trajectory": "qualify-local"}).encode()
     candidate = b"x = 1\n"
+    candidate_tree = {"answer.py": candidate}
+    tree_ref = tree_digest(candidate_tree)
     result = json.dumps({"exit_status": "Submitted"}).encode()
     configuration = json.dumps({"config": True}).encode()
     # No entry for the manifest itself: it is the document that binds these
@@ -510,7 +545,10 @@ def _artifact_entries_and_bytes(
     # checksum of the bytes carrying that checksum.)
     specs: tuple[tuple[str, ArtifactKind, bytes], ...] = (
         ("raw_trajectory.json", "raw_trajectory", raw_trajectory),
-        ("candidate.py", "candidate", candidate),
+        ("candidate-index.json", "candidate", json.dumps(["answer.py"]).encode()),
+        ("candidate_files/answer.py", "candidate", candidate),
+        ("candidate.patch", "patch", b"patch evidence"),
+        ("tree-digest.txt", "tree_digest", tree_ref.encode()),
         ("result.json", "result", result),
         ("configuration.json", "configuration", configuration),
     )
@@ -521,12 +559,12 @@ def _artifact_entries_and_bytes(
         for path, kind, data in specs
     )
     artifact_bytes = {path: data for path, _kind, data in specs}
-    submission_ref = digest_bytes(candidate)
+    submission_ref = digest_bytes(b"patch evidence")
     if tamper_candidate:
         # Corrupt the delivered bytes after the manifest was sealed against
         # the original candidate -- the round trip must catch this, not pass it.
-        artifact_bytes["candidate.py"] = b"x = 2\n"
-    return entries, artifact_bytes, submission_ref
+        artifact_bytes["candidate_files/answer.py"] = b"x = 2\n"
+    return entries, artifact_bytes, submission_ref, tree_ref
 
 
 @dataclass
@@ -535,12 +573,16 @@ class _FakeBridgeHandle:
     exchange: PierExchange
     mode: Literal["success", "tampered", "cancel", "error"]
 
+    def cancel(self) -> None:
+        """Implement the same handle contract exercised by the adapter probe."""
+        self.mode = "cancel"
+
     def run(self) -> BridgeTrialResult:
         if self.mode == "cancel":
             raise asyncio.CancelledError()
         if self.mode == "error":
             raise RuntimeError("qualification-injected bridge failure")
-        entries, artifact_bytes, submission_ref = _artifact_entries_and_bytes(
+        entries, artifact_bytes, submission_ref, tree_ref = _artifact_entries_and_bytes(
             self.exchange, tamper_candidate=(self.mode == "tampered")
         )
         manifest = ArtifactManifest(
@@ -551,11 +593,12 @@ class _FakeBridgeHandle:
         artifact_bytes["manifest.json"] = manifest.model_dump_json().encode()
         return BridgeTrialResult(
             exchange=self.exchange,
-            status="succeeded",
-            submission_ref=submission_ref,
+            outcome=CandidateSubmission(
+                patch_ref=submission_ref,
+                tree_digest=tree_ref,
+                baseline_tree_digest="sha256:" + "0" * 64,
+            ),
             usage={"prompt_tokens": 10.0, "completion_tokens": 5.0, "cost_usd": 0.0021},
-            error_type=None,
-            error_message=None,
             artifacts=artifact_bytes,
         )
 
@@ -658,18 +701,14 @@ async def _probe_adapter_boundary(m: Measurements) -> None:
     except asyncio.CancelledError:
         pass
     else:
-        raise QualificationFailed(
-            "cancellation", "adapter did not propagate operator cancellation"
-        )
+        raise QualificationFailed("cancellation", "adapter did not propagate operator cancellation")
     if cancel_bridge.teardown_calls != 1:
         raise QualificationFailed(
             "cancellation", "adapter did not tear down the handle on cancellation"
         )
 
     traces = [
-        json.loads(path.read_bytes())
-        for path in sorted(store.objects.iterdir())
-        if path.is_file()
+        json.loads(path.read_bytes()) for path in sorted(store.objects.iterdir()) if path.is_file()
     ]
     if not any(
         isinstance(trace, dict)
@@ -682,17 +721,24 @@ async def _probe_adapter_boundary(m: Measurements) -> None:
         )
 
 
-def _build_inventory(m: Measurements) -> QualificationInventory:
+def _build_inventory(m: Measurements, *, image_tag: str) -> QualificationInventory:
     assert m.lock_digest and m.bridge_image_digest and m.docker_version
     assert m.pier_revision and m.mini_swe_agent_revision
     assert m.uid is not None and m.gid is not None
+    try:
+        identity = bind_bridge_identity(
+            {
+                "pier_revision": m.pier_revision,
+                "mini_swe_agent_revision": m.mini_swe_agent_revision,
+                "lock_digest": m.lock_digest,
+                "bridge_image_digest": m.bridge_image_digest,
+            },
+            image_tag,
+        )
+    except (ImageInspectionError, ImageDigestMismatchError) as error:
+        raise QualificationFailed("image_identity", f"{type(error).__name__}: {error}") from error
     return QualificationInventory(
-        bridge=BridgeLock(
-            pier_revision=m.pier_revision,
-            mini_swe_agent_revision=m.mini_swe_agent_revision,
-            lock_digest=m.lock_digest,
-            bridge_image_digest=m.bridge_image_digest,
-        ),
+        bridge=BridgeLock.model_validate(identity.model_dump()),
         measured=MeasuredEnforcement(
             docker_version=m.docker_version,
             # A literal True, not a stored flag: this is only ever reached
@@ -746,7 +792,11 @@ def run_qualification(*, output_dir: Path, image_tag: str) -> int:
             return 1
         print("    ok", flush=True)
 
-    inventory = _build_inventory(m)
+    try:
+        inventory = _build_inventory(m, image_tag=image_tag)
+    except QualificationFailed as error:
+        print(f"FAIL [{error.probe}]: {error.reason}", file=sys.stderr)
+        return 1
     store = ObjectStore(output_dir)
     payload = inventory.model_dump(mode="json")
     ref = store.publish_json(payload)

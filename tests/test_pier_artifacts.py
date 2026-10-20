@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
@@ -13,10 +15,12 @@ from assay.pier_protocol import (
     MAX_ARTIFACT_BYTES,
     REQUIRED_SUCCESS_KINDS,
     ArtifactEntry,
+    ArtifactKind,
     ArtifactManifest,
     ManifestRejected,
     RuntimeBinding,
     bind_exchange,
+    candidate_tree_digest,
     verify_artifact_bytes,
 )
 from assay.references import reference_closure
@@ -51,7 +55,26 @@ def test_the_manifest_is_not_one_of_the_artifacts_it_binds() -> None:
     it with a decoy file, so the "manifest evidence" a success was gated on
     was reliably not the manifest."""
     assert "manifest" not in REQUIRED_SUCCESS_KINDS
-    assert {"raw_trajectory", "candidate", "result", "configuration"} == REQUIRED_SUCCESS_KINDS
+    assert {
+        "raw_trajectory",
+        "candidate",
+        "patch",
+        "tree_digest",
+        "result",
+        "configuration",
+    } == REQUIRED_SUCCESS_KINDS
+
+
+def test_revision_three_artifact_contract_matches_shared_fixture() -> None:
+    fixture = json.loads((Path(__file__).parent / "fixtures/pier_wire_contract.json").read_text())
+    contract = fixture["artifact_manifest"]
+    assert set(get_args(ArtifactKind)) == set(contract["kinds"])
+    assert set(contract["required_success_kinds"]) == REQUIRED_SUCCESS_KINDS
+    exchange = bind_exchange(coordinate=_coordinate(), binding=RuntimeBinding(**_binding()))
+    assert (
+        ArtifactManifest(exchange=exchange, entries=(), aggregate_bytes=0).schema_version
+        == (contract["schema_version"])
+    )
 
 
 def test_an_entry_cannot_claim_the_manifests_own_path() -> None:
@@ -61,6 +84,53 @@ def test_an_entry_cannot_claim_the_manifests_own_path() -> None:
     where the manifest belongs."""
     with pytest.raises(ValidationError, match="cannot declare itself"):
         _entry(MANIFEST_PATH, b"{}", kind="result")
+
+
+@pytest.mark.parametrize(
+    ("path", "accepted"),
+    [
+        ("candidate_files/x", True),
+        ("candidate_files/nested/x", True),
+        ("candidate_files/./x", False),
+        ("candidate_files//x", False),
+        ("candidate_files/../x", False),
+        ("candidate_files/x/", False),
+        ("candidate_files\\x", False),
+        ("./candidate_files/x", False),
+        ("/candidate_files/x", False),
+    ],
+)
+def test_core_artifact_paths_match_bridge_and_digest(
+    path: str, accepted: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bridge_src = Path(__file__).resolve().parents[1] / "integrations/pier/src"
+    monkeypatch.syspath_prepend(str(bridge_src))
+    from assay_pier_bridge.paths import safe_relative_path
+
+    if accepted:
+        assert safe_relative_path(path).as_posix() == path
+        entry = _entry(path, b"x")
+    else:
+        with pytest.raises(ValueError):
+            safe_relative_path(path)
+        with pytest.raises(ValidationError):
+            _entry(path, b"x")
+        entry = ArtifactEntry.model_construct(
+            path=path, kind="candidate", size_bytes=1,
+            checksum=digest_bytes(b"x"), utf8=True,
+        )
+    index_bytes = json.dumps([path.removeprefix("candidate_files/")]).encode()
+    index = _entry("candidate-index.json", index_bytes)
+    exchange = bind_exchange(coordinate=_coordinate(), binding=RuntimeBinding(**_binding()))
+    manifest = ArtifactManifest.model_construct(
+        exchange=exchange, entries=(index, entry), aggregate_bytes=len(index_bytes) + 1
+    )
+    artifact_bytes = {index.path: index_bytes, path: b"x"}
+    if accepted:
+        assert candidate_tree_digest(manifest, artifact_bytes=artifact_bytes).startswith("sha256:")
+    else:
+        with pytest.raises(ManifestRejected):
+            candidate_tree_digest(manifest, artifact_bytes=artifact_bytes)
 
 
 def test_manifest_kind_is_no_longer_a_declarable_kind() -> None:
@@ -196,7 +266,7 @@ def test_atif_unavailable_is_recorded_not_treated_as_missing_evidence() -> None:
     no transcript still reports complete required-success evidence."""
 
     exchange = bind_exchange(coordinate=_coordinate(), binding=RuntimeBinding(**_binding()))
-    kinds = ["raw_trajectory", "candidate", "result", "configuration"]
+    kinds = ["raw_trajectory", "candidate", "patch", "tree_digest", "result", "configuration"]
     entries = tuple(
         _entry(f"{kind}.json", f'{{"kind": "{kind}"}}'.encode(), kind=kind) for kind in kinds
     )

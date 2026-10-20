@@ -1,0 +1,37 @@
+"""Agent bounds for self-trust cells, on the paid and the local route alike.
+
+The pilot's bounds (20 model requests, 15 tool calls a turn, 40 a cell) were
+sized against spend, and they cut off careful verifiers: on the 2,800-line
+rewrite every Kimi K2.7 and Qwen3.8 cell hit them, so a model that ran out of
+steps looked the same as one that skimmed. Spend is bounded by the operator's
+dollar cap (``budget.py``) on the paid route, and nothing is billed on the
+local one, so these bounds only stop a runaway loop; the cell deadline, the
+protocol's 30-minute ceiling, is the backstop. Limit hits are still recorded.
+"""
+
+from __future__ import annotations
+
+from pydantic import Field
+
+from verification_pilot.settings import VerificationPilotSettings
+
+
+class SelfTrustSettings(VerificationPilotSettings):
+    """Loose step bounds; the dollar cap, not the step count, bounds spend."""
+
+    max_turns: int = Field(default=150, ge=20, le=200)  # type: ignore[assignment]
+    max_tool_calls_per_turn: int = Field(default=100, ge=1, le=500)  # type: ignore[assignment]
+    max_tool_calls_per_cell: int = Field(default=300, ge=1, le=1_000)  # type: ignore[assignment]
+
+
+# The local route's per-reply output cap. The paid cap (8,192) bounds a
+# request's worst-case price; nothing is billed locally, and on the full
+# rewrite every capped Qwen3.6-27B reply stopped at exactly 8,192 tokens with
+# no content or tool call (raw/self_trust/runs/f4643792-*, 0f798f49-*), so
+# the cap, not the model, may have ended those cells. 32,768 is the settings'
+# ceiling; vLLM on mcbain serves 131,072 tokens, so a prompt above about
+# 98,000 tokens no longer fits beside it.
+LOCAL_MAX_OUTPUT_TOKENS = 32_768
+
+# The trial protocol's ceiling (TrialLimits.timeout_s <= 1800).
+CELL_SECONDS = 1_800.0

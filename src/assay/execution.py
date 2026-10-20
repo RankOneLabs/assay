@@ -6,20 +6,24 @@ import asyncio
 import contextlib
 import json
 import math
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from decimal import Decimal
+from typing import Any, Literal, Protocol, cast
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.models import (
     CellCoordinate,
     EvaluationCoordinate,
     EvaluationFailure,
+    ExecutionCeiling,
     ExecutionOutcome,
     ExecutionPlan,
     ExecutionPlanV2,
+    ExecutionPlanV3,
     RunManifest,
     StudySnapshot,
 )
@@ -148,24 +152,132 @@ class CoordinateAwareWorker(Protocol):
 class AdmissionHalt(Exception):
     """Typed control signal: stop admitting new cells, deterministically.
 
-    Adapters raise this — rather than returning a ``WorkerFailure`` — to
-    signal budget exhaustion, identity uncertainty, or billing uncertainty:
-    conditions that must stop new dispatch without being mistaken for an
-    ordinary per-attempt failure. The cell that raised it still gets a
-    definite, recorded outcome; only cells not yet started are affected.
+    Adapters raise this when a new reservation is refused because of budget
+    or cell ceiling exhaustion, identity uncertainty, or billing uncertainty.
+    The request that first makes billing uncertain can still return its own
+    ``WorkerFailure``. A cell that raises this signal gets a definite outcome
+    with its completed trace; only cells not yet started are blocked.
     """
 
     def __init__(
         self,
-        code: Literal["budget_exhausted", "identity_uncertain", "billing_uncertain"],
+        code: Literal[
+            "budget_exhausted", "ceiling_exhausted", "identity_uncertain", "billing_uncertain"
+        ],
         message: str,
         *,
         accounting: Accounting | None = None,
+        trace: Any | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.accounting = accounting if accounting is not None else Accounting(coverage="uncertain")
+        self.trace = trace
+
+
+class AdmissionLedger:
+    """Reserve cell and request capacity before either kind of dispatch."""
+
+    def __init__(
+        self,
+        *,
+        ceiling: ExecutionCeiling | None = None,
+        max_requests: int | None = None,
+        max_spend_usd: Decimal = Decimal(0),
+        request_cost_bound_usd: Decimal = Decimal(0),
+    ) -> None:
+        self.ceiling = ceiling
+        self.max_requests = max_requests
+        self.max_spend_usd = max_spend_usd
+        self.request_cost_bound_usd = request_cost_bound_usd
+        self._request_limits = (
+            (max_requests, max_spend_usd, request_cost_bound_usd)
+            if max_requests is not None or max_spend_usd != 0 or request_cost_bound_usd != 0
+            else None
+        )
+        self.started_at = time.monotonic()
+        self.cells = 0
+        self.active_cells = 0
+        self.requests = 0
+        self.cell_halt: AdmissionHalt | None = None
+        self.request_halt: AdmissionHalt | None = None
+
+    @property
+    def halt(self) -> AdmissionHalt | None:
+        """Compatibility with request adapters that publish a billing halt."""
+        return self.request_halt
+
+    @halt.setter
+    def halt(self, value: AdmissionHalt | None) -> None:
+        self.request_halt = value
+
+    def configure_requests(
+        self,
+        *,
+        max_requests: int,
+        max_spend_usd: Decimal,
+        request_cost_bound_usd: Decimal,
+    ) -> None:
+        """Bind one request policy before dispatch; all bound arms must agree."""
+        limits = (max_requests, max_spend_usd, request_cost_bound_usd)
+        if self._request_limits is not None and self._request_limits != limits:
+            raise ValueError("worker request admission limits differ across arms")
+        self._request_limits = limits
+        self.max_requests, self.max_spend_usd, self.request_cost_bound_usd = limits
+
+    def remaining_seconds(self) -> float | None:
+        if self.ceiling is None:
+            return None
+        return self.ceiling.max_wall_time_seconds - (time.monotonic() - self.started_at)
+
+    def reserve(self, kind: Literal["cell", "request"]) -> AdmissionHalt | None:
+        if self.request_halt is not None:
+            return self.request_halt
+        remaining = self.remaining_seconds()
+        if remaining is not None and remaining <= 0:
+            self.request_halt = AdmissionHalt(
+                "ceiling_exhausted", "authorized wall time exhausted"
+            )
+            return self.request_halt
+        if kind == "cell":
+            if self.cell_halt is not None:
+                return self.cell_halt
+            if self.ceiling is None:
+                return None
+            if self.cells >= self.ceiling.max_cells:
+                self.cell_halt = AdmissionHalt(
+                    "ceiling_exhausted", "authorized cell ceiling exhausted"
+                )
+            elif self.active_cells >= self.ceiling.max_fleet_occupancy:
+                self.cell_halt = AdmissionHalt(
+                    "ceiling_exhausted", "authorized fleet occupancy exhausted"
+                )
+            else:
+                self.cells += 1
+                self.active_cells += 1
+            return self.cell_halt
+        else:
+            if self.max_requests is not None and self.requests >= self.max_requests:
+                self.request_halt = AdmissionHalt(
+                    "ceiling_exhausted", "authorized request count exhausted"
+                )
+            elif (self.requests + 1) * self.request_cost_bound_usd > self.max_spend_usd:
+                self.request_halt = AdmissionHalt(
+                    "budget_exhausted", "insufficient unreserved budget"
+                )
+            else:
+                self.requests += 1
+        return self.request_halt
+
+    def release_cell(self) -> None:
+        self.active_cells -= 1
+
+
+class AdmissionBoundWorker(Protocol):
+    supports_run_admission: Literal[True]
+
+    def bind_admission(self, ledger: AdmissionLedger) -> Worker | CoordinateAwareWorker: ...
 
 
 def _worker_supports_coordinates(worker: Worker | CoordinateAwareWorker) -> bool:
@@ -237,20 +349,24 @@ async def execute_plan(
         )
         workers, evaluators = dict(workers), dict(evaluators)
         plan = authorize(plan_bytes, authorization)
-        if not isinstance(plan, ExecutionPlan | ExecutionPlanV2):
+        if not isinstance(plan, ExecutionPlan | ExecutionPlanV2 | ExecutionPlanV3):
             raise ValueError(f"unsupported execution plan type: {type(plan).__name__}")
         snapshot_bytes = canonical_json(snapshot.model_dump(mode="json"))
         if digest_bytes(snapshot_bytes) != plan.snapshot_ref:
             raise ValueError("provided snapshot does not match the authorized plan")
         if store.read_bytes(plan.snapshot_ref) != snapshot_bytes:
             raise ValueError("stored snapshot differs from the provided snapshot")
-        validate_plan_snapshot(plan, snapshot)
+        validate_plan_snapshot(
+            plan.base_plan() if isinstance(plan, ExecutionPlanV3) else plan, snapshot
+        )
         verify_snapshot(store, snapshot)
         # A 0.2.0 plan's runtime configuration is a separate closure from the
         # snapshot's; verify_snapshot never walks it, so a caller trusting an
         # authorized V2 plan without this call could run against a runtime
         # configuration that was never fully declared or stored.
-        require_runtime_closure(store, plan)
+        require_runtime_closure(
+            store, plan.base_plan() if isinstance(plan, ExecutionPlanV3) else plan
+        )
         if plan.preparation_mode != "none":
             raise ValueError("authorized preparation is not implemented")
         if concurrency is not None and concurrency != plan.concurrency:
@@ -284,6 +400,16 @@ async def execute_plan(
             store.publish_json(declaration.configuration)
             store.publish_json(declaration.model_dump(mode="json"))
         store.publish_json([arm.conditions for arm in snapshot.arms])
+        admission = AdmissionLedger(
+            ceiling=plan.ceiling if isinstance(plan, ExecutionPlanV3) else None
+        )
+        for arm in snapshot.arms:
+            worker = workers[arm.id]
+            if getattr(worker, "supports_run_admission", False) is True:
+                bound = cast(AdmissionBoundWorker, worker).bind_admission(admission)
+                if canonical_json(bound.configuration(arm.id)) != canonical_json(arm.worker):
+                    raise ValueError(f"bound worker configuration mismatch: {arm.id}")
+                workers[arm.id] = bound
     except Exception as error:
         return RunFailed(type(error).__name__, str(error))
 
@@ -366,7 +492,11 @@ async def execute_plan(
         validators[snapshot.operating_schema_ref].validate(record)
         operating_records[key] = str(store.publish_json(record))
 
-    async def run_cell(cell: CellCoordinate) -> None:
+    def wall_expired() -> bool:
+        remaining = admission.remaining_seconds()
+        return remaining is not None and remaining <= 0
+
+    async def run_reserved_cell(cell: CellCoordinate) -> None:
         nonlocal halt
         started_at = _now()
         arm = arms[cell.arm_id]
@@ -377,12 +507,29 @@ async def execute_plan(
             if canonical_json(workers[arm.id].configuration(arm.id)) != canonical_json(arm.worker):
                 raise ValueError("worker configuration changed after authorization")
             attempted = True
-            result = await _dispatch_worker(
-                workers[arm.id],
-                arm_id=arm.id,
-                cell=cell,
-                input_value=json.loads(store.read_bytes(cell.realization_ref)),
-            )
+            input_value = json.loads(store.read_bytes(cell.realization_ref))
+            remaining = admission.remaining_seconds()
+            if remaining is not None:
+                if remaining <= 0:
+                    raise AdmissionHalt(
+                        "ceiling_exhausted", "authorized wall time exhausted",
+                        accounting=Accounting(coverage="unavailable"),
+                    )
+                try:
+                    async with asyncio.timeout(remaining):
+                        result = await _dispatch_worker(
+                            workers[arm.id], arm_id=arm.id, cell=cell, input_value=input_value
+                        )
+                except TimeoutError as error:
+                    if wall_expired():
+                        raise AdmissionHalt(
+                            "ceiling_exhausted", "authorized wall time exhausted"
+                        ) from error
+                    raise
+            else:
+                result = await _dispatch_worker(
+                    workers[arm.id], arm_id=arm.id, cell=cell, input_value=input_value
+                )
             returned = True
             if not isinstance(result, WorkerSuccess | WorkerFailure):
                 raise TypeError("worker returned an invalid Result")
@@ -392,7 +539,9 @@ async def execute_plan(
         except AdmissionHalt as error:
             if halt is None:
                 halt = error
-            result = WorkerFailure(error.code, error.message, accounting=error.accounting)
+            result = WorkerFailure(
+                error.code, error.message, trace=error.trace, accounting=error.accounting
+            )
         except Exception as error:
             if returned and isinstance(result, WorkerSuccess | WorkerFailure):
                 accounting = result.accounting
@@ -440,7 +589,25 @@ async def execute_plan(
             completed_at=completed_at,
         )
 
+    async def run_cell(cell: CellCoordinate) -> None:
+        nonlocal halt
+        refused = admission.reserve("cell")
+        if refused is not None:
+            halt = refused
+            return
+        try:
+            await run_reserved_cell(cell)
+        finally:
+            if isinstance(plan, ExecutionPlanV3):
+                admission.release_cell()
+
     async def run_evaluation(coordinate: EvaluationCoordinate) -> None:
+        nonlocal halt
+        remaining = admission.remaining_seconds()
+        if remaining is not None and remaining <= 0:
+            if halt is None:
+                halt = AdmissionHalt("ceiling_exhausted", "authorized wall time exhausted")
+            return
         started_at = _now()
         cell = cells[coordinate.cell_id]
         declaration = declarations[coordinate.evaluator_id]
@@ -458,16 +625,40 @@ async def execute_plan(
                     declaration.configuration
                 ):
                     raise ValueError("evaluator configuration changed after authorization")
+                input_value = json.loads(store.read_bytes(cell.realization_ref))
+                output_value = json.loads(store.read_bytes(output))
+                remaining = admission.remaining_seconds()
+                if remaining is not None and remaining <= 0:
+                    raise TimeoutError("authorized wall time exhausted")
                 called = True
-                result = await evaluators[declaration.id].evaluate(
-                    input_value=json.loads(store.read_bytes(cell.realization_ref)),
-                    output=json.loads(store.read_bytes(output)),
-                    coordinate=coordinate,
+                evaluation = evaluators[declaration.id].evaluate(
+                    input_value=input_value, output=output_value, coordinate=coordinate
                 )
+                if remaining is None:
+                    result = await evaluation
+                else:
+                    async with asyncio.timeout(remaining):
+                        result = await evaluation
                 returned = True
                 if not isinstance(result, EvaluationSuccess | EvaluationFailed):
                     raise TypeError("evaluator returned an invalid Result")
                 canonical_json(result.detail)
+            except TimeoutError as error:
+                timeout_accounting = Accounting(
+                    coverage="uncertain" if called else "unavailable"
+                )
+                if wall_expired():
+                    if halt is None:
+                        halt = AdmissionHalt("ceiling_exhausted", "authorized wall time exhausted")
+                    result = EvaluationFailed(
+                        halt.code, halt.message, accounting=timeout_accounting
+                    )
+                else:
+                    result = EvaluationFailed(
+                        type(error).__name__,
+                        str(error),
+                        accounting=timeout_accounting,
+                    )
             except Exception as error:
                 if returned and isinstance(result, EvaluationSuccess | EvaluationFailed):
                     accounting = result.accounting
@@ -593,7 +784,11 @@ async def execute_plan(
         }
 
     async def bounded[T](
-        items: Iterable[T], call: Callable[[T], Awaitable[None]], *, should_stop: Callable[[], bool]
+        items: Iterable[T],
+        call: Callable[[T], Awaitable[None]],
+        *,
+        should_stop: Callable[[], bool],
+        slots: int | None = None,
     ) -> None:
         """Only active slots start; a stop signal halts new dispatch, active calls still drain."""
         nonlocal interruption
@@ -612,7 +807,7 @@ async def execute_plan(
                     if fatal is None:
                         fatal = error
 
-        tasks = [asyncio.create_task(consume()) for _ in range(plan.concurrency)]
+        tasks = [asyncio.create_task(consume()) for _ in range(slots or plan.concurrency)]
         try:
             # asyncio.gather() forwards cancellation to its children but will
             # not settle -- and so will not deliver that cancellation back to
@@ -662,7 +857,7 @@ async def execute_plan(
         return RunManifest(
             run_id=run_id,
             plan_ref=authorization,
-            status="complete" if not missing and fatal is None and halt is None else "incomplete",
+            status="complete" if not missing else "incomplete",
             execution_records=execution_records,
             evaluation_records=evaluation_records,
             operating_records=operating_records,
@@ -672,10 +867,24 @@ async def execute_plan(
 
     try:
         await bounded(
-            plan.cells, run_cell, should_stop=lambda: fatal is not None or halt is not None
+            plan.cells,
+            run_cell,
+            should_stop=lambda: fatal is not None or halt is not None,
+            slots=min(plan.concurrency, plan.ceiling.max_fleet_occupancy)
+            if isinstance(plan, ExecutionPlanV3)
+            else None,
         )
         if fatal is None:
-            await bounded(plan.evaluations, run_evaluation, should_stop=lambda: fatal is not None)
+            await bounded(
+                (item for item in plan.evaluations if item.cell_id in execution_records),
+                run_evaluation,
+                should_stop=lambda: fatal is not None or wall_expired(),
+                slots=min(plan.concurrency, plan.ceiling.max_fleet_occupancy)
+                if isinstance(plan, ExecutionPlanV3)
+                else None,
+            )
+        if wall_expired() and halt is None:
+            halt = AdmissionHalt("ceiling_exhausted", "authorized wall time exhausted")
     except asyncio.CancelledError:
         # Cancellation stays observable to the caller, but whatever recoverable
         # evidence exists (including cleanup's own typed interruption record,

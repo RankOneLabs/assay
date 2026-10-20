@@ -12,7 +12,9 @@ from typing import Any
 from assay._version import __version__
 from assay.canonical import canonical_json, digest_bytes
 from assay.models import (
+    ExecutionPlan,
     ExecutionPlanV2,
+    ExecutionPlanV3,
     ReportConfig,
     RunManifest,
     StudySnapshot,
@@ -68,6 +70,43 @@ def _aggregate(values: list[Any], rule: str, config: ReportConfig, *, mapped: bo
 
 def _read(store: ObjectStore, ref: str) -> Any:
     return json.loads(store.read_bytes(ref))
+
+
+def _compatibility_fingerprint(
+    plan: ExecutionPlan | ExecutionPlanV2 | ExecutionPlanV3, snapshot: StudySnapshot
+) -> bytes:
+    """Return the exact shard compatibility identity used by build_report."""
+    common = {
+        "task_ref": snapshot.paa_task_ref,
+        "scope": snapshot.paa_scope,
+        "task_schema_ref": snapshot.task_schema_ref,
+        "evidence_schema_ref": snapshot.evidence_schema_ref,
+        "operating_schema_ref": snapshot.operating_schema_ref,
+        "pricing_catalog_ref": snapshot.pricing_catalog_ref,
+        "pricing_assumptions": snapshot.pricing_assumptions,
+        "worker_repeats": plan.worker_repeats,
+        "preparation_mode": plan.preparation_mode,
+        "concurrency": plan.concurrency,
+    }
+    if isinstance(plan, ExecutionPlanV3):
+        return canonical_json({
+            **common,
+            "runtime": plan.runtime.model_dump(mode="json"),
+            "assay_version": plan.assay_version,
+            "schema_version": plan.schema_version,
+            "ceiling": plan.ceiling.model_dump(mode="json"),
+        })
+    if isinstance(plan, ExecutionPlanV2):
+        return canonical_json({
+            **common,
+            "runtime": plan.runtime.model_dump(mode="json"),
+            "assay_version": plan.assay_version,
+        })
+    return canonical_json({
+        **common,
+        "jig_revision": plan.jig_revision,
+        "assay_version": plan.assay_version,
+    })
 
 
 def classification_metrics(
@@ -143,34 +182,8 @@ def build_report(store: ObjectStore, config: ReportConfig) -> dict[str, Any]:
         # jig_revision) so historical reports never move; 0.2.0 binds the
         # generic runtime identity/configuration instead, so legacy and
         # generic (or cross-profile) shards can never pool by coincidence.
-        common_fingerprint = {
-            "task_ref": snapshot.paa_task_ref,
-            "scope": snapshot.paa_scope,
-            "task_schema_ref": snapshot.task_schema_ref,
-            "evidence_schema_ref": snapshot.evidence_schema_ref,
-            "operating_schema_ref": snapshot.operating_schema_ref,
-            "pricing_catalog_ref": snapshot.pricing_catalog_ref,
-            "pricing_assumptions": snapshot.pricing_assumptions,
-            "worker_repeats": plan.worker_repeats,
-            "preparation_mode": plan.preparation_mode,
-            "concurrency": plan.concurrency,
-        }
-        if isinstance(plan, ExecutionPlanV2):
-            fingerprint = canonical_json(
-                {
-                    **common_fingerprint,
-                    "runtime": plan.runtime.model_dump(mode="json"),
-                    "assay_version": plan.assay_version,
-                }
-            )
-        else:
-            fingerprint = canonical_json(
-                {
-                    **common_fingerprint,
-                    "jig_revision": plan.jig_revision,
-                    "assay_version": plan.assay_version,
-                }
-            )
+        # 0.3.0 additionally binds its authorized run-wide ceiling.
+        fingerprint = _compatibility_fingerprint(plan, snapshot)
         if compatibility is not None and fingerprint != compatibility:
             raise ReportError("run compatibility drift across selected manifests")
         compatibility = fingerprint

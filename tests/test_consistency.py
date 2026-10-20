@@ -302,3 +302,31 @@ async def test_judge_failures_preserve_attempt_accounting(invalid_success: bool)
     assert isinstance(outcome, EvaluationFailed)
     assert outcome.accounting == accounting
     assert outcome.error_type == ("InvalidJudgeVerdict" if invalid_success else "JudgeError")
+
+
+def test_python_correctness_configuration_bytes_survive_lifecycle_extraction() -> None:
+    """Frozen canonical JSON captured from the base branch before extraction."""
+    from assay.investigations.correctness import DockerPythonRunner, FunctionalCorrectnessEvaluator
+
+    runner_json = (
+        b'{"capabilities":"drop-all","harness_sha256":"sha256:8ce1e9681818e89972b99a4'
+        b'acd20e9304074259b52e2b9eeffa1bc6aee9f9088","host_mounts":[],"id":"docker-py'
+        b'thon-functional","network":"none","no_new_privileges":true,"pull":"never","'
+        b'repository_storage_budget_bytes":786432,"repository_storage_estimator":"tmp'
+        b'fs-pages-and-directories-v1","root_filesystem":"read-only","seccomp":"built'
+        b'in","settings":{"command_timeout_s":5.0,"cpus":"0.5","docker_client_version'
+        b'":"29.6.1","docker_server_version":"29.1.2","image":"python@sha256:2be5d3cb'
+        b'08aa616c6e38d922bd7072975166b2de772004f79ee1bae59fe983dc","max_output_bytes'
+        b'":65536,"memory":"64m","pids_limit":32,"platform":"linux/amd64","startup_ti'
+        b'meout_s":10.0,"timeout_s":5.0},"tmpfs":"/tmp:rw,noexec,nosuid,nodev,size=1m'
+        b'","ulimits":{"core":"0:0","fsize":"1048576:1048576","nofile":"64:64"},"user'
+        b'":"65534:65534","version":"3"}'
+    )
+    evaluator_json = (
+        b'{"categories":["incorrect","correct"],"comparison":"canonical-json-output-equality","id":"consistency-functional-correctness","runner":'
+        + runner_json
+        + b',"source_boundary":"optional-docstring-imports-one-implement","version":"4"}'
+    )
+    runner = DockerPythonRunner()
+    assert canonical_json(runner.configuration()) == runner_json
+    assert canonical_json(FunctionalCorrectnessEvaluator(runner).configuration()) == evaluator_json

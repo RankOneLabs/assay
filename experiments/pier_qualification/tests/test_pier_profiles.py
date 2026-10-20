@@ -8,6 +8,8 @@ from pier_qualification.pier_experiment import (
     PIER_COST_PER_CELL_USD,
     PIER_FULL_PER_ARM_USD,
     PIER_FULL_TOTAL_USD,
+    PIER_MAX_REPOSITORY_BYTES,
+    PIER_MAX_REPOSITORY_FILES,
     PIER_QUALIFICATION_PER_ARM_USD,
     PIER_QUALIFICATION_TOTAL_USD,
     PIER_SMOKE_PER_ARM_USD,
@@ -80,6 +82,11 @@ def test_full_profile_shape(tmp_path: Path) -> None:
     snapshot = StudySnapshot.model_validate_json(store.read_bytes(plan.snapshot_ref))
     assert len(snapshot.subjects) == 12
     assert len(snapshot.arms) == 2
+    assert all(
+        arm.worker["max_repository_files"] == PIER_MAX_REPOSITORY_FILES
+        and arm.worker["max_repository_bytes"] == PIER_MAX_REPOSITORY_BYTES
+        for arm in snapshot.arms
+    )
     assert plan.worker_repeats == 2
     assert plan.cost_estimate.amount == float(PIER_FULL_TOTAL_USD)
     assert {value.amount for value in plan.arm_cost_estimates.values()} == {

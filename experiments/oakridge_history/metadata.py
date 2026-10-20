@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from assay.canonical import canonical_json
-from assay.code_metrics.models import CodeMetricsReportV5
+from assay.code_metrics import CodeMetricsReport
 from assay.code_metrics.pins import DEPENDENCY_CRUISER
 
 from .git_resolve import ResolvedCommit
@@ -26,7 +26,7 @@ def build_metadata(
     commit: ResolvedCommit,
     scope: ScopeSpec,
     resolved_exclusions: tuple[str, ...],
-    report: CodeMetricsReportV5,
+    report: CodeMetricsReport,
     *,
     strict_runtime_pins: bool = False,
 ) -> dict[str, Any]:

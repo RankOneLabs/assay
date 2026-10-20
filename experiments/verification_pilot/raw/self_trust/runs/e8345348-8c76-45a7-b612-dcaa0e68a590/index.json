@@ -1,0 +1,23 @@
+{
+  "rewrite1-own_b-remnant_a:st-native:w0": {
+    "measures": "001-measures.json",
+    "record_ref": "sha256:7d4c4d79085ce68313f7f5c8bf65c9fc97a83dc18fbcc8426a3ed96478e7f0bf",
+    "status": "succeeded",
+    "trajectory": "001-trajectory.json",
+    "worker_trace": "001-worker.json"
+  },
+  "rewrite1-own_b-remnant_a:st-native:w1": {
+    "measures": "002-measures.json",
+    "record_ref": "sha256:518934b97b3fdfa0c94a02800cfb141d8eb8365c85da0340208c48cb12f70a42",
+    "status": "succeeded",
+    "trajectory": "002-trajectory.json",
+    "worker_trace": "002-worker.json"
+  },
+  "rewrite1-own_b-remnant_a:st-native:w2": {
+    "measures": "003-measures.json",
+    "record_ref": "sha256:c126fc4a050f45823fe170032de72df16c39c9ee97244464266f7dbbf1e5f1b9",
+    "status": "failed",
+    "trajectory": "003-trajectory.json",
+    "worker_trace": "003-worker.json"
+  }
+}

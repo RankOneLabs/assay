@@ -51,14 +51,13 @@ def submit_output_tool() -> dict[str, Any]:
         "function": {
             "name": TOOL_NAME,
             "description": (
-                "Submit your final answer. Call this exactly once when you have "
-                "your result."
+                "Submit your final answer. Call this exactly once when you have your result."
             ),
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["source"],
-                "properties": {"source": {"type": "string", "minLength": 1}},
+                "properties": {"source": {"type": "string"}},
             },
             "strict": True,
         },
@@ -156,8 +155,8 @@ def _validate_submission(message: dict[str, Any], finish_reason: Any) -> Submitt
     ):
         raise GuardedRouteError("tool call arguments carry an unknown field")
     source = arguments.get("source")
-    if not isinstance(source, str) or not source:
-        raise GuardedRouteError("tool call arguments are missing a nonblank source")
+    if not isinstance(source, str):
+        raise GuardedRouteError("tool call arguments are missing source text")
     return SubmittedOutput(call_id=call_id, source=source)
 
 
