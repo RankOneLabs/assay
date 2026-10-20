@@ -355,7 +355,7 @@ $3.50, $0.75 to $1.50 and $1.50).
 | Model | S fixed | rewrite0 fixed | rewrite0 verdict on misses | Archives |
 |---|---|---|---|---|
 | Gemini 4 Argon (earlier) | 18 / 18 | 0 / 10 | | |
-| Sonnet 5.5 | 6 / 6 | 2 / 4 | 2 incomplete | `7fe13e8f`, `472c12bd` |
+| Sonnet 5.5 | 6 / 6 | 2 / 4 | 1 incomplete, 1 none | `7fe13e8f`, `472c12bd` |
 | Gemini 3.8 Flash | 6 / 6 | 0 / 3 | 3 complete | `aed117c0`, `99a4fd07` |
 | GPT-6.1 Sol | none usable | none usable | | `1afadcd8`, `8c67f47d` |
 
@@ -385,7 +385,7 @@ tokens were is not recorded. The local route now caps replies at 32,768
 the fixed label had made Smithers refuse every re-run of a cell
 (`IdempotencyConflictError`).
 
-The re-run at 32,768 (`70e00fa0`, full rewrite) did not fix it. Every reply
+The re-run at 32,768 (`70e00fa0`, on S) did not fix it. Every reply
 that came back was short (at most 487 output tokens), and all six cells
 stopped on Smithers' 900-second job deadline
 (`model_dispatch:AcceptanceDeadlineExceeded`) after 7 to 35 requests, with
