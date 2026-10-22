@@ -95,7 +95,7 @@ generator simply has a flag for whether to emit it.
 
 *Excerpt, condensed — boilerplate fields (`stage_key`, `artifact_id`, `path`)
 elided with `…`; see the appendix for the exact spans.* The right-hand column
-cites the generator, not the generated file: the destination module,
+cites the [pinned fixture generator](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/refactor.py#L238-L290), not the generated file: the destination module,
 `src/decision/mint.ts`, is produced by this script at run time and is not
 checked into the repository in either its clean or omitted state, so there is
 no file to link. **Takeaway: when the new code is a near-literal copy of the
@@ -109,12 +109,12 @@ The architectural rewrite keeps the identical duplicate-`unit_id` check, but
 moves it out of a flat loop (`materialize-units.ts`) into a much larger,
 differently structured function (`derive.ts`) that branches on where the
 input came from. The destination file is checked into the repository in its
-clean state, so it gets a direct link; the omitted state is not checked in
+clean state, so it gets a [pinned source link](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/rewrite_repo/after/src/decision/derive.ts#L196-L210); the omitted state is not checked in
 and is citable only through the fixture generator that produces it.
 
 | Old behavior | Refactored behavior — OMITTED |
 | --- | --- |
-| `const ids = new Set<string>();` <br> `for (const item of items) {` <br> `  const parsed = parseUnit(item, spec);` <br> `  if (!parsed.ok) return parsed;` <br> `  if (ids.has(parsed.value.unit_id)) return err({ operation: "materialize_units", …, detail: "duplicate unit_id" });` <br> `  ids.add(parsed.value.unit_id);` | *(clean, checked in)* `for (const artifact of selectDriverArtifacts(…)) {` <br> `  const parsed = parseUnit(item, spec);` <br> ``  if (seen.has(parsed.value.unit_id)) return err({ …, detail: `duplicate unit_id '${parsed.value.unit_id}'` });`` <br> `  seen.add(parsed.value.unit_id);` <br> `} else { … for (const item of over.value) { … } }` |
+| `const ids = new Set<string>();` <br> `for (const item of items) {` <br> `  const parsed = parseUnit(item, spec);` <br> `  if (!parsed.ok) return parsed;` <br> `  if (ids.has(parsed.value.unit_id)) return err({ operation: "materialize_units", …, detail: "duplicate unit_id" });` <br> `  ids.add(parsed.value.unit_id);` | *(clean, checked in)* `for (const artifact of selectDriverArtifacts(…)) {` <br> `  const parsed = parseUnit(item, spec);` <br> ``  if (seen.has(parsed.value.unit_id)) return err({ …, detail: `duplicate unit_id '${parsed.value.unit_id}'` });`` <br> `  seen.add(parsed.value.unit_id);` <br> `} else { … for (const item of over.value) { … } }` <br> **OMITTED in the fixture: the driver-artifact branch's `seen.has(…)` rejection line shown above.** |
 
 *Excerpt, condensed.* **Takeaway: the same guarantee, restated inside a
 differently shaped function with a different variable name and a second
@@ -137,11 +137,11 @@ Not every rewrite scored like Figure 2's. A reconciler module was moved into
 a new `src/forge` package two ways: a plain move, and a move that also
 rebuilt each `if`/`else if` branch as one named rule in an ordered list. The
 rewrite kept a strict one-to-one correspondence — same order, same messages —
-and the fixture's planted gap is a single missing rule at the end of the list.
+and the [fixture's planted gap](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/fixtures.py#L273-L285) is a single missing rule at the end of the list.
 
 | Old behavior | Refactored behavior — OMITTED |
 | --- | --- |
-| `} else if (input.observation.state === "closed_unmerged") {` <br> `  finding = pullRequestMismatch("closed_without_merge", "pull request closed without merging into the integration branch");` <br> `} else if (input.observation.state === "merged" && input.observation.merged_at === null) {` <br> `  finding = pullRequestMismatch("pull_request_mismatch", "merged observation is missing merged_at evidence");` <br> `}` | `rules.notClosedUnmerged("pull request closed without merging into the integration branch"),` <br> `rules.mergedWithEvidence("merged observation is missing merged_at evidence"),` <br> `];` <br> **OMITTED variant: the `rules.mergedWithEvidence(...)` line and its trailing `]` are the only lines missing — the list ends one rule early.** |
+| `} else if (input.observation.state === "closed_unmerged") {` <br> `  finding = pullRequestMismatch("closed_without_merge", "pull request closed without merging into the integration branch");` <br> `} else if (input.observation.state === "merged" && input.observation.merged_at === null) {` <br> `  finding = pullRequestMismatch("pull_request_mismatch", "merged observation is missing merged_at evidence");` <br> `}` | `rules.notClosedUnmerged("pull request closed without merging into the integration branch"),` <br> `rules.mergedWithEvidence("merged observation is missing merged_at evidence"),` <br> `];` <br> **OMITTED variant: only the `rules.mergedWithEvidence(...)` entry is missing; the closing `];` remains.** |
 
 *Excerpt, condensed to the two relevant conditions; the full chain has more
 branches above these.* **Takeaway: when every old condition maps to one named
@@ -164,7 +164,7 @@ session could inherit. The new, runtime-neutral adapter that replaced it
 carries the same code before it — but without the guard. And the old
 handler's file is still in the tree, a few lines further down, still
 enforcing an allowlist — just a different, legacy one, on a code path the new
-adapter no longer uses for this check.
+adapter no longer uses for this check. The [pinned adapter source](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/resume_repo/after/adapters/claude-code/index.ts#L317-L329) shows the unguarded path.
 
 | Old behavior | Refactored behavior — OMITTED |
 | --- | --- |
@@ -194,10 +194,12 @@ models that ran this fixture, 0 of 12 sessions restored it, and 10 of those
 ### What the numbers say, labelled for what they measure
 
 These are sessions in which the omitted check was restored in the final tree
-— not a "verified correctly" rate, and not the same thing as a model's
-diagnosis being right. A session can diagnose the gap precisely and still not
-implement the fix; a session can also decline to call the work complete
-without ever locating or repairing the specific line. "Restored" bundles
+without a regression: the omission's hidden test passes, `tsc` and visible
+tests still pass, and no other share's hidden test fails. This is the study's
+`remnant_fixed` measure — not a "verified correctly" rate or the same thing
+as a model's diagnosis being right. A session can diagnose the gap precisely
+and still not implement the fix; a session can also decline to call the work
+complete without ever locating or repairing the specific line. "Restored" bundles
 detection and repair; it does not measure either alone.
 
 | Refactor | Sessions restoring the omitted check |
@@ -279,7 +281,7 @@ to separate authorship from narrative position all ran only on the fixture
 where Gemini restored everything regardless, so none of them could show a
 difference either. And the "own work" logs were never actually written by the
 model under test — they were recorded once in a sandbox and replayed with a
-label attached. [Self-Attribution Bias](https://arxiv.org/abs/2603.04582)
+label attached. The Self-Attribution Bias paper
 reports its effect as much weaker, or absent, when the reviewed work wasn't
 actually written by the model doing the reviewing — so a null result from
 this design says little even setting the ceiling and floor effects aside. The
