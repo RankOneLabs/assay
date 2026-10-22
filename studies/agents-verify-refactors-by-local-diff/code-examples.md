@@ -3,8 +3,10 @@
 These four comparisons show the check before the refactor, the **clean
 refactor** that preserves its intended behavior, and the **omitted fixture**
 given to a reviewing agent. The excerpts are shortened to the relevant lines;
-each source or fixture definition is linked at the pinned commit below. The
-cases have different models, denominators, and run histories, so they are not
+each source or fixture definition is linked at the pinned commit below.
+Long source statements are wrapped editorially inside fences; pinned links
+preserve their original line layout. These cases have different models,
+denominators, and run histories, so they are not
 matched arms of one experiment. For examples 2 and 3, a checked-in clean file
 is not evidence that the generated omitted version kept its guard.
 
@@ -24,9 +26,21 @@ into one pass, turning their identical checks into one guard.
 
 ```ts
 const seen = new Set<string>();
-if (seen.has(parsed.value.unit_id)) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: artifact.artifact_id, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });
+if (seen.has(parsed.value.unit_id)) return err({
+  kind: "malformed_driver_artifact",
+  stage_key: contract.stage_key,
+  artifact_id: artifact.artifact_id,
+  path: spec.unit_id_path,
+  detail: `duplicate unit_id '${parsed.value.unit_id}'`,
+});
 seen.add(parsed.value.unit_id);
-if (seen.has(parsed.value.unit_id)) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: null, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });
+if (seen.has(parsed.value.unit_id)) return err({
+  kind: "malformed_driver_artifact",
+  stage_key: contract.stage_key,
+  artifact_id: null,
+  path: spec.unit_id_path,
+  detail: `duplicate unit_id '${parsed.value.unit_id}'`,
+});
 seen.add(parsed.value.unit_id);
 ```
 
@@ -40,7 +54,13 @@ omitted. The following `mint.ts` excerpts show selected emitted lines from
 const seen = new Set<string>();
 for (const { item, source_artifact_id } of items) {
   const parsed = parseDriverItem(item, spec);
-  if (seen.has(parsed.value.unit_id)) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: source_artifact_id, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });
+  if (seen.has(parsed.value.unit_id)) return err({
+    kind: "malformed_driver_artifact",
+    stage_key: contract.stage_key,
+    artifact_id: source_artifact_id,
+    path: spec.unit_id_path,
+    detail: `duplicate unit_id '${parsed.value.unit_id}'`
+  });
   seen.add(parsed.value.unit_id);
   driverUnits.push({ unit: parsed.value, source_artifact_id });
 }
@@ -83,7 +103,11 @@ const ids = new Set<string>();
 for (const item of items) {
   const parsed = parseUnit(item, spec);
   if (!parsed.ok) return parsed;
-  if (ids.has(parsed.value.unit_id)) return err({ operation: "materialize_units", unit_id: parsed.value.unit_id, detail: "duplicate unit_id" });
+  if (ids.has(parsed.value.unit_id)) return err({
+    operation: "materialize_units",
+    unit_id: parsed.value.unit_id,
+    detail: "duplicate unit_id"
+  });
   ids.add(parsed.value.unit_id);
   units.push(parsed.value);
 }
@@ -95,12 +119,24 @@ for (const item of items) {
 const seen = new Set<string>();
 if (materialization.over.from === "input") {
   for (const artifact of selectDriverArtifacts(inputs, materialization.over.input_name)) {
-    if (seen.has(parsed.value.unit_id)) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: artifact.artifact_id, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });
+    if (seen.has(parsed.value.unit_id)) return err({
+      kind: "malformed_driver_artifact",
+      stage_key: contract.stage_key,
+      artifact_id: artifact.artifact_id,
+      path: spec.unit_id_path,
+      detail: `duplicate unit_id '${parsed.value.unit_id}'`
+    });
     seen.add(parsed.value.unit_id);
   }
 } else {
   for (const item of over.value) {
-    if (seen.has(parsed.value.unit_id)) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: null, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });
+    if (seen.has(parsed.value.unit_id)) return err({
+      kind: "malformed_driver_artifact",
+      stage_key: contract.stage_key,
+      artifact_id: null,
+      path: spec.unit_id_path,
+      detail: `duplicate unit_id '${parsed.value.unit_id}'`
+    });
     seen.add(parsed.value.unit_id);
   }
 }
@@ -119,7 +155,13 @@ if (materialization.over.from === "input") {
   }
 } else {
   for (const item of over.value) {
-    if (seen.has(parsed.value.unit_id)) return err({ kind: "malformed_driver_artifact", stage_key: contract.stage_key, artifact_id: null, path: spec.unit_id_path, detail: `duplicate unit_id '${parsed.value.unit_id}'` });
+    if (seen.has(parsed.value.unit_id)) return err({
+      kind: "malformed_driver_artifact",
+      stage_key: contract.stage_key,
+      artifact_id: null,
+      path: spec.unit_id_path,
+      detail: `duplicate unit_id '${parsed.value.unit_id}'`
+    });
     seen.add(parsed.value.unit_id);
   }
 }
@@ -153,9 +195,15 @@ explanation string.
 
 ```ts
 } else if (input.observation.state === "closed_unmerged") {
-  finding = pullRequestMismatch("closed_without_merge", "pull request closed without merging into the integration branch");
+  finding = pullRequestMismatch(
+    "closed_without_merge",
+    "pull request closed without merging into the integration branch"
+  );
 } else if (input.observation.state === "merged" && input.observation.merged_at === null) {
-  finding = pullRequestMismatch("pull_request_mismatch", "merged observation is missing merged_at evidence");
+  finding = pullRequestMismatch(
+    "pull_request_mismatch",
+    "merged observation is missing merged_at evidence"
+  );
 }
 ```
 
@@ -220,10 +268,13 @@ if (typeof payload.model === "string" && isAllowedModel(payload.model)) {
 }
 ```
 
-**Clean refactor — `Omission.clean` fixture definition, line 299 (`python`):**
+**Clean refactor — from `Omission.clean` fixture definition, line 299 (`ts`):**
 
-```python
-clean='''          if (typeof payload.model === "string" && (ALLOWED_MODELS as readonly string[]).includes(payload.model)) model = payload.model;''',
+```ts
+if (
+  typeof payload.model === "string" &&
+  (ALLOWED_MODELS as readonly string[]).includes(payload.model)
+) model = payload.model;
 ```
 
 This clean line exists as a fixture string, not as a checked-in adapter line.
