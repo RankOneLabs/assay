@@ -21,6 +21,8 @@ that explanation but don't isolate it (see Finding 2).
 the internal fixture names, how to reproduce a session and where every number
 comes from. [When an Agent Says a Refactor Is Complete](./article.md) walks
 through how this question came up and what changed under evidence.
+[Code examples](./code-examples.md) puts the four before, clean refactor and
+omitted fixture states side by side.
 
 ## What we tested
 
@@ -104,6 +106,10 @@ The difference is in what the agent did:
   for old names. It opened the file holding the omission in 4 of 41 rewrite
   sessions, and its one restore was among them.
 
+The move's local check and the rewrite's disarmed branch appear in
+[Example 1](./code-examples.md#example-1) and
+[Example 2](./code-examples.md#example-2).
+
 Two more models ran the move and the 693-line rewrite:
 
 | Model | 436-line move | 693-line rewrite | Verdict on the rewrite misses |
@@ -132,6 +138,9 @@ The first two start from the same Oakridge code and drop the same check: the
 final reconciler's refusal of a "merged" report with no `merged_at`. #146 is
 real. The move dropped the allowlist check on the resumed parent's model, and
 PR #153 restored it.
+
+[Example 3](./code-examples.md#example-3) compares the matchable forge rules;
+[Example 4](./code-examples.md#example-4) shows the missed adapter guard.
 
 - **The rewrite was caught, and it still read as a checklist.** Each old
   `else if` became one named rule, with the same message, in the same order.
