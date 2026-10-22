@@ -19,7 +19,8 @@ that explanation but don't isolate it (see Finding 2).
 
 [Supporting data](./supporting-data.md) covers the method, the exclusion rule,
 the internal fixture names, how to reproduce a session and where every number
-comes from.
+comes from. [The narrative](./narrative.md) walks through how this question
+came up and what changed under evidence.
 
 ## What we tested
 
