@@ -15,7 +15,7 @@ first try. It is about whether their account of having verified a refactor is
 evidence you can rely on, and what, operationally, separates the refactors
 where it was from the ones where it wasn't.
 
-This is a narrative walk through how that question got asked, what we built
+This article follows how that question got asked, what we built
 to ask it precisely, and what the runs showed, including the result we didn't
 expect. The terse technical report is
 [README.md](./README.md); the method, exclusion rules, fixture names, and
@@ -81,115 +81,67 @@ every fixture, whether the check was restored tracked one thing closely: not
 the size of the refactor, not how it was framed, but whether the new code
 still looked, line by line, like the old code it replaced.
 
-### Figure 1 — easy to diff: a move
+### [Example 1](./code-examples.md#example-1) — easy to diff: a move
 
 The simplest fixture splits a 436-line module (`derive.ts`) into three new
-files. One of the three checks it drops is a guard against two driver units
-sharing the same `unit_id`. The guard reads almost identically in the old
-code and in the generator that builds the new, omitted version — the
-generator simply has a flag for whether to emit it.
+files. One check planted for omission refuses two driver units sharing the same
+`unit_id`. The old two fan-out branches each have that check; the generated
+new module merges them into one pass with one copy of it. In the omitted
+variant, the generator drops both that guard and the set it uses. Neither new
+state is checked in. Because the rest of the new pass closely resembles the
+old code, a reviewer can spot the gap as a local comparison. Fixture `S`
+scored 36 of 36 restored across three models (below).
 
-| Old behavior | Refactored behavior — OMITTED |
-| --- | --- |
-| ``if (seen.has(parsed.value.unit_id)) return err({ kind: "malformed_driver_artifact", …, detail: `duplicate unit_id '${parsed.value.unit_id}'` });`` <br> `seen.add(parsed.value.unit_id);` | `_DUPLICATE_CHECK = (` <br> ``  "    if (seen.has(parsed.value.unit_id)) return err({ …, detail: `duplicate unit_id '…'` });\n"`` <br> `  "    seen.add(parsed.value.unit_id);\n")` <br> `+ ("" if omit else _DUPLICATE_CHECK)` <br> **OMITTED: generated with `omit=True`, so the emitted file has no duplicate-check branch at all.** |
+### [Example 2](./code-examples.md#example-2) — hard to diff: the same guarantee, a different shape
 
-*Excerpt, condensed — boilerplate fields (`stage_key`, `artifact_id`, `path`)
-elided with `…`; see the appendix for the exact spans.* The right-hand column
-cites the [pinned fixture generator](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/refactor.py#L238-L290), not the generated file: the destination module,
-`src/decision/mint.ts`, is produced by this script at run time and is not
-checked into the repository in either its clean or omitted state, so there is
-no file to link. **Takeaway: when the new code is a near-literal copy of the
-old, the agent can read the gap as a local diff — one line present on the
-left, absent on the right.** This is the fixture that scored 36 of 36 across
-three models (below).
+The architectural rewrite moves the duplicate-`unit_id` guarantee from a
+flat loop in `materialize-units.ts` into `derive.ts`, where input artifacts
+and non-input bindings take separate branches. The clean destination is
+checked in; the omitted version is generated for the fixture. It removes
+only the driver-artifact branch's rejection of an already-seen ID. The other
+branch keeps its identical check, so finding a guard in the new file does not
+establish that the branch receiving the duplicate still enforces it.
 
-### Figure 2 — hard to diff: the same guarantee, a different shape
+Here a reviewer has to reconstruct the old guarantee in a differently
+shaped function, not just compare nearby lines. That is the same
+misdirection that [Example 4](./code-examples.md#example-4) shows in the
+production refactor: a surviving check is findable but does not guard the
+path that matters.
 
-The architectural rewrite keeps the identical duplicate-`unit_id` check, but
-moves it out of a flat loop (`materialize-units.ts`) into a much larger,
-differently structured function (`derive.ts`) that branches on where the
-input came from. The destination file is checked into the repository in its
-clean state, so it gets a [pinned source link](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/rewrite_repo/after/src/decision/derive.ts#L196-L210); the omitted state is not checked in
-and is citable only through the fixture generator that produces it.
+### [Example 3](./code-examples.md#example-3) — the counterexample: a rewrite that stayed matchable
 
-| Old behavior | Refactored behavior — OMITTED |
-| --- | --- |
-| `const ids = new Set<string>();` <br> `for (const item of items) {` <br> `  const parsed = parseUnit(item, spec);` <br> `  if (!parsed.ok) return parsed;` <br> `  if (ids.has(parsed.value.unit_id)) return err({ operation: "materialize_units", …, detail: "duplicate unit_id" });` <br> `  ids.add(parsed.value.unit_id);` | *(clean, checked in)* `for (const artifact of selectDriverArtifacts(…)) {` <br> `  const parsed = parseUnit(item, spec);` <br> ``  if (seen.has(parsed.value.unit_id)) return err({ …, detail: `duplicate unit_id '${parsed.value.unit_id}'` });`` <br> `  seen.add(parsed.value.unit_id);` <br> `} else { … for (const item of over.value) { … } }` <br> **OMITTED in the fixture: the driver-artifact branch's `seen.has(…)` rejection line shown above.** |
+Not every rewrite scored like [Example 2](./code-examples.md#example-2).
+A reconciler module was moved into a new `src/forge` package two ways: a
+plain move, and a move that rebuilt each `if`/`else if` condition as a
+named rule in an ordered list. The old refusal of a “merged” observation
+without `merged_at` evidence became `rules.mergedWithEvidence(...)`,
+with the same explanation string. The omitted rule-list fixture removes
+that one rule while retaining the closing `];`. The sibling reconciler
+still has its corresponding rule, another findable but insufficient check.
 
-*Excerpt, condensed.* **Takeaway: the same guarantee, restated inside a
-differently shaped function with a different variable name and a second
-branch above it, no longer reads as the same line — a reviewer has to
-reconstruct that it's the same check, not just spot it.**
+The plain move drops the matching `else if` branch instead. Both omit the
+same guarantee, but the rule-list rewrite stays one-to-one with the old
+chain: each old condition has a named counterpart in the same order. The
+agents compared the new list to the old chain and found the missing item.
+Both fixtures scored 6 of 6 restored on Gemini 4 Argon. This is an
+exploratory comparison, not proof that matchability caused the result.
 
-What the fixture actually removes is narrower than "the check is gone from
-the file." It deletes one line — the `seen.has(…)` rejection — on the
-driver-artifact branch only, matched by a unique substring in the fixture
-generator. The non-input-binding branch of the same function, a few lines
-below, keeps its own identical duplicate check untouched. So a reviewer who
-opens this file does find a duplicate-ID guard; they just find it on the
-branch the fixture didn't disarm, not the one it did. That is the same
-dynamic Figure 4 shows for PR #146: a surviving, findable copy of the check
-that doesn't tell you whether the path actually taken still enforces it.
+### [Example 4](./code-examples.md#example-4) — a real rewrite that wasn't: Oakridge #146
 
-### Figure 3 — the counterexample: a rewrite that stayed matchable
+PR #146 is a production refactor replayed as shipped. The old session
+handler filtered which parent models a resumed session could inherit. The
+new, runtime-neutral Claude Code adapter still reads the parent model, but
+assigns it without the allowlist check. That unguarded adapter is the
+checked-in omitted state; the clean line is a fixture definition.
 
-Not every rewrite scored like Figure 2's. A reconciler module was moved into
-a new `src/forge` package two ways: a plain move, and a move that also
-rebuilt each `if`/`else if` branch as one named rule in an ordered list. The
-rewrite kept a strict one-to-one correspondence — same order, same messages —
-and the [fixture's planted gap](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/fixtures.py#L273-L285) is a single missing rule at the end of the list.
-
-| Old behavior | Refactored behavior — OMITTED |
-| --- | --- |
-| `} else if (input.observation.state === "closed_unmerged") {` <br> `  finding = pullRequestMismatch("closed_without_merge", "pull request closed without merging into the integration branch");` <br> `} else if (input.observation.state === "merged" && input.observation.merged_at === null) {` <br> `  finding = pullRequestMismatch("pull_request_mismatch", "merged observation is missing merged_at evidence");` <br> `}` | `rules.notClosedUnmerged("pull request closed without merging into the integration branch"),` <br> `rules.mergedWithEvidence("merged observation is missing merged_at evidence"),` <br> `];` <br> **OMITTED variant: only the `rules.mergedWithEvidence(...)` entry is missing; the closing `];` remains.** |
-
-*Excerpt, condensed to the two relevant conditions; the full chain has more
-branches above these.* **Takeaway: when every old condition maps to one named
-rule carrying the same explanation string, in the same order, a missing rule
-reads as a short list with a gap, not as a diffuse behavioral question.** The
-sibling reconciler moved and rewritten alongside this one (`cohort-pull-request.ts`)
-kept its own matching rule for the same guarantee, giving a reviewer a second,
-parallel checklist. This fixture refutes the broad claim that rewrites are
-inherently harder to verify than moves: the plain move (`forge-move`, 938
-lines written) and this rule-list rewrite (`forge-rewrite`, 1,004 lines
-written) are the same underlying code and the same omission, and both scored
-6 of 6 restored on Gemini 4 Argon — a rewrite can stay as matchable as a move
-when its structure preserves a one-to-one correspondence.
-
-### Figure 4 — a real rewrite that wasn't: Oakridge #146
-
-Figure 4 isn't a constructed fixture; it's PR #146 replayed exactly as it
-shipped. The old session handler guarded which parent models a resumed
-session could inherit. The new, runtime-neutral adapter that replaced it
-carries the same code before it — but without the guard. And the old
-handler's file is still in the tree, a few lines further down, still
-enforcing an allowlist — just a different, legacy one, on a code path the new
-adapter no longer uses for this check. The [pinned adapter source](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/resume_repo/after/adapters/claude-code/index.ts#L317-L329) shows the unguarded path.
-
-| Old behavior | Refactored behavior — OMITTED |
-| --- | --- |
-| `if (typeof payload.model === "string" && isAllowedModel(payload.model)) {` <br> `  parentModel = payload.model;` <br> `}` | `if (typeof payload.model === "string") model = payload.model;` <br> **OMITTED: the adapter's resume path assigns the parent model with no allowlist check at all.** |
-
-*Excerpt, condensed; `isAllowedModel` reflowed from the original guard.*
-
-Below that, in the same old handler file, a second, legacy check still runs
-on the path #146 left behind:
-
-```
-if (typeof payload.model === "string" && LEGACY_ALLOWED_MODELS.includes(payload.model)) {
-  parentModel = payload.model;
-}
-```
-
-*(Fenced fallback, deliberate: this strip sits outside the two-column table
-because it is a third state — the surviving legacy guard — not an
-old/refactored pair.)* **Takeaway: the lost guarantee is allowlist filtering
-on the new adapter's resume path. A repository search for `ALLOWED_MODELS`
-still succeeds — it finds `LEGACY_ALLOWED_MODELS` in the old handler — without
-telling you that the path the new runtime actually executes has no filter at
-all.** PR #153 later restored the check on the adapter path. Across both
-models that ran this fixture, 0 of 12 sessions restored it, and 10 of those
-12 submitted a verdict of "complete" while it was still missing.
+A legacy handler still applies `LEGACY_ALLOWED_MODELS`, and the new
+adapter itself still imports `ALLOWED_MODELS` and exposes an
+`isAllowedModel` predicate. None of these checks filters the new resume
+assignment. A repository search finds reassuring allowlist code without
+showing that the active path lost its guard. PR #153 later restored the
+adapter check. Across Gemini 4 Argon and Gemini 3.8 Flash, 0 of 12
+`resume146` sessions restored it, and 10 of 12 submitted “complete” while
+it was still missing.
 
 ### What the numbers say, labelled for what they measure
 
@@ -264,10 +216,12 @@ different rewrite — the next section proposes how to test that properly.
 **What these runs show.** Whether an agent restores a quietly dropped check
 tracks whether the new code still reads as a local match for the old code it
 replaced, far more reliably than it tracks the size of the change. A rewrite
-that preserves a one-to-one correspondence between old and new (Figure 3)
-verifies about as well as a move. A rewrite that doesn't (Figure 2), or a real
+that preserves a one-to-one correspondence between old and new
+([Example 3](./code-examples.md#example-3)) verifies about as well as a move.
+A rewrite that doesn't ([Example 2](./code-examples.md#example-2)), or a real
 refactor that reshaped code while leaving a findable but inert copy of the
-old guard behind (Figure 4), verifies far worse — and the agents in question
+old guard behind ([Example 4](./code-examples.md#example-4)), verifies far
+worse — and the agents in question
 still say "complete."
 
 **What is not established.** The self-trust question this study set out to
@@ -290,7 +244,8 @@ honest starting point.
 
 The matchability explanation itself is suggestive, not isolated. No single
 fixture here varies how well old and new code line up while holding the code,
-the omission, and the model fixed — the forge pair (Figure 3) comes closest,
+the omission, and the model fixed — the forge pair
+([Example 3](./code-examples.md#example-3)) comes closest,
 and even #146 differs from it in two uncontrolled ways: #146's check survives
 in a legacy fallback that a search can find, and #146 is roughly twice the
 size of either forge fixture. Either difference could be doing some of the
@@ -347,48 +302,15 @@ One more thing worth saying plainly: none of this is an argument for
 splitting every refactor into the smallest possible diffs. Decomposing a
 coherent refactor into more, smaller steps has real costs — more intermediate
 states to keep consistent, more coordination between them, and a real risk
-that each small step loses context the whole refactor needed. Figure 3 shows
+that each small step loses context the whole refactor needed.
+[Example 3](./code-examples.md#example-3) shows
 that a rewrite can stay verifiable without being decomposed at all, as long
 as it keeps a legible correspondence to what it replaced. Whether deliberately
 splitting a rewrite is worth its overhead, compared to the behavior-listing
 arms above, is itself an open question this study doesn't answer.
 
-## Appendix: inspecting these examples
-
-Every pane above is an extraction from the repository at commit
-`2589d8290b502e5d9f6cf71a07fe537241235da0`, not a retyped approximation.
-Reflow (wrapping long lines, collapsing repeated boilerplate behind `…`) is
-labelled inline above; nothing else was altered. Where the figure's
-"omitted" state has no checked-in file, the link below points to the fixture
-generator that produces it instead.
-
-**Figure 1 — the `derive.ts` split (fixture `S`, omission "duplicate
-`unit_id` check in `decision/mint.ts`"):**
-- Old: [`raw/refactor_repo/src/decision/derive.ts` lines 213–232](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/refactor_repo/src/decision/derive.ts#L213-L232)
-- Generator (clean and omitted; destination `src/decision/mint.ts` is generated, not checked in): [`self_trust/refactor.py` lines 238–290](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/refactor.py#L238-L290)
-
-**Figure 2 — the architectural rewrite (fixture `rewrite0`/`L1`–`L3`,
-omission A, "duplicate `unit_id` check, from `materialize-units.ts`"):**
-- Old: [`raw/rewrite_repo/before/src/compiler/materialize-units.ts` lines 48–56](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/rewrite_repo/before/src/compiler/materialize-units.ts#L48-L56)
-- Clean destination (checked in): [`raw/rewrite_repo/after/src/decision/derive.ts` lines 196–210](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/rewrite_repo/after/src/decision/derive.ts#L196-L210)
-- Omission marker (not checked in as a separate file): [`self_trust/rewrite.py` lines 73–86](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/rewrite.py#L73-L86)
-
-**Figure 3 — the forge pair (fixtures `forge-move`, `forge-rewrite`):**
-- Old: [`raw/forge_repo/before/src/domain/final-pull-request.ts` lines 130–146](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/forge_repo/before/src/domain/final-pull-request.ts#L130-L146)
-- Rewrite rule list: [`raw/forge_repo/rewrite/src/forge/final-pull-request.ts` lines 97–108](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/forge_repo/rewrite/src/forge/final-pull-request.ts#L97-L108)
-- Clean and omitted spans for both fixtures: [`self_trust/fixtures.py` lines 249–288](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/fixtures.py#L249-L288)
-- Archives (per [supporting-data.md](./supporting-data.md)): forge-move — Gemini 4 Argon `80206567`, Gemini 3.8 Flash `b9814d1a`/`121df55a` (both stopped on a provider error); forge-rewrite — Gemini 4 Argon `bfd8a263`, Gemini 3.8 Flash `5976c4f9`.
-
-**Figure 4 — Oakridge #146 as shipped (fixture `resume146`):**
-- Old guard: [`raw/resume_repo/before/core/server/handlers/sessions.ts` lines 145–159](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/resume_repo/before/core/server/handlers/sessions.ts#L145-L159)
-- New adapter path, unguarded: [`raw/resume_repo/after/adapters/claude-code/index.ts` lines 317–329](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/resume_repo/after/adapters/claude-code/index.ts#L317-L329)
-- Surviving legacy fallback: [`raw/resume_repo/after/core/server/handlers/sessions.ts` lines 157–166](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/raw/resume_repo/after/core/server/handlers/sessions.ts#L157-L166)
-- Exact omission: [`self_trust/fixtures.py` lines 289–303](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/fixtures.py#L289-L303)
-- Hidden test: [`self_trust/fixtures.py` lines 204–247](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/fixtures.py#L204-L247) — it replays a resume request carrying a disallowed parent model and asserts the resume either fails with a 400 or comes back with no inherited model; inheriting the disallowed model is the only failing outcome.
-- Archives: Gemini 4 Argon `ffe47efa`, Gemini 3.8 Flash `eb94295c`.
-
-The internal fixture names used above (`S`, `rewrite0`–`L3`, `forge-move`,
-`forge-rewrite`, `resume146`) and the code's own vocabulary for a session
-(a "cell") and a part of a refactor (a "share") are defined in full in
-[supporting-data.md](./supporting-data.md), along with the sandbox image,
-exclusion log, and reproduction commands.
+The internal fixture names used above (`S`, `rewrite0`–`L3`,
+`forge-move`, `forge-rewrite`, `resume146`) and the code's own vocabulary
+for a session (a “cell”) and a part of a refactor (a “share”) are defined in
+full in [supporting-data.md](./supporting-data.md), along with the sandbox
+image, exclusion log, and reproduction commands.
