@@ -1,9 +1,9 @@
 # Agents verify refactors by local diff
 
-We gave coding agents a finished refactor with one check quietly dropped, and
-asked them to verify it. They put the check back when the new code lined up
-line by line with the code it replaced. When it didn't, they rarely restored
-the check, even in median-sized PRs, and often signed the work off as complete.
+We gave coding agents a finished refactor with one check removed, and asked
+them to verify it. They put the check back when the new code lined up line by
+line with the code it replaced. When it didn't, they rarely restored the
+check, even in median-sized PRs, and often signed the work off as complete.
 
 | What the agents verified | Sessions where the check was restored |
 | --- | --- |
@@ -192,7 +192,7 @@ check.
 
 Sol's successful reviews worked differently. It wrote that "the final tree
 typechecks and all 85 tests pass, but that does not establish behavior
-preservation", then compared each retired module's behaviour with the new
+preservation", then compared each retired module's behavior with the new
 code. The other models ran `tsc` and the tests, listed the files and searched
 for old names.
 
@@ -207,7 +207,7 @@ equivalent when asked to. Sol shows that it can be done.
 ## What it means for agent review
 
 In these sessions, an agent's "verified" on a rewrite meant the tests passed
-and the structure looked right. It did not mean the old behaviour was kept.
+and the structure looked right. It did not mean the old behavior was kept.
 That held well inside normal PR sizes: at 693 lines, about the median Oakridge
 PR, three models restored 2 of 17.
 
@@ -217,8 +217,8 @@ The levers below follow from what the agents did. None has been tested yet.
   old check has a visible counterpart. #146 moved code and reshaped it in the
   same step, and that lost the counterpart. Do the reshaping as its own small
   step.
-- **Hand the reviewer the old behaviour.** On the full rewrite, the model that
-  caught omissions compared old and new code behaviour by behaviour. A list of
+- **Hand the reviewer the old behavior.** On the full rewrite, the model that
+  caught omissions compared old and new code behavior by behavior. A list of
   the old module's guarantees, or tests that pin each one before the rewrite,
   gives every reviewer that comparison.
 - **Prefer a reviewer that says "unsure".** When Sol missed, it answered
@@ -227,7 +227,7 @@ The levers below follow from what the agents did. None has been tested yet.
 
 The next experiment is to test these levers on the same refactors and measure
 both restores and sign-offs. Examples: a reviewer prompt that asks for a
-behaviour-by-behaviour comparison, or a rewrite split into a move followed by
+behavior-by-behavior comparison, or a rewrite split into a move followed by
 a change.
 
 ## What we could not answer
