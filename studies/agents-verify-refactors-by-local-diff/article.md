@@ -65,10 +65,10 @@ or "a teammate's session") is assigned by us; the model under test did not
 write the log. That matters for how much weight the self-attribution result
 below can carry.
 
-Each fixture has an internal name: the 436-line move is fixture `S`; a family
-of increasingly large rewrites of the same code are `rewrite0` through `L3`;
-a matched move-versus-rewrite pair through a `src/forge` package is
-`forge-move` and `forge-rewrite`; and
+Each fixture has an internal name: the 436-line move is fixture `S`; a
+family of increasingly large rewrites of the same code are `rewrite0`
+through `L3`; a matched move-versus-rewrite pair through a
+`src/forge` package is `forge-move` and `forge-rewrite`; and
 Oakridge #146, replayed exactly as shipped, is `resume146`.
 
 ## The unexpected split
@@ -283,7 +283,7 @@ rate in arm B or C can be checked against whether the agent looked at the
 right file. If arm B or C raises the restore rate without a comparable rise
 in false "complete" verdicts, that supports the matchability explanation and
 suggests a workable lever. If giving the reviewer the old behavior does not
-move the numbers, that weakens it and point back toward something else,
+move the numbers, that weakens it and points back toward something else,
 including the self-attribution question this study couldn't settle. This
 experiment has not been run.
 
