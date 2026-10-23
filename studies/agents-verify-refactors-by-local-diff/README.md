@@ -32,10 +32,10 @@ omitted fixture states side by side.
 The study began with a different question. Do agents re-check a teammate's
 work but trust their own earlier "done"? [Self-Attribution
 Bias](https://arxiv.org/abs/2603.04582) reports that bias in AI monitors. Our
-own case was Oakridge, our production TypeScript codebase. A completion report
-on one of our own refactors said the migration was finished while code on the
-old contract remained. A later cleanup removed what had been left behind.
-That self-trust question went unanswered (see
+own case was Oakridge, our production TypeScript codebase. PR #619 moved the
+operator app to the v2 contract and said everything underneath was v2. It
+wasn't: PR #629 later removed v1 code that #619 had left behind. That
+self-trust question went unanswered (see
 [below](#what-we-could-not-answer)), and the result on this page came out of the
 runs instead. Treat it as exploratory.
 
