@@ -1,12 +1,12 @@
 # Agent Refactor Reporting
 
-Agents restored a dropped check when new code lined up with what it replaced,
-but largely missed it otherwise and often signed the refactor off as complete.
-We gave each agent a finished refactor of real Oakridge code with one behavioral
-check removed, alongside the log of the session that supposedly wrote and
-signed off the work. A hidden test the agent never saw failed until the check
-was restored, and its result scored each session. Across the runs, visible
-counterparts to old checks made the difference.
+A completion report on a large Oakridge refactor said the migration was
+finished, but code on the old contract remained. To investigate such mistakes,
+we gave agents a finished refactor of real Oakridge code with one behavioral
+check removed and the log of the session that supposedly wrote and signed it
+off. A hidden test they never saw failed until the check was restored. Across
+the runs, agents restored it when new code lined up with what it replaced, but
+largely missed it otherwise and often signed off as complete.
 
 | What the agents verified | Sessions where the check was restored |
 | --- | --- |
