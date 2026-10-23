@@ -1,9 +1,12 @@
-# Agents verify refactors by local diff
+# Agent Refactor Reporting
 
-We gave coding agents a finished refactor with one check removed, and asked
-them to verify it. They put the check back when the new code lined up line by
-line with the code it replaced. When it didn't, they rarely restored the
-check, even in median-sized PRs, and often signed the work off as complete.
+Agents restored a dropped check when new code lined up with what it replaced,
+but largely missed it otherwise and often signed the refactor off as complete.
+We gave each agent a finished refactor of real Oakridge code with one behavioral
+check removed, alongside the log of the session that supposedly wrote and
+signed off the work. A hidden test the agent never saw failed until the check
+was restored, and its result scored each session. Across the runs, visible
+counterparts to old checks made the difference.
 
 | What the agents verified | Sessions where the check was restored |
 | --- | --- |
@@ -29,10 +32,10 @@ omitted fixture states side by side.
 The study began with a different question. Do agents re-check a teammate's
 work but trust their own earlier "done"? [Self-Attribution
 Bias](https://arxiv.org/abs/2603.04582) reports that bias in AI monitors. Our
-own case was Oakridge, our production TypeScript codebase. PR #619 moved the
-operator app to the v2 contract and said everything underneath was v2. It
-wasn't: PR #629 later removed about 4,200 lines of v1 code that #619 had left
-behind. That self-trust question went unanswered (see
+own case was Oakridge, our production TypeScript codebase. A completion report
+on one of our own refactors said the migration was finished while code on the
+old contract remained. A later cleanup removed what had been left behind.
+That self-trust question went unanswered (see
 [below](#what-we-could-not-answer)), and the result on this page came out of the
 runs instead. Treat it as exploratory.
 
