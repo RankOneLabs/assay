@@ -1,4 +1,4 @@
-# Supporting data: agents verify refactors by local diff
+# Supporting data: Agent Refactor Reporting
 
 These details support [the study page](README.md). The full running record,
 with every result table and the order the runs happened in, is
