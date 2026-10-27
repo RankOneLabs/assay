@@ -285,7 +285,7 @@ Endpoint identity checks later failed with terminal cause `provider_identity`.
 The response body was not kept, so the cause is unknown; there is no evidence
 for a request-size threshold.
 
-Three variants separated who wrote a part from where it sat. In one, all logs
+Three variants changed how labels and logs were presented. In one, all logs
 arrived in one message and only the "You" label moved. In another, only the
 position of the omission's log moved. In the third, the agent's own log became
 its own earlier turns in the conversation instead of a quoted transcript.

@@ -171,8 +171,8 @@ shows both measures and the completed-normally denominator.
 
 "No verdict" and "limit" outcomes (a turn that ended in prose with no
 verdict, or a session cut off by a request, tool-call, or time limit) are
-excluded from every false-"complete" count in this article, because those
-sessions never claimed the work was complete.
+reported separately. A cut-off session can have submitted "complete" in an
+earlier turn; that is why the last-verdict and final-turn counts differ.
 
 Size alone doesn't explain the split either. The 420-line move, replayed
 with each part first reading the files it touches (about 190 KB of history
