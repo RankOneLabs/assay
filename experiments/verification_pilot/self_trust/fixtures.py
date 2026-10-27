@@ -118,6 +118,7 @@ class Omission:
     clean: str
     omitted: str
     stored: Literal["clean", "omitted"]  # which of the two the raw finished tree holds
+    expected_behavior_source: str  # start-tree path:line, or new_in_refactor
 
 
 @dataclass(frozen=True)
@@ -286,7 +287,7 @@ FORGE_MOVE = OneShareChange(
         omitted='''  } else if (input.observation.state === "closed_unmerged") {
     finding = pullRequestMismatch("closed_without_merge", "pull request closed without merging into the integration branch");
   }
-''', stored="clean"),
+''', stored="clean", expected_behavior_source="src/domain/final-pull-request.ts:138"),
     hidden_block=_FORGE_HIDDEN, visible_tests="tests/*.test.ts",
 )
 
@@ -305,7 +306,7 @@ FORGE_REWRITE = OneShareChange(
 ''',
         omitted='''  rules.notClosedUnmerged("pull request closed without merging into the integration branch"),
 ];
-''', stored="clean"),
+''', stored="clean", expected_behavior_source="src/domain/final-pull-request.ts:138"),
     hidden_block=_FORGE_HIDDEN, visible_tests="tests/*.test.ts",
 )
 
@@ -321,7 +322,7 @@ RESUME_146 = OneShareChange(
         "adapters/claude-code/index.ts",
         clean='''          if (typeof payload.model === "string" && (ALLOWED_MODELS as readonly string[]).includes(payload.model)) model = payload.model;''',
         omitted='''          if (typeof payload.model === "string") model = payload.model;''',
-        stored="omitted"),
+        stored="omitted", expected_behavior_source="core/server/handlers/sessions.ts:150"),
     hidden_block=_RESUME_HIDDEN, visible_tests="core adapters",
 )
 

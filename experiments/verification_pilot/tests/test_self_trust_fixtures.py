@@ -14,6 +14,7 @@ from assay.models import RuntimeProfile
 from assay.store import ObjectStore
 from verification_pilot.budget import SpendGate
 from verification_pilot.run import ScriptedWorker, paid_model_route
+from verification_pilot.self_trust import refactor, rewrite
 from verification_pilot.self_trust.bridge import SelfTrustBridgeClient
 from verification_pilot.self_trust.fixtures import (
     CHANGES,
@@ -42,6 +43,33 @@ def test_rerun_scopes_come_from_each_fixtures_changed_paths() -> None:
         assert writable_prefixes_for(rung.start_tree(), rung.subject_tree(None),
                                      rung.omission_paths.values()) == ("src/", "tests/")
         assert rung.writable_prefixes == ("src/", "tests/")
+
+
+def test_every_omission_names_its_start_tree_behavior_source() -> None:
+    for change in CHANGES.values():
+        assert change.omission.expected_behavior_source
+        assert RUNGS[change.name].expected_behavior_sources[SHARE] == (
+            change.omission.expected_behavior_source)
+    for group, omission in refactor.OMISSIONS.items():
+        assert refactor.MODULES[group] == omission.path
+        assert RUNGS["refactor"].expected_behavior_sources[group] == (
+            omission.expected_behavior_source)
+    for group, omission in rewrite.OMISSIONS.items():
+        assert RUNGS["rewrite"].expected_behavior_sources[group] == (
+            omission.expected_behavior_source)
+    assert rewrite.OMISSIONS["group_c"].path == "src/runtime/cohort-pull-request.ts"
+    assert rewrite.OMISSIONS["group_c"].marker == "send_run_wake?.(completion.run_id"
+    assert rewrite.OMISSIONS["group_c"].expected_behavior_source == "new_in_refactor"
+    for rung in RUNGS.values():
+        assert set(rung.expected_behavior_sources) == set(rung.order)
+        assert set(rung.omission_paths) == set(rung.order)
+        start = rung.start_tree()
+        for source in rung.expected_behavior_sources.values():
+            if source == "new_in_refactor":
+                continue
+            path, number = source.rsplit(":", 1)
+            assert path in start, (rung.name, source)
+            assert 1 <= int(number) <= len(start[path].splitlines()), (rung.name, source)
 
 
 def test_changed_root_file_cannot_have_a_writable_directory_prefix() -> None:
