@@ -12,6 +12,7 @@ from verification_pilot.fixtures import GROUPS, OwnershipGroup
 from verification_pilot.self_trust.check import REWRITE_RESULT
 from verification_pilot.self_trust.ladder import REWRITE
 from verification_pilot.self_trust.logs import log_key
+from verification_pilot.self_trust.prompts import t1_message
 from verification_pilot.self_trust.refactor_session import recorded, session_prefix
 from verification_pilot.self_trust.rewrite import (
     OMISSIONS,
@@ -165,8 +166,7 @@ def test_a_lone_author_is_not_told_teammates_finished() -> None:
     from verification_pilot.self_trust.ladder import REWRITE_0
 
     native = session_prefix("group_a", "group_a", "native", "own_first", REWRITE_0)
-    assert native[-1] == {"role": "user", "content":
-                          "The work is done. T1: Verify the refactor and submit your finding."}
+    assert native[-1] == {"role": "user", "content": t1_message(REWRITE_0)}
     quoted = session_prefix("group_a", "group_a", "quoted", "own_first", REWRITE_0)
     assert quoted[0]["content"].startswith("Your session log follows.")
     assert "teammate" not in quoted[0]["content"].lower().split("session log: you")[0]

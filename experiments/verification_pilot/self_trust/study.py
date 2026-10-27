@@ -45,14 +45,22 @@ from verification_pilot.self_trust.ladder import (
     RUNGS,
 )
 from verification_pilot.self_trust.refactor_session import LogOrder
+from verification_pilot.self_trust.refactor_session import (
+    matched_task_text as refactor_matched_task_text,
+)
 from verification_pilot.self_trust.refactor_session import task_text as refactor_task_text
 from verification_pilot.self_trust.session import Placement, task_text
+from verification_pilot.self_trust.session import matched_task_text as rename_matched_task_text
 
-ARMS: tuple[str, ...] = ("st-native", "st-quoted", "st-quoted-first", "st-quoted-last")
+MATCHED_ARMS: tuple[str, str] = ("st-matched-own", "st-matched-teammate")
+ARMS: tuple[str, ...] = ("st-native", "st-quoted", "st-quoted-first", "st-quoted-last",
+                         *MATCHED_ARMS)
 ATTRIBUTION_ORDER_ARMS: tuple[str, ...] = ("st-quoted-first", "st-quoted-last")
 _ORDERS: dict[str, LogOrder] = {"st-native": "own_first", "st-quoted": "own_first",
                                 "st-quoted-first": "holder_first",
-                                "st-quoted-last": "holder_last"}
+                                "st-quoted-last": "holder_last",
+                                "st-matched-own": "own_first",
+                                "st-matched-teammate": "own_first"}
 SCHEDULE = "subject-rotated-v1"
 CEILING = ExecutionCeiling(max_cells=144, max_wall_time_seconds=518_400, max_fleet_occupancy=1)
 PAYLOAD_SCHEMA = "https://assay.local/schemas/self-trust-measure-v1.json"
@@ -69,6 +77,14 @@ def order_for(arm_id: str) -> LogOrder:
     if arm_id not in ARMS:
         raise ValueError(f"unknown self-trust arm: {arm_id}")
     return _ORDERS[arm_id]
+
+
+def attribution_for(arm_id: str) -> str | None:
+    if arm_id == MATCHED_ARMS[0]:
+        return "own"
+    if arm_id == MATCHED_ARMS[1]:
+        return "teammate"
+    return None
 
 
 Fixture = Literal["rename", "refactor", "refactor-long", "rewrite", "rewrite0", "rewrite0-read",
@@ -168,10 +184,21 @@ def refactor_calibration_ids(subjects: tuple[SelfTrustSubject, ...],
 
 
 def realization_payload(subject: SelfTrustSubject, arm_id: str) -> dict[str, Any]:
-    return {"task": subject.task, "repository": subject.repository,
+    task = subject.task
+    if arm_id in MATCHED_ARMS:
+        holder = subject.remnant_owner or subject.own
+        if subject.fixture in RUNGS:
+            task = refactor_matched_task_text(holder, arm_id == MATCHED_ARMS[0],
+                                              RUNGS[subject.fixture])
+        elif subject.concept is not None:
+            task = rename_matched_task_text(read_raw_repository(), subject.concept, holder,
+                                            arm_id == MATCHED_ARMS[0])
+    attribution = attribution_for(arm_id)
+    return {"task": task, "repository": subject.repository,
             "concept": subject.concept_name, "own": subject.own,
             "remnant_owner": subject.remnant_owner, "placement": placement_for(arm_id),
-            "order": order_for(arm_id)}
+            "order": order_for(arm_id),
+            **({"attribution": attribution} if attribution is not None else {})}
 
 
 def compile_self_trust_plan(
@@ -203,7 +230,9 @@ def compile_self_trust_plan(
             realizations.append(Realization(subject_id=item.id, arm_id=arm_id,
                                             digest=ref, artifact_ref=ref))
     arms = tuple(Arm(id=arm_id, worker=worker_configurations[arm_id],
-                     intervention={"placement": placement_for(arm_id), "order": order_for(arm_id)},
+                     intervention={"placement": placement_for(arm_id), "order": order_for(arm_id),
+                                   **({"attribution": attribution_for(arm_id)}
+                                      if attribution_for(arm_id) is not None else {})},
                      conditions={"assay_execution_schedule": SCHEDULE}) for arm_id in ARMS)
     basis = publish({"definition": "Final tree replayed from the sealed trajectory"})
     schema_id = PAYLOAD_SCHEMA.removesuffix(".json") + f"-{EVALUATOR_ID}.json"
