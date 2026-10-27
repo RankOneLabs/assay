@@ -1,0 +1,3727 @@
+{
+  "configurations": {
+    "sha256:109afbc995e7c1f5b330deaa0b12390213360f34f98f955bb3874113fb10cf93": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "google/gemini-4-argon",
+      "provider": "google-vertex/global",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:1a75b86192f2293d6ec3e14b5a7e3d51e3b9e82b3cb16e4ecb2bcc35255aa2d8": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "anthropic/claude-haiku-5.5",
+      "provider": "amazon-bedrock",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:2248a79d9190a61042d68870d7f0e4129960e547f093c04a6d085d36c25943b4": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "openai/gpt-6.1-sol",
+      "provider": "azure/us",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:2f0afc089de015d34508b5a76b8954b3ae79f4ac702e51ec276db9bc0d40437a": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "anthropic/claude-sonnet-5.5",
+      "provider": "amazon-bedrock",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:4c30db6c883d2162c692b0baf22bea6471f6ec00596167aff9bd1adc6550fa0e": {
+      "attempts": "1",
+      "backend": "smithers",
+      "endpoint": "http://willie:8900",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "qwen3.6-27b",
+      "provider": "smithers-local",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:4c4dc93026c2d8656e794905c06ad51b096e6d89baa47027f4fc02983cc85924": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "google/gemini-4-argon",
+      "provider": "google-vertex/global",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:50ebf6a3958efc9e9bbdc22d07cd36bf71822f62296769674d3ca01da739c244": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "google/gemini-3.8-flash",
+      "provider": "google-vertex/global",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:62d748734fab6f56d47e446ddd0788359d6da7338a79396011a9d5a742f97e85": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "moonshotai/kimi-k2.7-code",
+      "provider": "moonshotai/int4",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:678dfc52c4b5335fa3a03db98cce561eaa3e953e0f7de78726a6cf103541372e": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "google/gemini-3.8-flash",
+      "provider": "google-vertex/global",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:76a989c80a5bcfe16d2f8a70fff0b69cd02ac6c5c25d62547ec132173b0ae7be": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "openai/gpt-6-luna",
+      "provider": "azure",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:788f0627b1bfa63e199dc6d6c6d2d67153586b904596cdc4f4b0c933a3903e5b": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "openai/gpt-6.1-sol",
+      "provider": "azure/eu",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:93e7b8807932d002c473d62ca0c2917b59b9fb26665d9a517851e7f37cac7cb2": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "mistralai/ministral-14b-2512",
+      "provider": "mistral/zdr",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:aef4d0c58aa6b3c36c1218f625282e3ccd3bb5c8decab70c7ff479e24a742c06": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "anthropic/claude-sonnet-5.5",
+      "provider": "amazon-bedrock",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:b072a74234729f4c16b1a8aa775999fe29126d1c8eeceadd44d435ac5acf347d": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "openai/gpt-6.1-sol",
+      "provider": "azure/us",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:bccb2ffe39c73ff7749506c7dab8cabde811668d9dfddc04c9d7378970449914": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "qwen/qwen3.8-2.4t-a95b",
+      "provider": "siliconflow/fp8",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:cc8de520ef04ddfbe8b3ba474a0256039423d4c3e8aa9aa1bacf906c75b79f45": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "openai/gpt-oss-20b",
+      "provider": "deepinfra/bf16",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:ce85bb61c094d7c56dfc3426f0914f30e2610edb3c7eeec127375dfa6edaff96": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "moonshotai/kimi-k2.7-code",
+      "provider": "moonshotai/int4",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:d722fc03df8270c8d3db973a01ea23c20a4afb922a5da01ac45eb297c4678ff6": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "google/gemini-4-argon",
+      "provider": "google-vertex/global",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:db95b8fa28c539b0c509896a8d47af7973eb996aa538628dd4346c36963c6275": {
+      "attempts": "1",
+      "backend": "smithers",
+      "endpoint": "http://willie:8900",
+      "max_output_tokens": "32768",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "qwen3.6-27b",
+      "provider": "smithers-local",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:e22eb1c2d0c522c4aad08c220ebeb67467d539416d2c8c80b933b89b381177ee": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "300",
+      "max_tool_calls_per_turn": "100",
+      "max_turns": "150",
+      "model": "google/gemini-3.8-flash",
+      "provider": "google-vertex/global",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "1800.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:e2de542d26d2041da81afabc54bf37d09733e45c90741407cb6e6ef73b221531": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "qwen/qwen3.8-27b",
+      "provider": "deepinfra/bf16",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:e9146eb5e2173694b79c7f725c5c518d02fe1bfc60037d096b4aaeb8ea271d2b": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "qwen/qwen3.8-2.4t-a95b",
+      "provider": "siliconflow/fp8",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    },
+    "sha256:fb4935663aa2537459597956c2857af931ed1f28a6d7cef150b647fa88565297": {
+      "attempts": "1",
+      "backend": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_output_tokens": "8192",
+      "max_tool_calls_per_cell": "40",
+      "max_tool_calls_per_turn": "15",
+      "max_turns": "20",
+      "model": "deepseek/deepseek-v4-pro",
+      "provider": "siliconflow/fp8",
+      "provider_retries": "0",
+      "subject_rendering": "self-trust-session-v1",
+      "system_prompt_sha256": "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b",
+      "temperature": "unset",
+      "timeout_s": "900.0",
+      "tools_sha256": "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd",
+      "turn_prompts_sha256": "sha256:c4e7b2d5648041af7b0c7bef80650920f57d82b2859c0a44adaad4c032727dc2"
+    }
+  },
+  "model_mapping": {
+    "anthropic/claude-haiku-5.5": "Claude Haiku 5.5",
+    "anthropic/claude-sonnet-5.5": "Claude Sonnet 5.5",
+    "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
+    "google/gemini-3.8-flash": "Gemini 3.8 Flash",
+    "google/gemini-4-argon": "Gemini 4 Argon",
+    "mistralai/ministral-14b-2512": "ministral-14b-2512",
+    "moonshotai/kimi-k2.7-code": "kimi-k2.7-code",
+    "openai/gpt-6-luna": "gpt-6-luna",
+    "openai/gpt-6.1-sol": "GPT-6.1 Sol",
+    "openai/gpt-oss-20b": "gpt-oss-20b",
+    "qwen/qwen3.8-2.4t-a95b": "Qwen3.8 (2.4T)",
+    "qwen/qwen3.8-27b": "Qwen3.8 27B",
+    "qwen3.6-27b": "qwen3.6-27b"
+  },
+  "runs": {
+    "023dc4f8-cefd-44c4-836e-ad7975793571": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite1-own_a-remnant_a:st-native:w0",
+        "rewrite1-own_a-remnant_a:st-native:w1",
+        "rewrite1-own_a-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite1-own_a-remnant_a:st-native:w0",
+        "rewrite1-own_a-remnant_a:st-native:w1",
+        "rewrite1-own_a-remnant_a:st-native:w2"
+      ]
+    },
+    "0f798f49-436e-49af-8a53-de6f00364f98": {
+      "framing_version": "published",
+      "model": "qwen3.6-27b",
+      "planned_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "121df55a-c80b-4e5b-afbe-27f554f44fb2": {
+      "framing_version": "published",
+      "model": "google/gemini-3.8-flash",
+      "planned_cells": [
+        "forge-move-own_a-remnant_a:st-native:w0",
+        "forge-move-own_a-remnant_a:st-native:w1",
+        "forge-move-own_a-remnant_a:st-native:w2",
+        "forge-move-own_b-remnant_a:st-native:w0",
+        "forge-move-own_b-remnant_a:st-native:w1",
+        "forge-move-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "forge-move-own_a-remnant_a:st-native:w0"
+      ]
+    },
+    "13719646-87a0-4bea-b1a0-56fbb4f08ad3": {
+      "framing_version": "published",
+      "model": "moonshotai/kimi-k2.7-code",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0"
+      ]
+    },
+    "1768b68e-952a-4ef2-8158-271cac06045e": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "stage_run-own_a-remnant_b:st-native:w0",
+        "stage_run-own_a-remnant_c:st-native:w0",
+        "stage_run-own_b-remnant_a:st-native:w0",
+        "stage_run-own_b-remnant_c:st-native:w0",
+        "stage_run-own_c-remnant_a:st-native:w0",
+        "stage_run-own_c-remnant_b:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "stage_run-own_a-remnant_b:st-native:w0",
+        "stage_run-own_a-remnant_c:st-native:w0",
+        "stage_run-own_b-remnant_a:st-native:w0",
+        "stage_run-own_b-remnant_c:st-native:w0",
+        "stage_run-own_c-remnant_a:st-native:w0",
+        "stage_run-own_c-remnant_b:st-native:w0"
+      ]
+    },
+    "1afadcd8-4850-40b9-98a3-5e91bcdd7d9c": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-own_a-remnant_a:st-native:w0"
+      ]
+    },
+    "1c8be64b-b530-4969-a745-518223943c71": {
+      "framing_version": "published",
+      "model": "qwen/qwen3.8-2.4t-a95b",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0"
+      ]
+    },
+    "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da": {
+      "framing_version": "published",
+      "model": "deepseek/deepseek-v4-pro",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "22db85bc-b9ce-4137-b0c1-638c84bd764e": {
+      "framing_version": "published",
+      "model": "openai/gpt-oss-20b",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "2b21347e-ed77-46f6-8792-9dc7d9c325cc": {
+      "framing_version": "published",
+      "model": "mistralai/ministral-14b-2512",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "36d62df0-edad-4c6b-824d-62877bbadb70": {
+      "framing_version": "published",
+      "model": "google/gemini-3.8-flash",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0"
+      ]
+    },
+    "39603b39-bef6-4992-b0bb-d95b90a52577": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_a:st-native:w1",
+        "rewrite-own_a-remnant_a:st-native:w2",
+        "rewrite-own_a-remnant_a:st-native:w3",
+        "rewrite-own_a-remnant_a:st-native:w4",
+        "rewrite-own_a-remnant_a:st-native:w5",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w1",
+        "rewrite-own_b-remnant_a:st-native:w2",
+        "rewrite-own_b-remnant_a:st-native:w3",
+        "rewrite-own_b-remnant_a:st-native:w4",
+        "rewrite-own_b-remnant_a:st-native:w5"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_a:st-native:w1",
+        "rewrite-own_a-remnant_a:st-native:w2",
+        "rewrite-own_a-remnant_a:st-native:w3"
+      ]
+    },
+    "3cb59616-dd89-4d88-95fb-7a9660c678da": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_b-remnant_b:st-native:w0"
+      ]
+    },
+    "40f328ef-349d-4389-87c0-133745f41bbe": {
+      "framing_version": "published",
+      "model": "moonshotai/kimi-k2.7-code",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0"
+      ]
+    },
+    "414b5927-fe13-48d9-9fcb-ce79a18d4362": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0"
+      ]
+    },
+    "4402110b-dbfd-4bb9-a709-08f1756b1b9b": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1"
+      ]
+    },
+    "472c12bd-8ac8-4ad4-a5ec-fb943236099a": {
+      "framing_version": "published",
+      "model": "anthropic/claude-sonnet-5.5",
+      "planned_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2",
+        "rewrite0-own_b-remnant_a:st-native:w0",
+        "rewrite0-own_b-remnant_a:st-native:w1",
+        "rewrite0-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2",
+        "rewrite0-own_b-remnant_a:st-native:w0",
+        "rewrite0-own_b-remnant_a:st-native:w1"
+      ]
+    },
+    "4db6069a-2b0b-4278-a03a-6698382f7b4d": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w1",
+        "rewrite-own_b-remnant_a:st-native:w2",
+        "rewrite-own_b-remnant_a:st-native:w3",
+        "rewrite-own_b-remnant_a:st-native:w4",
+        "rewrite-own_b-remnant_a:st-native:w5"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_b-remnant_a:st-native:w0"
+      ]
+    },
+    "52ca8956-195b-4c36-9940-939c005ca68d": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2"
+      ]
+    },
+    "56e4e366-eb55-4bc9-8430-678ae9d10914": {
+      "framing_version": "published",
+      "model": "qwen/qwen3.8-27b",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0"
+      ]
+    },
+    "58c9fe2b-c199-4165-9dc0-10a90aebb8db": {
+      "framing_version": "published",
+      "model": "google/gemini-3.8-flash",
+      "planned_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-own_a-remnant_a:st-native:w0"
+      ]
+    },
+    "5976c4f9-be30-4e88-8f7e-62c4d454a003": {
+      "framing_version": "published",
+      "model": "google/gemini-3.8-flash",
+      "planned_cells": [
+        "forge-rewrite-own_a-remnant_a:st-native:w0",
+        "forge-rewrite-own_a-remnant_a:st-native:w1",
+        "forge-rewrite-own_a-remnant_a:st-native:w2",
+        "forge-rewrite-own_b-remnant_a:st-native:w0",
+        "forge-rewrite-own_b-remnant_a:st-native:w1",
+        "forge-rewrite-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "forge-rewrite-own_a-remnant_a:st-native:w0",
+        "forge-rewrite-own_a-remnant_a:st-native:w1",
+        "forge-rewrite-own_a-remnant_a:st-native:w2",
+        "forge-rewrite-own_b-remnant_a:st-native:w0",
+        "forge-rewrite-own_b-remnant_a:st-native:w1",
+        "forge-rewrite-own_b-remnant_a:st-native:w2"
+      ]
+    },
+    "59bb7fbd-64be-40c7-9620-14808875fdd8": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w1",
+        "rewrite-own_b-remnant_b:st-native:w2",
+        "rewrite-own_b-remnant_b:st-native:w3",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w1",
+        "rewrite-own_c-remnant_b:st-native:w2",
+        "rewrite-own_c-remnant_b:st-native:w3"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_b-remnant_b:st-native:w0"
+      ]
+    },
+    "64fcf385-c5f9-4190-b29d-48b788ed7586": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite1-own_a-remnant_a:st-native:w0",
+        "rewrite1-own_a-remnant_a:st-native:w1",
+        "rewrite1-own_a-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite1-own_a-remnant_a:st-native:w0",
+        "rewrite1-own_a-remnant_a:st-native:w1",
+        "rewrite1-own_a-remnant_a:st-native:w2"
+      ]
+    },
+    "68ef25b0-2971-41f9-89a3-b03acd2fafe7": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "70e00fa0-fb0c-4111-a394-04195bc4e7cf": {
+      "framing_version": "published",
+      "model": "qwen3.6-27b",
+      "planned_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "72c5ca9c-6006-4203-b220-92a7ae7ec473": {
+      "framing_version": "published",
+      "model": "google/gemini-3.8-flash",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0"
+      ]
+    },
+    "772e5410-060c-42e1-9674-e3b0d993c3d2": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "78660eae-a995-42a0-88f4-1ab7a4aac6ae": {
+      "framing_version": "published",
+      "model": "anthropic/claude-sonnet-5.5",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "7fe13e8f-0766-442b-9614-bfecfd391484": {
+      "framing_version": "published",
+      "model": "anthropic/claude-sonnet-5.5",
+      "planned_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "80206567-2154-4c12-afe2-b3a49f6b4448": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "forge-move-own_a-remnant_a:st-native:w0",
+        "forge-move-own_a-remnant_a:st-native:w1",
+        "forge-move-own_a-remnant_a:st-native:w2",
+        "forge-move-own_b-remnant_a:st-native:w0",
+        "forge-move-own_b-remnant_a:st-native:w1",
+        "forge-move-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "forge-move-own_a-remnant_a:st-native:w0",
+        "forge-move-own_a-remnant_a:st-native:w1",
+        "forge-move-own_a-remnant_a:st-native:w2",
+        "forge-move-own_b-remnant_a:st-native:w0",
+        "forge-move-own_b-remnant_a:st-native:w1",
+        "forge-move-own_b-remnant_a:st-native:w2"
+      ]
+    },
+    "82d125fb-cb1f-4bcb-af62-14e853e07cdf": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite1-own_a-remnant_a:st-native:w0",
+        "rewrite1-own_a-remnant_a:st-native:w1",
+        "rewrite1-own_a-remnant_a:st-native:w2",
+        "rewrite1-own_b-remnant_a:st-native:w0",
+        "rewrite1-own_b-remnant_a:st-native:w1",
+        "rewrite1-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite1-own_a-remnant_a:st-native:w0",
+        "rewrite1-own_a-remnant_a:st-native:w1",
+        "rewrite1-own_a-remnant_a:st-native:w2",
+        "rewrite1-own_b-remnant_a:st-native:w0"
+      ]
+    },
+    "839e4c5c-69e0-4a03-ad55-5dd64469ecfa": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite0-read-own_a-remnant_a:st-native:w0",
+        "rewrite0-read-own_a-remnant_a:st-native:w1",
+        "rewrite0-read-own_a-remnant_a:st-native:w2",
+        "rewrite0-read-own_a-remnant_a:st-native:w3",
+        "rewrite0-read-own_b-remnant_a:st-native:w0",
+        "rewrite0-read-own_b-remnant_a:st-native:w1",
+        "rewrite0-read-own_b-remnant_a:st-native:w2",
+        "rewrite0-read-own_b-remnant_a:st-native:w3"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite0-read-own_a-remnant_a:st-native:w0",
+        "rewrite0-read-own_a-remnant_a:st-native:w1",
+        "rewrite0-read-own_a-remnant_a:st-native:w2",
+        "rewrite0-read-own_a-remnant_a:st-native:w3",
+        "rewrite0-read-own_b-remnant_a:st-native:w0",
+        "rewrite0-read-own_b-remnant_a:st-native:w1",
+        "rewrite0-read-own_b-remnant_a:st-native:w2",
+        "rewrite0-read-own_b-remnant_a:st-native:w3"
+      ]
+    },
+    "84932da0-4201-48e4-b216-1b6be52fccfd": {
+      "framing_version": "published",
+      "model": "anthropic/claude-sonnet-5.5",
+      "planned_cells": [
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0"
+      ]
+    },
+    "8b9e9666-ed2c-4287-9730-597aec848e02": {
+      "framing_version": "published",
+      "model": "qwen/qwen3.8-27b",
+      "planned_cells": [
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_c:st-native:w0"
+      ]
+    },
+    "8c67f47d-3b05-4516-bf3e-7bc8cd5f4c22": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2",
+        "rewrite0-own_b-remnant_a:st-native:w0",
+        "rewrite0-own_b-remnant_a:st-native:w1",
+        "rewrite0-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0"
+      ]
+    },
+    "90b75097-c8e4-417c-93d2-6a0fc29fe90c": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "99a4fd07-fb77-45ed-bb60-cba52fcacaf2": {
+      "framing_version": "published",
+      "model": "google/gemini-3.8-flash",
+      "planned_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2",
+        "rewrite0-own_b-remnant_a:st-native:w0",
+        "rewrite0-own_b-remnant_a:st-native:w1",
+        "rewrite0-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2",
+        "rewrite0-own_b-remnant_a:st-native:w0"
+      ]
+    },
+    "9e24b30e-55c6-4434-b4b2-0cf339ce99ee": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0"
+      ]
+    },
+    "a2310fc3-f18f-4aa8-970a-d22ae5495759": {
+      "framing_version": "published",
+      "model": "anthropic/claude-sonnet-5.5",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0"
+      ]
+    },
+    "ac955a91-ddf4-49cb-a96d-af65b7df479d": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "aed117c0-95d1-4a08-8bff-e8c3ca9bb2d7": {
+      "framing_version": "published",
+      "model": "google/gemini-3.8-flash",
+      "planned_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-own_a-remnant_a:st-native:w0",
+        "refactor-own_a-remnant_c:st-native:w0",
+        "refactor-own_b-remnant_a:st-native:w0",
+        "refactor-own_b-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_b:st-native:w0",
+        "refactor-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "b70afd75-201a-412c-a64d-b634a80ab967": {
+      "framing_version": "earlier",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2",
+        "rewrite0-own_b-remnant_a:st-native:w0",
+        "rewrite0-own_b-remnant_a:st-native:w1",
+        "rewrite0-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2",
+        "rewrite0-own_b-remnant_a:st-native:w0",
+        "rewrite0-own_b-remnant_a:st-native:w1",
+        "rewrite0-own_b-remnant_a:st-native:w2"
+      ]
+    },
+    "b9814d1a-c4fe-4ae2-865b-5ef0c9076d20": {
+      "framing_version": "published",
+      "model": "google/gemini-3.8-flash",
+      "planned_cells": [
+        "forge-move-own_a-remnant_a:st-native:w0",
+        "forge-move-own_a-remnant_a:st-native:w1",
+        "forge-move-own_a-remnant_a:st-native:w2",
+        "forge-move-own_b-remnant_a:st-native:w0",
+        "forge-move-own_b-remnant_a:st-native:w1",
+        "forge-move-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "forge-move-own_a-remnant_a:st-native:w0"
+      ]
+    },
+    "b9ed3648-60c7-4077-b835-7d0b639bd272": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "refactor-long-own_a-remnant_a:st-native:w0",
+        "refactor-long-own_a-remnant_c:st-native:w0",
+        "refactor-long-own_b-remnant_a:st-native:w0",
+        "refactor-long-own_b-remnant_b:st-native:w0",
+        "refactor-long-own_c-remnant_b:st-native:w0",
+        "refactor-long-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-long-own_a-remnant_a:st-native:w0"
+      ]
+    },
+    "bfd8a263-1c66-4048-83c8-b932b0a3527d": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "forge-rewrite-own_a-remnant_a:st-native:w0",
+        "forge-rewrite-own_a-remnant_a:st-native:w1",
+        "forge-rewrite-own_a-remnant_a:st-native:w2",
+        "forge-rewrite-own_b-remnant_a:st-native:w0",
+        "forge-rewrite-own_b-remnant_a:st-native:w1",
+        "forge-rewrite-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "forge-rewrite-own_a-remnant_a:st-native:w0",
+        "forge-rewrite-own_a-remnant_a:st-native:w1",
+        "forge-rewrite-own_a-remnant_a:st-native:w2",
+        "forge-rewrite-own_b-remnant_a:st-native:w0",
+        "forge-rewrite-own_b-remnant_a:st-native:w1",
+        "forge-rewrite-own_b-remnant_a:st-native:w2"
+      ]
+    },
+    "c728d1cb-8404-4fb4-a985-3b7fe7b4b9f3": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite2-own_a-remnant_a:st-native:w0",
+        "rewrite2-own_a-remnant_a:st-native:w1",
+        "rewrite2-own_a-remnant_b:st-native:w0",
+        "rewrite2-own_a-remnant_b:st-native:w1",
+        "rewrite2-own_b-remnant_a:st-native:w0",
+        "rewrite2-own_b-remnant_a:st-native:w1",
+        "rewrite2-own_b-remnant_b:st-native:w0",
+        "rewrite2-own_b-remnant_b:st-native:w1"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite2-own_a-remnant_a:st-native:w0",
+        "rewrite2-own_a-remnant_a:st-native:w1",
+        "rewrite2-own_a-remnant_b:st-native:w0",
+        "rewrite2-own_a-remnant_b:st-native:w1",
+        "rewrite2-own_b-remnant_a:st-native:w0",
+        "rewrite2-own_b-remnant_a:st-native:w1"
+      ]
+    },
+    "cdb19371-3d92-453e-a47b-7c9fe532565b": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_a:st-native:w1",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w1",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w1",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w1",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w1",
+        "rewrite-own_c-remnant_c:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w1"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0"
+      ]
+    },
+    "d05ad588-18f9-4cd7-90b0-2688ab0ebde9": {
+      "framing_version": "published",
+      "model": "openai/gpt-6.1-sol",
+      "planned_cells": [
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w1",
+        "rewrite-own_b-remnant_b:st-native:w2",
+        "rewrite-own_b-remnant_b:st-native:w3",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w1",
+        "rewrite-own_c-remnant_b:st-native:w2",
+        "rewrite-own_c-remnant_b:st-native:w3"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_b-remnant_b:st-native:w0"
+      ]
+    },
+    "d434fb0b-4b16-4f85-9d50-85622390e3de": {
+      "framing_version": "published",
+      "model": "openai/gpt-6-luna",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "dc8939df-4382-493d-9fd2-7810ae13349b": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "refactor-own_a-remnant_a:st-quoted-first:w0",
+        "refactor-own_a-remnant_a:st-quoted-last:w0",
+        "refactor-own_a-remnant_c:st-quoted-first:w0",
+        "refactor-own_a-remnant_c:st-quoted-last:w0",
+        "refactor-own_b-remnant_a:st-quoted-first:w0",
+        "refactor-own_b-remnant_a:st-quoted-last:w0",
+        "refactor-own_b-remnant_b:st-quoted-first:w0",
+        "refactor-own_b-remnant_b:st-quoted-last:w0",
+        "refactor-own_c-remnant_b:st-quoted-first:w0",
+        "refactor-own_c-remnant_b:st-quoted-last:w0",
+        "refactor-own_c-remnant_c:st-quoted-first:w0",
+        "refactor-own_c-remnant_c:st-quoted-last:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-own_a-remnant_a:st-quoted-first:w0",
+        "refactor-own_a-remnant_a:st-quoted-last:w0",
+        "refactor-own_a-remnant_c:st-quoted-first:w0",
+        "refactor-own_a-remnant_c:st-quoted-last:w0",
+        "refactor-own_b-remnant_a:st-quoted-first:w0",
+        "refactor-own_b-remnant_a:st-quoted-last:w0",
+        "refactor-own_b-remnant_b:st-quoted-first:w0",
+        "refactor-own_b-remnant_b:st-quoted-last:w0",
+        "refactor-own_c-remnant_b:st-quoted-first:w0",
+        "refactor-own_c-remnant_b:st-quoted-last:w0",
+        "refactor-own_c-remnant_c:st-quoted-first:w0",
+        "refactor-own_c-remnant_c:st-quoted-last:w0"
+      ]
+    },
+    "dd67e400-763a-4e85-a0d7-b84828412cee": {
+      "framing_version": "published",
+      "model": "google/gemini-3.8-flash",
+      "planned_cells": [
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "df496bc1-d0a9-4c99-9445-6eb2f4e17291": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "refactor-long-own_a-remnant_a:st-native:w0",
+        "refactor-long-own_a-remnant_c:st-native:w0",
+        "refactor-long-own_b-remnant_a:st-native:w0",
+        "refactor-long-own_b-remnant_b:st-native:w0",
+        "refactor-long-own_c-remnant_b:st-native:w0",
+        "refactor-long-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "refactor-long-own_a-remnant_a:st-native:w0",
+        "refactor-long-own_a-remnant_c:st-native:w0",
+        "refactor-long-own_b-remnant_a:st-native:w0",
+        "refactor-long-own_b-remnant_b:st-native:w0",
+        "refactor-long-own_c-remnant_b:st-native:w0",
+        "refactor-long-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "df5b61b8-8cbe-4634-a2e4-edaebcfb505b": {
+      "framing_version": "published",
+      "model": "anthropic/claude-haiku-5.5",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "e8345348-8c76-45a7-b612-dcaa0e68a590": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite1-own_b-remnant_a:st-native:w0",
+        "rewrite1-own_b-remnant_a:st-native:w1",
+        "rewrite1-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite1-own_b-remnant_a:st-native:w0",
+        "rewrite1-own_b-remnant_a:st-native:w1",
+        "rewrite1-own_b-remnant_a:st-native:w2"
+      ]
+    },
+    "eb94295c-b36b-481f-a296-1f11b263a213": {
+      "framing_version": "published",
+      "model": "google/gemini-3.8-flash",
+      "planned_cells": [
+        "resume146-own_a-remnant_a:st-native:w0",
+        "resume146-own_a-remnant_a:st-native:w1",
+        "resume146-own_a-remnant_a:st-native:w2",
+        "resume146-own_b-remnant_a:st-native:w0",
+        "resume146-own_b-remnant_a:st-native:w1",
+        "resume146-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "resume146-own_a-remnant_a:st-native:w0",
+        "resume146-own_a-remnant_a:st-native:w1",
+        "resume146-own_a-remnant_a:st-native:w2",
+        "resume146-own_b-remnant_a:st-native:w0",
+        "resume146-own_b-remnant_a:st-native:w1",
+        "resume146-own_b-remnant_a:st-native:w2"
+      ]
+    },
+    "ee3042b2-e0cf-4e90-9001-a1bd61edf370": {
+      "framing_version": "published",
+      "model": "qwen/qwen3.8-2.4t-a95b",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0"
+      ]
+    },
+    "f4643792-79b6-4074-8e26-488c73c741dc": {
+      "framing_version": "published",
+      "model": "qwen3.6-27b",
+      "planned_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite-own_a-remnant_a:st-native:w0",
+        "rewrite-own_a-remnant_c:st-native:w0",
+        "rewrite-own_b-remnant_a:st-native:w0",
+        "rewrite-own_b-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_b:st-native:w0",
+        "rewrite-own_c-remnant_c:st-native:w0"
+      ]
+    },
+    "ff6dd246-5279-4af1-9727-e99e86f328c3": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "rewrite0-read-own_a-remnant_a:st-native:w0",
+        "rewrite0-read-own_a-remnant_a:st-native:w1",
+        "rewrite0-read-own_a-remnant_a:st-native:w2",
+        "rewrite0-read-own_a-remnant_a:st-native:w3"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "rewrite0-read-own_a-remnant_a:st-native:w0",
+        "rewrite0-read-own_a-remnant_a:st-native:w1",
+        "rewrite0-read-own_a-remnant_a:st-native:w2"
+      ]
+    },
+    "ffe47efa-0724-44a9-8f50-640e6e244d8f": {
+      "framing_version": "published",
+      "model": "google/gemini-4-argon",
+      "planned_cells": [
+        "resume146-own_a-remnant_a:st-native:w0",
+        "resume146-own_a-remnant_a:st-native:w1",
+        "resume146-own_a-remnant_a:st-native:w2",
+        "resume146-own_b-remnant_a:st-native:w0",
+        "resume146-own_b-remnant_a:st-native:w1",
+        "resume146-own_b-remnant_a:st-native:w2"
+      ],
+      "protocol_version": "st-v1",
+      "ran_cells": [
+        "resume146-own_a-remnant_a:st-native:w0",
+        "resume146-own_a-remnant_a:st-native:w1",
+        "resume146-own_a-remnant_a:st-native:w2",
+        "resume146-own_b-remnant_a:st-native:w0",
+        "resume146-own_b-remnant_a:st-native:w1",
+        "resume146-own_b-remnant_a:st-native:w2"
+      ]
+    }
+  },
+  "schema_version": "self-trust-publication/1",
+  "size_and_framing": {
+    "argon_693_sample": {
+      "4402110b-dbfd-4bb9-a709-08f1756b1b9b": [
+        "rewrite0-own_a-remnant_a:st-native:w0"
+      ],
+      "52ca8956-195b-4c36-9940-939c005ca68d": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2"
+      ],
+      "b70afd75-201a-412c-a64d-b634a80ab967": [
+        "rewrite0-own_a-remnant_a:st-native:w0",
+        "rewrite0-own_a-remnant_a:st-native:w1",
+        "rewrite0-own_a-remnant_a:st-native:w2",
+        "rewrite0-own_b-remnant_a:st-native:w0",
+        "rewrite0-own_b-remnant_a:st-native:w1",
+        "rewrite0-own_b-remnant_a:st-native:w2"
+      ]
+    }
+  },
+  "tables": [
+    {
+      "archives": [
+        "7fe13e8f-0766-442b-9614-bfecfd391484",
+        "90b75097-c8e4-417c-93d2-6a0fc29fe90c",
+        "aed117c0-95d1-4a08-8bff-e8c3ca9bb2d7",
+        "dc8939df-4382-493d-9fd2-7810ae13349b",
+        "df496bc1-d0a9-4c99-9445-6eb2f4e17291"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "7fe13e8f-0766-442b-9614-bfecfd391484": [
+          "refactor-own_a-remnant_a:st-native:w0",
+          "refactor-own_a-remnant_c:st-native:w0",
+          "refactor-own_b-remnant_a:st-native:w0",
+          "refactor-own_b-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_c:st-native:w0"
+        ],
+        "90b75097-c8e4-417c-93d2-6a0fc29fe90c": [
+          "refactor-own_a-remnant_a:st-native:w0",
+          "refactor-own_a-remnant_c:st-native:w0",
+          "refactor-own_b-remnant_a:st-native:w0",
+          "refactor-own_b-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_c:st-native:w0"
+        ],
+        "aed117c0-95d1-4a08-8bff-e8c3ca9bb2d7": [
+          "refactor-own_a-remnant_a:st-native:w0",
+          "refactor-own_a-remnant_c:st-native:w0",
+          "refactor-own_b-remnant_a:st-native:w0",
+          "refactor-own_b-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_c:st-native:w0"
+        ],
+        "dc8939df-4382-493d-9fd2-7810ae13349b": [
+          "refactor-own_a-remnant_a:st-quoted-first:w0",
+          "refactor-own_a-remnant_a:st-quoted-last:w0",
+          "refactor-own_a-remnant_c:st-quoted-first:w0",
+          "refactor-own_a-remnant_c:st-quoted-last:w0",
+          "refactor-own_b-remnant_a:st-quoted-first:w0",
+          "refactor-own_b-remnant_a:st-quoted-last:w0",
+          "refactor-own_b-remnant_b:st-quoted-first:w0",
+          "refactor-own_b-remnant_b:st-quoted-last:w0",
+          "refactor-own_c-remnant_b:st-quoted-first:w0",
+          "refactor-own_c-remnant_b:st-quoted-last:w0",
+          "refactor-own_c-remnant_c:st-quoted-first:w0",
+          "refactor-own_c-remnant_c:st-quoted-last:w0"
+        ],
+        "df496bc1-d0a9-4c99-9445-6eb2f4e17291": [
+          "refactor-long-own_a-remnant_a:st-native:w0",
+          "refactor-long-own_a-remnant_c:st-native:w0",
+          "refactor-long-own_b-remnant_a:st-native:w0",
+          "refactor-long-own_b-remnant_b:st-native:w0",
+          "refactor-long-own_c-remnant_b:st-native:w0",
+          "refactor-long-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "H1",
+      "location": "README headline table, row 1",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "4402110b-dbfd-4bb9-a709-08f1756b1b9b",
+        "472c12bd-8ac8-4ad4-a5ec-fb943236099a",
+        "52ca8956-195b-4c36-9940-939c005ca68d",
+        "99a4fd07-fb77-45ed-bb60-cba52fcacaf2",
+        "b70afd75-201a-412c-a64d-b634a80ab967"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "4402110b-dbfd-4bb9-a709-08f1756b1b9b": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2"
+        ],
+        "472c12bd-8ac8-4ad4-a5ec-fb943236099a": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2",
+          "rewrite0-own_b-remnant_a:st-native:w0",
+          "rewrite0-own_b-remnant_a:st-native:w1",
+          "rewrite0-own_b-remnant_a:st-native:w2"
+        ],
+        "52ca8956-195b-4c36-9940-939c005ca68d": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2"
+        ],
+        "99a4fd07-fb77-45ed-bb60-cba52fcacaf2": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2",
+          "rewrite0-own_b-remnant_a:st-native:w0",
+          "rewrite0-own_b-remnant_a:st-native:w1",
+          "rewrite0-own_b-remnant_a:st-native:w2"
+        ],
+        "b70afd75-201a-412c-a64d-b634a80ab967": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2",
+          "rewrite0-own_b-remnant_a:st-native:w0",
+          "rewrite0-own_b-remnant_a:st-native:w1",
+          "rewrite0-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "H2",
+      "location": "README headline table, row 2",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "5976c4f9-be30-4e88-8f7e-62c4d454a003",
+        "bfd8a263-1c66-4048-83c8-b932b0a3527d"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "5976c4f9-be30-4e88-8f7e-62c4d454a003": [
+          "forge-rewrite-own_a-remnant_a:st-native:w0",
+          "forge-rewrite-own_a-remnant_a:st-native:w1",
+          "forge-rewrite-own_a-remnant_a:st-native:w2",
+          "forge-rewrite-own_b-remnant_a:st-native:w0",
+          "forge-rewrite-own_b-remnant_a:st-native:w1",
+          "forge-rewrite-own_b-remnant_a:st-native:w2"
+        ],
+        "bfd8a263-1c66-4048-83c8-b932b0a3527d": [
+          "forge-rewrite-own_a-remnant_a:st-native:w0",
+          "forge-rewrite-own_a-remnant_a:st-native:w1",
+          "forge-rewrite-own_a-remnant_a:st-native:w2",
+          "forge-rewrite-own_b-remnant_a:st-native:w0",
+          "forge-rewrite-own_b-remnant_a:st-native:w1",
+          "forge-rewrite-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "H3",
+      "location": "README headline table, row 3",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "eb94295c-b36b-481f-a296-1f11b263a213",
+        "ffe47efa-0724-44a9-8f50-640e6e244d8f"
+      ],
+      "calculation": "restored / kept; last verdict on misses",
+      "cells": {
+        "eb94295c-b36b-481f-a296-1f11b263a213": [
+          "resume146-own_a-remnant_a:st-native:w0",
+          "resume146-own_a-remnant_a:st-native:w1",
+          "resume146-own_a-remnant_a:st-native:w2",
+          "resume146-own_b-remnant_a:st-native:w0",
+          "resume146-own_b-remnant_a:st-native:w1",
+          "resume146-own_b-remnant_a:st-native:w2"
+        ],
+        "ffe47efa-0724-44a9-8f50-640e6e244d8f": [
+          "resume146-own_a-remnant_a:st-native:w0",
+          "resume146-own_a-remnant_a:st-native:w1",
+          "resume146-own_a-remnant_a:st-native:w2",
+          "resume146-own_b-remnant_a:st-native:w0",
+          "resume146-own_b-remnant_a:st-native:w1",
+          "resume146-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "H4",
+      "location": "README headline table, row 4",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "13719646-87a0-4bea-b1a0-56fbb4f08ad3",
+        "1c8be64b-b530-4969-a745-518223943c71",
+        "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da",
+        "22db85bc-b9ce-4137-b0c1-638c84bd764e",
+        "2b21347e-ed77-46f6-8792-9dc7d9c325cc",
+        "36d62df0-edad-4c6b-824d-62877bbadb70",
+        "39603b39-bef6-4992-b0bb-d95b90a52577",
+        "3cb59616-dd89-4d88-95fb-7a9660c678da",
+        "40f328ef-349d-4389-87c0-133745f41bbe",
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362",
+        "4db6069a-2b0b-4278-a03a-6698382f7b4d",
+        "56e4e366-eb55-4bc9-8430-678ae9d10914",
+        "59bb7fbd-64be-40c7-9620-14808875fdd8",
+        "72c5ca9c-6006-4203-b220-92a7ae7ec473",
+        "772e5410-060c-42e1-9674-e3b0d993c3d2",
+        "78660eae-a995-42a0-88f4-1ab7a4aac6ae",
+        "84932da0-4201-48e4-b216-1b6be52fccfd",
+        "8b9e9666-ed2c-4287-9730-597aec848e02",
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee",
+        "a2310fc3-f18f-4aa8-970a-d22ae5495759",
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d",
+        "cdb19371-3d92-453e-a47b-7c9fe532565b",
+        "d05ad588-18f9-4cd7-90b0-2688ab0ebde9",
+        "d434fb0b-4b16-4f85-9d50-85622390e3de",
+        "dd67e400-763a-4e85-a0d7-b84828412cee",
+        "df5b61b8-8cbe-4634-a2e4-edaebcfb505b",
+        "ee3042b2-e0cf-4e90-9001-a1bd61edf370"
+      ],
+      "calculation": "restored / kept, local Qwen3.6 route excluded",
+      "cells": {
+        "13719646-87a0-4bea-b1a0-56fbb4f08ad3": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "1c8be64b-b530-4969-a745-518223943c71": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "22db85bc-b9ce-4137-b0c1-638c84bd764e": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "2b21347e-ed77-46f6-8792-9dc7d9c325cc": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "36d62df0-edad-4c6b-824d-62877bbadb70": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "39603b39-bef6-4992-b0bb-d95b90a52577": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_a:st-native:w1",
+          "rewrite-own_a-remnant_a:st-native:w2",
+          "rewrite-own_a-remnant_a:st-native:w3",
+          "rewrite-own_a-remnant_a:st-native:w4",
+          "rewrite-own_a-remnant_a:st-native:w5",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w2",
+          "rewrite-own_b-remnant_a:st-native:w3",
+          "rewrite-own_b-remnant_a:st-native:w4",
+          "rewrite-own_b-remnant_a:st-native:w5"
+        ],
+        "3cb59616-dd89-4d88-95fb-7a9660c678da": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "40f328ef-349d-4389-87c0-133745f41bbe": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "4db6069a-2b0b-4278-a03a-6698382f7b4d": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w2",
+          "rewrite-own_b-remnant_a:st-native:w3",
+          "rewrite-own_b-remnant_a:st-native:w4",
+          "rewrite-own_b-remnant_a:st-native:w5"
+        ],
+        "56e4e366-eb55-4bc9-8430-678ae9d10914": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "59bb7fbd-64be-40c7-9620-14808875fdd8": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w2",
+          "rewrite-own_b-remnant_b:st-native:w3",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w2",
+          "rewrite-own_c-remnant_b:st-native:w3"
+        ],
+        "72c5ca9c-6006-4203-b220-92a7ae7ec473": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "772e5410-060c-42e1-9674-e3b0d993c3d2": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "78660eae-a995-42a0-88f4-1ab7a4aac6ae": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "84932da0-4201-48e4-b216-1b6be52fccfd": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "8b9e9666-ed2c-4287-9730-597aec848e02": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "a2310fc3-f18f-4aa8-970a-d22ae5495759": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "cdb19371-3d92-453e-a47b-7c9fe532565b": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_a:st-native:w1",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w1"
+        ],
+        "d05ad588-18f9-4cd7-90b0-2688ab0ebde9": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w2",
+          "rewrite-own_b-remnant_b:st-native:w3",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w2",
+          "rewrite-own_c-remnant_b:st-native:w3"
+        ],
+        "d434fb0b-4b16-4f85-9d50-85622390e3de": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "dd67e400-763a-4e85-a0d7-b84828412cee": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "df5b61b8-8cbe-4634-a2e4-edaebcfb505b": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "ee3042b2-e0cf-4e90-9001-a1bd61edf370": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "H5",
+      "location": "README headline table, row 5",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "90b75097-c8e4-417c-93d2-6a0fc29fe90c",
+        "dc8939df-4382-493d-9fd2-7810ae13349b"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "90b75097-c8e4-417c-93d2-6a0fc29fe90c": [
+          "refactor-own_a-remnant_a:st-native:w0",
+          "refactor-own_a-remnant_c:st-native:w0",
+          "refactor-own_b-remnant_a:st-native:w0",
+          "refactor-own_b-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_c:st-native:w0"
+        ],
+        "dc8939df-4382-493d-9fd2-7810ae13349b": [
+          "refactor-own_a-remnant_a:st-quoted-first:w0",
+          "refactor-own_a-remnant_a:st-quoted-last:w0",
+          "refactor-own_a-remnant_c:st-quoted-first:w0",
+          "refactor-own_a-remnant_c:st-quoted-last:w0",
+          "refactor-own_b-remnant_a:st-quoted-first:w0",
+          "refactor-own_b-remnant_a:st-quoted-last:w0",
+          "refactor-own_b-remnant_b:st-quoted-first:w0",
+          "refactor-own_b-remnant_b:st-quoted-last:w0",
+          "refactor-own_c-remnant_b:st-quoted-first:w0",
+          "refactor-own_c-remnant_b:st-quoted-last:w0",
+          "refactor-own_c-remnant_c:st-quoted-first:w0",
+          "refactor-own_c-remnant_c:st-quoted-last:w0"
+        ]
+      },
+      "id": "F1-move",
+      "location": "Finding 1 table, 436-line move",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "df496bc1-d0a9-4c99-9445-6eb2f4e17291"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "df496bc1-d0a9-4c99-9445-6eb2f4e17291": [
+          "refactor-long-own_a-remnant_a:st-native:w0",
+          "refactor-long-own_a-remnant_c:st-native:w0",
+          "refactor-long-own_b-remnant_a:st-native:w0",
+          "refactor-long-own_b-remnant_b:st-native:w0",
+          "refactor-long-own_c-remnant_b:st-native:w0",
+          "refactor-long-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F1-move-long",
+      "location": "Finding 1 table, move with file reads",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "4402110b-dbfd-4bb9-a709-08f1756b1b9b",
+        "52ca8956-195b-4c36-9940-939c005ca68d",
+        "b70afd75-201a-412c-a64d-b634a80ab967"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "4402110b-dbfd-4bb9-a709-08f1756b1b9b": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2"
+        ],
+        "52ca8956-195b-4c36-9940-939c005ca68d": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2"
+        ],
+        "b70afd75-201a-412c-a64d-b634a80ab967": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2",
+          "rewrite0-own_b-remnant_a:st-native:w0",
+          "rewrite0-own_b-remnant_a:st-native:w1",
+          "rewrite0-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F1-r0",
+      "location": "Finding 1 table, 693-line rewrite",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "839e4c5c-69e0-4a03-ad55-5dd64469ecfa",
+        "ff6dd246-5279-4af1-9727-e99e86f328c3"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "839e4c5c-69e0-4a03-ad55-5dd64469ecfa": [
+          "rewrite0-read-own_a-remnant_a:st-native:w0",
+          "rewrite0-read-own_a-remnant_a:st-native:w1",
+          "rewrite0-read-own_a-remnant_a:st-native:w2",
+          "rewrite0-read-own_a-remnant_a:st-native:w3",
+          "rewrite0-read-own_b-remnant_a:st-native:w0",
+          "rewrite0-read-own_b-remnant_a:st-native:w1",
+          "rewrite0-read-own_b-remnant_a:st-native:w2",
+          "rewrite0-read-own_b-remnant_a:st-native:w3"
+        ],
+        "ff6dd246-5279-4af1-9727-e99e86f328c3": [
+          "rewrite0-read-own_a-remnant_a:st-native:w0",
+          "rewrite0-read-own_a-remnant_a:st-native:w1",
+          "rewrite0-read-own_a-remnant_a:st-native:w2",
+          "rewrite0-read-own_a-remnant_a:st-native:w3"
+        ]
+      },
+      "id": "F1-r0read",
+      "location": "Finding 1 table, 693-line rewrite with old modules read",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "023dc4f8-cefd-44c4-836e-ad7975793571",
+        "64fcf385-c5f9-4190-b29d-48b788ed7586",
+        "82d125fb-cb1f-4bcb-af62-14e853e07cdf",
+        "e8345348-8c76-45a7-b612-dcaa0e68a590"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "023dc4f8-cefd-44c4-836e-ad7975793571": [
+          "rewrite1-own_a-remnant_a:st-native:w0",
+          "rewrite1-own_a-remnant_a:st-native:w1",
+          "rewrite1-own_a-remnant_a:st-native:w2"
+        ],
+        "64fcf385-c5f9-4190-b29d-48b788ed7586": [
+          "rewrite1-own_a-remnant_a:st-native:w0",
+          "rewrite1-own_a-remnant_a:st-native:w1",
+          "rewrite1-own_a-remnant_a:st-native:w2"
+        ],
+        "82d125fb-cb1f-4bcb-af62-14e853e07cdf": [
+          "rewrite1-own_a-remnant_a:st-native:w0",
+          "rewrite1-own_a-remnant_a:st-native:w1",
+          "rewrite1-own_a-remnant_a:st-native:w2",
+          "rewrite1-own_b-remnant_a:st-native:w0",
+          "rewrite1-own_b-remnant_a:st-native:w1",
+          "rewrite1-own_b-remnant_a:st-native:w2"
+        ],
+        "e8345348-8c76-45a7-b612-dcaa0e68a590": [
+          "rewrite1-own_b-remnant_a:st-native:w0",
+          "rewrite1-own_b-remnant_a:st-native:w1",
+          "rewrite1-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F1-L1",
+      "location": "Finding 1 table, 1,097-line rewrite",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "c728d1cb-8404-4fb4-a985-3b7fe7b4b9f3"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "c728d1cb-8404-4fb4-a985-3b7fe7b4b9f3": [
+          "rewrite2-own_a-remnant_a:st-native:w0",
+          "rewrite2-own_a-remnant_a:st-native:w1",
+          "rewrite2-own_a-remnant_b:st-native:w0",
+          "rewrite2-own_a-remnant_b:st-native:w1",
+          "rewrite2-own_b-remnant_a:st-native:w0",
+          "rewrite2-own_b-remnant_a:st-native:w1",
+          "rewrite2-own_b-remnant_b:st-native:w0",
+          "rewrite2-own_b-remnant_b:st-native:w1"
+        ]
+      },
+      "id": "F1-L2",
+      "location": "Finding 1 table, 2,137-line rewrite",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F1-L3",
+      "location": "Finding 1 table, 2,782-line rewrite",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "023dc4f8-cefd-44c4-836e-ad7975793571",
+        "4402110b-dbfd-4bb9-a709-08f1756b1b9b",
+        "52ca8956-195b-4c36-9940-939c005ca68d",
+        "64fcf385-c5f9-4190-b29d-48b788ed7586",
+        "82d125fb-cb1f-4bcb-af62-14e853e07cdf",
+        "839e4c5c-69e0-4a03-ad55-5dd64469ecfa",
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d",
+        "b70afd75-201a-412c-a64d-b634a80ab967",
+        "c728d1cb-8404-4fb4-a985-3b7fe7b4b9f3",
+        "e8345348-8c76-45a7-b612-dcaa0e68a590",
+        "ff6dd246-5279-4af1-9727-e99e86f328c3"
+      ],
+      "calculation": "module_read in any turn",
+      "cells": {
+        "023dc4f8-cefd-44c4-836e-ad7975793571": [
+          "rewrite1-own_a-remnant_a:st-native:w0",
+          "rewrite1-own_a-remnant_a:st-native:w1",
+          "rewrite1-own_a-remnant_a:st-native:w2"
+        ],
+        "4402110b-dbfd-4bb9-a709-08f1756b1b9b": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2"
+        ],
+        "52ca8956-195b-4c36-9940-939c005ca68d": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2"
+        ],
+        "64fcf385-c5f9-4190-b29d-48b788ed7586": [
+          "rewrite1-own_a-remnant_a:st-native:w0",
+          "rewrite1-own_a-remnant_a:st-native:w1",
+          "rewrite1-own_a-remnant_a:st-native:w2"
+        ],
+        "82d125fb-cb1f-4bcb-af62-14e853e07cdf": [
+          "rewrite1-own_a-remnant_a:st-native:w0",
+          "rewrite1-own_a-remnant_a:st-native:w1",
+          "rewrite1-own_a-remnant_a:st-native:w2",
+          "rewrite1-own_b-remnant_a:st-native:w0",
+          "rewrite1-own_b-remnant_a:st-native:w1",
+          "rewrite1-own_b-remnant_a:st-native:w2"
+        ],
+        "839e4c5c-69e0-4a03-ad55-5dd64469ecfa": [
+          "rewrite0-read-own_a-remnant_a:st-native:w0",
+          "rewrite0-read-own_a-remnant_a:st-native:w1",
+          "rewrite0-read-own_a-remnant_a:st-native:w2",
+          "rewrite0-read-own_a-remnant_a:st-native:w3",
+          "rewrite0-read-own_b-remnant_a:st-native:w0",
+          "rewrite0-read-own_b-remnant_a:st-native:w1",
+          "rewrite0-read-own_b-remnant_a:st-native:w2",
+          "rewrite0-read-own_b-remnant_a:st-native:w3"
+        ],
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "b70afd75-201a-412c-a64d-b634a80ab967": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2",
+          "rewrite0-own_b-remnant_a:st-native:w0",
+          "rewrite0-own_b-remnant_a:st-native:w1",
+          "rewrite0-own_b-remnant_a:st-native:w2"
+        ],
+        "c728d1cb-8404-4fb4-a985-3b7fe7b4b9f3": [
+          "rewrite2-own_a-remnant_a:st-native:w0",
+          "rewrite2-own_a-remnant_a:st-native:w1",
+          "rewrite2-own_a-remnant_b:st-native:w0",
+          "rewrite2-own_a-remnant_b:st-native:w1",
+          "rewrite2-own_b-remnant_a:st-native:w0",
+          "rewrite2-own_b-remnant_a:st-native:w1",
+          "rewrite2-own_b-remnant_b:st-native:w0",
+          "rewrite2-own_b-remnant_b:st-native:w1"
+        ],
+        "e8345348-8c76-45a7-b612-dcaa0e68a590": [
+          "rewrite1-own_b-remnant_a:st-native:w0",
+          "rewrite1-own_b-remnant_a:st-native:w1",
+          "rewrite1-own_b-remnant_a:st-native:w2"
+        ],
+        "ff6dd246-5279-4af1-9727-e99e86f328c3": [
+          "rewrite0-read-own_a-remnant_a:st-native:w0",
+          "rewrite0-read-own_a-remnant_a:st-native:w1",
+          "rewrite0-read-own_a-remnant_a:st-native:w2",
+          "rewrite0-read-own_a-remnant_a:st-native:w3"
+        ]
+      },
+      "id": "F1-41",
+      "location": "Finding 1 text, opened the omission's file",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "4402110b-dbfd-4bb9-a709-08f1756b1b9b",
+        "52ca8956-195b-4c36-9940-939c005ca68d",
+        "b70afd75-201a-412c-a64d-b634a80ab967"
+      ],
+      "calculation": "last verdict on misses",
+      "cells": {
+        "4402110b-dbfd-4bb9-a709-08f1756b1b9b": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2"
+        ],
+        "52ca8956-195b-4c36-9940-939c005ca68d": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2"
+        ],
+        "b70afd75-201a-412c-a64d-b634a80ab967": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2",
+          "rewrite0-own_b-remnant_a:st-native:w0",
+          "rewrite0-own_b-remnant_a:st-native:w1",
+          "rewrite0-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F1-argon-verdicts",
+      "location": "Finding 1 breadth table, Argon rewrite misses",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "7fe13e8f-0766-442b-9614-bfecfd391484"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "7fe13e8f-0766-442b-9614-bfecfd391484": [
+          "refactor-own_a-remnant_a:st-native:w0",
+          "refactor-own_a-remnant_c:st-native:w0",
+          "refactor-own_b-remnant_a:st-native:w0",
+          "refactor-own_b-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F1-sonnet-move",
+      "location": "Finding 1 breadth table, Sonnet move",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "472c12bd-8ac8-4ad4-a5ec-fb943236099a"
+      ],
+      "calculation": "restored / kept; last verdict on misses",
+      "cells": {
+        "472c12bd-8ac8-4ad4-a5ec-fb943236099a": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2",
+          "rewrite0-own_b-remnant_a:st-native:w0",
+          "rewrite0-own_b-remnant_a:st-native:w1",
+          "rewrite0-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F1-sonnet-r0",
+      "location": "Finding 1 breadth table, Sonnet rewrite",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "aed117c0-95d1-4a08-8bff-e8c3ca9bb2d7"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "aed117c0-95d1-4a08-8bff-e8c3ca9bb2d7": [
+          "refactor-own_a-remnant_a:st-native:w0",
+          "refactor-own_a-remnant_c:st-native:w0",
+          "refactor-own_b-remnant_a:st-native:w0",
+          "refactor-own_b-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F1-flash-move",
+      "location": "Finding 1 breadth table, Flash move",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "99a4fd07-fb77-45ed-bb60-cba52fcacaf2"
+      ],
+      "calculation": "restored / kept; last verdict on misses",
+      "cells": {
+        "99a4fd07-fb77-45ed-bb60-cba52fcacaf2": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2",
+          "rewrite0-own_b-remnant_a:st-native:w0",
+          "rewrite0-own_b-remnant_a:st-native:w1",
+          "rewrite0-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F1-flash-r0",
+      "location": "Finding 1 breadth table, Flash rewrite",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "aed117c0-95d1-4a08-8bff-e8c3ca9bb2d7"
+      ],
+      "calculation": "module_read T1",
+      "cells": {
+        "aed117c0-95d1-4a08-8bff-e8c3ca9bb2d7": [
+          "refactor-own_a-remnant_a:st-native:w0",
+          "refactor-own_a-remnant_c:st-native:w0",
+          "refactor-own_b-remnant_a:st-native:w0",
+          "refactor-own_b-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F1-flash-open-move",
+      "location": "Finding 1 text, Flash opened the file in T1, move",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "99a4fd07-fb77-45ed-bb60-cba52fcacaf2"
+      ],
+      "calculation": "module_read per turn",
+      "cells": {
+        "99a4fd07-fb77-45ed-bb60-cba52fcacaf2": [
+          "rewrite0-own_a-remnant_a:st-native:w0",
+          "rewrite0-own_a-remnant_a:st-native:w1",
+          "rewrite0-own_a-remnant_a:st-native:w2",
+          "rewrite0-own_b-remnant_a:st-native:w0",
+          "rewrite0-own_b-remnant_a:st-native:w1",
+          "rewrite0-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F1-flash-open-r0",
+      "location": "Finding 1 text, Flash opened the file, rewrite",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "80206567-2154-4c12-afe2-b3a49f6b4448"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "80206567-2154-4c12-afe2-b3a49f6b4448": [
+          "forge-move-own_a-remnant_a:st-native:w0",
+          "forge-move-own_a-remnant_a:st-native:w1",
+          "forge-move-own_a-remnant_a:st-native:w2",
+          "forge-move-own_b-remnant_a:st-native:w0",
+          "forge-move-own_b-remnant_a:st-native:w1",
+          "forge-move-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F2-forge-move-argon",
+      "location": "Finding 2 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "121df55a-c80b-4e5b-afbe-27f554f44fb2",
+        "b9814d1a-c4fe-4ae2-865b-5ef0c9076d20"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "121df55a-c80b-4e5b-afbe-27f554f44fb2": [
+          "forge-move-own_a-remnant_a:st-native:w0",
+          "forge-move-own_a-remnant_a:st-native:w1",
+          "forge-move-own_a-remnant_a:st-native:w2",
+          "forge-move-own_b-remnant_a:st-native:w0",
+          "forge-move-own_b-remnant_a:st-native:w1",
+          "forge-move-own_b-remnant_a:st-native:w2"
+        ],
+        "b9814d1a-c4fe-4ae2-865b-5ef0c9076d20": [
+          "forge-move-own_a-remnant_a:st-native:w0",
+          "forge-move-own_a-remnant_a:st-native:w1",
+          "forge-move-own_a-remnant_a:st-native:w2",
+          "forge-move-own_b-remnant_a:st-native:w0",
+          "forge-move-own_b-remnant_a:st-native:w1",
+          "forge-move-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F2-forge-move-flash",
+      "location": "Finding 2 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "bfd8a263-1c66-4048-83c8-b932b0a3527d"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "bfd8a263-1c66-4048-83c8-b932b0a3527d": [
+          "forge-rewrite-own_a-remnant_a:st-native:w0",
+          "forge-rewrite-own_a-remnant_a:st-native:w1",
+          "forge-rewrite-own_a-remnant_a:st-native:w2",
+          "forge-rewrite-own_b-remnant_a:st-native:w0",
+          "forge-rewrite-own_b-remnant_a:st-native:w1",
+          "forge-rewrite-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F2-forge-rewrite-argon",
+      "location": "Finding 2 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "5976c4f9-be30-4e88-8f7e-62c4d454a003"
+      ],
+      "calculation": "restored / kept",
+      "cells": {
+        "5976c4f9-be30-4e88-8f7e-62c4d454a003": [
+          "forge-rewrite-own_a-remnant_a:st-native:w0",
+          "forge-rewrite-own_a-remnant_a:st-native:w1",
+          "forge-rewrite-own_a-remnant_a:st-native:w2",
+          "forge-rewrite-own_b-remnant_a:st-native:w0",
+          "forge-rewrite-own_b-remnant_a:st-native:w1",
+          "forge-rewrite-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F2-forge-rewrite-flash",
+      "location": "Finding 2 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "ffe47efa-0724-44a9-8f50-640e6e244d8f"
+      ],
+      "calculation": "restored / kept; last verdict on misses",
+      "cells": {
+        "ffe47efa-0724-44a9-8f50-640e6e244d8f": [
+          "resume146-own_a-remnant_a:st-native:w0",
+          "resume146-own_a-remnant_a:st-native:w1",
+          "resume146-own_a-remnant_a:st-native:w2",
+          "resume146-own_b-remnant_a:st-native:w0",
+          "resume146-own_b-remnant_a:st-native:w1",
+          "resume146-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F2-146-argon",
+      "location": "Finding 2 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "eb94295c-b36b-481f-a296-1f11b263a213"
+      ],
+      "calculation": "restored / kept; last verdict on misses",
+      "cells": {
+        "eb94295c-b36b-481f-a296-1f11b263a213": [
+          "resume146-own_a-remnant_a:st-native:w0",
+          "resume146-own_a-remnant_a:st-native:w1",
+          "resume146-own_a-remnant_a:st-native:w2",
+          "resume146-own_b-remnant_a:st-native:w0",
+          "resume146-own_b-remnant_a:st-native:w1",
+          "resume146-own_b-remnant_a:st-native:w2"
+        ]
+      },
+      "id": "F2-146-flash",
+      "location": "Finding 2 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "39603b39-bef6-4992-b0bb-d95b90a52577",
+        "3cb59616-dd89-4d88-95fb-7a9660c678da",
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362",
+        "4db6069a-2b0b-4278-a03a-6698382f7b4d",
+        "59bb7fbd-64be-40c7-9620-14808875fdd8",
+        "772e5410-060c-42e1-9674-e3b0d993c3d2",
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee",
+        "cdb19371-3d92-453e-a47b-7c9fe532565b",
+        "d05ad588-18f9-4cd7-90b0-2688ab0ebde9"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "39603b39-bef6-4992-b0bb-d95b90a52577": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_a:st-native:w1",
+          "rewrite-own_a-remnant_a:st-native:w2",
+          "rewrite-own_a-remnant_a:st-native:w3",
+          "rewrite-own_a-remnant_a:st-native:w4",
+          "rewrite-own_a-remnant_a:st-native:w5",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w2",
+          "rewrite-own_b-remnant_a:st-native:w3",
+          "rewrite-own_b-remnant_a:st-native:w4",
+          "rewrite-own_b-remnant_a:st-native:w5"
+        ],
+        "3cb59616-dd89-4d88-95fb-7a9660c678da": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "4db6069a-2b0b-4278-a03a-6698382f7b4d": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w2",
+          "rewrite-own_b-remnant_a:st-native:w3",
+          "rewrite-own_b-remnant_a:st-native:w4",
+          "rewrite-own_b-remnant_a:st-native:w5"
+        ],
+        "59bb7fbd-64be-40c7-9620-14808875fdd8": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w2",
+          "rewrite-own_b-remnant_b:st-native:w3",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w2",
+          "rewrite-own_c-remnant_b:st-native:w3"
+        ],
+        "772e5410-060c-42e1-9674-e3b0d993c3d2": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "cdb19371-3d92-453e-a47b-7c9fe532565b": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_a:st-native:w1",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w1"
+        ],
+        "d05ad588-18f9-4cd7-90b0-2688ab0ebde9": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w2",
+          "rewrite-own_b-remnant_b:st-native:w3",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w2",
+          "rewrite-own_c-remnant_b:st-native:w3"
+        ]
+      },
+      "id": "F3-gpt-6.1-sol",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "78660eae-a995-42a0-88f4-1ab7a4aac6ae",
+        "84932da0-4201-48e4-b216-1b6be52fccfd",
+        "a2310fc3-f18f-4aa8-970a-d22ae5495759"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "78660eae-a995-42a0-88f4-1ab7a4aac6ae": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "84932da0-4201-48e4-b216-1b6be52fccfd": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "a2310fc3-f18f-4aa8-970a-d22ae5495759": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-claude-sonnet-5.5",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-gemini-4-argon",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "2b21347e-ed77-46f6-8792-9dc7d9c325cc"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "2b21347e-ed77-46f6-8792-9dc7d9c325cc": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-ministral-14b-2512",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-deepseek-v4-pro",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "36d62df0-edad-4c6b-824d-62877bbadb70",
+        "72c5ca9c-6006-4203-b220-92a7ae7ec473",
+        "dd67e400-763a-4e85-a0d7-b84828412cee"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "36d62df0-edad-4c6b-824d-62877bbadb70": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "72c5ca9c-6006-4203-b220-92a7ae7ec473": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "dd67e400-763a-4e85-a0d7-b84828412cee": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-gemini-3.8-flash",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "13719646-87a0-4bea-b1a0-56fbb4f08ad3",
+        "40f328ef-349d-4389-87c0-133745f41bbe"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "13719646-87a0-4bea-b1a0-56fbb4f08ad3": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "40f328ef-349d-4389-87c0-133745f41bbe": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-kimi-k2.7-code",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "d434fb0b-4b16-4f85-9d50-85622390e3de"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "d434fb0b-4b16-4f85-9d50-85622390e3de": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-gpt-6-luna",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "df5b61b8-8cbe-4634-a2e4-edaebcfb505b"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "df5b61b8-8cbe-4634-a2e4-edaebcfb505b": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-claude-haiku-5.5",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "22db85bc-b9ce-4137-b0c1-638c84bd764e"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "22db85bc-b9ce-4137-b0c1-638c84bd764e": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-gpt-oss-20b",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "1c8be64b-b530-4969-a745-518223943c71",
+        "ee3042b2-e0cf-4e90-9001-a1bd61edf370"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "1c8be64b-b530-4969-a745-518223943c71": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "ee3042b2-e0cf-4e90-9001-a1bd61edf370": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-qwen3.8-2.4t-a95b",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "56e4e366-eb55-4bc9-8430-678ae9d10914",
+        "8b9e9666-ed2c-4287-9730-597aec848e02"
+      ],
+      "calculation": "restored / kept by framing; last verdict on misses",
+      "cells": {
+        "56e4e366-eb55-4bc9-8430-678ae9d10914": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "8b9e9666-ed2c-4287-9730-597aec848e02": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-qwen3.8-27b",
+      "location": "Finding 3 table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "13719646-87a0-4bea-b1a0-56fbb4f08ad3",
+        "1c8be64b-b530-4969-a745-518223943c71",
+        "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da",
+        "22db85bc-b9ce-4137-b0c1-638c84bd764e",
+        "2b21347e-ed77-46f6-8792-9dc7d9c325cc",
+        "36d62df0-edad-4c6b-824d-62877bbadb70",
+        "39603b39-bef6-4992-b0bb-d95b90a52577",
+        "3cb59616-dd89-4d88-95fb-7a9660c678da",
+        "40f328ef-349d-4389-87c0-133745f41bbe",
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362",
+        "4db6069a-2b0b-4278-a03a-6698382f7b4d",
+        "56e4e366-eb55-4bc9-8430-678ae9d10914",
+        "59bb7fbd-64be-40c7-9620-14808875fdd8",
+        "72c5ca9c-6006-4203-b220-92a7ae7ec473",
+        "772e5410-060c-42e1-9674-e3b0d993c3d2",
+        "78660eae-a995-42a0-88f4-1ab7a4aac6ae",
+        "84932da0-4201-48e4-b216-1b6be52fccfd",
+        "8b9e9666-ed2c-4287-9730-597aec848e02",
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee",
+        "a2310fc3-f18f-4aa8-970a-d22ae5495759",
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d",
+        "cdb19371-3d92-453e-a47b-7c9fe532565b",
+        "d05ad588-18f9-4cd7-90b0-2688ab0ebde9",
+        "d434fb0b-4b16-4f85-9d50-85622390e3de",
+        "dd67e400-763a-4e85-a0d7-b84828412cee",
+        "df5b61b8-8cbe-4634-a2e4-edaebcfb505b",
+        "ee3042b2-e0cf-4e90-9001-a1bd61edf370"
+      ],
+      "calculation": "misses whose last verdict is complete",
+      "cells": {
+        "13719646-87a0-4bea-b1a0-56fbb4f08ad3": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "1c8be64b-b530-4969-a745-518223943c71": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "22db85bc-b9ce-4137-b0c1-638c84bd764e": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "2b21347e-ed77-46f6-8792-9dc7d9c325cc": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "36d62df0-edad-4c6b-824d-62877bbadb70": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "39603b39-bef6-4992-b0bb-d95b90a52577": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_a:st-native:w1",
+          "rewrite-own_a-remnant_a:st-native:w2",
+          "rewrite-own_a-remnant_a:st-native:w3",
+          "rewrite-own_a-remnant_a:st-native:w4",
+          "rewrite-own_a-remnant_a:st-native:w5",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w2",
+          "rewrite-own_b-remnant_a:st-native:w3",
+          "rewrite-own_b-remnant_a:st-native:w4",
+          "rewrite-own_b-remnant_a:st-native:w5"
+        ],
+        "3cb59616-dd89-4d88-95fb-7a9660c678da": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "40f328ef-349d-4389-87c0-133745f41bbe": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "4db6069a-2b0b-4278-a03a-6698382f7b4d": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w2",
+          "rewrite-own_b-remnant_a:st-native:w3",
+          "rewrite-own_b-remnant_a:st-native:w4",
+          "rewrite-own_b-remnant_a:st-native:w5"
+        ],
+        "56e4e366-eb55-4bc9-8430-678ae9d10914": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "59bb7fbd-64be-40c7-9620-14808875fdd8": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w2",
+          "rewrite-own_b-remnant_b:st-native:w3",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w2",
+          "rewrite-own_c-remnant_b:st-native:w3"
+        ],
+        "72c5ca9c-6006-4203-b220-92a7ae7ec473": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "772e5410-060c-42e1-9674-e3b0d993c3d2": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "78660eae-a995-42a0-88f4-1ab7a4aac6ae": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "84932da0-4201-48e4-b216-1b6be52fccfd": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "8b9e9666-ed2c-4287-9730-597aec848e02": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "a2310fc3-f18f-4aa8-970a-d22ae5495759": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "cdb19371-3d92-453e-a47b-7c9fe532565b": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_a:st-native:w1",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w1"
+        ],
+        "d05ad588-18f9-4cd7-90b0-2688ab0ebde9": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w2",
+          "rewrite-own_b-remnant_b:st-native:w3",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w2",
+          "rewrite-own_c-remnant_b:st-native:w3"
+        ],
+        "d434fb0b-4b16-4f85-9d50-85622390e3de": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "dd67e400-763a-4e85-a0d7-b84828412cee": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "df5b61b8-8cbe-4634-a2e4-edaebcfb505b": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "ee3042b2-e0cf-4e90-9001-a1bd61edf370": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-complete",
+      "location": "Finding 3 text",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "40f328ef-349d-4389-87c0-133745f41bbe"
+      ],
+      "calculation": "max requests in a session",
+      "cells": {
+        "40f328ef-349d-4389-87c0-133745f41bbe": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "F3-kimi-requests",
+      "location": "Finding 3 text, loose limits",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "39603b39-bef6-4992-b0bb-d95b90a52577",
+        "3cb59616-dd89-4d88-95fb-7a9660c678da",
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362",
+        "4db6069a-2b0b-4278-a03a-6698382f7b4d",
+        "59bb7fbd-64be-40c7-9620-14808875fdd8",
+        "772e5410-060c-42e1-9674-e3b0d993c3d2",
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee",
+        "cdb19371-3d92-453e-a47b-7c9fe532565b",
+        "d05ad588-18f9-4cd7-90b0-2688ab0ebde9"
+      ],
+      "calculation": "restored / kept per omission and framing",
+      "cells": {
+        "39603b39-bef6-4992-b0bb-d95b90a52577": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_a:st-native:w1",
+          "rewrite-own_a-remnant_a:st-native:w2",
+          "rewrite-own_a-remnant_a:st-native:w3",
+          "rewrite-own_a-remnant_a:st-native:w4",
+          "rewrite-own_a-remnant_a:st-native:w5",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w2",
+          "rewrite-own_b-remnant_a:st-native:w3",
+          "rewrite-own_b-remnant_a:st-native:w4",
+          "rewrite-own_b-remnant_a:st-native:w5"
+        ],
+        "3cb59616-dd89-4d88-95fb-7a9660c678da": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "4db6069a-2b0b-4278-a03a-6698382f7b4d": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w2",
+          "rewrite-own_b-remnant_a:st-native:w3",
+          "rewrite-own_b-remnant_a:st-native:w4",
+          "rewrite-own_b-remnant_a:st-native:w5"
+        ],
+        "59bb7fbd-64be-40c7-9620-14808875fdd8": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w2",
+          "rewrite-own_b-remnant_b:st-native:w3",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w2",
+          "rewrite-own_c-remnant_b:st-native:w3"
+        ],
+        "772e5410-060c-42e1-9674-e3b0d993c3d2": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "cdb19371-3d92-453e-a47b-7c9fe532565b": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_a:st-native:w1",
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w1"
+        ],
+        "d05ad588-18f9-4cd7-90b0-2688ab0ebde9": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w2",
+          "rewrite-own_b-remnant_b:st-native:w3",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w2",
+          "rewrite-own_c-remnant_b:st-native:w3"
+        ]
+      },
+      "id": "SELF-sol",
+      "location": "What we could not answer, Sol table",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "13719646-87a0-4bea-b1a0-56fbb4f08ad3",
+        "1c8be64b-b530-4969-a745-518223943c71",
+        "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da",
+        "22db85bc-b9ce-4137-b0c1-638c84bd764e",
+        "2b21347e-ed77-46f6-8792-9dc7d9c325cc",
+        "36d62df0-edad-4c6b-824d-62877bbadb70",
+        "39603b39-bef6-4992-b0bb-d95b90a52577",
+        "3cb59616-dd89-4d88-95fb-7a9660c678da",
+        "40f328ef-349d-4389-87c0-133745f41bbe",
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362",
+        "4db6069a-2b0b-4278-a03a-6698382f7b4d",
+        "56e4e366-eb55-4bc9-8430-678ae9d10914",
+        "59bb7fbd-64be-40c7-9620-14808875fdd8",
+        "72c5ca9c-6006-4203-b220-92a7ae7ec473",
+        "772e5410-060c-42e1-9674-e3b0d993c3d2",
+        "78660eae-a995-42a0-88f4-1ab7a4aac6ae",
+        "84932da0-4201-48e4-b216-1b6be52fccfd",
+        "8b9e9666-ed2c-4287-9730-597aec848e02",
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee",
+        "a2310fc3-f18f-4aa8-970a-d22ae5495759",
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d",
+        "cdb19371-3d92-453e-a47b-7c9fe532565b",
+        "d05ad588-18f9-4cd7-90b0-2688ab0ebde9",
+        "d434fb0b-4b16-4f85-9d50-85622390e3de",
+        "dd67e400-763a-4e85-a0d7-b84828412cee",
+        "df5b61b8-8cbe-4634-a2e4-edaebcfb505b",
+        "ee3042b2-e0cf-4e90-9001-a1bd61edf370"
+      ],
+      "calculation": "restored / kept, omissions A and B only",
+      "cells": {
+        "13719646-87a0-4bea-b1a0-56fbb4f08ad3": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "1c8be64b-b530-4969-a745-518223943c71": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "22db85bc-b9ce-4137-b0c1-638c84bd764e": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "2b21347e-ed77-46f6-8792-9dc7d9c325cc": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "36d62df0-edad-4c6b-824d-62877bbadb70": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "39603b39-bef6-4992-b0bb-d95b90a52577": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_a:st-native:w1",
+          "rewrite-own_a-remnant_a:st-native:w2",
+          "rewrite-own_a-remnant_a:st-native:w3",
+          "rewrite-own_a-remnant_a:st-native:w4",
+          "rewrite-own_a-remnant_a:st-native:w5",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w2",
+          "rewrite-own_b-remnant_a:st-native:w3",
+          "rewrite-own_b-remnant_a:st-native:w4",
+          "rewrite-own_b-remnant_a:st-native:w5"
+        ],
+        "3cb59616-dd89-4d88-95fb-7a9660c678da": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "40f328ef-349d-4389-87c0-133745f41bbe": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "4db6069a-2b0b-4278-a03a-6698382f7b4d": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w2",
+          "rewrite-own_b-remnant_a:st-native:w3",
+          "rewrite-own_b-remnant_a:st-native:w4",
+          "rewrite-own_b-remnant_a:st-native:w5"
+        ],
+        "56e4e366-eb55-4bc9-8430-678ae9d10914": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "59bb7fbd-64be-40c7-9620-14808875fdd8": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w2",
+          "rewrite-own_b-remnant_b:st-native:w3",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w2",
+          "rewrite-own_c-remnant_b:st-native:w3"
+        ],
+        "72c5ca9c-6006-4203-b220-92a7ae7ec473": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "772e5410-060c-42e1-9674-e3b0d993c3d2": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "78660eae-a995-42a0-88f4-1ab7a4aac6ae": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "84932da0-4201-48e4-b216-1b6be52fccfd": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "8b9e9666-ed2c-4287-9730-597aec848e02": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "a2310fc3-f18f-4aa8-970a-d22ae5495759": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "cdb19371-3d92-453e-a47b-7c9fe532565b": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_a-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1"
+        ],
+        "d05ad588-18f9-4cd7-90b0-2688ab0ebde9": [
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w1",
+          "rewrite-own_b-remnant_b:st-native:w2",
+          "rewrite-own_b-remnant_b:st-native:w3",
+          "rewrite-own_c-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w1",
+          "rewrite-own_c-remnant_b:st-native:w2",
+          "rewrite-own_c-remnant_b:st-native:w3"
+        ],
+        "d434fb0b-4b16-4f85-9d50-85622390e3de": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "dd67e400-763a-4e85-a0d7-b84828412cee": [
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "df5b61b8-8cbe-4634-a2e4-edaebcfb505b": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ],
+        "ee3042b2-e0cf-4e90-9001-a1bd61edf370": [
+          "rewrite-own_a-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_a:st-native:w0",
+          "rewrite-own_b-remnant_b:st-native:w0",
+          "rewrite-own_c-remnant_b:st-native:w0"
+        ]
+      },
+      "id": "H5-without-C",
+      "location": "Sensitivity, not on the page (REPORT A13)",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "13719646-87a0-4bea-b1a0-56fbb4f08ad3",
+        "1c8be64b-b530-4969-a745-518223943c71",
+        "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da",
+        "22db85bc-b9ce-4137-b0c1-638c84bd764e",
+        "2b21347e-ed77-46f6-8792-9dc7d9c325cc",
+        "36d62df0-edad-4c6b-824d-62877bbadb70",
+        "3cb59616-dd89-4d88-95fb-7a9660c678da",
+        "40f328ef-349d-4389-87c0-133745f41bbe",
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362",
+        "56e4e366-eb55-4bc9-8430-678ae9d10914",
+        "72c5ca9c-6006-4203-b220-92a7ae7ec473",
+        "772e5410-060c-42e1-9674-e3b0d993c3d2",
+        "78660eae-a995-42a0-88f4-1ab7a4aac6ae",
+        "84932da0-4201-48e4-b216-1b6be52fccfd",
+        "8b9e9666-ed2c-4287-9730-597aec848e02",
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee",
+        "a2310fc3-f18f-4aa8-970a-d22ae5495759",
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d",
+        "cdb19371-3d92-453e-a47b-7c9fe532565b",
+        "d434fb0b-4b16-4f85-9d50-85622390e3de",
+        "dd67e400-763a-4e85-a0d7-b84828412cee",
+        "df5b61b8-8cbe-4634-a2e4-edaebcfb505b",
+        "ee3042b2-e0cf-4e90-9001-a1bd61edf370"
+      ],
+      "calculation": "restored / kept, omission C only",
+      "cells": {
+        "13719646-87a0-4bea-b1a0-56fbb4f08ad3": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "1c8be64b-b530-4969-a745-518223943c71": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "217d63c3-a4d9-49a4-9a60-c9f77e9ba9da": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "22db85bc-b9ce-4137-b0c1-638c84bd764e": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "2b21347e-ed77-46f6-8792-9dc7d9c325cc": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "36d62df0-edad-4c6b-824d-62877bbadb70": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "3cb59616-dd89-4d88-95fb-7a9660c678da": [
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "40f328ef-349d-4389-87c0-133745f41bbe": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "414b5927-fe13-48d9-9fcb-ce79a18d4362": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "56e4e366-eb55-4bc9-8430-678ae9d10914": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "72c5ca9c-6006-4203-b220-92a7ae7ec473": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "772e5410-060c-42e1-9674-e3b0d993c3d2": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "78660eae-a995-42a0-88f4-1ab7a4aac6ae": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "84932da0-4201-48e4-b216-1b6be52fccfd": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "8b9e9666-ed2c-4287-9730-597aec848e02": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "9e24b30e-55c6-4434-b4b2-0cf339ce99ee": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "a2310fc3-f18f-4aa8-970a-d22ae5495759": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "ac955a91-ddf4-49cb-a96d-af65b7df479d": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "cdb19371-3d92-453e-a47b-7c9fe532565b": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_a-remnant_c:st-native:w1",
+          "rewrite-own_c-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w1"
+        ],
+        "d434fb0b-4b16-4f85-9d50-85622390e3de": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "dd67e400-763a-4e85-a0d7-b84828412cee": [
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "df5b61b8-8cbe-4634-a2e4-edaebcfb505b": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ],
+        "ee3042b2-e0cf-4e90-9001-a1bd61edf370": [
+          "rewrite-own_a-remnant_c:st-native:w0",
+          "rewrite-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "H5-C-only",
+      "location": "Sensitivity, not on the page (REPORT A13)",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "dc8939df-4382-493d-9fd2-7810ae13349b"
+      ],
+      "calculation": "restored / kept, quoted arms",
+      "cells": {
+        "dc8939df-4382-493d-9fd2-7810ae13349b": [
+          "refactor-own_a-remnant_a:st-quoted-first:w0",
+          "refactor-own_a-remnant_a:st-quoted-last:w0",
+          "refactor-own_a-remnant_c:st-quoted-first:w0",
+          "refactor-own_a-remnant_c:st-quoted-last:w0",
+          "refactor-own_b-remnant_a:st-quoted-first:w0",
+          "refactor-own_b-remnant_a:st-quoted-last:w0",
+          "refactor-own_b-remnant_b:st-quoted-first:w0",
+          "refactor-own_b-remnant_b:st-quoted-last:w0",
+          "refactor-own_c-remnant_b:st-quoted-first:w0",
+          "refactor-own_c-remnant_b:st-quoted-last:w0",
+          "refactor-own_c-remnant_c:st-quoted-first:w0",
+          "refactor-own_c-remnant_c:st-quoted-last:w0"
+        ]
+      },
+      "id": "SELF-quoted",
+      "location": "What we could not answer, attribution variants",
+      "protocol_version": "st-v1"
+    },
+    {
+      "archives": [
+        "90b75097-c8e4-417c-93d2-6a0fc29fe90c"
+      ],
+      "calculation": "restored / kept, native arm",
+      "cells": {
+        "90b75097-c8e4-417c-93d2-6a0fc29fe90c": [
+          "refactor-own_a-remnant_a:st-native:w0",
+          "refactor-own_a-remnant_c:st-native:w0",
+          "refactor-own_b-remnant_a:st-native:w0",
+          "refactor-own_b-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_b:st-native:w0",
+          "refactor-own_c-remnant_c:st-native:w0"
+        ]
+      },
+      "id": "SELF-turns",
+      "location": "What we could not answer, own log as own turns",
+      "protocol_version": "st-v1"
+    }
+  ]
+}
