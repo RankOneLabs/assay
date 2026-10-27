@@ -2,6 +2,8 @@
 
 Run ``uv run python -m verification_pilot.self_trust.tally <archive>...`` from
 ``experiments/``. Each archive is a ``raw/self_trust/runs/<run_id>`` directory.
+This quick tally does not apply the publication report's exclusion rule;
+it includes every indexed cell regardless of terminal cause.
 """
 
 from __future__ import annotations
