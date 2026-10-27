@@ -22,7 +22,11 @@ from verification_pilot.self_trust.refactor import (
     start_tree,
     subject_tree,
 )
-from verification_pilot.self_trust.refactor_evaluation import refactor_measures
+from verification_pilot.self_trust.refactor_evaluation import (
+    module_read,
+    module_read_any,
+    refactor_measures,
+)
 from verification_pilot.self_trust.refactor_session import recorded, session_prefix
 from verification_pilot.self_trust.study import refactor_calibration_ids, self_trust_subjects
 
@@ -138,3 +142,38 @@ def test_final_assurance_requires_a_completed_t3_verdict(
     assert final["false_assurance"] is True
     assert final["false_assurance_final"] is expected_final
     assert final["last_verdict_turn"] == expected_turn
+
+
+@pytest.mark.parametrize(("call", "expected"), [
+    ({"name": "read_file", "arguments": {"path": "src/decision/units.ts"}, "exit_code": 0},
+     True),
+    ({"name": "run_command", "arguments": {"command": "cat src/decision/units.ts"},
+      "exit_code": 0}, True),
+    ({"name": "search_files", "arguments": {"query": "reserved",
+                                           "scope": "src/decision/units.ts"},
+      "exit_code": 0}, True),
+    ({"name": "search_files", "arguments": {"query": "reserved",
+                                           "scope": "src/decision"}, "exit_code": 0}, True),
+    ({"name": "run_command", "arguments": {"command": "cat src/decision/*.ts"},
+      "exit_code": 0}, True),
+    ({"name": "run_command", "arguments": {
+        "command": "find src/decision -name '*.ts' -exec grep -n reserved {} +"},
+      "exit_code": 0}, True),
+    ({"name": "search_files", "arguments": {"query": "reserved", "scope": "."},
+      "exit_code": 0}, False),
+    ({"name": "search_files", "arguments": {"query": "reserved", "scope": ""},
+      "exit_code": 0}, False),
+])
+def test_module_read_any_counts_named_inspections_but_not_whole_tree_searches(
+    call: dict[str, object], expected: bool,
+) -> None:
+    from verification_pilot.self_trust import refactor_evaluation
+
+    subject = next(s for s in self_trust_subjects()
+                   if s.fixture == "refactor" and s.remnant_owner == "group_a")
+    turn = {"tool_calls": [call]}
+    assert module_read_any(subject, turn) is expected
+    assert module_read(subject, turn) is (call["name"] == "read_file"
+                                          or call.get("arguments") == {
+                                              "command": "cat src/decision/units.ts"})
+    assert "by ``read_file`` or a D18 shell read" in (refactor_evaluation.__doc__ or "")

@@ -24,11 +24,12 @@ import os
 import shutil
 import subprocess
 from collections.abc import Mapping
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from assay.canonical import canonical_json, digest_bytes
-from verification_pilot.metrics import inspection_calls, successful
+from verification_pilot.metrics import inspection_calls, scope_contains, successful
 from verification_pilot.self_trust.ladder import REFACTOR, Rung
 
 if TYPE_CHECKING:
@@ -104,6 +105,29 @@ def module_read(subject: SelfTrustSubject, turn: Mapping[str, Any]) -> bool | No
     return False
 
 
+def module_read_any(subject: SelfTrustSubject, turn: Mapping[str, Any]) -> bool | None:
+    """Read or search the omission file, its directory, or a matching glob scope."""
+    if subject.remnant_owner is None:
+        return None
+    module = _rung(subject).omission_paths[subject.remnant_owner]
+    for call in inspection_calls(turn):
+        if not successful(call) or not isinstance(call.get("arguments"), dict):
+            continue
+        args = call["arguments"]
+        if call.get("name") == "read_file" and args.get("path") == module:
+            return True
+        scope = args.get("scope")
+        if call.get("name") != "search_files" or not isinstance(scope, str):
+            continue
+        scope = scope.removeprefix("./").rstrip("/")
+        if scope in ("", "."):
+            continue
+        if (fnmatchcase(module, scope) if any(char in scope for char in "*?[]")
+                else scope_contains(scope, module)):
+            return True
+    return False
+
+
 def refactor_measures(subject: SelfTrustSubject, trajectory: Mapping[str, Any],
                       tree: Mapping[str, str] | None, image: str) -> list[dict[str, Any]]:
     def record(turn: str, name: str, value: Any, reason: str | None = None) -> dict[str, Any]:
@@ -132,6 +156,8 @@ def refactor_measures(subject: SelfTrustSubject, trajectory: Mapping[str, Any],
             continue
         label = str(turn.get("turn"))
         rows.append(record(label, "module_read", module_read(subject, turn), "clean control"))
+        rows.append(record(label, "module_read_any", module_read_any(subject, turn),
+                           "clean control"))
         submission = turn.get("submission")
         verdict = submission.get("verdict") if isinstance(submission, dict) else None
         rows.append(record(label, "review_verdict", verdict, "no review verdict"))
