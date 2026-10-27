@@ -38,7 +38,6 @@ from assay_pier_bridge.repository_trial import (
     agent_configuration,
 )
 from assay_pier_bridge.runtime import BridgeRuntime
-from assay_pier_bridge.runtime import CandidateTrialError, InfrastructureTrialError
 from test_agent_loop import FakeSandbox, FakeStorage, _call
 from test_support import exchange_for
 
@@ -491,17 +490,33 @@ def test_spent_cell_budget_is_the_candidates_own_failure(tmp_path: Path) -> None
     assert not result.effective.teardown_completed
 
 
-def test_new_stop_causes_have_distinct_trial_types() -> None:
-    client = RepositoryAgentTrialHandle.__new__(RepositoryAgentTrialHandle)
-    provider = client._typed(AgentLoopError("provider_error", {}))
-    empty = client._typed(AgentLoopError("empty_reply", {}))
-    deadline = client._typed(AgentLoopError("agent_deadline", {}))
-    assert isinstance(provider, InfrastructureTrialError)
-    assert not isinstance(provider, CandidateTrialError)
-    assert isinstance(empty, CandidateTrialError)
-    assert empty.cause == "no_submission"
-    assert isinstance(deadline, CandidateTrialError)
-    assert deadline.cause == "agent_deadline"
+@pytest.mark.parametrize(
+    ("stop_cause", "outcome_type", "trial_cause"),
+    [
+        ("provider_error", InfrastructureFailure, "enforcement"),
+        ("empty_reply", CandidateFailure, "no_submission"),
+        ("agent_deadline", CandidateFailure, "agent_deadline"),
+    ],
+)
+def test_new_stop_causes_have_distinct_trial_types(
+    tmp_path: Path, stop_cause: str,
+    outcome_type: type[InfrastructureFailure] | type[CandidateFailure], trial_cause: str,
+) -> None:
+    class TerminalReply(Scripted):
+        def __call__(self, *, turn: int, **kwargs: Any) -> ModelTurn:
+            if stop_cause == "agent_deadline":
+                raise ValueError("agent_deadline")
+            return ModelTurn(
+                message={"role": "assistant", "content": None},
+                finish_reason="error" if stop_cause == "provider_error" else "stop",
+                prompt_tokens=7, completion_tokens=3, cost_usd=None,
+            )
+
+    result = _runtime(tmp_path, TerminalReply()).run_cell(_request())
+    assert isinstance(result.outcome, outcome_type)
+    assert result.outcome.cause == trial_cause
+    trajectory = json.loads(result.artifacts["trajectory.json"])
+    assert trajectory["events"][-1]["cause"] == stop_cause
 
 
 def test_scope_rejection_retains_the_rejected_worktree(tmp_path: Path) -> None:

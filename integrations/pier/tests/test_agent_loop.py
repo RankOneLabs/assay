@@ -113,7 +113,7 @@ def test_request_event_keeps_provider_provenance_and_bounded_error_body(
     def handler(request: httpx.Request) -> httpx.Response:
         answer = _answer("submit_output", {"summary": "unused"}, 1)
         answer.update({
-            "id": "gen-123", "model_revision": "revision-2026-10-26",
+            "id": "gen-123",
             "error": error_text,
         })
         answer["choices"] = [{
@@ -137,7 +137,7 @@ def test_request_event_keeps_provider_provenance_and_bounded_error_body(
     assert event["http_status"] == 200
     assert event["finish_reason"] == "error"
     assert event["sampling"] == "unset"
-    assert event["model_revision"] == "revision-2026-10-26"
+    assert event["model_revision"] == "unavailable"
     assert event["error_body"].startswith("provider overloaded: ")
     assert len(event["error_body"].encode("utf-8")) == 2048
 
@@ -163,7 +163,7 @@ def test_provider_identity_failure_keeps_response_provenance(tmp_path: Path) -> 
         answer = _answer("submit_output", {"summary": "unused"}, 1)
         answer.update({
             "id": "gen-wrong-route", "provider": "unexpected-provider",
-            "model_revision": "revision-x", "error": "route mismatch",
+            "error": "route mismatch",
         })
         return httpx.Response(200, json=answer)
 
@@ -176,7 +176,7 @@ def test_provider_identity_failure_keeps_response_provenance(tmp_path: Path) -> 
                  if e["kind"] == "model_request")
     assert event["generation_id"] == "gen-wrong-route"
     assert event["http_status"] == 200
-    assert event["model_revision"] == "revision-x"
+    assert event["model_revision"] == "unavailable"
     assert event["finish_reason"] == "tool_calls"
     assert "route mismatch" in event["error_body"]
     assert len(event["error_body"].encode("utf-8")) <= 2048
@@ -2063,11 +2063,11 @@ def test_no_tool_reply_cause(
 
 
 def test_candidate_stop_causes_are_additive() -> None:
-    assert CANDIDATE_STOP_CAUSES == {
+    assert {
         "turn_limit", "no_tool_call", "invalid_tool_call", "invalid_submission",
         "output_token_limit", "conversation_limit", "request_limit",
         "turn_tool_call_limit", "cell_tool_call_limit", "empty_reply",
-    }
+    } == CANDIDATE_STOP_CAUSES
     assert "provider_error" not in CANDIDATE_STOP_CAUSES
 
 

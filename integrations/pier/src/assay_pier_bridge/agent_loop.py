@@ -30,7 +30,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, NoReturn, Protocol
 
@@ -146,7 +146,8 @@ class ModelTurn:
     generation_id: str | None = None
     http_status: int | None = None
     error_body: str | None = None
-    model_revision: str | None = None
+    # No verified provider revision field exists in the response contract yet.
+    model_revision: str = "unavailable"
 
 
 class InFlightDeadline(ValueError):
@@ -1407,7 +1408,7 @@ class RepositoryAgentClient:
             chunks = bytearray()
             over_limit = False
             bytes_received = False
-            request_started_at = datetime.now(timezone.utc).isoformat()
+            request_started_at = datetime.now(UTC).isoformat()
             try:
                 with client.stream(
                     "POST",
@@ -1434,7 +1435,7 @@ class RepositoryAgentClient:
                             response.status_code,
                             bytes(error_chunks).decode("utf-8", "ignore"),
                             request_started_at,
-                            datetime.now(timezone.utc).isoformat(),
+                            datetime.now(UTC).isoformat(),
                         )
                     for chunk in response.iter_bytes():
                         bytes_received = bytes_received or bool(chunk)
@@ -1449,7 +1450,7 @@ class RepositoryAgentClient:
                         and deadline <= time.monotonic():
                     raise InFlightDeadline(bytes_received=bytes_received) from error
                 raise
-            request_ended_at = datetime.now(timezone.utc).isoformat()
+            request_ended_at = datetime.now(UTC).isoformat()
         def billed_failure(
             cause: str, usage: Mapping[str, int | float | None], data: Any = None,
         ) -> BilledResponseError:
@@ -1465,8 +1466,7 @@ class RepositoryAgentClient:
                 "http_status": response.status_code,
                 "finish_reason": finish_reason,
                 "error_body": bytes(chunks[:2048]).decode("utf-8", "ignore"),
-                "model_revision": data.get("model_revision") if isinstance(data, dict)
-                and isinstance(data.get("model_revision"), str) else None,
+                "model_revision": "unavailable",
             })
         try:
             data = json.loads(chunks)
@@ -1514,8 +1514,7 @@ class RepositoryAgentClient:
             http_status=response.status_code,
             error_body=(error_text.encode("utf-8")[:2048].decode("utf-8", "ignore")
                         if error_text is not None else None),
-            model_revision=(data.get("model_revision")
-                            if isinstance(data.get("model_revision"), str) else None),
+            model_revision="unavailable",
         )
 
     def run_cell(
@@ -1770,7 +1769,7 @@ class RepositoryAgentClient:
                     raise ValueError("request_limit")
                 turn_usage: dict[str, int | float | None] = turn_record["usage"]
                 started = time.monotonic()
-                started_at = datetime.now(timezone.utc).isoformat()
+                started_at = datetime.now(UTC).isoformat()
                 requests_before = requests
                 try:
                     answer = self._turn(messages, turn, deadline, turn_tools, count_dispatch)
@@ -1786,11 +1785,11 @@ class RepositoryAgentClient:
                         "seconds": round(time.monotonic() - started, 3),
                         "started_at": error.provenance.get("started_at") or started_at,
                         "ended_at": error.provenance.get("ended_at")
-                        or datetime.now(timezone.utc).isoformat(),
+                        or datetime.now(UTC).isoformat(),
                         "generation_id": error.provenance.get("generation_id"),
                         "http_status": error.provenance.get("http_status"),
                         "error_body": error.provenance.get("error_body"),
-                        "model_revision": error.provenance.get("model_revision"),
+                        "model_revision": error.provenance.get("model_revision", "unavailable"),
                         "sampling": "unset",
                         "billing": "uncertain" if error.usage.get("cost_usd") is None
                         else "measured",
@@ -1809,13 +1808,13 @@ class RepositoryAgentClient:
                             "seconds": round(time.monotonic() - started, 3),
                             "started_at": error.started_at, "ended_at": error.ended_at,
                             "generation_id": None, "http_status": error.status,
-                            "error_body": error.body, "model_revision": None,
+                            "error_body": error.body, "model_revision": "unavailable",
                             "sampling": "unset", "billing": "uncertain",
                             "observations": {},
                         })
                     raise
                 message = answer.message
-                ended_at = datetime.now(timezone.utc).isoformat()
+                ended_at = datetime.now(UTC).isoformat()
                 if (
                     not isinstance(message, dict)
                     or type(answer.prompt_tokens) is not int
