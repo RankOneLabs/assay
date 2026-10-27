@@ -468,6 +468,14 @@ Each archive copies the worker's resolved configuration and records the cell's
 run lineage, protocol, code and fixture hashes, route, bounds, terminal
 status and cause, and grader code revision beside the archived measures.
 Remeasuring writes a dated measures file alongside the original.
+`index.json` continues to point to the original measures file; the dated
+sibling is the re-derived version, and no command promotes it automatically.
+
+The model-free `scripted` command deliberately runs a 72-cell smoke slice:
+36 rename subjects in the native and quoted arms. The full 702 subject-arm
+sweep exceeds the plan's 144-cell ceiling and needs multiple plans. Tests
+compile every arm against every subject, but the archive smoke test covers
+only this slice.
 
 `uv run python -m verification_pilot.self_trust.run rerun-matrix --dry-run
 --max-spend-usd N` prints R1–R5 without opening the object store or calling a

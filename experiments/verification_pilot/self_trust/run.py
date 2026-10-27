@@ -102,6 +102,7 @@ async def _execute(store: ObjectStore, prepared: PreparedSelfTrust, worker: Any,
 
 async def run_scripted(store: ObjectStore, archive_root: Path,
                        image: str = "") -> tuple[Any, Path | None]:
+    """Archive a 72-cell rename smoke slice within the plan's 144-cell ceiling."""
     subjects = self_trust_subjects()
     worker = SelfTrustScriptedWorker(store=store, image=image)
     runtime = RuntimeProfile(id="scripted", version="1",

@@ -372,6 +372,9 @@ def archive_manifest(
             resolved = json.loads(store.read_bytes(configuration_ref))
             configuration = {**resolved, "configuration_ref": configuration_ref}
             entry["configuration"] = configuration
+        # Historical self-trust subjects have a fixture but no protocol marker.
+        # Generic pilot cells have neither and must not be mislabeled st-v1.
+        is_self_trust = bool(configuration.get("protocol_version") or hasattr(subject, "fixture"))
         output_ref = record.get("output_ref")
         output = json.loads(store.read_bytes(output_ref)) if output_ref is not None else None
         raw_ref = output.get("raw_trajectory_ref") if output is not None else None
@@ -387,7 +390,7 @@ def archive_manifest(
             trace = cast(RecordedTrace, json.loads(trajectory))
             trajectory_object = trace
             measures = measure(trace, subject)
-            if configuration.get("protocol_version") or hasattr(subject, "fixture"):
+            if is_self_trust:
                 for row in measures:
                     row["code_revision"] = code_revision
             measures_name = f"{number:03d}-measures.json"
@@ -395,7 +398,7 @@ def archive_manifest(
                 json.dumps(measures, sort_keys=True, indent=2) + "\n", encoding="utf-8"
             )
             entry["measures"] = measures_name
-        if configuration.get("protocol_version") or hasattr(subject, "fixture"):
+        if is_self_trust:
             repository = getattr(subject, "repository", None)
             terminal_status, terminal_cause = _terminal_fields(
                 worker_trace, trajectory_object, record["status"])

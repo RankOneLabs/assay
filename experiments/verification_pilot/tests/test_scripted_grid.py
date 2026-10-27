@@ -8,7 +8,12 @@ from pathlib import Path
 
 from assay.execution import RunSucceeded
 from assay.store import ObjectStore
-from verification_pilot.run import archive_manifest, remeasure_archive, run_scripted
+from verification_pilot.run import (
+    archive_manifest,
+    measure_code_revision,
+    remeasure_archive,
+    run_scripted,
+)
 from verification_pilot.self_trust.settings import countable
 
 
@@ -74,7 +79,9 @@ def test_archive_copies_configuration_and_revalidation_without_store(tmp_path: P
     assert entry["configuration"] == {**configuration, "configuration_ref": config_ref}
     recorded = entry["revalidation"]
     assert recorded["new_run_id"] == "new-run" and recorded["original_run_id"] is None
+    assert recorded["change_reason"] == "st-v2 protocol"
     assert recorded["protocol_version"] == "st-v2"
+    assert recorded["code_hash"] == measure_code_revision()
     assert recorded["image_hash"] == "sha256:image"
     assert recorded["model_route"] == configuration["model_route"]
     assert recorded["bounds"] == {**configuration["bounds"],
@@ -84,6 +91,20 @@ def test_archive_copies_configuration_and_revalidation_without_store(tmp_path: P
     assert recorded["terminal_status"] == "completed_valid"
     measures = json.loads((archive / "traces" / entry["measures"]).read_text())
     assert recorded["grader_version"] == measures[0]["code_revision"]
+
+
+def test_generic_pilot_archive_does_not_claim_self_trust_revalidation(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / "store")
+    config_ref = str(store.publish_json({"scripted": True}))
+    worker_ref = str(store.publish_json({"binding": {"configuration_ref": config_ref}}))
+    record_ref = str(store.publish_json({"status": "failed", "trace_ref": worker_ref}))
+    manifest_ref = str(store.publish_json({"run_id": "pilot-run", "execution_records": {
+        "subject:pilot-arm:w0": record_ref}}))
+    archive = archive_manifest(store, manifest_ref, tmp_path / "archives",
+                               {"subject": object()})
+    entry = json.loads((archive / "index.json").read_text())["subject:pilot-arm:w0"]
+    assert entry["configuration"] == {"scripted": True, "configuration_ref": config_ref}
+    assert "revalidation" not in entry
 
 
 def test_replacement_archive_keeps_original_and_retry_reference(tmp_path: Path) -> None:

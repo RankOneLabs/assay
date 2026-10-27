@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import sys
@@ -222,6 +223,29 @@ def test_v2_bounds_and_terminal_policy() -> None:
             {"kind": "stopped", "cause": cause}]}, "failed")
         assert (status, actual) == ("agent_limit", cause)
         assert not did_not_complete(status, cause)
+
+
+def test_excluded_cause_definition_has_one_production_home() -> None:
+    """The report command must import the rule, not restate either half of it."""
+    package = Path(__file__).resolve().parents[1]
+    definition = package / "self_trust" / "settings.py"
+    literal_causes = {"transport_failure", "budget_exhausted", "billing_uncertain"}
+    prefix_sites: list[Path] = []
+    literal_set_sites: list[Path] = []
+    for path in package.rglob("*.py"):
+        if "tests" in path.relative_to(package).parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and node.value in ("provider_", "provider_*"):
+                prefix_sites.append(path)
+            if isinstance(node, (ast.Set, ast.List, ast.Tuple)):
+                values = [item.value for item in node.elts if isinstance(item, ast.Constant)
+                          and isinstance(item.value, str)]
+                if len(values) == len(node.elts) and set(values) == literal_causes:
+                    literal_set_sites.append(path)
+    assert prefix_sites == [definition]
+    assert literal_set_sites == [definition]
 
 
 def test_rerun_matrix_counts_and_dry_run_only(monkeypatch: pytest.MonkeyPatch,
