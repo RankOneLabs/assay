@@ -25,6 +25,7 @@ of text that the share leaves out or writes differently.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -93,6 +94,22 @@ HIDDEN_TEST = "tests/hidden/omissions.test.ts"
 SHARE: OwnershipGroup = "group_a"
 
 
+def writable_prefixes_for(
+    start: Mapping[str, str], finished: Mapping[str, str], omission_paths: Iterable[str],
+) -> tuple[str, ...]:
+    """Directories touched by the clean change or by an omitted span.
+
+    Root-level edits cannot fit this directory-only scope, so reject such a
+    fixture at construction time. This also covers protected root manifests.
+    """
+    changed = {path for path in start.keys() | finished.keys()
+               if start.get(path) != finished.get(path)}
+    changed.update(omission_paths)
+    if any("/" not in path for path in changed):
+        raise ValueError("a changed root file has no writable directory prefix")
+    return tuple(sorted({path.split("/", 1)[0] + "/" for path in changed}))
+
+
 @dataclass(frozen=True, slots=True)
 class Omission:
     """The one span the share leaves out: ``clean`` in the clean subject, ``omitted`` otherwise."""
@@ -113,6 +130,12 @@ class OneShareChange:
     omission: Omission
     hidden_block: str
     visible_tests: str
+    writable_prefixes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.writable_prefixes:
+            object.__setattr__(self, "writable_prefixes", writable_prefixes_for(
+                self.start_tree(), self.finished_tree(omit=False), (self.omission.path,)))
 
     @property
     def check(self) -> str:

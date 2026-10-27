@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
 from verification_pilot.arms import ALL_ARMS, arm, placement_for
 from verification_pilot.bridge import create_pilot_agent
 from verification_pilot.fixture import load_fixture
@@ -23,6 +26,16 @@ from verification_pilot.render import request_messages
 from verification_pilot.session import contributor_blocks, rotated_blocks
 from verification_pilot.settings import PILOT_TOOLS_SHA256, VerificationPilotSettings
 from verification_pilot.study import pilot_subjects
+
+
+def test_writable_prefixes_are_strict_nonempty_directories() -> None:
+    settings = VerificationPilotSettings(writable_prefixes=("adapters/", "core/"))
+    assert settings.writable_prefixes == ("adapters/", "core/")
+    for invalid in ((), ("",), ("../core/",), ("core",)):
+        with pytest.raises(ValidationError):
+            VerificationPilotSettings(writable_prefixes=invalid)
+    with pytest.raises(ValidationError):
+        VerificationPilotSettings(writable_prefixes=["src/"])  # type: ignore[arg-type]
 
 
 def test_committed_pilot_tool_digest_matches_schema() -> None:
