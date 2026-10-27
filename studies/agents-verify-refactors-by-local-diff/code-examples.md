@@ -86,8 +86,9 @@ Evidence: [old branches](https://github.com/RankOneLabs/assay/blob/2589d8290b502
 [hidden test](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/refactor.py#L413-L419).
 
 The missing check is easy to see when the generated pass still resembles the
-old branches. Fixture `S` was restored in 36 of 36 sessions across three
-models, pooled with its six long-history runs
+old branches. The 420-line fixture `S` was restored in 36 of 36 sessions across
+three models, including six long-history runs. The move's Argon results
+include six native and twelve quoted sessions
 ([Finding 1](./README.md#finding-1-moves-are-caught-rewrites-are-missed-at-every-size)).
 
 ## Example 2
@@ -321,6 +322,8 @@ Evidence: [old guard](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d
 [hidden test](https://github.com/RankOneLabs/assay/blob/2589d8290b502e5d9f6cf71a07fe537241235da0/experiments/verification_pilot/self_trust/fixtures.py#L204-L247).
 
 The findable guards did not protect the path that ran. Fixture `resume146`
-was restored in 0 of 12 sessions across Gemini 4 Argon and Gemini 3.8 Flash;
-10 of 12 submitted "complete"
+was restored in 0 of 11 sessions across Gemini 4 Argon and Gemini 3.8 Flash;
+10 of 11 submitted "complete". The allowed edit paths were exactly `src/`
+and `tests/`, while this fixture had neither directory. A correct restore
+would have been rejected, and no session tried one
 ([Finding 2](./README.md#finding-2-what-decides-it-seems-to-be-whether-old-and-new-line-up)).
