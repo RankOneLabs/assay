@@ -807,6 +807,7 @@ CANDIDATE_STOP_CAUSES = frozenset(
     {
         "turn_limit",
         "no_tool_call",
+        "empty_reply",
         "invalid_tool_call",
         "invalid_submission",
         "output_token_limit",
@@ -1752,19 +1753,23 @@ class RepositoryAgentClient:
                 if answer.completion_tokens > self.bounds.max_output_tokens:
                     raise ValueError("output_token_limit")
                 if not isinstance(calls, list) or not calls:
+                    content = message.get("content")
                     if not cut_off:
                         # The reply that ends the cell is never a message, so
                         # keep its text: a manual read must see what it said.
-                        content = message.get("content")
                         events.append({
                             "kind": "reply_without_tool_call", "turn": turn,
                             "finish_reason": answer.finish_reason,
                             "content": content if isinstance(content, str) else None,
                         })
-                    raise ValueError(
-                        "output_token_limit" if answer.finish_reason == "length"
-                        else "no_tool_call"
-                    )
+                    if (answer.finish_reason == "error" or
+                            answer.prompt_tokens == answer.completion_tokens == 0):
+                        raise ValueError("provider_error")
+                    if answer.finish_reason == "length":
+                        raise ValueError("output_token_limit")
+                    if answer.finish_reason == "stop" and not content:
+                        raise ValueError("empty_reply")
+                    raise ValueError("no_tool_call")
                 replayed = [_replayable_call(call) for call in calls]
                 content = message.get("content")
                 record_message({

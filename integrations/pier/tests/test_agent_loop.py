@@ -1926,6 +1926,43 @@ def test_reply_without_a_tool_call_keeps_its_text(tmp_path: Path) -> None:
                         "content": "Review: the migration looks complete."}]
 
 
+@pytest.mark.parametrize(
+    ("finish_reason", "prompt_tokens", "completion_tokens", "content", "cause"),
+    [
+        ("error", 10, 1, None, "provider_error"),
+        ("stop", 0, 0, None, "provider_error"),
+        ("stop", 10, 1, None, "empty_reply"),
+        ("stop", 10, 1, "I reviewed the files.", "no_tool_call"),
+    ],
+)
+def test_no_tool_reply_cause(
+    tmp_path: Path, finish_reason: str, prompt_tokens: int,
+    completion_tokens: int, content: str | None, cause: str,
+) -> None:
+    def completion(**kwargs: Any) -> ModelTurn:
+        return ModelTurn(
+            message={"role": "assistant", "content": content},
+            finish_reason=finish_reason, prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens, cost_usd=None,
+        )
+
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    assert failure.value.cause == cause
+    assert failure.value.trajectory["events"][-1]["cause"] == cause
+
+
+def test_candidate_stop_causes_are_additive() -> None:
+    assert CANDIDATE_STOP_CAUSES == {
+        "turn_limit", "no_tool_call", "invalid_tool_call", "invalid_submission",
+        "output_token_limit", "conversation_limit", "request_limit",
+        "turn_tool_call_limit", "cell_tool_call_limit", "empty_reply",
+    }
+    assert "provider_error" not in CANDIDATE_STOP_CAUSES
+
+
 @pytest.mark.parametrize(("max_turns", "accepted"), [(19, False), (20, True), (150, True),
                                                      (MAX_MODEL_TURNS, True),
                                                      (MAX_MODEL_TURNS + 1, False)])

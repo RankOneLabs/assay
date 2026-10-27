@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from verification_pilot.screen import tally_cell
+from verification_pilot.screen import MODEL_STOP_CAUSES, tally_cell
 
 
 def _trajectory(events: list[dict[str, Any]], *, prose: str | None = None,
@@ -45,6 +45,21 @@ def test_spend_halts_and_limits_are_not_harness_failures() -> None:
     assert cell["harness_failures"] == []
     assert cell["spend_stops"] == ["budget_exhausted"]
     assert cell["conversation_limit_hits"] == 1
+
+
+def test_stop_cause_mirror_and_provider_error() -> None:
+    import sys
+    from pathlib import Path
+
+    bridge_src = Path(__file__).resolve().parents[3] / "integrations/pier/src"
+    sys.path.insert(0, str(bridge_src))
+    from assay_pier_bridge.agent_loop import CANDIDATE_STOP_CAUSES
+
+    assert MODEL_STOP_CAUSES == CANDIDATE_STOP_CAUSES | {"agent_deadline"}
+    cell = tally_cell("s:t1-native:w0", _trajectory([
+        {"kind": "stopped", "cause": "provider_error"},
+    ]), None)
+    assert cell["harness_failures"] == []
 
 
 def test_refusal_wording_is_flagged_for_the_manual_read() -> None:

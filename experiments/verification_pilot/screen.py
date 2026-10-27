@@ -24,13 +24,14 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-# Mirrors CANDIDATE_STOP_CAUSES in the bridge's agent_loop.py.
+# Mirrors CANDIDATE_STOP_CAUSES in the bridge, plus agent_deadline.
 MODEL_STOP_CAUSES = frozenset({
-    "turn_limit", "no_tool_call", "invalid_tool_call", "invalid_submission",
+    "turn_limit", "no_tool_call", "empty_reply", "invalid_tool_call", "invalid_submission",
     "output_token_limit", "conversation_limit", "request_limit",
     "turn_tool_call_limit", "cell_tool_call_limit", "agent_deadline",
 })
 SPEND_STOP_CAUSES = frozenset({"budget_exhausted", "billing_uncertain"})
+PROVIDER_STOP_CAUSES = frozenset({"provider_error"})
 HARNESS_EVENT_KINDS = frozenset({"tool_timeout", "cleanup_failed", "partial_capture_failed"})
 CALL_LIMIT_CAUSES = frozenset({"turn_tool_call_limit", "cell_tool_call_limit"})
 REFUSAL_WORDING = re.compile(
@@ -56,7 +57,8 @@ def _harness_failures(trajectory: dict[str, Any]) -> list[str]:
     failures = [str(event["kind"]) for event in trajectory["events"]
                 if event.get("kind") in HARNESS_EVENT_KINDS]
     failures += [cause for cause in _stop_causes(trajectory)
-                 if cause not in MODEL_STOP_CAUSES and cause not in SPEND_STOP_CAUSES]
+                 if cause not in MODEL_STOP_CAUSES and cause not in SPEND_STOP_CAUSES
+                 and cause not in PROVIDER_STOP_CAUSES]
     return failures
 
 
