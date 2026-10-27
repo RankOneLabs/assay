@@ -46,7 +46,7 @@ def summarize(table: dict[str, Any], rows: list[dict[str, Any]],
         "protocol_version": table["protocol_version"],
         "step_bound_label": ",".join(sorted(bounds)) if bounds else "no runs",
         "framing_version_label": ",".join(sorted(framing)),
-        "model_label": ",".join(sorted(publication["model_mapping"].get(m, m) for m in models)),
+        "model_label": ",".join(sorted(table["model_mapping"][m] for m in models)),
         "planned": len(chosen),
         "ran": len(ran),
         "excluded_by_cause": dict(sorted(

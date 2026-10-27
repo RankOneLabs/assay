@@ -62,6 +62,7 @@ def test_all_tables_have_denominators_and_labels(
         assert entry["protocol_version"] == "st-v1"
     assert row(tables, "H5", "old_behavior")["counted"] == 51
     assert row(tables, "H5", "new_fix")["counted"] == 23
+    assert row(tables, "F1-move", "old_behavior")["counted"] == 18
 
 
 def test_noncompleters_are_not_judged_misses(tables: list[dict[str, Any]]) -> None:

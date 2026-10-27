@@ -298,7 +298,8 @@ def ledger(manifest_path: Path = PUBLICATION_MANIFEST, runs: Path = RUNS) -> lis
             row["protocol_version"] = run_meta["protocol_version"]
             row["framing_version"] = run_meta["framing_version"]
             row["expected_behavior_source"] = (
-                "new_fix" if row["omission"] == "remnant_c" else "old_behavior"
+                "new_fix" if row["fixture"] == "rewrite" and row["omission"] == "remnant_c"
+                else "old_behavior"
             )
         rows.extend(run_rows)
     return rows

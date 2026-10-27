@@ -1659,6 +1659,11 @@
       },
       "id": "H1",
       "location": "README headline table, row 1",
+      "model_mapping": {
+        "anthropic/claude-sonnet-5.5": "Claude Sonnet 5.5",
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash",
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -1708,6 +1713,11 @@
       },
       "id": "H2",
       "location": "README headline table, row 2",
+      "model_mapping": {
+        "anthropic/claude-sonnet-5.5": "Claude Sonnet 5.5",
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash",
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -1736,6 +1746,10 @@
       },
       "id": "H3",
       "location": "README headline table, row 3",
+      "model_mapping": {
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash",
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -1764,6 +1778,10 @@
       },
       "id": "H4",
       "location": "README headline table, row 4",
+      "model_mapping": {
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash",
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2026,6 +2044,20 @@
       },
       "id": "H5",
       "location": "README headline table, row 5",
+      "model_mapping": {
+        "anthropic/claude-haiku-5.5": "Claude Haiku 5.5",
+        "anthropic/claude-sonnet-5.5": "Claude Sonnet 5.5",
+        "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash",
+        "google/gemini-4-argon": "Gemini 4 Argon",
+        "mistralai/ministral-14b-2512": "ministral-14b-2512",
+        "moonshotai/kimi-k2.7-code": "kimi-k2.7-code",
+        "openai/gpt-6-luna": "gpt-6-luna",
+        "openai/gpt-6.1-sol": "GPT-6.1 Sol",
+        "openai/gpt-oss-20b": "gpt-oss-20b",
+        "qwen/qwen3.8-2.4t-a95b": "Qwen3.8 (2.4T)",
+        "qwen/qwen3.8-27b": "Qwen3.8 27B"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2060,6 +2092,9 @@
       },
       "id": "F1-move",
       "location": "Finding 1 table, 436-line move",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2079,6 +2114,9 @@
       },
       "id": "F1-move-long",
       "location": "Finding 1 table, move with file reads",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2110,6 +2148,9 @@
       },
       "id": "F1-r0",
       "location": "Finding 1 table, 693-line rewrite",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2138,6 +2179,9 @@
       },
       "id": "F1-r0read",
       "location": "Finding 1 table, 693-line rewrite with old modules read",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2175,6 +2219,9 @@
       },
       "id": "F1-L1",
       "location": "Finding 1 table, 1,097-line rewrite",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2196,6 +2243,9 @@
       },
       "id": "F1-L2",
       "location": "Finding 1 table, 2,137-line rewrite",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2215,6 +2265,9 @@
       },
       "id": "F1-L3",
       "location": "Finding 1 table, 2,782-line rewrite",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2311,6 +2364,9 @@
       },
       "id": "F1-41",
       "location": "Finding 1 text, opened the omission's file",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2342,6 +2398,9 @@
       },
       "id": "F1-argon-verdicts",
       "location": "Finding 1 breadth table, Argon rewrite misses",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2361,6 +2420,9 @@
       },
       "id": "F1-sonnet-move",
       "location": "Finding 1 breadth table, Sonnet move",
+      "model_mapping": {
+        "anthropic/claude-sonnet-5.5": "Claude Sonnet 5.5"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2380,6 +2442,9 @@
       },
       "id": "F1-sonnet-r0",
       "location": "Finding 1 breadth table, Sonnet rewrite",
+      "model_mapping": {
+        "anthropic/claude-sonnet-5.5": "Claude Sonnet 5.5"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2399,6 +2464,9 @@
       },
       "id": "F1-flash-move",
       "location": "Finding 1 breadth table, Flash move",
+      "model_mapping": {
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2418,6 +2486,9 @@
       },
       "id": "F1-flash-r0",
       "location": "Finding 1 breadth table, Flash rewrite",
+      "model_mapping": {
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2437,6 +2508,9 @@
       },
       "id": "F1-flash-open-move",
       "location": "Finding 1 text, Flash opened the file in T1, move",
+      "model_mapping": {
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2456,6 +2530,9 @@
       },
       "id": "F1-flash-open-r0",
       "location": "Finding 1 text, Flash opened the file, rewrite",
+      "model_mapping": {
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2475,6 +2552,9 @@
       },
       "id": "F2-forge-move-argon",
       "location": "Finding 2 table",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2503,6 +2583,9 @@
       },
       "id": "F2-forge-move-flash",
       "location": "Finding 2 table",
+      "model_mapping": {
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2522,6 +2605,9 @@
       },
       "id": "F2-forge-rewrite-argon",
       "location": "Finding 2 table",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2541,6 +2627,9 @@
       },
       "id": "F2-forge-rewrite-flash",
       "location": "Finding 2 table",
+      "model_mapping": {
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2560,6 +2649,9 @@
       },
       "id": "F2-146-argon",
       "location": "Finding 2 table",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2579,6 +2671,9 @@
       },
       "id": "F2-146-flash",
       "location": "Finding 2 table",
+      "model_mapping": {
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2683,6 +2778,9 @@
       },
       "id": "F3-gpt-6.1-sol",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "openai/gpt-6.1-sol": "GPT-6.1 Sol"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2719,6 +2817,9 @@
       },
       "id": "F3-claude-sonnet-5.5",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "anthropic/claude-sonnet-5.5": "Claude Sonnet 5.5"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2738,6 +2839,9 @@
       },
       "id": "F3-gemini-4-argon",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2757,6 +2861,9 @@
       },
       "id": "F3-ministral-14b-2512",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "mistralai/ministral-14b-2512": "ministral-14b-2512"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2776,6 +2883,9 @@
       },
       "id": "F3-deepseek-v4-pro",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "deepseek/deepseek-v4-pro": "deepseek-v4-pro"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2811,6 +2921,9 @@
       },
       "id": "F3-gemini-3.8-flash",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2839,6 +2952,9 @@
       },
       "id": "F3-kimi-k2.7-code",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "moonshotai/kimi-k2.7-code": "kimi-k2.7-code"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2858,6 +2974,9 @@
       },
       "id": "F3-gpt-6-luna",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "openai/gpt-6-luna": "gpt-6-luna"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2877,6 +2996,9 @@
       },
       "id": "F3-claude-haiku-5.5",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "anthropic/claude-haiku-5.5": "Claude Haiku 5.5"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2896,6 +3018,9 @@
       },
       "id": "F3-gpt-oss-20b",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "openai/gpt-oss-20b": "gpt-oss-20b"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2924,6 +3049,9 @@
       },
       "id": "F3-qwen3.8-2.4t-a95b",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "qwen/qwen3.8-2.4t-a95b": "Qwen3.8 (2.4T)"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -2951,6 +3079,9 @@
       },
       "id": "F3-qwen3.8-27b",
       "location": "Finding 3 table",
+      "model_mapping": {
+        "qwen/qwen3.8-27b": "Qwen3.8 27B"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -3213,6 +3344,20 @@
       },
       "id": "F3-complete",
       "location": "Finding 3 text",
+      "model_mapping": {
+        "anthropic/claude-haiku-5.5": "Claude Haiku 5.5",
+        "anthropic/claude-sonnet-5.5": "Claude Sonnet 5.5",
+        "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash",
+        "google/gemini-4-argon": "Gemini 4 Argon",
+        "mistralai/ministral-14b-2512": "ministral-14b-2512",
+        "moonshotai/kimi-k2.7-code": "kimi-k2.7-code",
+        "openai/gpt-6-luna": "gpt-6-luna",
+        "openai/gpt-6.1-sol": "GPT-6.1 Sol",
+        "openai/gpt-oss-20b": "gpt-oss-20b",
+        "qwen/qwen3.8-2.4t-a95b": "Qwen3.8 (2.4T)",
+        "qwen/qwen3.8-27b": "Qwen3.8 27B"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -3232,6 +3377,9 @@
       },
       "id": "F3-kimi-requests",
       "location": "Finding 3 text, loose limits",
+      "model_mapping": {
+        "moonshotai/kimi-k2.7-code": "kimi-k2.7-code"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -3336,6 +3484,9 @@
       },
       "id": "SELF-sol",
       "location": "What we could not answer, Sol table",
+      "model_mapping": {
+        "openai/gpt-6.1-sol": "GPT-6.1 Sol"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -3552,6 +3703,20 @@
       },
       "id": "H5-without-C",
       "location": "Sensitivity, not on the page (REPORT A13)",
+      "model_mapping": {
+        "anthropic/claude-haiku-5.5": "Claude Haiku 5.5",
+        "anthropic/claude-sonnet-5.5": "Claude Sonnet 5.5",
+        "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash",
+        "google/gemini-4-argon": "Gemini 4 Argon",
+        "mistralai/ministral-14b-2512": "ministral-14b-2512",
+        "moonshotai/kimi-k2.7-code": "kimi-k2.7-code",
+        "openai/gpt-6-luna": "gpt-6-luna",
+        "openai/gpt-6.1-sol": "GPT-6.1 Sol",
+        "openai/gpt-oss-20b": "gpt-oss-20b",
+        "qwen/qwen3.8-2.4t-a95b": "Qwen3.8 (2.4T)",
+        "qwen/qwen3.8-27b": "Qwen3.8 27B"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -3677,6 +3842,20 @@
       },
       "id": "H5-C-only",
       "location": "Sensitivity, not on the page (REPORT A13)",
+      "model_mapping": {
+        "anthropic/claude-haiku-5.5": "Claude Haiku 5.5",
+        "anthropic/claude-sonnet-5.5": "Claude Sonnet 5.5",
+        "deepseek/deepseek-v4-pro": "deepseek-v4-pro",
+        "google/gemini-3.8-flash": "Gemini 3.8 Flash",
+        "google/gemini-4-argon": "Gemini 4 Argon",
+        "mistralai/ministral-14b-2512": "ministral-14b-2512",
+        "moonshotai/kimi-k2.7-code": "kimi-k2.7-code",
+        "openai/gpt-6-luna": "gpt-6-luna",
+        "openai/gpt-6.1-sol": "GPT-6.1 Sol",
+        "openai/gpt-oss-20b": "gpt-oss-20b",
+        "qwen/qwen3.8-2.4t-a95b": "Qwen3.8 (2.4T)",
+        "qwen/qwen3.8-27b": "Qwen3.8 27B"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -3702,6 +3881,9 @@
       },
       "id": "SELF-quoted",
       "location": "What we could not answer, attribution variants",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     },
     {
@@ -3721,6 +3903,9 @@
       },
       "id": "SELF-turns",
       "location": "What we could not answer, own log as own turns",
+      "model_mapping": {
+        "google/gemini-4-argon": "Gemini 4 Argon"
+      },
       "protocol_version": "st-v1"
     }
   ]
