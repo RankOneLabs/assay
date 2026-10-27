@@ -28,6 +28,7 @@ import asyncio
 import json
 import os
 import uuid
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -44,13 +45,14 @@ from verification_pilot.run import (
     _spend_cap,
     archive_manifest,
     dated_measures_path,
+    measure_code_revision,
     paid_model_route,
 )
 from verification_pilot.self_trust.bridge import SelfTrustBridgeClient, self_trust_worker
 from verification_pilot.self_trust.evaluation import SelfTrustEvaluator, measures
 from verification_pilot.self_trust.settings import (
     CELL_SECONDS,
-    LOCAL_MAX_OUTPUT_TOKENS,
+    PROTOCOL_VERSION,
     SelfTrustSettings,
 )
 from verification_pilot.self_trust.study import (
@@ -61,10 +63,20 @@ from verification_pilot.self_trust.study import (
     calibration_subject_ids,
     compile_self_trust_plan,
     refactor_calibration_ids,
+    rerun_matrix,
     self_trust_subjects,
 )
 
 ARCHIVE_ROOT = Path(__file__).resolve().parents[1] / "raw" / "self_trust" / "runs"
+
+
+@dataclass
+class SelfTrustScriptedWorker(ScriptedWorker):
+    image: str = ""
+
+    def configuration(self, arm_id: str) -> dict[str, Any]:
+        return {**super().configuration(arm_id), "protocol_version": PROTOCOL_VERSION,
+                "image_digest": self.image}
 
 
 async def _execute(store: ObjectStore, prepared: PreparedSelfTrust, worker: Any,
@@ -91,12 +103,13 @@ async def _execute(store: ObjectStore, prepared: PreparedSelfTrust, worker: Any,
 async def run_scripted(store: ObjectStore, archive_root: Path,
                        image: str = "") -> tuple[Any, Path | None]:
     subjects = self_trust_subjects()
-    worker = ScriptedWorker(store)
+    worker = SelfTrustScriptedWorker(store=store, image=image)
     runtime = RuntimeProfile(id="scripted", version="1",
                              configuration_ref=str(store.publish_json({"scripted": True})))
     prepared = compile_self_trust_plan(
         store, runtime, worker_configurations={arm: worker.configuration(arm) for arm in ARMS},
-        active_subject_ids=tuple(s.id for s in subjects), subjects_data=subjects)
+        active_subject_ids=tuple(s.id for s in subjects if s.fixture == "rename"),
+        active_arms=("st-native", "st-quoted"), subjects_data=subjects)
     return await _execute(store, prepared, worker, {s.id: s for s in subjects}, archive_root,
                           image)
 
@@ -123,7 +136,7 @@ async def run_live(store: ObjectStore, *, image: str, runs_root: Path,
             model_route=ModelRoute(endpoint="http://willie:8900", model=local_model,  # type: ignore[arg-type]
                                    provider="smithers-local"),
             subjects=dict(by_id),
-            settings=SelfTrustSettings(max_output_tokens=LOCAL_MAX_OUTPUT_TOKENS),
+            settings=SelfTrustSettings(),
             factory=SmithersFactory(model=local_model, machine="mcbain",
                                     routing_config=routing_config,
                                     dispatch_url="http://willie:8900"),
@@ -162,6 +175,8 @@ def remeasure(archive: Path, image: str) -> int:
             continue
         trace = json.loads((archive / "traces" / entry["trajectory"]).read_text(encoding="utf-8"))
         rows = measures(by_id[cell_id.split(":", 1)[0]], trace, image)
+        for row in rows:
+            row["code_revision"] = measure_code_revision()
         dated_measures_path(archive / "traces" / entry["measures"]).write_text(
             json.dumps(rows, sort_keys=True, indent=2) + "\n", encoding="utf-8")
         rewritten += 1
@@ -171,13 +186,15 @@ def remeasure(archive: Path, image: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("scripted", "calibrate", "calibrate-refactor",
-                                            "attribution-order", "cells", "remeasure"))
+                                            "attribution-order", "cells", "remeasure",
+                                            "rerun-matrix"))
     parser.add_argument("--archive", type=Path, action="append", default=[])
     parser.add_argument("--store", type=Path, default=None)
     parser.add_argument("--image", default="")
     parser.add_argument("--runs-root", type=Path, default=None)
     parser.add_argument("--paid-route", choices=sorted(PAID_ROUTES), default=None)
     parser.add_argument("--max-spend-usd", type=_spend_cap, default=None)
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--concept", default="stage_run")
     parser.add_argument("--rung", choices=("refactor", "refactor-long", "rewrite0", "rewrite0-read",
                                            "rewrite1",
@@ -195,6 +212,23 @@ def main() -> None:
     parser.add_argument("--subject", action="append", default=[])
     parser.add_argument("--arm", action="append", choices=ARMS, default=[])
     args = parser.parse_args()
+    if args.command == "rerun-matrix":
+        if args.max_spend_usd is None:
+            parser.error("rerun-matrix needs --max-spend-usd for each run")
+        if not args.dry_run:
+            parser.error("rerun-matrix execution is gated; use --dry-run")
+        matrix = rerun_matrix()
+        print(json.dumps({"protocol_version": "st-v2", "dry_run": True,
+                          "replacement_phase": "after_matrix",
+                          "max_spend_usd": str(args.max_spend_usd),
+                          "matrix": {name: {"cells": cells, "cell_count": len(cells),
+                                            "source_cell_count": len({
+                                                (cell["route"], cell["source_run_id"],
+                                                 cell["source_cell"])
+                                                for cell in cells}),
+                                            "session_count": len(cells)}
+                                     for name, cells in matrix.items()}}, sort_keys=True))
+        return
     if args.command == "remeasure":
         if not args.image or not args.archive:
             parser.error("remeasure needs --image and --archive")

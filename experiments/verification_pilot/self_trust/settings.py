@@ -12,6 +12,7 @@ protocol's 30-minute ceiling, is the backstop. Limit hits are still recorded.
 from __future__ import annotations
 
 from collections.abc import Collection
+
 from pydantic import Field
 
 from verification_pilot.settings import VerificationPilotSettings
