@@ -30,6 +30,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, NoReturn, Protocol
 
@@ -140,6 +141,12 @@ class ModelTurn:
     completion_tokens: int
     cost_usd: float | None
     observations: dict[str, Any] = field(default_factory=dict)
+    started_at: str | None = None
+    ended_at: str | None = None
+    generation_id: str | None = None
+    http_status: int | None = None
+    error_body: str | None = None
+    model_revision: str | None = None
 
 
 class InFlightDeadline(ValueError):
@@ -148,6 +155,17 @@ class InFlightDeadline(ValueError):
     def __init__(self, *, bytes_received: bool) -> None:
         super().__init__("agent_deadline")
         self.bytes_received = bytes_received
+
+
+class ProviderResponseFailure(ValueError):
+    """A non-success HTTP response whose bounded body is available for the request event."""
+
+    def __init__(self, status: int, body: str, started_at: str, ended_at: str) -> None:
+        super().__init__("provider_response")
+        self.status = status
+        self.body = body
+        self.started_at = started_at
+        self.ended_at = ended_at
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,8 +304,12 @@ class AgentLoopError(RuntimeError):
 class BilledResponseError(ValueError):
     """A successful HTTP response failed validation after billing was possible."""
 
-    def __init__(self, cause: str, usage: Mapping[str, int | float | None]) -> None:
+    def __init__(
+        self, cause: str, usage: Mapping[str, int | float | None],
+        provenance: Mapping[str, Any] | None = None,
+    ) -> None:
         self.usage = dict(usage)
+        self.provenance = dict(provenance or {})
         super().__init__(cause)
 
 
@@ -1385,6 +1407,7 @@ class RepositoryAgentClient:
             chunks = bytearray()
             over_limit = False
             bytes_received = False
+            request_started_at = datetime.now(timezone.utc).isoformat()
             try:
                 with client.stream(
                     "POST",
@@ -1396,8 +1419,23 @@ class RepositoryAgentClient:
                     },
                     timeout=timeout_s,
                 ) as response:
-                    if str(response.url) != chat_completions_url or not response.is_success:
+                    if str(response.url) != chat_completions_url:
                         raise ValueError("provider_response")
+                    if not response.is_success:
+                        error_chunks = bytearray()
+                        for chunk in response.iter_bytes():
+                            bytes_received = bytes_received or bool(chunk)
+                            if deadline is not None and deadline <= time.monotonic():
+                                raise InFlightDeadline(bytes_received=bytes_received)
+                            error_chunks.extend(chunk[:2048 - len(error_chunks)])
+                            if len(error_chunks) == 2048:
+                                break
+                        raise ProviderResponseFailure(
+                            response.status_code,
+                            bytes(error_chunks).decode("utf-8", "ignore"),
+                            request_started_at,
+                            datetime.now(timezone.utc).isoformat(),
+                        )
                     for chunk in response.iter_bytes():
                         bytes_received = bytes_received or bool(chunk)
                         if deadline is not None and deadline <= time.monotonic():
@@ -1411,39 +1449,73 @@ class RepositoryAgentClient:
                         and deadline <= time.monotonic():
                     raise InFlightDeadline(bytes_received=bytes_received) from error
                 raise
+            request_ended_at = datetime.now(timezone.utc).isoformat()
+        def billed_failure(
+            cause: str, usage: Mapping[str, int | float | None], data: Any = None,
+        ) -> BilledResponseError:
+            choice = data.get("choices") if isinstance(data, dict) else None
+            first_choice = choice[0] if isinstance(choice, list) and choice else None
+            finish_reason = (
+                first_choice.get("finish_reason") if isinstance(first_choice, dict) else None
+            )
+            return BilledResponseError(cause, usage, {
+                "started_at": request_started_at, "ended_at": request_ended_at,
+                "generation_id": data.get("id") if isinstance(data, dict)
+                and isinstance(data.get("id"), str) else None,
+                "http_status": response.status_code,
+                "finish_reason": finish_reason,
+                "error_body": bytes(chunks[:2048]).decode("utf-8", "ignore"),
+                "model_revision": data.get("model_revision") if isinstance(data, dict)
+                and isinstance(data.get("model_revision"), str) else None,
+            })
         try:
             data = json.loads(chunks)
         except (ValueError, UnicodeError) as error:
             cause = "response_limit" if over_limit else "provider_response"
-            raise BilledResponseError(cause, _read_billed_usage(None)) from error
+            raise billed_failure(cause, _read_billed_usage(None)) from error
         billed_usage = _read_billed_usage(data)
         if over_limit:
-            raise BilledResponseError("response_limit", billed_usage)
+            raise billed_failure("response_limit", billed_usage, data)
         if (
             not isinstance(data, dict)
             or data.get("model") != route.model
             or data.get("provider") != route.provider_name
         ):
-            raise BilledResponseError("provider_identity", billed_usage)
+            raise billed_failure("provider_identity", billed_usage, data)
         choices, usage = data.get("choices"), data.get("usage")
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(usage, dict):
-            raise BilledResponseError("provider_response", billed_usage)
+            raise billed_failure("provider_response", billed_usage, data)
         choice = choices[0]
         if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
-            raise BilledResponseError("provider_response", billed_usage)
+            raise billed_failure("provider_response", billed_usage, data)
         cost = billed_usage["cost_usd"]
         if cost is None:
-            raise BilledResponseError("provider_usage", billed_usage)
+            raise billed_failure("provider_usage", billed_usage, data)
         prompt_count = billed_usage["prompt_tokens"]
         completion_count = billed_usage["completion_tokens"]
         if type(prompt_count) is not int or type(completion_count) is not int:
-            raise BilledResponseError("provider_usage", billed_usage)
+            raise billed_failure("provider_usage", billed_usage, data)
+        provider_error = data.get("error")
+        error_text = (
+            provider_error if isinstance(provider_error, str)
+            else json.dumps(provider_error, ensure_ascii=False) if provider_error is not None
+            else bytes(chunks).decode("utf-8", "ignore")
+            if choice.get("finish_reason") == "error" else None
+        )
         return ModelTurn(
             message=choice["message"],
             finish_reason=str(choice.get("finish_reason")),
             prompt_tokens=prompt_count,
             completion_tokens=completion_count,
             cost_usd=float(cost),
+            started_at=request_started_at,
+            ended_at=request_ended_at,
+            generation_id=data.get("id") if isinstance(data.get("id"), str) else None,
+            http_status=response.status_code,
+            error_body=(error_text.encode("utf-8")[:2048].decode("utf-8", "ignore")
+                        if error_text is not None else None),
+            model_revision=(data.get("model_revision")
+                            if isinstance(data.get("model_revision"), str) else None),
         )
 
     def run_cell(
@@ -1698,17 +1770,52 @@ class RepositoryAgentClient:
                     raise ValueError("request_limit")
                 turn_usage: dict[str, int | float | None] = turn_record["usage"]
                 started = time.monotonic()
+                started_at = datetime.now(timezone.utc).isoformat()
                 requests_before = requests
                 try:
                     answer = self._turn(messages, turn, deadline, turn_tools, count_dispatch)
                 except BilledResponseError as error:
                     accrue_billed(error.usage)
+                    events.append({
+                        "kind": "model_request", "turn": turn,
+                        "prompt_tokens": error.usage.get("prompt_tokens"),
+                        "completion_tokens": error.usage.get("completion_tokens"),
+                        "finish_reason": error.provenance.get("finish_reason"),
+                        "tool_calls": None,
+                        "request_bytes": len(_json_bytes(messages)),
+                        "seconds": round(time.monotonic() - started, 3),
+                        "started_at": error.provenance.get("started_at") or started_at,
+                        "ended_at": error.provenance.get("ended_at")
+                        or datetime.now(timezone.utc).isoformat(),
+                        "generation_id": error.provenance.get("generation_id"),
+                        "http_status": error.provenance.get("http_status"),
+                        "error_body": error.provenance.get("error_body"),
+                        "model_revision": error.provenance.get("model_revision"),
+                        "sampling": "unset",
+                        "billing": "uncertain" if error.usage.get("cost_usd") is None
+                        else "measured",
+                        "observations": {},
+                    })
                     raise
-                except (ValueError, RuntimeError, OSError, httpx.HTTPError):
+                except (ValueError, RuntimeError, OSError, httpx.HTTPError) as error:
                     if self.model_route.paid_route_reachable and requests > requests_before:
                         mark_cost_unknown()
+                    if isinstance(error, ProviderResponseFailure):
+                        events.append({
+                            "kind": "model_request", "turn": turn,
+                            "prompt_tokens": None, "completion_tokens": None,
+                            "finish_reason": None, "tool_calls": None,
+                            "request_bytes": len(_json_bytes(messages)),
+                            "seconds": round(time.monotonic() - started, 3),
+                            "started_at": error.started_at, "ended_at": error.ended_at,
+                            "generation_id": None, "http_status": error.status,
+                            "error_body": error.body, "model_revision": None,
+                            "sampling": "unset", "billing": "uncertain",
+                            "observations": {},
+                        })
                     raise
                 message = answer.message
+                ended_at = datetime.now(timezone.utc).isoformat()
                 if (
                     not isinstance(message, dict)
                     or type(answer.prompt_tokens) is not int
@@ -1750,6 +1857,13 @@ class RepositoryAgentClient:
                     "tool_calls": len(calls) if isinstance(calls, list) else None,
                     "request_bytes": len(_json_bytes(messages)),
                     "seconds": round(time.monotonic() - started, 3),
+                    "started_at": answer.started_at or started_at,
+                    "ended_at": answer.ended_at or ended_at,
+                    "generation_id": answer.generation_id,
+                    "http_status": answer.http_status,
+                    "error_body": answer.error_body,
+                    "model_revision": answer.model_revision,
+                    "sampling": "unset",
                     "billing": "uncertain" if answer.cost_usd is None else "measured",
                     "observations": dict(answer.observations),
                 })

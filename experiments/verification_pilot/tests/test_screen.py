@@ -55,7 +55,7 @@ def test_stop_cause_mirror_and_provider_error() -> None:
     sys.path.insert(0, str(bridge_src))
     from assay_pier_bridge.agent_loop import CANDIDATE_STOP_CAUSES
 
-    assert MODEL_STOP_CAUSES == CANDIDATE_STOP_CAUSES | {"agent_deadline"}
+    assert CANDIDATE_STOP_CAUSES | {"agent_deadline"} == MODEL_STOP_CAUSES
     cell = tally_cell("s:t1-native:w0", _trajectory([
         {"kind": "stopped", "cause": "provider_error"},
     ]), None)
