@@ -214,6 +214,15 @@ def compile_self_trust_plan(
         raise ValueError("active subjects must be unique, known subject ids")
     if not set(active_arms) <= set(ARMS):
         raise ValueError("unknown active arm")
+    for name in {item.fixture for item in subjects_data
+                 if item.id in active_subject_ids and item.fixture in RUNGS}:
+        rung = RUNGS[name]
+        start, clean = rung.start_tree(), rung.subject_tree(None)
+        changed = {path for path in start.keys() | clean.keys()
+                   if start.get(path) != clean.get(path)}
+        for path in changed | set(rung.omission_paths.values()):
+            if not path.startswith(rung.writable_prefixes):
+                raise ValueError(f"{name}: {path} lies outside writable_prefixes")
 
     def publish(value: Any) -> str:
         return str(store.publish_json(value))

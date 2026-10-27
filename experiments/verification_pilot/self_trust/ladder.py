@@ -37,6 +37,12 @@ class Rung:
     visible_tests: str
     logs: Path
     claim: Callable[[OwnershipGroup, str], str]  # (share, its last check's output) -> "done"
+    writable_prefixes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.writable_prefixes:
+            object.__setattr__(self, "writable_prefixes", fixtures.writable_prefixes_for(
+                self.start_tree(), self.subject_tree(None), self.omission_paths.values()))
 
 
 def _rewrite_claim(group: OwnershipGroup, check_output: str) -> str:
@@ -202,6 +208,7 @@ def _one_share(change: fixtures.OneShareChange) -> Rung:
         omission_paths={fixtures.SHARE: change.omission.path}, hidden_test=fixtures.HIDDEN_TEST,
         hidden_tests=change.hidden_tests, visible_tests=change.visible_tests,
         logs=RAW / f"{change.name}-logs.json", claim=partial(_one_share_claim, change),
+        writable_prefixes=change.writable_prefixes,
     )
 
 
