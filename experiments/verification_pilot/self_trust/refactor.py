@@ -36,9 +36,18 @@ DERIVE = "src/decision/derive.ts"
 VISIBLE_TEST = "tests/decision/derive.test.ts"
 HIDDEN_TEST = "tests/hidden/omissions.test.ts"
 ORDER: tuple[OwnershipGroup, ...] = ("group_b", "group_a", "group_c")
-MODULES: dict[OwnershipGroup, str] = {"group_a": "src/decision/units.ts",
-                                      "group_b": "src/decision/dependencies.ts",
-                                      "group_c": "src/decision/mint.ts"}
+@dataclass(frozen=True, slots=True)
+class Omission:
+    path: str
+    expected_behavior_source: str  # start-tree path:line
+
+
+OMISSIONS: dict[OwnershipGroup, Omission] = {
+    "group_a": Omission("src/decision/units.ts", "src/decision/derive.ts:138"),
+    "group_b": Omission("src/decision/dependencies.ts", "src/decision/derive.ts:145"),
+    "group_c": Omission("src/decision/mint.ts", "src/decision/derive.ts:217"),
+}
+MODULES: dict[OwnershipGroup, str] = {group: omission.path for group, omission in OMISSIONS.items()}
 HELD_OUT_TESTS = (
     "a fan-out driver artifact minting unit_id '0' is a contradiction",
     "a scalar stage still mints unit_id '0' unaffected by the fan-out reservation",

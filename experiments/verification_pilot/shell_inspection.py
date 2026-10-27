@@ -8,8 +8,9 @@ measure sees shell and tool inspections the same way.
 
 Recognition is deliberately narrow and fails closed. ``grep``/``egrep``/
 ``fgrep``/``rg``/``git grep`` become searches. ``cat``/``head``/``tail``/
-``nl``/``sed -n``/``awk`` with explicit file operands become reads. A segment
-reading only from a pipe, a path with a glob or variable, ``sed -i``, and
+``nl``/``sed -n``/``awk`` with explicit file operands become reads. A glob
+operand or a ``find -exec`` over named files becomes a scoped search. A segment
+reading only from a pipe, a path with a variable, ``sed -i``, and
 anything else are not inspections. The command must have exited 0, or 1 for
 a lone search segment, grep's "no match", which still inspected the scope.
 """
@@ -35,7 +36,8 @@ READ_VALUE_OPTIONS = {"head": frozenset({"-n", "-c"}), "tail": frozenset({"-n", 
                       "sed": frozenset({"-e", "-f"}), "awk": frozenset({"-F", "-v", "-f"})}
 _OPERATORS = frozenset({";", "|", "||", "&", "&&", "(", ")", ";;", "|&"})
 _REDIRECTION_CHARS = frozenset("<>&")
-_UNSAFE_PATH = re.compile(r"[*?\[\]$`{}~]")
+_UNSAFE_PATH = re.compile(r"[$`{}~]")
+_GLOB_PATH = re.compile(r"[*?\[\]]")
 
 
 def _segments(command: str) -> list[list[str]]:
@@ -179,9 +181,55 @@ def _read(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
         path = _repository_path(operand, cwd)
         if path is None or path == ".":
             continue
-        reads.append({"name": "read_file", "exit_code": 0, "derived_from": "shell",
-                      "arguments": {"path": path}})
+        if _GLOB_PATH.search(path):
+            reads.append({"name": "search_files", "exit_code": 0, "derived_from": "shell",
+                          "arguments": {"query": "", "scope": path}})
+        else:
+            reads.append({"name": "read_file", "exit_code": 0, "derived_from": "shell",
+                          "arguments": {"path": path}})
     return reads
+
+
+def _find(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
+    """Model a successful find whose -exec inspects its selected files."""
+    if len(tokens) < 5 or "-exec" not in tokens:
+        return []
+    exec_at = tokens.index("-exec")
+    roots = tokens[1:exec_at]
+    roots = roots[:next((i for i, token in enumerate(roots) if token.startswith("-")), len(roots))]
+    if not roots:
+        roots = ["."]
+    names = [tokens[i + 1] for i in range(1, exec_at - 1) if tokens[i] == "-name"]
+    command = tokens[exec_at + 1:]
+    if not command or command[-1] not in ("+", ";") or "{}" not in command:
+        return []
+    command = command[:-1]
+    head = command[0]
+    if head in SEARCH_COMMANDS:
+        patterns, operands = _operands(command[1:], RG_VALUE_OPTIONS if head == "rg"
+                                       else GREP_VALUE_OPTIONS)
+        query = (patterns or [value for value in operands if value != "{}"])[:1]
+        if not query:
+            return []
+        query_text = query[0]
+    elif head in READ_COMMANDS:
+        if head == "sed" and not any(t == "-n" or t.startswith("-n") for t in command[1:]):
+            return []
+        query_text = ""
+    else:
+        return []
+    derived = []
+    for root in roots:
+        scope = _repository_path(root, cwd)
+        if scope is None:
+            continue
+        for name in names or [""]:
+            if _UNSAFE_PATH.search(name) or "/" in name:
+                continue
+            selected = (f"{scope.rstrip('/')}/{name}" if scope != "." else name) if name else scope
+            derived.append({"name": "search_files", "exit_code": 0, "derived_from": "shell",
+                            "arguments": {"query": query_text, "scope": selected}})
+    return derived
 
 
 def shell_inspections(call: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -210,4 +258,6 @@ def shell_inspections(call: Mapping[str, Any]) -> list[dict[str, Any]]:
             derived.extend(_search(tokens, cwd))
         elif head in READ_COMMANDS:
             derived.extend(_read(tokens, cwd))
+        elif head == "find":
+            derived.extend(_find(tokens, cwd))
     return derived

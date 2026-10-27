@@ -71,15 +71,19 @@ SHARE_WORK: dict[OwnershipGroup, str] = {
 class Omission:
     path: str
     marker: str  # a substring of the one line the share leaves out
+    expected_behavior_source: str  # start-tree path:line, or new_in_refactor
 
 
 OMISSIONS: dict[OwnershipGroup, Omission] = {
     "group_a": Omission("src/decision/derive.ts",
                         "if (seen.has(parsed.value.unit_id)) return err({ kind: \"malformed_driver_artifact\", "
-                        "stage_key: contract.stage_key, artifact_id: artifact.artifact_id"),
+                        "stage_key: contract.stage_key, artifact_id: artifact.artifact_id",
+                        "src/compiler/materialize-units.ts:53"),
     "group_b": Omission("src/runtime/resolve-work-order.ts",
-                        "must declare one repository refs output"),
-    "group_c": Omission("src/runtime/cohort-pull-request.ts", "send_run_wake?.(completion.run_id"),
+                        "must declare one repository refs output",
+                        "src/runtime/run-materialization.ts:102"),
+    "group_c": Omission("src/runtime/cohort-pull-request.ts", "send_run_wake?.(completion.run_id",
+                        "new_in_refactor"),
 }
 
 

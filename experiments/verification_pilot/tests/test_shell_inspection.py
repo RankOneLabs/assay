@@ -30,6 +30,9 @@ def _derived(command: str, exit_code: int = 0) -> list[tuple[str, dict[str, str]
     ("cd src && head -n 20 a.ts ../tests/b.ts",
      [("read_file", {"path": "src/a.ts"}), ("read_file", {"path": "tests/b.ts"})]),
     ("cat /workspace/docs/migration.md", [("read_file", {"path": "docs/migration.md"})]),
+    ("cat src/decision/*.ts", [("search_files", {"query": "", "scope": "src/decision/*.ts"})]),
+    ("find . -name '*.ts' -exec grep -n X {} +",
+     [("search_files", {"query": "X", "scope": "*.ts"})]),
     ("grep -rn '<WorkOrderId' src", [("search_files", {"query": "<WorkOrderId", "scope": "src"})]),
 ])
 def test_recognized_inspections(command: str, expected: list[Any]) -> None:
@@ -38,7 +41,9 @@ def test_recognized_inspections(command: str, expected: list[Any]) -> None:
 
 @pytest.mark.parametrize("command", [
     "sed -i '15s/A/B/' src/a.ts",      # an edit, not a read
-    "cat src/*.ts",                     # a glob the trace cannot resolve
+    "cat src/$FILE",                    # variable expansion cannot be resolved
+    "cat src/`name`.ts",                # command substitution cannot be resolved
+    "cat ~/src/a.ts",                   # home expansion cannot be resolved
     "cat > src/x.ts <<EOF",             # a write
     "cd /tmp && cat a.ts",              # outside the workspace
     "ls src | grep ts",                 # grep over a pipe, not the repository
