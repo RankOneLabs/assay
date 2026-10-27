@@ -15,14 +15,12 @@ from assay.execution import AdmissionHalt, WorkerFailure, WorkerResult
 from assay.models import CellCoordinate, RuntimeProfile
 from assay.pier_protocol import PierExchange, RuntimeBinding
 from assay.store import ObjectStore
-from verification_pilot.bridge import (  # type: ignore[attr-defined]
+from verification_pilot.bridge import (
     DockerTmpfsStagingStorage,
     DockerTmpfsToolSandbox,
     PilotBridgeClient,
     SandboxLimits,
     SmithersTurnCompletion,
-    TurnCompletion,
-    agent_configuration,
     create_pilot_agent,
 )
 from verification_pilot.dispatch import cell_idempotency_key
@@ -34,7 +32,6 @@ from verification_pilot.self_trust.prompts import (
     T3_TEXT,
     build_system_prompt,
     framing_for,
-    t1_message,
 )
 from verification_pilot.self_trust.session import (
     SYSTEM_PROMPT,
@@ -65,7 +62,7 @@ def subject_prefix(subject: SelfTrustSubject, arm_id: str) -> list[dict[str, Any
                 subject.remnant_owner or subject.own, subject.remnant_owner,
                 arm_id == MATCHED_ARMS[0], rung)
         return refactor_session.session_prefix(subject.own, subject.remnant_owner, placement,
-                                               order_for(arm_id), rung, t1_message(rung))
+                                               order_for(arm_id), rung)
     if order_for(arm_id) != "own_first":
         raise ValueError(f"{subject.id}: the rename fixture does not vary log order")
     if subject.concept is None:
@@ -100,26 +97,9 @@ class SelfTrustBridgeClient(PilotBridgeClient):
                       arm_id: str = "st-native") -> dict[str, Any]:
         prompt = (subject_system_prompt(subject, arm_id) if subject is not None
                   else self.system_prompt)
-        turns = subject_turns()
-        probe = create_pilot_agent(
-            settings=self.settings, image=self.image, runs_root=self.runs_root,
-            model_route=self.model_route,
-            completion=(cast(TurnCompletion, lambda **_: None)
-                        if self.factory is not None else None),
-            next_user_turns=turns, api_key=self.api_key, system_prompt=prompt,
-        )
-        return agent_configuration(
-            bounds=probe.bounds, limits=SandboxLimits(),
-            writable_prefixes=probe.writable_prefixes,
-            model_route=self.model_route, system_prompt=probe.system_prompt,
-            pilot_mode=True, next_user_turns=probe.next_user_turns,
-            max_tool_calls_per_turn=probe.max_tool_calls_per_turn,
-            max_tool_calls_per_cell=probe.max_tool_calls_per_cell,
-            extra={"image": self.image, "timeout_s": self.timeout_s,
-                   "subject_rendering": "self-trust-session-v2",
-                   "turns": {"backend": "smithers" if self.factory else "openrouter",
-                             "smithers": self.factory.configuration()
-                             if self.factory is not None else None}},
+        return self._configuration_for(
+            system_prompt=prompt, next_user_turns=subject_turns(),
+            subject_rendering="self-trust-session-v2",
         )
 
     def create(self, *, exchange: PierExchange, package: Any) -> Any:

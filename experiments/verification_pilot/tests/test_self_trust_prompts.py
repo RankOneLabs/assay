@@ -15,6 +15,7 @@ from verification_pilot.self_trust.ladder import (
     REWRITE,
     REWRITE_0,
     REWRITE_1,
+    REWRITE_2,
     RUNGS,
     Rung,
 )
@@ -24,6 +25,9 @@ from verification_pilot.self_trust.prompts import (
     build_system_prompt,
     framing_for,
     t1_message,
+)
+from verification_pilot.self_trust.refactor_session import (
+    session_prefix as refactor_session_prefix,
 )
 from verification_pilot.self_trust.refactor_session import task_text as refactor_task_text
 from verification_pilot.self_trust.session import task_text as rename_task_text
@@ -51,7 +55,7 @@ def test_rename_task_has_one_heading_and_workspace(own: OwnershipGroup, concept:
     assert rendered.count(REPOSITORY_AGENT_WORKSPACE) == 1
 
 
-@pytest.mark.parametrize("rung", (REWRITE, REWRITE_0, RESUME_146, REWRITE_1),
+@pytest.mark.parametrize("rung", (REWRITE, REWRITE_0, RESUME_146, REWRITE_1, REWRITE_2),
                          ids=lambda rung: rung.name)
 @pytest.mark.parametrize("own", GROUPS)
 def test_refactor_prompt_agrees_with_task_framing(rung: Rung, own: OwnershipGroup) -> None:
@@ -90,7 +94,9 @@ def test_first_turn_requests_its_submission_fields(rung: Rung) -> None:
     subject = next(subject for subject in self_trust_subjects()
                    if subject.fixture == rung.name and subject.own == holder
                    and subject.remnant_owner == holder)
-    assert message in subject_prefix(subject, "st-native")[-1]["content"]
+    direct_prefix = refactor_session_prefix(holder, holder, "native", rung=rung)
+    assert direct_prefix == subject_prefix(subject, "st-native")
+    assert message in direct_prefix[-1]["content"]
 
 
 @pytest.mark.parametrize("rung", (REWRITE, REWRITE_0, RESUME_146),
