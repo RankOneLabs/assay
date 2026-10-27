@@ -2,6 +2,9 @@
 
 This tool never opens a run archive's index or invokes the PR collector. Run
 ``uv run python -m verification_pilot.self_trust.sizes`` from ``experiments/``.
+The Argon 6/4 split comes from each archive's framing_version label in the
+publication manifest. Archived per-cell own/teammate condition corroborates
+the label but does not derive it.
 """
 
 from __future__ import annotations

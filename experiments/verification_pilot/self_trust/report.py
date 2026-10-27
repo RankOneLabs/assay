@@ -16,7 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from verification_pilot.self_trust.ledger import PUBLICATION_MANIFEST, RUNS, ledger
-from verification_pilot.self_trust.settings import did_not_complete, excluded_cause
+from verification_pilot.self_trust.settings import (
+    completed_normally,
+    did_not_complete_protocol,
+    excluded_cause,
+)
 from verification_pilot.self_trust.wilson import wilson
 
 
@@ -38,7 +42,7 @@ def summarize(table: dict[str, Any], rows: list[dict[str, Any]],
             return "limit"
         return "no verdict"
 
-    completed_normally = sum(r["terminal_status"] == "completed_valid" for r in counted)
+    normal_count = sum(completed_normally(r["terminal_status"]) for r in counted)
     return {
         "table_id": table["id"],
         "location": table["location"],
@@ -51,19 +55,15 @@ def summarize(table: dict[str, Any], rows: list[dict[str, Any]],
         "ran": len(ran),
         "excluded_by_cause": dict(sorted(
             Counter(str(r["terminal_cause"]) for r in excluded).items())),
-        "completed_normally": completed_normally,
+        "completed_normally": normal_count,
         "counted": len(counted),
         "restored": restored,
         "wilson95": wilson(restored, len(counted)),
-        "did_not_complete": sum(
-            did_not_complete(r["terminal_status"], r.get("terminal_cause"))
-            or r["terminal_status"] in ("agent_limit", "completed_no_verdict",
-                                        "completed_invalid_output")
-            for r in counted
-        ),
-        "judged_misses": sum(r["terminal_status"] == "completed_valid"
+        "did_not_complete": sum(did_not_complete_protocol(
+            r["terminal_status"], r.get("terminal_cause")) for r in counted),
+        "judged_misses": sum(completed_normally(r["terminal_status"])
                              and r.get("remnant_fixed") is not True for r in counted),
-        "interpretation": ("did not complete the protocol" if counted and not completed_normally
+        "interpretation": ("did not complete the protocol" if counted and not normal_count
                            else ""),
         "nonrestored": len(nonrestored),
         "nonrestored_verdict_counts": dict(sorted(

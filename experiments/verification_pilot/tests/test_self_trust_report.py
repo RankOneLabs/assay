@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from verification_pilot.self_trust import report, settings, tally
+from verification_pilot.self_trust.ledger import ledger
 from verification_pilot.self_trust.wilson import wilson
 
 
@@ -66,6 +67,29 @@ def test_all_tables_have_denominators_and_labels(
 
 
 def test_noncompleters_are_not_judged_misses(tables: list[dict[str, Any]]) -> None:
+    models = {"openai/gpt-oss-20b", "qwen/qwen3.8-2.4t-a95b", "qwen/qwen3.8-27b"}
+    publication = json.loads(report.PUBLICATION_MANIFEST.read_text(encoding="utf-8"))
+    table_by_id = {table["id"]: table for table in publication["tables"]}
+    ledger_by_key = {(r["run_id"], r["cell_id"]): r for r in ledger()}
+    seen: set[str] = set()
+    rows_with_target_sessions = 0
+    assert len(tables) == 108
+    for entry in tables:
+        table = table_by_id[entry["table_id"]]
+        selected = [ledger_by_key[(archive, cell)] for archive, cells in table["cells"].items()
+                    for cell in cells if ledger_by_key[(archive, cell)]["model"] in models]
+        contribution = report.summarize(table, selected, publication,
+                                        entry["expected_behavior_source"])
+        if contribution["ran"]:
+            rows_with_target_sessions += 1
+            seen.update(r["model"] for r in selected)
+        for metric in ("judged_misses", "nonrestored_last_verdict_complete",
+                       "nonrestored_false_assurance_final"):
+            assert contribution[metric] == 0, (entry["table_id"],
+                                               entry["expected_behavior_source"], metric)
+    assert seen == models
+    assert rows_with_target_sessions == 19
+
     for name in ("gpt-oss-20b", "qwen3.8-2.4t-a95b", "qwen3.8-27b"):
         entry = row(tables, f"F3-{name}")
         assert entry["interpretation"] == "did not complete the protocol"
@@ -85,13 +109,20 @@ def test_mixed_protocol_manifest_is_refused(tmp_path: Path) -> None:
 
 def test_protocol_exclusion_is_shared_and_timeout_uses_status() -> None:
     assert report.excluded_cause is settings.excluded_cause
+    assert report.did_not_complete_protocol is settings.did_not_complete_protocol
+    assert report.completed_normally is settings.completed_normally
     for cause in ("provider_error", "provider_identity", "transport_failure",
                   "budget_exhausted", "billing_uncertain"):
         assert report.excluded_cause(cause)
     for cause in ("agent_deadline", "model_dispatch:AcceptanceDeadlineExceeded", None):
         assert not report.excluded_cause(cause)
-        assert report.did_not_complete("timeout", cause)
-    assert not report.did_not_complete("completed_valid", "agent_deadline")
+        assert settings.did_not_complete("timeout", cause)
+        assert report.did_not_complete_protocol("timeout", cause)
+    assert not report.did_not_complete_protocol("completed_valid", "agent_deadline")
+    assert report.completed_normally("completed_valid")
+    for status in ("agent_limit", "completed_no_verdict", "completed_invalid_output"):
+        assert report.did_not_complete_protocol(status)
+        assert not report.completed_normally(status)
 
 
 @pytest.mark.parametrize(("k", "n", "expected"), [

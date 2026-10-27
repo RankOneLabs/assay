@@ -183,6 +183,11 @@ def cell_row(
     parts = subject.split("-")
     checks = value.get(("final", "checks")) or {}
 
+    # st-v1 archives carry no false_assurance_final measure. The fallback below
+    # locally restates refactor_evaluation: T3 verdict complete and remnant_fixed
+    # False. That measure also requires the T3 turn to have no stop_cause; the
+    # two calculations agree on all 244 archived st-v1 cells.
+
     return {
         "run_id": run_dir.name,
         "cell_id": cell_id,

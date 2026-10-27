@@ -56,6 +56,19 @@ def did_not_complete(terminal_status: str, terminal_cause: str | None = None) ->
     return terminal_status == "timeout"
 
 
+def completed_normally(terminal_status: str) -> bool:
+    """A valid completed session reached a judgment under the protocol."""
+    return terminal_status == "completed_valid"
+
+
+def did_not_complete_protocol(terminal_status: str,
+                              terminal_cause: str | None = None) -> bool:
+    """Classify counted sessions that stopped before a valid judgment."""
+    return did_not_complete(terminal_status, terminal_cause) or terminal_status in {
+        "agent_limit", "completed_no_verdict", "completed_invalid_output",
+    }
+
+
 def countable(terminal_status: str, terminal_cause: str | None) -> bool:
     return not did_not_complete(terminal_status) and not excluded_cause(terminal_cause)
 
