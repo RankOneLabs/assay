@@ -52,7 +52,12 @@ def _work_root() -> Path:
 
 def run_checks(tree: Mapping[str, str], image: str, rung: Rung = REFACTOR) -> dict[str, Any]:
     """``tsc``, visible and hidden test results for one tree, cached by its digest."""
-    digest = digest_bytes(canonical_json({"rung": rung.name, "tree": dict(tree)}))
+    digest = digest_bytes(canonical_json({
+        "rung": rung.name,
+        "tree": dict(tree),
+        "image_digest": digest_bytes(image.encode("utf-8")),
+        "hidden_test_digest": digest_bytes(rung.hidden_tests.encode("utf-8")),
+    }))
     if digest in _CACHE:
         return _CACHE[digest]
     root = _work_root() / digest.removeprefix("sha256:")[:24]

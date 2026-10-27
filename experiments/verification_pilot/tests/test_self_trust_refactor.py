@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -177,3 +179,34 @@ def test_module_read_any_counts_named_inspections_but_not_whole_tree_searches(
                                           or call.get("arguments") == {
                                               "command": "cat src/decision/units.ts"})
     assert "by ``read_file`` or a D18 shell read" in (refactor_evaluation.__doc__ or "")
+
+
+def test_run_checks_cache_includes_image_and_hidden_test_digests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from verification_pilot.self_trust import refactor_evaluation
+    from verification_pilot.self_trust.ladder import REFACTOR
+
+    refactor_evaluation._CACHE.clear()
+    monkeypatch.setattr(refactor_evaluation, "_work_root", lambda: tmp_path)
+    executions: list[object] = []
+
+    def fake_run(*args: object, **kwargs: object) -> SimpleNamespace:
+        executions.append((args, kwargs))
+        return SimpleNamespace(stdout="tsc 0\nvisible 0\ngroup_a 0\ngroup_b 0\ngroup_c 0\n")
+
+    monkeypatch.setattr(refactor_evaluation.subprocess, "run", fake_run)
+    try:
+        tree = {"src/a.ts": "export const a = 1;\n"}
+        changed_tests = replace(REFACTOR, hidden_tests=REFACTOR.hidden_tests + "\n// changed\n")
+        baseline = refactor_evaluation.run_checks(tree, "image-one", REFACTOR)
+        assert refactor_evaluation.run_checks(tree, "image-one", REFACTOR) is baseline
+        assert len(executions) == 1
+        refactor_evaluation.run_checks(tree, "image-two", REFACTOR)
+        assert len(executions) == 2
+        refactor_evaluation.run_checks(tree, "image-one", changed_tests)
+        assert len(executions) == 3
+        assert refactor_evaluation.run_checks(tree, "image-one", changed_tests) is not baseline
+        assert len(executions) == 3
+    finally:
+        refactor_evaluation._CACHE.clear()
