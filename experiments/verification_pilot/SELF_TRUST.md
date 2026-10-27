@@ -443,6 +443,49 @@ replaced:
   structure (tsc, the 61 tests, that `core/` no longer imports the
   adapter); none compared the new lookup's behaviour with the old one's.
 
+## st-v2 rerun protocol (2026-10-27)
+
+st-v2 adds the repaired prompt and schema work to st-v1. Every new cell carries
+`protocol_version: st-v2`; archived st-v1 cells retain their original label.
+The two populations are reported separately until equivalence is established.
+Every st-v2 session has a 1,800-second deadline, at most 150 model requests,
+100 tool calls per turn, 300 tool calls per session, and 8,192 output tokens
+per request, including on the local route. Provider and SDK retries are zero.
+
+The denominator excludes causes beginning `provider_` and the exact causes
+`transport_failure`, `budget_exhausted`, and `billing_uncertain`. The
+did-not-complete rule uses `terminal_status: timeout`, regardless of whether
+the cause was `agent_deadline`, `model_dispatch:AcceptanceDeadlineExceeded`,
+or a future timeout cause. Step-limit stops are not timeouts. A
+`provider_identity` failure halts its route for the run; that route must be
+probed again before any further run. Probe invocations now write separate
+dated files, preserving the historical `route-probes.json` as recorded.
+
+An excluded session may be replaced once after the planned matrix finishes.
+The new session records `retry_of` pointing to the original cell and both
+archives remain present; only the replacement can enter the denominator.
+Each archive copies the worker's resolved configuration and records the cell's
+run lineage, protocol, code and fixture hashes, route, bounds, terminal
+status and cause, and grader code revision beside the archived measures.
+Remeasuring writes a dated measures file alongside the original.
+`index.json` continues to point to the original measures file; the dated
+sibling is the re-derived version, and no command promotes it automatically.
+
+The model-free `scripted` command deliberately runs a 72-cell smoke slice:
+36 rename subjects in the native and quoted arms. The full 702 subject-arm
+sweep exceeds the plan's 144-cell ceiling and needs multiple plans. Tests
+compile every arm against every subject, but the archive smoke test covers
+only this slice.
+
+`uv run python -m verification_pilot.self_trust.run rerun-matrix --dry-run
+--max-spend-usd N` prints R1–R5 without opening the object store or calling a
+model. R1 repeats the resolved full-rewrite and rewrite0 cells under the
+single st-v2 envelope, R2 tests the presentation-matched rewrite0 pair, R3
+repeats the resume146 Argon and Flash cells, R4 adds the clean twins, and R5
+lists two Sol diagnostic re-sends. The command has no execution path in this
+cohort. Running any of these cells awaits G2: WP1 acceptance, Steve's matrix
+approval, and a spend cap per run.
+
 So "moves are caught, rewrites are missed" was a proxy. The finding that
 holds is the narrower one this document already led with: models verify a
 refactor as a local diff, and catch an omission when the old line and its

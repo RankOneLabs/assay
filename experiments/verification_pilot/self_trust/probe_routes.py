@@ -9,7 +9,7 @@ cell. Every request is reserved against one run-wide spend gate.
 
 Run ``uv run python -m verification_pilot.self_trust.probe_routes --route NAME
 ... --max-spend-usd 0.10`` from ``experiments/`` with ``OPENROUTER_API_KEY``
-set. The result is written to ``raw/self_trust/route-probes.json``.
+set. Each invocation writes a new dated file under ``raw/self_trust``.
 """
 
 from __future__ import annotations
@@ -21,13 +21,25 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from verification_pilot.bridge import create_pilot_agent
 from verification_pilot.budget import SpendGate
 from verification_pilot.run import PAID_ROUTES, _spend_cap, paid_model_route
 from verification_pilot.settings import VerificationPilotSettings
 
-RESULT = Path(__file__).resolve().parents[1] / "raw" / "self_trust" / "route-probes.json"
+RESULT_ROOT = Path(__file__).resolve().parents[1] / "raw" / "self_trust"
+
+
+def write_result(result: dict[str, Any], root: Path | None = None) -> Path:
+    """Keep every route probe, including probes started in the same second."""
+    root = RESULT_ROOT if root is None else root
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    path = root / f"route-probes-{stamp}-{uuid4().hex}.json"
+    with path.open("x", encoding="utf-8") as output:
+        output.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    return path
 
 
 def probe(name: str, gate: SpendGate, api_key: str, runs_root: Path) -> dict[str, Any]:
@@ -65,11 +77,10 @@ def main() -> None:
     spend = gate.record()
     result = {"probed_at": datetime.now(UTC).isoformat(timespec="seconds"), "probes": probes,
               "spend": spend}
-    RESULT.parent.mkdir(parents=True, exist_ok=True)
-    RESULT.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path = write_result(result)
     print(json.dumps({"ok": [p["route"] for p in probes if p["ok"]],
                       "failed": {p["route"]: p.get("error") for p in probes if not p["ok"]},
-                      "spent_usd": spend["spent_usd"]}))
+                      "spent_usd": spend["spent_usd"], "result": str(path)}))
 
 
 if __name__ == "__main__":

@@ -184,6 +184,80 @@ def refactor_calibration_ids(subjects: tuple[SelfTrustSubject, ...],
     return ids
 
 
+def rerun_matrix() -> dict[str, list[dict[str, Any]]]:
+    """The approved-for-planning st-v2 cells; enumeration performs no dispatch.
+
+    Each row is one planned subject/arm/repeat session. ``source_cell`` and
+    ``source_run_id`` identify the st-v1 cell it revalidates, including cells
+    that appeared in more than one old run.
+    """
+    subjects = self_trust_subjects()
+    known = {subject.id for subject in subjects}
+    matrix: dict[str, list[dict[str, Any]]] = {f"R{i}": [] for i in range(1, 6)}
+    next_repeat: dict[tuple[str, str, str, str], int] = {}
+
+    def add(group: str, route: str, subject: str, *, arm: str = "st-native",
+            worker_repeat: int = 0, sessions: int = 1,
+            source_run_id: str | None = None) -> None:
+        if subject not in known or arm not in ARMS or sessions < 1:
+            raise ValueError(f"invalid matrix cell: {subject}:{arm}")
+        key = (group, route, subject, arm)
+        for _ in range(sessions):
+            repeat = next_repeat.get(key, 0)
+            next_repeat[key] = repeat + 1
+            matrix[group].append({"route": route, "subject": subject, "arm": arm,
+                                  "worker_repeat": repeat,
+                                  "source_cell": f"{subject}:{arm}:w{worker_repeat}",
+                                  "source_run_id": source_run_id})
+
+    # Eleven archived Sonnet full-rewrite cells across three st-v1 runs.
+    sonnet_rewrite = (
+        ("78660eae-a995-42a0-88f4-1ab7a4aac6ae", refactor_calibration_ids(subjects, "rewrite")),
+        ("84932da0-4201-48e4-b216-1b6be52fccfd", (
+            "rewrite-own_a-remnant_c", "rewrite-own_b-remnant_a", "rewrite-own_b-remnant_b")),
+        ("a2310fc3-f18f-4aa8-970a-d22ae5495759", (
+            "rewrite-own_a-remnant_a", "rewrite-own_a-remnant_c")),
+    )
+    for run_id, ids in sonnet_rewrite:
+        for subject in ids:
+            add("R1", "sonnet-5.5", subject, source_run_id=run_id)
+    for subject, worker_repeat in (
+        ("rewrite0-own_a-remnant_a", 0), ("rewrite0-own_a-remnant_a", 1),
+        ("rewrite0-own_a-remnant_a", 2), ("rewrite0-own_b-remnant_a", 0),
+        ("rewrite0-own_b-remnant_a", 1),
+    ):
+        add("R1", "sonnet-5.5", subject, worker_repeat=worker_repeat, sessions=2,
+            source_run_id="472c12bd-8ac8-4ad4-a5ec-fb943236099a")
+    for route in ("haiku-5.5", "gpt-oss-20b"):
+        for subject in refactor_calibration_ids(subjects, "rewrite"):
+            add("R1", route, subject)
+
+    # The median rewrite's own/teammate presentation pair, six sessions each.
+    for arm in MATCHED_ARMS:
+        for subject in refactor_calibration_ids(subjects, "rewrite0"):
+            add("R2", "sonnet-5.5", subject, arm=arm, sessions=6)
+
+    for route in ("gemini-4-argon", "gemini-3.8-flash"):
+        for subject in refactor_calibration_ids(subjects, "resume146"):
+            for repeat in range(3):
+                add("R3", route, subject, worker_repeat=repeat)
+
+    for subject in (s.id for s in subjects if s.fixture == "rewrite" and s.condition == "clean"):
+        add("R4", "sonnet-5.5", subject, sessions=2)
+    for subject in ("rewrite0-own_a-remnant_none", "rewrite0-own_b-remnant_none"):
+        add("R4", "sonnet-5.5", subject, sessions=3)
+    for route in ("gemini-4-argon", "gemini-3.8-flash"):
+        for subject, sessions in (("resume146-own_a-remnant_none", 2),
+                                  ("resume146-own_b-remnant_none", 1)):
+            add("R4", route, subject, sessions=sessions)
+
+    add("R5", "gpt-6.1-sol", "rewrite-own_a-remnant_a",
+        source_run_id="414b5927-fe13-48d9-9fcb-ce79a18d4362")
+    add("R5", "gpt-6.1-sol", "rewrite0-own_a-remnant_a",
+        source_run_id="8c67f47d-3b05-4516-bf3e-7bc8cd5f4c22")
+    return matrix
+
+
 def realization_payload(subject: SelfTrustSubject, arm_id: str) -> dict[str, Any]:
     task = subject.task
     if arm_id in MATCHED_ARMS:
