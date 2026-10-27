@@ -65,6 +65,7 @@ def create_pilot_agent(
     message_prefix: tuple[dict[str, Any], ...] = (),
     spend_gate: SpendGate | None = None,
     system_prompt: str = PILOT_SYSTEM_PROMPT,
+    writable_prefixes: tuple[str, ...] | None = None,
 ) -> RepositoryAgentClient:
     """Use the pilot's declared scope and call budgets for the actual loop.
 
@@ -94,7 +95,8 @@ def create_pilot_agent(
         system_prompt=system_prompt,
         next_user_turns=next_user_turns,
         message_prefix=message_prefix,
-        writable_prefixes=settings.writable_prefixes,
+        writable_prefixes=(settings.writable_prefixes if writable_prefixes is None
+                           else writable_prefixes),
         max_tool_calls_per_turn=settings.max_tool_calls_per_turn,
         max_tool_calls_per_cell=settings.max_tool_calls_per_cell,
         sandbox_factory=sandbox_factory,
@@ -141,7 +143,8 @@ class PilotBridgeClient:
 
     def _configuration_for(self, *, system_prompt: str,
                            next_user_turns: tuple[str, ...],
-                           subject_rendering: str) -> dict[str, Any]:
+                           subject_rendering: str,
+                           writable_prefixes: tuple[str, ...] | None = None) -> dict[str, Any]:
         probe = create_pilot_agent(
             settings=self.settings, image=self.image, runs_root=self.runs_root,
             model_route=self.model_route,
@@ -149,6 +152,7 @@ class PilotBridgeClient:
                         if self.factory is not None else None),
             next_user_turns=next_user_turns,
             api_key=self.api_key, system_prompt=system_prompt,
+            writable_prefixes=writable_prefixes,
         )
         configuration: dict[str, Any] = agent_configuration(
             bounds=probe.bounds, limits=SandboxLimits(),

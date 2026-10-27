@@ -100,6 +100,8 @@ class SelfTrustBridgeClient(PilotBridgeClient):
         return self._configuration_for(
             system_prompt=prompt, next_user_turns=subject_turns(),
             subject_rendering="self-trust-session-v2",
+            writable_prefixes=(RUNGS[subject.fixture].writable_prefixes
+                               if subject is not None and subject.fixture in RUNGS else None),
         )
 
     def create(self, *, exchange: PierExchange, package: Any) -> Any:
@@ -121,6 +123,8 @@ class SelfTrustBridgeClient(PilotBridgeClient):
             next_user_turns=subject_turns(), api_key=self.api_key,
             message_prefix=prefix,
             system_prompt=subject_system_prompt(subject, coordinate.arm_id),
+            writable_prefixes=(RUNGS[subject.fixture].writable_prefixes
+                               if subject.fixture in RUNGS else None),
             sandbox_factory=partial(DockerTmpfsToolSandbox, limits=SandboxLimits()),
             storage_factory=DockerTmpfsStagingStorage, spend_gate=self.spend_gate,
         )

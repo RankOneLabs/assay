@@ -10,14 +10,15 @@ qualification still records actual usage and limit hits, since arbitrary
 tool outputs can exceed either ceiling. The bridge records a typed
 ``conversation_limit`` stop in the partial trace.
 
-Only ``src/`` and ``tests/`` are writable in generated workspaces. Historical
+The pilot defaults to writable ``src/`` and ``tests/`` directories; self-trust
+rungs derive their own writable directories from fixture changes. Historical
 G6 decoy carriers are read-only documents; the protected-name guard also
 rejects package and TypeScript manifest changes.
 """
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Canonical JSON digest of PILOT_TOOL_SCHEMAS (T1 and T2/T3) in agent_loop.py.
 # The separate legacy TOOLS digest remains pinned by workflow_edit's identity test.
@@ -41,6 +42,16 @@ class VerificationPilotSettings(BaseModel):
     max_response_bytes: int = Field(default=131_072, ge=1, le=1_000_000)
     max_output_tokens: int = Field(default=8_192, ge=1, le=32_768)
     max_storage_mb: int = Field(default=512, ge=1, le=4_096)
-    writable_prefixes: tuple[Literal["src/"], Literal["tests/"]] = ("src/", "tests/")
+    writable_prefixes: tuple[str, ...] = ("src/", "tests/")
+
+    @field_validator("writable_prefixes")
+    @classmethod
+    def validate_writable_prefixes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value or any(not prefix or not prefix.endswith("/") or prefix.startswith("/")
+                            or "//" in prefix or any(part in (".", "..")
+                                                  for part in prefix[:-1].split("/"))
+                            for prefix in value):
+            raise ValueError("writable_prefixes must contain canonical relative directories")
+        return value
     max_tool_calls_per_turn: Literal[15] = 15
     max_tool_calls_per_cell: Literal[40] = 40
