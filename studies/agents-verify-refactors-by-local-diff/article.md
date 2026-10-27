@@ -62,10 +62,12 @@ truth the agent cannot see or infer the shape of in advance. Second, the
 earlier session was recorded by running those edits in the sandbox, so every
 tool result in it is genuine, but the authorship label ("your own session"
 or "a teammate's session") is assigned by us; the model under test did not
-write the log. That matters for how much weight the self-attribution result
-below can carry.
+write the log. In the own arm the recorded log appeared as native earlier
+turns; in the teammate arm it appeared as a quoted transcript. The two arms
+therefore varied presentation as well as the authorship label and do not test
+an isolated self-attribution effect.
 
-Each fixture has an internal name: the 436-line move is fixture `S`; a
+Each fixture has an internal name: the 420-line move is fixture `S`; a
 family of increasingly large rewrites of the same code are `rewrite0`
 through `L3`; a matched move-versus-rewrite pair through a
 `src/forge` package is `forge-move` and `forge-rewrite`; and
@@ -73,7 +75,7 @@ Oakridge #146, replayed exactly as shipped, is `resume146`.
 
 ## The unexpected split
 
-The self-trust question came back inconclusive (see
+The self-trust question was not tested by this design (see
 [below](#what-we-know-dont-know-and-are-testing-next)). The sessions
 produced a different result. Across every fixture, whether the check was
 restored tracked one thing more closely than size or framing: whether the
@@ -81,7 +83,7 @@ new code still matched the old code line by line.
 
 ### [Example 1](./code-examples.md#example-1): a move, easy to diff
 
-The simplest fixture splits a 436-line module (`derive.ts`) into three new
+The simplest fixture is a 420-line move of `derive.ts` into three new
 files. One check planted for omission refuses two driver units sharing the same
 `unit_id`. The old two fan-out branches each have that check; the generated
 new module merges them into one pass with one copy of it. In the omitted
@@ -137,8 +139,10 @@ itself still imports `ALLOWED_MODELS` and exposes an `isAllowedModel`
 predicate. None of these checks filters the new resume assignment. A
 repository search finds reassuring allowlist code without showing that the
 active path lost its guard. PR #153 later restored the adapter check. Across
-Gemini 4 Argon and Gemini 3.8 Flash, 0 of 12 `resume146` sessions restored
-it, and 10 of 12 submitted "complete" while it was still missing.
+Gemini 4 Argon and Gemini 3.8 Flash, 0 of 11 `resume146` sessions restored
+it, and 10 submitted "complete" while it was still missing. The allowed
+edit paths were only `src/` and `tests/`; this fixture had neither directory.
+A correct restore would have been rejected, and no session attempted one.
 
 ### What the numbers measure
 
@@ -154,17 +158,23 @@ bundles detection and repair; it does not measure either alone.
 | Refactor | Sessions restoring the omitted check |
 | --- | --- |
 | Move: `derive.ts` split into three modules | 36 of 36 (three models) |
-| 693-line architectural rewrite, near the Oakridge PR median | 2 of 17 (same three models) |
+| 693-line architectural rewrite, near the 212-PR cohort median | 2 of 17 (same three models) |
 | Rewrite with each check kept as one matching rule | 11 of 11 (two models) |
-| Oakridge #146 as shipped | 0 of 12, with 10 of 12 submitted "complete" |
-| Full 2,782-line rewrite (12 models) | 8 of 75, with 19 of the 67 misses submitted "complete" |
+| Oakridge #146 as shipped | 0 of 11, with 10 of 11 submitting "complete"; correct edit outside allowed paths |
+| Full 2,782-line rewrite (12 models) | 8 of 74: 8 of 51 on old-behavior omissions A and B, 0 of 23 on new-fix omission C; 18 of 66 misses ended "complete" |
+
+Omission C was a fix introduced by the refactor, so its sessions form a
+separate stratum. The stricter false-sign-off count is 17 of 66: it requires
+the final turn to finish and say "complete". The 18-of-66 count uses the last
+submitted verdict in any turn. The [technical report](./README.md#finding-3-on-the-full-rewrite-most-models-miss-and-some-sign-off)
+shows both measures and the completed-normally denominator.
 
 "No verdict" and "limit" outcomes (a turn that ended in prose with no
 verdict, or a session cut off by a request, tool-call, or time limit) are
 excluded from every false-"complete" count in this article, because those
 sessions never claimed the work was complete.
 
-Size alone doesn't explain the split either. The 436-line move, replayed
+Size alone doesn't explain the split either. The 420-line move, replayed
 with each part first reading the files it touches (about 190 KB of history
 before the agent starts), still scored 6 of 6 restored on Gemini. The
 693-line rewrite, with roughly a quarter that much history (about 49 KB),
@@ -177,13 +187,13 @@ explanation for the split; it doesn't show that context length is irrelevant
 in general, and this design can't support that broader claim.
 
 "Lines changed" and "lines written" are different counts here. Against
-Oakridge's 212 merged PRs, counted on code lines only (the study excludes
+Oakridge's 634 merged PRs, counted on code lines only (the study excludes
 docs and generated files; PR #605, for instance, is 672 lines of code
-against 47,402 lines of everything else), the median PR is 660 code lines.
-The 693-line rewrite sits right at that median. The full 2,782-line rewrite,
-cut from Oakridge PR #468, is larger than 91% of those 212 PRs. Neither
-fixture is an outlier. The one that scored 2 of 17 is about a typical
-Oakridge PR's size.
+against 47,402 lines of everything else), the earlier 212-PR cohort has a
+median of 660.5 code lines. The 693-line rewrite sits near that median. The
+full 2,782-line rewrite, cut from Oakridge PR #468, is at the 89.4th
+percentile of all 634 merged PRs; 91% is its percentile within the 212-PR
+cohort. The one that scored 2 of 17 is near the earlier cohort's median size.
 
 ## What the agents checked
 
@@ -199,8 +209,9 @@ One model worked differently. On the full 2,782-line rewrite, GPT-6.1 Sol
 wrote, in one review, that "the final tree typechecks and all 85 tests pass,
 but that does not establish behavior preservation," and then went on to
 compare each retired module's behavior against its replacement, one piece at
-a time. Sol restored 7 of 12 checks on that fixture, against zero for ten of
-the other eleven models that ran it. This is an observation from these
+a time. Sol restored 7 of 12 checks on that fixture; three other routes did
+not complete the protocol, while the remaining routes recorded no restores.
+This is an observation from these
 sessions. It does not show that the method or the model would repeat the
 result on a different prompt or rewrite. The next section proposes a test.
 
@@ -216,21 +227,16 @@ refactor that reshaped code while leaving a findable but inert copy of the
 old guard behind ([Example 4](./code-examples.md#example-4)), verifies far
 worse, and the agents still say "complete."
 
-**What is not established.** The self-trust question this study set out to
-answer came back without a result. Almost every model restored nearly every
-check on moves and nearly none on rewrites, which leaves no room between
-"own work" and "teammate's work" for a self-attribution effect to show up.
-Only GPT-6.1 Sol's sessions on the full rewrite landed in the middle, and
-even there a run of Azure endpoint refusals at 200 KB cut off its
-teammate-labeled sessions before they could finish. Three variants that
-tried to separate authorship from narrative position all ran only on the
-fixture where Gemini restored everything regardless, so none of them could
-show a difference either. And the "own work" logs were not written by the
-model under test. They were recorded once in a sandbox and replayed with a
-label attached. The Self-Attribution Bias paper reports its effect as much
-weaker, or absent, when the reviewed work wasn't written by the reviewing
-model, so a null result here says little even without the ceiling and floor
-effects. The hypothesis is not disproved. This design did not test it.
+**What is not established.** This design did not test self-trust. The own
+and teammate arms changed both the authorship label and presentation: native
+turns versus a quoted log. The logs were recorded in a sandbox, not written
+by the model under test. The three presentation variants ran only on the move
+where Gemini restored every check. They cannot isolate authorship, and the
+observed arm counts support no causal self-attribution conclusion. Sol's
+endpoint identity checks failed with terminal cause `provider_identity`;
+the response body was not kept, so the cause is unknown. There is no evidence
+for a request-size threshold. A matched
+self-trust test remains future work.
 
 The sessions point to the matchability explanation but do not isolate it. No
 single fixture here varies how well old and new code line up while holding
