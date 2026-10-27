@@ -77,11 +77,7 @@ def task_text(own: OwnershipGroup, rung: Rung = REFACTOR) -> str:
                    "left; your part is to verify it:\n\n")
         shares += f"- {own} (you): verifying the change\n"
     return (
-        "# Task\n\n" + framing.format(summary=rung.summary) + f"{shares}\n"
-        "## Workspace\n\n"
-        "The repository is your working directory, `/workspace`. Edit its files in place; the "
-        "file tree you leave there is your submission. Call `submit_output` with a short "
-        "summary when you are done.\n"
+        framing.format(summary=rung.summary) + f"{shares}\n"
     )
 
 

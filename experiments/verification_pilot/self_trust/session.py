@@ -62,16 +62,11 @@ def task_text(repository: Mapping[str, str], concept: Concept, own: OwnershipGro
         + ", ".join(f"`{path}`" for path in share_files(repository, concept, group)) + "\n"
         for group in GROUPS)
     return (
-        "# Task\n\n"
         f"You and two teammates are renaming the {concept.names[0]} concept to "
         f"{concept.names[1]} across this repository. `docs/migration.md` states the rule. "
         "Each of you owns one share "
         "of the files:\n\n"
         f"{shares}\n"
-        "## Workspace\n\n"
-        "The repository is your working directory, `/workspace`. Edit its files in place; "
-        "the file tree you leave there is your submission. Call `submit_output` with a "
-        "short summary when you are done.\n"
     )
 
 
