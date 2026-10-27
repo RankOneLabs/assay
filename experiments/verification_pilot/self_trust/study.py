@@ -29,6 +29,7 @@ from assay.models import (
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 from verification_pilot.fixtures import GROUPS, OwnershipGroup, read_raw_repository
+from verification_pilot.self_trust import fixtures
 from verification_pilot.self_trust.concepts import CONCEPTS, Concept, subject_repository
 from verification_pilot.self_trust.evaluation import EVALUATOR_ID, VERDICTS
 from verification_pilot.self_trust.ladder import (
@@ -217,12 +218,14 @@ def compile_self_trust_plan(
     for name in {item.fixture for item in subjects_data
                  if item.id in active_subject_ids and item.fixture in RUNGS}:
         rung = RUNGS[name]
-        start, clean = rung.start_tree(), rung.subject_tree(None)
-        changed = {path for path in start.keys() | clean.keys()
-                   if start.get(path) != clean.get(path)}
-        for path in changed | set(rung.omission_paths.values()):
-            if not path.startswith(rung.writable_prefixes):
-                raise ValueError(f"{name}: {path} lies outside writable_prefixes")
+        required = fixtures.writable_prefixes_for(
+            rung.start_tree(), rung.subject_tree(None), rung.omission_paths.values())
+        # This check is tautological for derived rung scopes: the same changed
+        # and omission paths produced them. It catches an explicit override,
+        # including a silently reinstated pilot default.
+        for prefix in required:
+            if not prefix.startswith(rung.writable_prefixes):
+                raise ValueError(f"{name}: {prefix} lies outside writable_prefixes")
 
     def publish(value: Any) -> str:
         return str(store.publish_json(value))

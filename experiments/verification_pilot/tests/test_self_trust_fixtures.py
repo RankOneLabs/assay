@@ -44,6 +44,11 @@ def test_rerun_scopes_come_from_each_fixtures_changed_paths() -> None:
         assert rung.writable_prefixes == ("src/", "tests/")
 
 
+def test_changed_root_file_cannot_have_a_writable_directory_prefix() -> None:
+    with pytest.raises(ValueError, match="changed root file"):
+        writable_prefixes_for({"package.json": "before"}, {"package.json": "after"}, ())
+
+
 def test_self_trust_bridge_configuration_uses_rung_scope(tmp_path: Path) -> None:
     subjects = {subject.id: subject for subject in self_trust_subjects()}
     bridge = SelfTrustBridgeClient(

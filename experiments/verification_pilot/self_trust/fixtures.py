@@ -97,7 +97,11 @@ SHARE: OwnershipGroup = "group_a"
 def writable_prefixes_for(
     start: Mapping[str, str], finished: Mapping[str, str], omission_paths: Iterable[str],
 ) -> tuple[str, ...]:
-    """Directories touched by the clean change or by an omitted span."""
+    """Directories touched by the clean change or by an omitted span.
+
+    Root-level edits cannot fit this directory-only scope, so reject such a
+    fixture at construction time. This also covers protected root manifests.
+    """
     changed = {path for path in start.keys() | finished.keys()
                if start.get(path) != finished.get(path)}
     changed.update(omission_paths)
