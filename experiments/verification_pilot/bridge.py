@@ -134,13 +134,21 @@ class PilotBridgeClient:
             self.authorized_smithers = self.factory.configuration()
 
     def configuration(self) -> dict[str, Any]:
+        return self._configuration_for(
+            system_prompt=self.system_prompt, next_user_turns=(T2_TEXT, T3_TEXT),
+            subject_rendering="realization-ref-v1",
+        )
+
+    def _configuration_for(self, *, system_prompt: str,
+                           next_user_turns: tuple[str, ...],
+                           subject_rendering: str) -> dict[str, Any]:
         probe = create_pilot_agent(
             settings=self.settings, image=self.image, runs_root=self.runs_root,
             model_route=self.model_route,
             completion=(cast(TurnCompletion, lambda **_: None)
                         if self.factory is not None else None),
-            next_user_turns=(T2_TEXT, T3_TEXT),
-            api_key=self.api_key, system_prompt=self.system_prompt,
+            next_user_turns=next_user_turns,
+            api_key=self.api_key, system_prompt=system_prompt,
         )
         configuration: dict[str, Any] = agent_configuration(
             bounds=probe.bounds, limits=SandboxLimits(),
@@ -150,7 +158,7 @@ class PilotBridgeClient:
             max_tool_calls_per_turn=probe.max_tool_calls_per_turn,
             max_tool_calls_per_cell=probe.max_tool_calls_per_cell,
             extra={"image": self.image, "timeout_s": self.timeout_s,
-                   "subject_rendering": "realization-ref-v1",
+                   "subject_rendering": subject_rendering,
                    "turns": {"backend": "smithers" if self.factory else "openrouter",
                              "smithers": self.factory.configuration()
                              if self.factory is not None else None}},

@@ -9,21 +9,26 @@ from typing import Any
 
 import pytest
 
-from assay.canonical import digest_bytes
+from assay.canonical import canonical_json, digest_bytes
 from assay.models import RuntimeProfile
 from assay.store import ObjectStore
 from verification_pilot.budget import SpendGate
 from verification_pilot.fixtures import GROUPS, whole_word_pattern
 from verification_pilot.run import ScriptedWorker, paid_model_route
-from verification_pilot.self_trust.bridge import SelfTrustBridgeClient
+from verification_pilot.self_trust.bridge import SelfTrustBridgeClient, subject_turns
 from verification_pilot.self_trust.concepts import LEGACY_READER
 from verification_pilot.self_trust.evaluation import measures, remnant_shown, verdict
+from verification_pilot.self_trust.ladder import RESUME_146, REWRITE, REWRITE_0
+from verification_pilot.self_trust.prompts import build_system_prompt, framing_for
 from verification_pilot.self_trust.session import SYSTEM_PROMPT
 from verification_pilot.self_trust.study import (
     ARMS,
+    MATCHED_ARMS,
     SelfTrustSubject,
     calibration_subject_ids,
     compile_self_trust_plan,
+    order_for,
+    placement_for,
     self_trust_subjects,
 )
 from verification_pilot.settings import VerificationPilotSettings
@@ -122,9 +127,32 @@ def test_bridge_configuration_pins_the_self_trust_prompt(tmp_path: Path) -> None
         settings=VerificationPilotSettings(), api_key="test-key",
         spend_gate=SpendGate(Decimal("1")),
     )
-    configuration = bridge.configuration()
-    assert configuration["system_prompt_sha256"] == digest_bytes(SYSTEM_PROMPT.encode("utf-8"))
-    assert configuration["subject_rendering"] == "self-trust-session-v1"
+    rename = SUBJECTS["stage_run-own_c-remnant_c"]
+    rename_configuration = bridge.configuration(rename)
+    assert rename_configuration["system_prompt_sha256"] == digest_bytes(
+        SYSTEM_PROMPT.encode("utf-8"))
+    assert rename_configuration["subject_rendering"] == "self-trust-session-v2"
+    assert rename_configuration["turn_prompts_sha256"] == digest_bytes(
+        canonical_json(list(subject_turns())))
+    for rung in (REWRITE, REWRITE_0, RESUME_146):
+        for own in GROUPS:
+            subject = SUBJECTS[f"{rung.name}-own_{own.removeprefix('group_')}-remnant_none"]
+            prompt = build_system_prompt(rung, framing_for(rung, own))
+            configuration = bridge.configuration(subject)
+            assert configuration["system_prompt_sha256"] == digest_bytes(prompt.encode("utf-8"))
+            assert configuration["turn_prompts_sha256"] == digest_bytes(
+                canonical_json(list(subject_turns())))
+
+
+def test_existing_arm_placements_and_orders_are_stable() -> None:
+    assert {arm: (placement_for(arm), order_for(arm)) for arm in ARMS} == {
+        "st-native": ("native", "own_first"),
+        "st-quoted": ("quoted", "own_first"),
+        "st-quoted-first": ("quoted", "holder_first"),
+        "st-quoted-last": ("quoted", "holder_last"),
+        MATCHED_ARMS[0]: ("quoted", "own_first"),
+        MATCHED_ARMS[1]: ("quoted", "own_first"),
+    }
 
 
 @pytest.mark.parametrize("arm", ARMS)
