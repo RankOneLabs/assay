@@ -32,11 +32,18 @@ class Rung:
     subject_tree: Callable[[OwnershipGroup | None], dict[str, str]]
     plan_share: Callable[..., list[PlannedCall]]
     omission_paths: Mapping[OwnershipGroup, str]
+    expected_behavior_sources: Mapping[OwnershipGroup, str]
     hidden_test: str
     hidden_tests: str
     visible_tests: str
     logs: Path
     claim: Callable[[OwnershipGroup, str], str]  # (share, its last check's output) -> "done"
+    writable_prefixes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.writable_prefixes:
+            object.__setattr__(self, "writable_prefixes", fixtures.writable_prefixes_for(
+                self.start_tree(), self.subject_tree(None), self.omission_paths.values()))
 
 
 def _rewrite_claim(group: OwnershipGroup, check_output: str) -> str:
@@ -62,6 +69,8 @@ REFACTOR = Rung(
     order=refactor.ORDER, share_work=refactor.SHARE_WORK,
     start_tree=refactor.start_tree, subject_tree=refactor.subject_tree,
     plan_share=_refactor_plan, omission_paths=refactor.MODULES,
+    expected_behavior_sources={group: omission.expected_behavior_source
+                               for group, omission in refactor.OMISSIONS.items()},
     hidden_test=refactor.HIDDEN_TEST, hidden_tests=refactor.HIDDEN_TESTS,
     visible_tests=refactor.VISIBLE_TEST, logs=RAW / "refactor-logs.json", claim=_refactor_claim,
 )
@@ -74,6 +83,8 @@ REWRITE = Rung(
     start_tree=rewrite.start_tree, subject_tree=rewrite.subject_tree,
     plan_share=rewrite.plan_share,
     omission_paths={group: omission.path for group, omission in rewrite.OMISSIONS.items()},
+    expected_behavior_sources={group: omission.expected_behavior_source
+                               for group, omission in rewrite.OMISSIONS.items()},
     hidden_test=rewrite.HIDDEN_TEST, hidden_tests=rewrite.HIDDEN_TESTS,
     visible_tests=rewrite.VISIBLE_TESTS, logs=RAW / "rewrite-logs.json", claim=_rewrite_claim,
 )
@@ -87,6 +98,8 @@ def _rewrite_prefix(name: str, through: tuple[OwnershipGroup, ...], summary: str
         subject_tree=partial(rewrite.subject_tree, through=through),
         plan_share=rewrite.plan_share,
         omission_paths={group: rewrite.OMISSIONS[group].path for group in through},
+        expected_behavior_sources={group: rewrite.OMISSIONS[group].expected_behavior_source
+                                   for group in through},
         hidden_test=rewrite.HIDDEN_TEST, hidden_tests=rewrite.hidden_tests(through),
         visible_tests=rewrite.VISIBLE_TESTS, logs=RAW / f"{name}-logs.json",
         claim=_rewrite_claim,
@@ -108,6 +121,7 @@ REWRITE_0 = Rung(
     plan_share=partial(rewrite.plan_share, exclude=REWRITE_0_EXCLUDE,
                        visible_tests="tests/*.test.ts"),
     omission_paths={"group_a": rewrite.OMISSIONS["group_a"].path},
+    expected_behavior_sources={"group_a": rewrite.OMISSIONS["group_a"].expected_behavior_source},
     hidden_test=rewrite.HIDDEN_TEST, hidden_tests=rewrite.hidden_tests(rewrite.ORDER[:1]),
     visible_tests="tests/*.test.ts", logs=RAW / "rewrite0-logs.json", claim=_rewrite_claim,
 )
@@ -137,6 +151,7 @@ REWRITE_0_READ = Rung(
     share_work=REWRITE_0.share_work, start_tree=REWRITE_0.start_tree,
     subject_tree=REWRITE_0.subject_tree, plan_share=_read_then_rewrite,
     omission_paths=REWRITE_0.omission_paths, hidden_test=REWRITE_0.hidden_test,
+    expected_behavior_sources=REWRITE_0.expected_behavior_sources,
     hidden_tests=REWRITE_0.hidden_tests, visible_tests=REWRITE_0.visible_tests,
     logs=RAW / "rewrite0-read-logs.json", claim=_rewrite_claim,
 )
@@ -180,6 +195,7 @@ REFACTOR_LONG = Rung(
     summary=REFACTOR.summary, order=refactor.ORDER, share_work=refactor.SHARE_WORK,
     start_tree=refactor.start_tree, subject_tree=refactor.subject_tree,
     plan_share=_refactor_long_plan, omission_paths=refactor.MODULES,
+    expected_behavior_sources=REFACTOR.expected_behavior_sources,
     hidden_test=refactor.HIDDEN_TEST, hidden_tests=refactor.HIDDEN_TESTS,
     visible_tests=refactor.VISIBLE_TEST, logs=RAW / "refactor-long-logs.json",
     claim=_refactor_claim,
@@ -200,8 +216,10 @@ def _one_share(change: fixtures.OneShareChange) -> Rung:
         share_work={fixtures.SHARE: change.share_work}, start_tree=change.start_tree,
         subject_tree=change.subject_tree, plan_share=change.plan_share,
         omission_paths={fixtures.SHARE: change.omission.path}, hidden_test=fixtures.HIDDEN_TEST,
+        expected_behavior_sources={fixtures.SHARE: change.omission.expected_behavior_source},
         hidden_tests=change.hidden_tests, visible_tests=change.visible_tests,
         logs=RAW / f"{change.name}-logs.json", claim=partial(_one_share_claim, change),
+        writable_prefixes=change.writable_prefixes,
     )
 
 

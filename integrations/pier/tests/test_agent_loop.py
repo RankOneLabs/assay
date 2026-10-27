@@ -10,6 +10,7 @@ import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -101,6 +102,84 @@ def test_haiku_turn_request_body_is_byte_identical(tmp_path: Path) -> None:
     assert captured == [
         json.dumps(prior_body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     ]
+    assert "temperature" not in json.loads(captured[0])
+
+
+def test_request_event_keeps_provider_provenance_and_bounded_error_body(
+    tmp_path: Path,
+) -> None:
+    error_text = "provider overloaded: " + "x" * 3000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        answer = _answer("submit_output", {"summary": "unused"}, 1)
+        answer.update({
+            "id": "gen-123",
+            "error": error_text,
+        })
+        answer["choices"] = [{
+            "finish_reason": "error",
+            "message": {"role": "assistant", "content": None},
+        }]
+        return httpx.Response(200, json=answer)
+
+    with pytest.raises(AgentLoopError) as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    assert failure.value.cause == "provider_error"
+    event = next(e for e in failure.value.trajectory["events"]
+                 if e["kind"] == "model_request")
+    assert datetime.fromisoformat(event["started_at"]) <= datetime.fromisoformat(
+        event["ended_at"]
+    )
+    assert event["seconds"] >= 0
+    assert event["generation_id"] == "gen-123"
+    assert event["http_status"] == 200
+    assert event["finish_reason"] == "error"
+    assert event["sampling"] == "unset"
+    assert event["model_revision"] == "unavailable"
+    assert event["error_body"].startswith("provider overloaded: ")
+    assert len(event["error_body"].encode("utf-8")) == 2048
+
+
+def test_http_error_keeps_status_and_bounded_body(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="provider unavailable: " + "x" * 3000)
+
+    with pytest.raises(AgentLoopError) as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    assert failure.value.cause == "provider_response"
+    event = next(e for e in failure.value.trajectory["events"]
+                 if e["kind"] == "model_request")
+    assert event["http_status"] == 503
+    assert event["error_body"].startswith("provider unavailable: ")
+    assert len(event["error_body"].encode("utf-8")) == 2048
+
+
+def test_provider_identity_failure_keeps_response_provenance(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        answer = _answer("submit_output", {"summary": "unused"}, 1)
+        answer.update({
+            "id": "gen-wrong-route", "provider": "unexpected-provider",
+            "error": "route mismatch",
+        })
+        return httpx.Response(200, json=answer)
+
+    with pytest.raises(AgentLoopError) as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    assert failure.value.cause == "provider_identity"
+    event = next(e for e in failure.value.trajectory["events"]
+                 if e["kind"] == "model_request")
+    assert event["generation_id"] == "gen-wrong-route"
+    assert event["http_status"] == 200
+    assert event["model_revision"] == "unavailable"
+    assert event["finish_reason"] == "tool_calls"
+    assert "route mismatch" in event["error_body"]
+    assert len(event["error_body"].encode("utf-8")) <= 2048
 
 
 def test_paid_turn_uses_the_current_pilot_tool_schema(tmp_path: Path) -> None:
@@ -1527,6 +1606,35 @@ def test_transport_failure_consumes_attempt_without_retry(tmp_path: Path) -> Non
     assert failure.value.trajectory["events"][-1]["error"] == "ConnectError"
 
 
+@pytest.mark.parametrize("after_bytes", [False, True])
+def test_deadline_during_request_records_bytes_received(
+    tmp_path: Path, after_bytes: bool,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not after_bytes:
+            time.sleep(0.1)
+            raise httpx.ReadTimeout("cell budget expired", request=request)
+
+        class LateStream(httpx.SyncByteStream):
+            def __iter__(self) -> Iterator[bytes]:
+                yield b'{"partial":'
+                time.sleep(0.1)
+                yield b'"late"}'
+
+        return httpx.Response(200, stream=LateStream())
+
+    with pytest.raises(AgentLoopError) as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"},
+            deadline=time.monotonic() + 0.05,
+        )
+    assert failure.value.cause == "agent_deadline"
+    assert failure.value.trajectory["events"][-1] == {
+        "kind": "stopped", "cause": "agent_deadline", "requests": 1,
+        "request_in_flight": True, "bytes_received": after_bytes,
+    }
+
+
 def test_model_request_waits_past_thirty_seconds(tmp_path: Path) -> None:
     # A 30 s read timeout stopped a slow paid request after dispatch, which
     # halts the run as billing_uncertain; requests now get MODEL_REQUEST_SECONDS.
@@ -1924,6 +2032,43 @@ def test_reply_without_a_tool_call_keeps_its_text(tmp_path: Path) -> None:
                if event["kind"] == "reply_without_tool_call"]
     assert replies == [{"kind": "reply_without_tool_call", "turn": 1, "finish_reason": "stop",
                         "content": "Review: the migration looks complete."}]
+
+
+@pytest.mark.parametrize(
+    ("finish_reason", "prompt_tokens", "completion_tokens", "content", "cause"),
+    [
+        ("error", 10, 1, None, "provider_error"),
+        ("stop", 0, 0, None, "provider_error"),
+        ("stop", 10, 1, None, "empty_reply"),
+        ("stop", 10, 1, "I reviewed the files.", "no_tool_call"),
+    ],
+)
+def test_no_tool_reply_cause(
+    tmp_path: Path, finish_reason: str, prompt_tokens: int,
+    completion_tokens: int, content: str | None, cause: str,
+) -> None:
+    def completion(**kwargs: Any) -> ModelTurn:
+        return ModelTurn(
+            message={"role": "assistant", "content": content},
+            finish_reason=finish_reason, prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens, cost_usd=None,
+        )
+
+    with pytest.raises(AgentLoopError) as failure:
+        _local(tmp_path, completion).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"}
+        )
+    assert failure.value.cause == cause
+    assert failure.value.trajectory["events"][-1]["cause"] == cause
+
+
+def test_candidate_stop_causes_are_additive() -> None:
+    assert {
+        "turn_limit", "no_tool_call", "invalid_tool_call", "invalid_submission",
+        "output_token_limit", "conversation_limit", "request_limit",
+        "turn_tool_call_limit", "cell_tool_call_limit", "empty_reply",
+    } == CANDIDATE_STOP_CAUSES
+    assert "provider_error" not in CANDIDATE_STOP_CAUSES
 
 
 @pytest.mark.parametrize(("max_turns", "accepted"), [(19, False), (20, True), (150, True),

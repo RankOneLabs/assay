@@ -490,6 +490,35 @@ def test_spent_cell_budget_is_the_candidates_own_failure(tmp_path: Path) -> None
     assert not result.effective.teardown_completed
 
 
+@pytest.mark.parametrize(
+    ("stop_cause", "outcome_type", "trial_cause"),
+    [
+        ("provider_error", InfrastructureFailure, "enforcement"),
+        ("empty_reply", CandidateFailure, "no_submission"),
+        ("agent_deadline", CandidateFailure, "agent_deadline"),
+    ],
+)
+def test_new_stop_causes_have_distinct_trial_types(
+    tmp_path: Path, stop_cause: str,
+    outcome_type: type[InfrastructureFailure] | type[CandidateFailure], trial_cause: str,
+) -> None:
+    class TerminalReply(Scripted):
+        def __call__(self, *, turn: int, **kwargs: Any) -> ModelTurn:
+            if stop_cause == "agent_deadline":
+                raise ValueError("agent_deadline")
+            return ModelTurn(
+                message={"role": "assistant", "content": None},
+                finish_reason="error" if stop_cause == "provider_error" else "stop",
+                prompt_tokens=7, completion_tokens=3, cost_usd=None,
+            )
+
+    result = _runtime(tmp_path, TerminalReply()).run_cell(_request())
+    assert isinstance(result.outcome, outcome_type)
+    assert result.outcome.cause == trial_cause
+    trajectory = json.loads(result.artifacts["trajectory.json"])
+    assert trajectory["events"][-1]["cause"] == stop_cause
+
+
 def test_scope_rejection_retains_the_rejected_worktree(tmp_path: Path) -> None:
     completion = Scripted(
         [_call("write_file", {"path": "package.json", "content": "{\"x\":1}"}, 1)],

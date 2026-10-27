@@ -29,6 +29,7 @@ from assay.models import (
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 from verification_pilot.fixtures import GROUPS, OwnershipGroup, read_raw_repository
+from verification_pilot.self_trust import fixtures
 from verification_pilot.self_trust.concepts import CONCEPTS, Concept, subject_repository
 from verification_pilot.self_trust.evaluation import EVALUATOR_ID, VERDICTS
 from verification_pilot.self_trust.ladder import (
@@ -45,14 +46,22 @@ from verification_pilot.self_trust.ladder import (
     RUNGS,
 )
 from verification_pilot.self_trust.refactor_session import LogOrder
+from verification_pilot.self_trust.refactor_session import (
+    matched_task_text as refactor_matched_task_text,
+)
 from verification_pilot.self_trust.refactor_session import task_text as refactor_task_text
 from verification_pilot.self_trust.session import Placement, task_text
+from verification_pilot.self_trust.session import matched_task_text as rename_matched_task_text
 
-ARMS: tuple[str, ...] = ("st-native", "st-quoted", "st-quoted-first", "st-quoted-last")
+MATCHED_ARMS: tuple[str, str] = ("st-matched-own", "st-matched-teammate")
+ARMS: tuple[str, ...] = ("st-native", "st-quoted", "st-quoted-first", "st-quoted-last",
+                         *MATCHED_ARMS)
 ATTRIBUTION_ORDER_ARMS: tuple[str, ...] = ("st-quoted-first", "st-quoted-last")
 _ORDERS: dict[str, LogOrder] = {"st-native": "own_first", "st-quoted": "own_first",
                                 "st-quoted-first": "holder_first",
-                                "st-quoted-last": "holder_last"}
+                                "st-quoted-last": "holder_last",
+                                "st-matched-own": "own_first",
+                                "st-matched-teammate": "own_first"}
 SCHEDULE = "subject-rotated-v1"
 CEILING = ExecutionCeiling(max_cells=144, max_wall_time_seconds=518_400, max_fleet_occupancy=1)
 PAYLOAD_SCHEMA = "https://assay.local/schemas/self-trust-measure-v1.json"
@@ -69,6 +78,14 @@ def order_for(arm_id: str) -> LogOrder:
     if arm_id not in ARMS:
         raise ValueError(f"unknown self-trust arm: {arm_id}")
     return _ORDERS[arm_id]
+
+
+def attribution_for(arm_id: str) -> str | None:
+    if arm_id == MATCHED_ARMS[0]:
+        return "own"
+    if arm_id == MATCHED_ARMS[1]:
+        return "teammate"
+    return None
 
 
 Fixture = Literal["rename", "refactor", "refactor-long", "rewrite", "rewrite0", "rewrite0-read",
@@ -167,11 +184,96 @@ def refactor_calibration_ids(subjects: tuple[SelfTrustSubject, ...],
     return ids
 
 
+def rerun_matrix() -> dict[str, list[dict[str, Any]]]:
+    """The approved-for-planning st-v2 cells; enumeration performs no dispatch.
+
+    Each row is one planned subject/arm/repeat session. ``source_cell`` and
+    ``source_run_id`` identify the st-v1 cell it revalidates, including cells
+    that appeared in more than one old run.
+    """
+    subjects = self_trust_subjects()
+    known = {subject.id for subject in subjects}
+    matrix: dict[str, list[dict[str, Any]]] = {f"R{i}": [] for i in range(1, 6)}
+    next_repeat: dict[tuple[str, str, str, str], int] = {}
+
+    def add(group: str, route: str, subject: str, *, arm: str = "st-native",
+            worker_repeat: int = 0, sessions: int = 1,
+            source_run_id: str | None = None) -> None:
+        if subject not in known or arm not in ARMS or sessions < 1:
+            raise ValueError(f"invalid matrix cell: {subject}:{arm}")
+        key = (group, route, subject, arm)
+        for _ in range(sessions):
+            repeat = next_repeat.get(key, 0)
+            next_repeat[key] = repeat + 1
+            matrix[group].append({"route": route, "subject": subject, "arm": arm,
+                                  "worker_repeat": repeat,
+                                  "source_cell": f"{subject}:{arm}:w{worker_repeat}",
+                                  "source_run_id": source_run_id})
+
+    # Eleven archived Sonnet full-rewrite cells across three st-v1 runs.
+    sonnet_rewrite = (
+        ("78660eae-a995-42a0-88f4-1ab7a4aac6ae", refactor_calibration_ids(subjects, "rewrite")),
+        ("84932da0-4201-48e4-b216-1b6be52fccfd", (
+            "rewrite-own_a-remnant_c", "rewrite-own_b-remnant_a", "rewrite-own_b-remnant_b")),
+        ("a2310fc3-f18f-4aa8-970a-d22ae5495759", (
+            "rewrite-own_a-remnant_a", "rewrite-own_a-remnant_c")),
+    )
+    for run_id, ids in sonnet_rewrite:
+        for subject in ids:
+            add("R1", "sonnet-5.5", subject, source_run_id=run_id)
+    for subject, worker_repeat in (
+        ("rewrite0-own_a-remnant_a", 0), ("rewrite0-own_a-remnant_a", 1),
+        ("rewrite0-own_a-remnant_a", 2), ("rewrite0-own_b-remnant_a", 0),
+        ("rewrite0-own_b-remnant_a", 1),
+    ):
+        add("R1", "sonnet-5.5", subject, worker_repeat=worker_repeat, sessions=2,
+            source_run_id="472c12bd-8ac8-4ad4-a5ec-fb943236099a")
+    for route in ("haiku-5.5", "gpt-oss-20b"):
+        for subject in refactor_calibration_ids(subjects, "rewrite"):
+            add("R1", route, subject)
+
+    # The median rewrite's own/teammate presentation pair, six sessions each.
+    for arm in MATCHED_ARMS:
+        for subject in refactor_calibration_ids(subjects, "rewrite0"):
+            add("R2", "sonnet-5.5", subject, arm=arm, sessions=6)
+
+    for route in ("gemini-4-argon", "gemini-3.8-flash"):
+        for subject in refactor_calibration_ids(subjects, "resume146"):
+            for repeat in range(3):
+                add("R3", route, subject, worker_repeat=repeat)
+
+    for subject in (s.id for s in subjects if s.fixture == "rewrite" and s.condition == "clean"):
+        add("R4", "sonnet-5.5", subject, sessions=2)
+    for subject in ("rewrite0-own_a-remnant_none", "rewrite0-own_b-remnant_none"):
+        add("R4", "sonnet-5.5", subject, sessions=3)
+    for route in ("gemini-4-argon", "gemini-3.8-flash"):
+        for subject, sessions in (("resume146-own_a-remnant_none", 2),
+                                  ("resume146-own_b-remnant_none", 1)):
+            add("R4", route, subject, sessions=sessions)
+
+    add("R5", "gpt-6.1-sol", "rewrite-own_a-remnant_a",
+        source_run_id="414b5927-fe13-48d9-9fcb-ce79a18d4362")
+    add("R5", "gpt-6.1-sol", "rewrite0-own_a-remnant_a",
+        source_run_id="8c67f47d-3b05-4516-bf3e-7bc8cd5f4c22")
+    return matrix
+
+
 def realization_payload(subject: SelfTrustSubject, arm_id: str) -> dict[str, Any]:
-    return {"task": subject.task, "repository": subject.repository,
+    task = subject.task
+    if arm_id in MATCHED_ARMS:
+        holder = subject.remnant_owner or subject.own
+        if subject.fixture in RUNGS:
+            task = refactor_matched_task_text(holder, arm_id == MATCHED_ARMS[0],
+                                              RUNGS[subject.fixture])
+        elif subject.concept is not None:
+            task = rename_matched_task_text(read_raw_repository(), subject.concept, holder,
+                                            arm_id == MATCHED_ARMS[0])
+    attribution = attribution_for(arm_id)
+    return {"task": task, "repository": subject.repository,
             "concept": subject.concept_name, "own": subject.own,
             "remnant_owner": subject.remnant_owner, "placement": placement_for(arm_id),
-            "order": order_for(arm_id)}
+            "order": order_for(arm_id),
+            **({"attribution": attribution} if attribution is not None else {})}
 
 
 def compile_self_trust_plan(
@@ -187,6 +289,17 @@ def compile_self_trust_plan(
         raise ValueError("active subjects must be unique, known subject ids")
     if not set(active_arms) <= set(ARMS):
         raise ValueError("unknown active arm")
+    for name in {item.fixture for item in subjects_data
+                 if item.id in active_subject_ids and item.fixture in RUNGS}:
+        rung = RUNGS[name]
+        required = fixtures.writable_prefixes_for(
+            rung.start_tree(), rung.subject_tree(None), rung.omission_paths.values())
+        # This check is tautological for derived rung scopes: the same changed
+        # and omission paths produced them. It catches an explicit override,
+        # including a silently reinstated pilot default.
+        for prefix in required:
+            if not prefix.startswith(rung.writable_prefixes):
+                raise ValueError(f"{name}: {prefix} lies outside writable_prefixes")
 
     def publish(value: Any) -> str:
         return str(store.publish_json(value))
@@ -203,7 +316,9 @@ def compile_self_trust_plan(
             realizations.append(Realization(subject_id=item.id, arm_id=arm_id,
                                             digest=ref, artifact_ref=ref))
     arms = tuple(Arm(id=arm_id, worker=worker_configurations[arm_id],
-                     intervention={"placement": placement_for(arm_id), "order": order_for(arm_id)},
+                     intervention={"placement": placement_for(arm_id), "order": order_for(arm_id),
+                                   **({"attribution": attribution_for(arm_id)}
+                                      if attribution_for(arm_id) is not None else {})},
                      conditions={"assay_execution_schedule": SCHEDULE}) for arm_id in ARMS)
     basis = publish({"definition": "Final tree replayed from the sealed trajectory"})
     schema_id = PAYLOAD_SCHEMA.removesuffix(".json") + f"-{EVALUATOR_ID}.json"

@@ -13,8 +13,10 @@ import json
 import os
 import subprocess
 import tempfile
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from functools import partial
 from pathlib import Path
@@ -23,7 +25,7 @@ from typing import Any, cast
 from workflow_edit.bridge import LOCAL_ROUTE
 
 from assay.adapters.smithers import SmithersFactory
-from assay.canonical import digest_bytes
+from assay.canonical import canonical_json, digest_bytes
 from assay.execution import (
     EvaluationResult,
     RunFailed,
@@ -54,6 +56,7 @@ from verification_pilot.ground_truth import GroundTruth
 from verification_pilot.ground_truth import subject_truth as fixture_subject_truth
 from verification_pilot.inputs import T2_TEXT, T3_TEXT
 from verification_pilot.observations import RecordedTrace, observe
+from verification_pilot.self_trust.settings import excluded_cause
 from verification_pilot.settings import VerificationPilotSettings
 from verification_pilot.study import (
     PilotSubject,
@@ -271,10 +274,54 @@ def _pilot_measures(trace: Any, subject: Any) -> list[dict[str, Any]]:
     return [asdict(item) for item in observe(cast(RecordedTrace, trace), subject)]
 
 
+def measure_code_revision() -> str:
+    """The checked-out code revision used to derive an archive's measures."""
+    result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                            check=True, cwd=Path(__file__).resolve().parents[2])
+    return result.stdout.strip()
+
+
+def _terminal_fields(worker_trace: Any, trajectory: Any, status: str) -> tuple[str, str | None]:
+    """Normalize a recorded stop into the ledger's terminal status vocabulary."""
+    events = trajectory.get("events", []) if isinstance(trajectory, dict) else []
+    stops = [event for event in events if isinstance(event, dict)
+             and event.get("kind") == "stopped"]
+    cause = stops[-1].get("cause") if stops else None
+    if cause is None and isinstance(worker_trace, dict):
+        cause = worker_trace.get("bridge_outcome", {}).get("cause")
+    if isinstance(cause, str):
+        if cause == "agent_deadline" or cause.endswith(":AcceptanceDeadlineExceeded"):
+            return "timeout", cause
+        if cause == "budget_exhausted":
+            return "budget_cut", cause
+        if excluded_cause(cause):
+            return "provider_error", cause
+        if cause in ("turn_limit", "turn_tool_call_limit", "cell_tool_call_limit",
+                     "output_token_limit"):
+            return "agent_limit", cause
+        if cause == "no_tool_call":
+            return "completed_no_verdict", cause
+    if status == "succeeded":
+        turns = trajectory.get("turns", []) if isinstance(trajectory, dict) else []
+        verdicts = [submission.get("verdict") for turn in turns if isinstance(turn, dict)
+                    for submission in [turn.get("submission")]
+                    if isinstance(submission, dict)]
+        if not verdicts or all(verdict is None for verdict in verdicts):
+            return "completed_no_verdict", cause if isinstance(cause, str) else None
+        if any(verdict not in (None, "complete", "incomplete") for verdict in verdicts):
+            return "completed_invalid_output", cause if isinstance(cause, str) else None
+        return "completed_valid", cause if isinstance(cause, str) else None
+    if trajectory is None:
+        return "not_run", cause if isinstance(cause, str) else None
+    return "completed_invalid_output", cause if isinstance(cause, str) else None
+
+
 def archive_manifest(
     store: ObjectStore, manifest_ref: str, archive_root: Path,
     subjects: Mapping[str, Any],
     measure: Callable[[Any, Any], list[dict[str, Any]]] = _pilot_measures,
+    retry_of: Mapping[str, str] | None = None,
+    original_run_ids: Mapping[str, str] | None = None,
 ) -> Path:
     """Archive one stored run manifest; a run whose save failed is re-archived from the store.
 
@@ -283,27 +330,57 @@ def archive_manifest(
     """
     manifest_bytes = store.read_bytes(manifest_ref)
     manifest = json.loads(manifest_bytes)
+    if retry_of and (not original_run_ids or not retry_of.keys() <= original_run_ids.keys()):
+        raise ValueError("each replacement needs its original run ID")
     destination: Path = archive_root / str(manifest["run_id"])
     destination.mkdir(parents=True, exist_ok=False)
     (destination / "manifest.json").write_bytes(manifest_bytes)
     traces = destination / "traces"
     traces.mkdir()
-    index: dict[str, dict[str, str | None]] = {}
+    index: dict[str, dict[str, Any]] = {}
+    snapshot_workers: dict[str, dict[str, Any]] | None = None
+    code_revision = measure_code_revision()
     for number, (cell_id, record_ref) in enumerate(sorted(manifest["execution_records"].items()),
                                                    1):
         record = json.loads(store.read_bytes(record_ref))
-        entry: dict[str, str | None] = {"record_ref": str(record_ref), "status": record["status"]}
+        subject = subjects[cell_id.split(":", 1)[0]]
+        entry: dict[str, Any] = {"record_ref": str(record_ref), "status": record["status"]}
         trace_ref = record.get("trace_ref")
+        worker_trace = None
         if trace_ref is not None:
             trace_name = f"{number:03d}-worker.json"
-            (traces / trace_name).write_bytes(store.read_bytes(trace_ref))
+            worker_bytes = store.read_bytes(trace_ref)
+            (traces / trace_name).write_bytes(worker_bytes)
+            worker_trace = json.loads(worker_bytes)
             entry["worker_trace"] = trace_name
+        binding = worker_trace.get("binding", {}) if isinstance(worker_trace, dict) else {}
+        configuration_ref = binding.get("configuration_ref")
+        if configuration_ref is None:
+            configuration_ref = record.get("worker", {}).get("configuration_ref")
+        if configuration_ref is None and manifest.get("plan_ref") is not None:
+            if snapshot_workers is None:
+                plan = json.loads(store.read_bytes(manifest["plan_ref"]))
+                snapshot_workers = {}
+                if "snapshot_ref" in plan:
+                    snapshot = json.loads(store.read_bytes(plan["snapshot_ref"]))
+                    snapshot_workers = {arm["id"]: arm["worker"] for arm in snapshot["arms"]}
+            arm_id = cell_id.split(":", 2)[1]
+            if arm_id in snapshot_workers:
+                configuration_ref = str(store.publish_json(snapshot_workers[arm_id]))
+        configuration: dict[str, Any] = {}
+        if configuration_ref is not None:
+            resolved = json.loads(store.read_bytes(configuration_ref))
+            configuration = {**resolved, "configuration_ref": configuration_ref}
+            entry["configuration"] = configuration
+        # Historical self-trust subjects have a fixture but no protocol marker.
+        # Generic pilot cells have neither and must not be mislabeled st-v1.
+        is_self_trust = bool(configuration.get("protocol_version") or hasattr(subject, "fixture"))
         output_ref = record.get("output_ref")
         output = json.loads(store.read_bytes(output_ref)) if output_ref is not None else None
         raw_ref = output.get("raw_trajectory_ref") if output is not None else None
-        if raw_ref is None and trace_ref is not None:
-            worker_trace = json.loads(store.read_bytes(trace_ref))
+        if raw_ref is None and worker_trace is not None:
             raw_ref = worker_trace.get("artifact_refs", {}).get("trajectory.json")
+        trajectory_object = None
         if raw_ref is not None:
             envelope = json.loads(store.read_bytes(raw_ref))
             trajectory = base64.b64decode(envelope["content_base64"], validate=True)
@@ -311,13 +388,42 @@ def archive_manifest(
             (traces / trace_name).write_bytes(trajectory)
             entry["trajectory"] = trace_name
             trace = cast(RecordedTrace, json.loads(trajectory))
-            subject_id = cell_id.split(":", 1)[0]
-            measures = measure(trace, subjects[subject_id])
+            trajectory_object = trace
+            measures = measure(trace, subject)
+            if is_self_trust:
+                for row in measures:
+                    row["code_revision"] = code_revision
             measures_name = f"{number:03d}-measures.json"
             (traces / measures_name).write_text(
                 json.dumps(measures, sort_keys=True, indent=2) + "\n", encoding="utf-8"
             )
             entry["measures"] = measures_name
+        if is_self_trust:
+            repository = getattr(subject, "repository", None)
+            terminal_status, terminal_cause = _terminal_fields(
+                worker_trace, trajectory_object, record["status"])
+            entry["revalidation"] = {
+                "original_run_id": (original_run_ids or {}).get(cell_id),
+                "new_run_id": manifest["run_id"],
+                "change_reason": ("excluded-cause replacement" if cell_id in (retry_of or {})
+                                  else "st-v2 protocol" if configuration.get("protocol_version")
+                                  == "st-v2" else "initial archive"),
+                "protocol_version": configuration.get("protocol_version", "st-v1"),
+                "code_hash": code_revision,
+                "fixture_hash": digest_bytes(canonical_json(repository)) if repository is not None
+                                else None,
+                "image_hash": binding.get("image_digest") or configuration.get("image_digest"),
+                "model_route": configuration.get("model_route"),
+                "bounds": {**configuration.get("bounds", {}), **{
+                    key: configuration[key] for key in ("max_tool_calls_per_turn",
+                                                    "max_tool_calls_per_cell", "timeout_s")
+                    if key in configuration}} if configuration else None,
+                "terminal_status": terminal_status,
+                "terminal_cause": terminal_cause,
+                "grader_version": measures[0]["code_revision"] if raw_ref is not None and measures
+                                  else None,
+                "retry_of": (retry_of or {}).get(cell_id),
+            }
         index[cell_id] = entry
     (destination / "index.json").write_text(
         json.dumps(index, sort_keys=True, indent=2) + "\n", encoding="utf-8"
@@ -339,10 +445,18 @@ def remeasure_archive(archive: Path, subjects: Mapping[str, PilotSubject]) -> in
         trace = cast(RecordedTrace, json.loads(
             (archive / "traces" / entry["trajectory"]).read_text(encoding="utf-8")))
         measures = [asdict(item) for item in observe(trace, subjects[cell_id.split(":", 1)[0]])]
-        (archive / "traces" / entry["measures"]).write_text(
+        for row in measures:
+            row["code_revision"] = measure_code_revision()
+        dated_measures_path(archive / "traces" / entry["measures"]).write_text(
             json.dumps(measures, sort_keys=True, indent=2) + "\n", encoding="utf-8")
         rewritten += 1
     return rewritten
+
+
+def dated_measures_path(original: Path) -> Path:
+    """Choose a new measures path without replacing archived evidence."""
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    return original.with_name(f"{original.stem}-{stamp}-{uuid.uuid4().hex}{original.suffix}")
 
 
 async def run_scripted(
