@@ -1527,6 +1527,35 @@ def test_transport_failure_consumes_attempt_without_retry(tmp_path: Path) -> Non
     assert failure.value.trajectory["events"][-1]["error"] == "ConnectError"
 
 
+@pytest.mark.parametrize("after_bytes", [False, True])
+def test_deadline_during_request_records_bytes_received(
+    tmp_path: Path, after_bytes: bool,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not after_bytes:
+            time.sleep(0.1)
+            raise httpx.ReadTimeout("cell budget expired", request=request)
+
+        class LateStream(httpx.SyncByteStream):
+            def __iter__(self) -> Iterator[bytes]:
+                yield b'{"partial":'
+                time.sleep(0.1)
+                yield b'"late"}'
+
+        return httpx.Response(200, stream=LateStream())
+
+    with pytest.raises(AgentLoopError) as failure:
+        _client(tmp_path, handler).run_cell(
+            cell_id="s:a:w0", package={"instruction.md": "Edit"},
+            deadline=time.monotonic() + 0.05,
+        )
+    assert failure.value.cause == "agent_deadline"
+    assert failure.value.trajectory["events"][-1] == {
+        "kind": "stopped", "cause": "agent_deadline", "requests": 1,
+        "request_in_flight": True, "bytes_received": after_bytes,
+    }
+
+
 def test_model_request_waits_past_thirty_seconds(tmp_path: Path) -> None:
     # A 30 s read timeout stopped a slow paid request after dispatch, which
     # halts the run as billing_uncertain; requests now get MODEL_REQUEST_SECONDS.

@@ -142,6 +142,14 @@ class ModelTurn:
     observations: dict[str, Any] = field(default_factory=dict)
 
 
+class InFlightDeadline(ValueError):
+    """The cell deadline expired while a model request was in flight."""
+
+    def __init__(self, *, bytes_received: bool) -> None:
+        super().__init__("agent_deadline")
+        self.bytes_received = bytes_received
+
+
 @dataclass(frozen=True, slots=True)
 class OpenRouterTurnRoute:
     """Pinned settings for one authorized repository-agent OpenRouter route."""
@@ -1374,27 +1382,35 @@ class RepositoryAgentClient:
                 raise ValueError("agent_deadline")
             if on_dispatch is not None:
                 on_dispatch()
-            with client.stream(
-                "POST",
-                chat_completions_url,
-                content=payload,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=timeout_s,
-            ) as response:
-                if str(response.url) != chat_completions_url or not response.is_success:
-                    raise ValueError("provider_response")
-                chunks = bytearray()
-                over_limit = False
-                for chunk in response.iter_bytes():
-                    if deadline is not None and deadline <= time.monotonic():
-                        raise ValueError("agent_deadline")
-                    chunks.extend(chunk)
-                    if len(chunks) > self.bounds.max_response_bytes:
-                        over_limit = True
-                        break
+            chunks = bytearray()
+            over_limit = False
+            bytes_received = False
+            try:
+                with client.stream(
+                    "POST",
+                    chat_completions_url,
+                    content=payload,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=timeout_s,
+                ) as response:
+                    if str(response.url) != chat_completions_url or not response.is_success:
+                        raise ValueError("provider_response")
+                    for chunk in response.iter_bytes():
+                        bytes_received = bytes_received or bool(chunk)
+                        if deadline is not None and deadline <= time.monotonic():
+                            raise InFlightDeadline(bytes_received=bytes_received)
+                        chunks.extend(chunk)
+                        if len(chunks) > self.bounds.max_response_bytes:
+                            over_limit = True
+                            break
+            except httpx.HTTPError as error:
+                if deadline is not None and timeout_s < MODEL_REQUEST_SECONDS \
+                        and deadline <= time.monotonic():
+                    raise InFlightDeadline(bytes_received=bytes_received) from error
+                raise
         try:
             data = json.loads(chunks)
         except (ValueError, UnicodeError) as error:
@@ -1982,6 +1998,9 @@ class RepositoryAgentClient:
             stopped: dict[str, Any] = {"kind": "stopped", "cause": cause, "requests": requests}
             if isinstance(error, httpx.HTTPError):
                 stopped["error"] = type(error).__name__
+            if isinstance(error, InFlightDeadline):
+                stopped["request_in_flight"] = True
+                stopped["bytes_received"] = error.bytes_received
             events.append(stopped)
             evidence: dict[str, bytes] = {}
             if sandbox is not None and rejection is None:
