@@ -41,6 +41,7 @@ from verification_pilot.self_trust.session import (
 from verification_pilot.self_trust.session import (
     matched_prefix as rename_matched_prefix,
 )
+from verification_pilot.self_trust.settings import CELL_SECONDS, PROTOCOL_VERSION
 from verification_pilot.self_trust.study import (
     MATCHED_ARMS,
     SelfTrustSubject,
@@ -49,7 +50,7 @@ from verification_pilot.self_trust.study import (
     realization_payload,
 )
 
-RUNTIME_VERSION = "self-trust-v1"
+RUNTIME_VERSION = "self-trust-v2"
 
 
 def subject_prefix(subject: SelfTrustSubject, arm_id: str) -> list[dict[str, Any]]:
@@ -92,17 +93,19 @@ class SelfTrustBridgeClient(PilotBridgeClient):
     """One fresh agent and sealed Pier trial per self-trust cell."""
 
     system_prompt: str = build_system_prompt(REFACTOR, framing_for(REFACTOR, "group_a"))
+    timeout_s: float = CELL_SECONDS
 
     def configuration(self, subject: SelfTrustSubject | None = None,
                       arm_id: str = "st-native") -> dict[str, Any]:
         prompt = (subject_system_prompt(subject, arm_id) if subject is not None
                   else self.system_prompt)
-        return self._configuration_for(
+        return {**self._configuration_for(
             system_prompt=prompt, next_user_turns=subject_turns(),
             subject_rendering="self-trust-session-v2",
             writable_prefixes=(RUNGS[subject.fixture].writable_prefixes
                                if subject is not None and subject.fixture in RUNGS else None),
-        )
+        ), "protocol_version": PROTOCOL_VERSION, "sdk_retries": self.settings.sdk_retries,
+            "image_digest": self.image}
 
     def create(self, *, exchange: PierExchange, package: Any) -> Any:
         from assay_pier_bridge import protocol as bridge_protocol
