@@ -13,8 +13,10 @@ import json
 import os
 import subprocess
 import tempfile
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from functools import partial
 from pathlib import Path
@@ -339,10 +341,16 @@ def remeasure_archive(archive: Path, subjects: Mapping[str, PilotSubject]) -> in
         trace = cast(RecordedTrace, json.loads(
             (archive / "traces" / entry["trajectory"]).read_text(encoding="utf-8")))
         measures = [asdict(item) for item in observe(trace, subjects[cell_id.split(":", 1)[0]])]
-        (archive / "traces" / entry["measures"]).write_text(
+        dated_measures_path(archive / "traces" / entry["measures"]).write_text(
             json.dumps(measures, sort_keys=True, indent=2) + "\n", encoding="utf-8")
         rewritten += 1
     return rewritten
+
+
+def dated_measures_path(original: Path) -> Path:
+    """Choose a new measures path without replacing archived evidence."""
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    return original.with_name(f"{original.stem}-{stamp}-{uuid.uuid4().hex}{original.suffix}")
 
 
 async def run_scripted(

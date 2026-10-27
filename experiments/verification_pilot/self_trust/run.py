@@ -43,6 +43,7 @@ from verification_pilot.run import (
     ScriptedWorker,
     _spend_cap,
     archive_manifest,
+    dated_measures_path,
     paid_model_route,
 )
 from verification_pilot.self_trust.bridge import SelfTrustBridgeClient, self_trust_worker
@@ -161,7 +162,7 @@ def remeasure(archive: Path, image: str) -> int:
             continue
         trace = json.loads((archive / "traces" / entry["trajectory"]).read_text(encoding="utf-8"))
         rows = measures(by_id[cell_id.split(":", 1)[0]], trace, image)
-        (archive / "traces" / entry["measures"]).write_text(
+        dated_measures_path(archive / "traces" / entry["measures"]).write_text(
             json.dumps(rows, sort_keys=True, indent=2) + "\n", encoding="utf-8")
         rewritten += 1
     return rewritten

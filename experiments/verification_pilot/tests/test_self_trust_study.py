@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -15,11 +16,13 @@ from assay.store import ObjectStore
 from verification_pilot.budget import SpendGate
 from verification_pilot.fixtures import GROUPS, whole_word_pattern
 from verification_pilot.run import ScriptedWorker, paid_model_route
+from verification_pilot.self_trust import probe_routes
 from verification_pilot.self_trust.bridge import SelfTrustBridgeClient, subject_turns
 from verification_pilot.self_trust.concepts import LEGACY_READER
 from verification_pilot.self_trust.evaluation import measures, remnant_shown, verdict
 from verification_pilot.self_trust.ladder import RESUME_146, REWRITE, REWRITE_0
 from verification_pilot.self_trust.prompts import build_system_prompt, framing_for
+from verification_pilot.self_trust.run import remeasure
 from verification_pilot.self_trust.session import SYSTEM_PROMPT
 from verification_pilot.self_trust.study import (
     ARMS,
@@ -153,6 +156,35 @@ def test_existing_arm_placements_and_orders_are_stable() -> None:
         MATCHED_ARMS[0]: ("quoted", "own_first"),
         MATCHED_ARMS[1]: ("quoted", "own_first"),
     }
+
+
+def test_route_probes_keep_each_invocation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    old = tmp_path / "route-probes.json"
+    old.write_bytes(b"existing Sol probes\n")
+    monkeypatch.setattr(probe_routes, "RESULT_ROOT", tmp_path)
+    monkeypatch.setattr(probe_routes, "probe", lambda *args: {"route": "sonnet-5.5", "ok": True})
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(sys, "argv", ["probe_routes", "--route", "sonnet-5.5",
+                                    "--max-spend-usd", "0.10", "--runs-root", str(tmp_path)])
+    probe_routes.main()
+    probe_routes.main()
+    assert old.read_bytes() == b"existing Sol probes\n"
+    assert len(list(tmp_path.glob("route-probes-*.json"))) == 2
+
+
+def test_self_trust_remeasure_preserves_original(tmp_path: Path,
+                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    original = b"original measures\n"
+    (traces / "001-measures.json").write_bytes(original)
+    (traces / "001-trajectory.json").write_text('{"turns": []}', encoding="utf-8")
+    (tmp_path / "index.json").write_text(json.dumps({"stage_run-own_c-remnant_c:st-native:w0": {
+        "trajectory": "001-trajectory.json", "measures": "001-measures.json"}}), encoding="utf-8")
+    monkeypatch.setattr("verification_pilot.self_trust.run.measures", lambda *args: [])
+    assert remeasure(tmp_path, "image") == 1
+    assert (traces / "001-measures.json").read_bytes() == original
+    assert len(list(traces.glob("001-measures-*.json"))) == 1
 
 
 @pytest.mark.parametrize("arm", ARMS)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from assay.execution import RunSucceeded
 from assay.store import ObjectStore
-from verification_pilot.run import run_scripted
+from verification_pilot.run import remeasure_archive, run_scripted
 
 
 def test_scripted_grid_has_one_judgment_per_session(tmp_path: Path) -> None:
@@ -24,3 +24,18 @@ def test_scripted_grid_has_one_judgment_per_session(tmp_path: Path) -> None:
         assert record["payload"]["evaluator_id"] == "pilot_judge"
         assert record["verdict"]["value"] == "1.00"
     assert prepared.authorization.startswith("sha256:")
+
+
+def test_remeasure_archive_preserves_original(tmp_path: Path, monkeypatch) -> None:
+    archive = tmp_path / "archive"
+    traces = archive / "traces"
+    traces.mkdir(parents=True)
+    original = b"original measures\n"
+    (traces / "001-measures.json").write_bytes(original)
+    (traces / "001-trajectory.json").write_text('{"turns": []}', encoding="utf-8")
+    (archive / "index.json").write_text(json.dumps({"cell:a:w0": {
+        "trajectory": "001-trajectory.json", "measures": "001-measures.json"}}), encoding="utf-8")
+    monkeypatch.setattr("verification_pilot.run.observe", lambda trace, subject: [])
+    assert remeasure_archive(archive, {"cell": object()}) == 1
+    assert (traces / "001-measures.json").read_bytes() == original
+    assert len(list(traces.glob("001-measures-*.json"))) == 1
