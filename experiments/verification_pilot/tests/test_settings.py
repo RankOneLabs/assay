@@ -111,6 +111,39 @@ def test_pilot_agent_and_configuration_consume_settings(tmp_path: Path) -> None:
     )
 
 
+def test_pilot_agent_accepts_instance_turn_tools_before_size_check(tmp_path: Path) -> None:
+    from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS
+    from assay_pier_bridge.protocol import ModelRoute
+
+    supplied: dict[str, list[dict[str, Any]]] = json.loads(json.dumps(PILOT_TOOL_SCHEMAS))
+    supplied["T2_T3"].append({
+        "type": "function", "function": {"name": "extra", "description": "provider tool"},
+    })
+    route = ModelRoute(
+        endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local")
+
+    def completion(**kwargs: Any) -> Any:
+        raise AssertionError("construction must not dispatch a turn")
+
+    agent = create_pilot_agent(
+        settings=VerificationPilotSettings(), image="img", runs_root=tmp_path,
+        model_route=route, completion=completion,
+        next_user_turns=("Review", "Check"), pilot_tools_by_turn=supplied,
+    )
+    assert agent.pilot_tools_by_turn == supplied
+    assert agent.pilot_tools_by_turn["T1"] == PILOT_TOOL_SCHEMAS["T1"]
+    assert agent.pilot_tools_by_turn["T2_T3"] != PILOT_TOOL_SCHEMAS["T2_T3"]
+    supplied["T2_T3"].append({
+        "type": "function", "function": {"name": "large", "description": "x" * 16_384},
+    })
+    with pytest.raises(ValueError, match="tool_schema_limit"):
+        create_pilot_agent(
+            settings=VerificationPilotSettings(), image="img", runs_root=tmp_path,
+            model_route=route, completion=completion,
+            next_user_turns=("Review", "Check"), pilot_tools_by_turn=supplied,
+        )
+
+
 def test_pilot_turn_texts_and_byte_envelope() -> None:
     settings = VerificationPilotSettings()
     assert (T2_TEXT, T3_TEXT) == (

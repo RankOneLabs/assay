@@ -367,7 +367,7 @@ def test_pilot_configuration_and_sealed_per_turn_submissions(tmp_path: Path) -> 
     ]
     trajectory = json.loads(result.artifacts["trajectory.json"])
     assert len(trajectory["turns"]) == 3
-    assert [turn["tools_sha256"] for turn in trajectory["turns"]] == [
+    assert [turn["tools_turn_sha256"] for turn in trajectory["turns"]] == [
         configuration["tools_t1_sha256"], configuration["tools_t2_t3_sha256"],
         configuration["tools_t2_t3_sha256"],
     ]

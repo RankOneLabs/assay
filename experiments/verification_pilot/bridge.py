@@ -66,6 +66,7 @@ def create_pilot_agent(
     spend_gate: SpendGate | None = None,
     system_prompt: str = PILOT_SYSTEM_PROMPT,
     writable_prefixes: tuple[str, ...] | None = None,
+    pilot_tools_by_turn: dict[str, list[dict[str, Any]]] | None = None,
 ) -> RepositoryAgentClient:
     """Use the pilot's declared scope and call budgets for the actual loop.
 
@@ -92,6 +93,7 @@ def create_pilot_agent(
             max_storage_mb=settings.max_storage_mb,
         ),
         pilot_mode=True,
+        pilot_tools_by_turn=pilot_tools_by_turn or {},
         system_prompt=system_prompt,
         next_user_turns=next_user_turns,
         message_prefix=message_prefix,
