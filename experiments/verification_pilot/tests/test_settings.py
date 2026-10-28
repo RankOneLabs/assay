@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from assay.canonical import canonical_json, digest_bytes
 from verification_pilot.arms import ALL_ARMS, arm, placement_for
 from verification_pilot.bridge import create_pilot_agent
 from verification_pilot.fixture import load_fixture
@@ -58,6 +59,26 @@ def test_committed_pilot_tool_digest_matches_schema() -> None:
             assert actual["type"] == field.value_type
             if field.allowed_values:
                 assert tuple(actual["enum"]) == field.allowed_values
+
+
+def test_baseline_code_intel_mode_is_selected_from_study_settings(tmp_path: Path) -> None:
+    from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS
+    from assay_pier_bridge.protocol import ModelRoute
+
+    settings = VerificationPilotSettings.model_validate({
+        "code_intel": {"mode": {"kind": "baseline"}},
+    })
+    agent = create_pilot_agent(
+        settings=settings, image="img", runs_root=tmp_path,
+        model_route=ModelRoute(endpoint="http://willie:8900", model="qwen-coder-32b",
+                               provider="smithers-local"),
+        completion=lambda **_: None, next_user_turns=("Review", "Check"),
+    )
+    assert settings.code_intel.mode.kind == "baseline"
+    assert agent.system_prompt == PILOT_SYSTEM_PROMPT
+    assert agent.message_prefix == ()
+    assert agent.pilot_tools_by_turn == PILOT_TOOL_SCHEMAS
+    assert digest_bytes(canonical_json(agent.pilot_tools_by_turn)) == PILOT_TOOLS_SHA256
 
 
 def test_pilot_agent_and_configuration_consume_settings(tmp_path: Path) -> None:

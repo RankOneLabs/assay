@@ -14,6 +14,7 @@ if str(_BRIDGE_SRC) not in sys.path:
     sys.path.insert(0, str(_BRIDGE_SRC))
 
 from assay_pier_bridge.agent_loop import (  # noqa: E402
+    PILOT_TOOL_SCHEMAS,
     CellStorage,
     DockerTmpfsStagingStorage,
     DockerTmpfsToolSandbox,
@@ -37,6 +38,13 @@ from workflow_edit.bridge import (  # noqa: E402
 
 from assay.adapters.pier import PierAdapter  # noqa: E402
 from assay.adapters.smithers import SmithersFactory  # noqa: E402
+from assay.code_intel.baseline import select_code_intel  # noqa: E402
+from assay.code_intel.contract import (  # noqa: E402
+    append_code_intel_prefix,
+    append_code_intel_tools,
+    render_code_intel_prompt,
+)
+from assay.code_intel.errors import Err  # noqa: E402
 from assay.execution import AdmissionHalt, WorkerFailure, WorkerResult  # noqa: E402
 from assay.models import CellCoordinate, RuntimeProfile  # noqa: E402
 from assay.pier_protocol import PierExchange, RuntimeBinding  # noqa: E402
@@ -74,6 +82,15 @@ def create_pilot_agent(
     """
     if spend_gate is not None and not model_route.paid_route_reachable:
         raise ValueError("the zero-paid local route takes no spend gate")
+    selected = select_code_intel(settings.code_intel)
+    if isinstance(selected, Err):
+        raise ValueError(str(selected.error))
+    code_intel = selected.value
+    baseline_tools = pilot_tools_by_turn or PILOT_TOOL_SCHEMAS
+    dispatched_tools = {
+        turn: append_code_intel_tools(tools, code_intel.tools())
+        for turn, tools in baseline_tools.items()
+    }
     budgeted: dict[str, Any] = {"spend_gate": spend_gate} if spend_gate is not None else {}
     client = BudgetedAgentClient if spend_gate is not None else RepositoryAgentClient
     return client(
@@ -93,10 +110,10 @@ def create_pilot_agent(
             max_storage_mb=settings.max_storage_mb,
         ),
         pilot_mode=True,
-        pilot_tools_by_turn=pilot_tools_by_turn or {},
-        system_prompt=system_prompt,
+        pilot_tools_by_turn=dispatched_tools,
+        system_prompt=render_code_intel_prompt(system_prompt, code_intel.prompt_block()),
         next_user_turns=next_user_turns,
-        message_prefix=message_prefix,
+        message_prefix=tuple(append_code_intel_prefix(message_prefix, code_intel.prefix_block())),
         writable_prefixes=(settings.writable_prefixes if writable_prefixes is None
                            else writable_prefixes),
         max_tool_calls_per_turn=settings.max_tool_calls_per_turn,

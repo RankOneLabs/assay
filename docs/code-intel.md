@@ -18,6 +18,13 @@ its position, then appends additions. The same rule applies to the prefix.
 The baseline therefore leaves the existing st-v2 prompt and per-turn tool
 digests intact.
 
+`VerificationPilotSettings.code_intel` selects the mode for a study through
+configuration. The pilot bridge applies that selection to its prompt, prefix,
+and per-turn tool lists. Baseline adds no bytes to any arm. The self-trust
+matched arms retain their separately pinned system framing, so cross-arm
+prompt comparisons expect only the study's pre-existing framing differences;
+the six prefix variants retain their declared placement and log order.
+
 ## Snapshot and index identity
 
 The bridge delivers only entries whose package paths start with `workspace/`,

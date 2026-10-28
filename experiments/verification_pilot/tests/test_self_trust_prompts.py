@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from itertools import combinations, zip_longest
 
 import pytest
-from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.code_intel.baseline import select_code_intel
@@ -150,15 +150,29 @@ def test_matched_arms_differ_only_in_holder_labels(rung: Rung) -> None:
 
 def test_baseline_arm_pairs_keep_existing_prompts_prefixes_and_dispatched_tools() -> None:
     """All 15 arm pairs retain their existing differences and identical tool bytes."""
+    # The bridge source path is installed by verification_pilot.bridge.
+    from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS
+
     selected = select_code_intel(CodeIntelSettings(mode=BaselineMode()))
     assert isinstance(selected, Ok)
     code_intel = selected.value
     assert code_intel.prompt_block() is None and code_intel.prefix_block() == ()
     subject = next(subject for subject in self_trust_subjects()
                    if subject.fixture == "refactor" and subject.own == "group_a"
-                   and subject.remnant_owner == "group_a")
+                   and subject.remnant_owner == "group_b")
     assert digest_bytes(canonical_json(list(subject_turns()))) == TURN_PROMPTS_SHA256
     rendered = {}
+    expected_placement_and_order = {
+        "st-native": ("native", "own_first"),
+        "st-quoted": ("quoted", "own_first"),
+        "st-quoted-first": ("quoted", "holder_first"),
+        "st-quoted-last": ("quoted", "holder_last"),
+        "st-matched-own": ("quoted", "own_first"),
+        "st-matched-teammate": ("quoted", "own_first"),
+    }
+    assert {arm: (placement_for(arm), order_for(arm)) for arm in ARMS} == (
+        expected_placement_and_order
+    )
     for arm in ARMS:
         prompt = subject_system_prompt(subject, arm)
         prefix = subject_prefix(subject, arm)
@@ -174,10 +188,6 @@ def test_baseline_arm_pairs_keep_existing_prompts_prefixes_and_dispatched_tools(
             assert digest_bytes(canonical_json(tools_by_turn[turn])) == digest_bytes(
                 canonical_json(PILOT_TOOL_SCHEMAS[turn]))
         rendered[arm] = (baseline_prompt, baseline_prefix, tools_by_turn)
-        assert (placement_for(arm), order_for(arm)) in {
-            ("native", "own_first"), ("quoted", "own_first"),
-            ("quoted", "holder_first"), ("quoted", "holder_last"),
-        }
         if arm in ("st-native", "st-quoted", "st-quoted-first", "st-quoted-last"):
             assert digest_bytes(prompt.encode("utf-8")) == SYSTEM_PROMPT_SHA256[
                 ("refactor", framing_for(RUNGS["refactor"], subject.own))]
@@ -185,13 +195,36 @@ def test_baseline_arm_pairs_keep_existing_prompts_prefixes_and_dispatched_tools(
             assert digest_bytes(prompt.encode("utf-8")) == SYSTEM_PROMPT_SHA256[
                 ("refactor", "matched")]
     assert len(list(combinations(ARMS, 2))) == 15
+    expected_logs = {
+        "st-native": ("group_b", "group_c"),
+        "st-quoted": ("You (group_a)", "group_b", "group_c"),
+        "st-quoted-first": ("group_b", "You (group_a)", "group_c"),
+        "st-quoted-last": ("You (group_a)", "group_c", "group_b"),
+        "st-matched-own": ("You (group_b)", "group_a", "group_c"),
+        "st-matched-teammate": ("group_b", "group_a", "group_c"),
+    }
+    ordered_prefixes = {arm: rendered[arm][1] for arm in ARMS}
+    for arm, prefix in ordered_prefixes.items():
+        assert tuple(re.findall(r"^Session log: (.+)$", prefix[-1]["content"], re.M)) == (
+            expected_logs[arm]
+        )
+        assert [item["role"] for item in prefix] == (
+            ["user"] if arm != "st-native" else ["assistant", "tool"] * 8 + ["assistant", "user"]
+        )
+    quoted_blocks = []
+    for arm in ("st-quoted", "st-quoted-first", "st-quoted-last"):
+        content = ordered_prefixes[arm][0]["content"]
+        log_text = content.split("Session log: ", 1)[1].split(
+            "\n\nAll three shares are done.", 1
+        )[0]
+        quoted_blocks.append(sorted(log_text.split("\n\nSession log: ")))
+    assert quoted_blocks[0] == quoted_blocks[1] == quoted_blocks[2]
     for left, right in combinations(ARMS, 2):
         left_prompt, left_prefix, left_tools = rendered[left]
         right_prompt, right_prefix, right_tools = rendered[right]
         assert (left_prompt != right_prompt) == ((left in MATCHED_ARMS) !=
                                                  (right in MATCHED_ARMS))
-        assert (left_prefix != right_prefix) == (subject_prefix(subject, left) !=
-                                                 subject_prefix(subject, right))
+        assert left_prefix != right_prefix
         for turn in ("T1", "T2_T3"):
             assert left_tools[turn] == right_tools[turn]
 
