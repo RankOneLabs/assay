@@ -11,7 +11,10 @@ from assay.code_intel.snapshot import check_omission_coverage
 from assay.code_intel.symbols import SymbolsCodeIntel
 from verification_pilot.self_trust.codeintel_fixtures import (
     NAMES,
+    RELATIONSHIP_FIXTURE,
+    read_relationship_span_through_tool,
     read_symbol_span_through_tool,
+    scripted_relationship_session,
     scripted_symbol_session,
 )
 from verification_pilot.self_trust.ladder import RUNGS
@@ -92,3 +95,27 @@ def test_indexed_symbol_span_is_read_through_docker_tool(
     runtime_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="span-read-", dir=runtime_root) as temporary:
         read_symbol_span_through_tool(name, result, work=Path(temporary), image=read_tool_image)
+
+
+def test_cross_file_caller_fixture_and_leak_scan(tmp_path: Path) -> None:
+    manifest, result, report = scripted_relationship_session(index_root=tmp_path)
+    assert RELATIONSHIP_FIXTURE.omission_path != RELATIONSHIP_FIXTURE.effect_path
+    assert report["caller_module"] == RELATIONSHIP_FIXTURE.effect_path
+    assert report["caller_line"] == 3
+    assert report["query_latency_ms"] >= 0
+    assert report["supplied_tokens"] == result.supplied_tokens
+    assert report["model_calls"] == 0
+    assert report["leak_hits"] == []
+    assert RELATIONSHIP_FIXTURE.hidden_test not in manifest.model_dump_json()
+
+
+def test_cross_file_caller_is_read_through_docker_tool(
+    tmp_path: Path, read_tool_image: str,
+) -> None:
+    _, result, _ = scripted_relationship_session(index_root=tmp_path / "indexes")
+    runtime_root = Path(__file__).resolve().parents[3] / ".assay" / "code-intel" / "tests"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="caller-read-", dir=runtime_root) as temporary:
+        read_relationship_span_through_tool(
+            result, work=Path(temporary), image=read_tool_image
+        )

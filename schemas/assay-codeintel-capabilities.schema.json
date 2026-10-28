@@ -133,6 +133,18 @@
       },
       "title": "Unresolvable Cases",
       "type": "array"
+    },
+    "graph_edge_caveat": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Graph Edge Caveat"
     }
   },
   "required": [

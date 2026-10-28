@@ -12,6 +12,7 @@ from assay.code_intel.models import (
     IndexManifest,
     PreloadedSummary,
     QueryResult,
+    RelationshipsMode,
     SymbolsMode,
 )
 from assay.code_intel.snapshot import make_index_manifest
@@ -68,6 +69,10 @@ def select_code_intel(settings: CodeIntelSettings) -> Result[CodeIntelContract]:
         from assay.code_intel.symbols import SymbolsCodeIntel
 
         return Ok(SymbolsCodeIntel(settings))
+    if isinstance(settings.mode, RelationshipsMode):
+        from assay.code_intel.relationships import RelationshipsCodeIntel
+
+        return Ok(RelationshipsCodeIntel(settings))
     return Err(CodeIntelError(
         operation="select mode", entity_id=settings.mode.kind,
         detail="index implementation has not been installed",

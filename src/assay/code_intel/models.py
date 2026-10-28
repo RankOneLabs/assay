@@ -10,6 +10,11 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
+from assay.code_metrics.models import (
+    CycleReportV4,
+    ModuleGraphV2,
+    PropagationReportV4,
+)
 from assay.models import NonEmpty, Sha256Ref, WireModel
 
 
@@ -119,6 +124,7 @@ class CapabilityManifest(WireModel):
     query_kinds: tuple[str, ...]
     supports_summary: bool
     unresolvable_cases: tuple[str, ...] = ()
+    graph_edge_caveat: str | None = None
 
 
 class PreloadedSummary(WireModel):
@@ -133,3 +139,56 @@ class QueryResult(WireModel):
     latency_ms: float = Field(default=0, ge=0)
     supplied_tokens: int = Field(default=0, ge=0)
     snippets: tuple[str, ...] = ()
+
+
+class ResolvedCall(WireModel):
+    kind: Literal["resolved"] = "resolved"
+
+
+class UnresolvedCall(WireModel):
+    kind: Literal["unresolved"] = "unresolved"
+    reason: Literal[
+        "dynamic import()", "string-keyed dispatch", "any-typed value",
+        "unknown target", "ambiguous target",
+    ]
+
+
+CallResolution = Annotated[ResolvedCall | UnresolvedCall, Field(discriminator="kind")]
+
+
+class CallEdge(WireModel):
+    caller: NonEmpty
+    callee: NonEmpty
+    file_path: NonEmpty
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    target_path: str | None = None
+    resolution: CallResolution
+
+
+class ImportEdgeItem(ContextItem):
+    importer: NonEmpty
+    imported: NonEmpty
+
+
+class CallEdgeItem(ContextItem):
+    caller: NonEmpty
+    callee: NonEmpty
+    target_path: str | None = None
+    resolution: CallResolution
+
+
+class AffectedModuleItem(ContextItem):
+    module: NonEmpty
+    changed_module: NonEmpty
+
+
+class RelationshipQueryResult(QueryResult):
+    items: tuple[ImportEdgeItem | CallEdgeItem | AffectedModuleItem, ...]
+
+
+class RelationshipIndexManifest(IndexManifest):
+    graph: ModuleGraphV2
+    cycles: CycleReportV4
+    propagation: PropagationReportV4
+    call_edges: tuple[CallEdge, ...] = ()
