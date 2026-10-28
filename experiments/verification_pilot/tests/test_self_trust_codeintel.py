@@ -1,5 +1,6 @@
 """The real omission-owner trees remain searchable without hidden material."""
 
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,11 @@ import pytest
 from assay.code_intel.errors import CodeIntelError, Err, Ok
 from assay.code_intel.snapshot import check_omission_coverage
 from assay.code_intel.symbols import SymbolsCodeIntel
-from verification_pilot.self_trust.codeintel_fixtures import NAMES, scripted_symbol_session
+from verification_pilot.self_trust.codeintel_fixtures import (
+    NAMES,
+    read_symbol_span_through_tool,
+    scripted_symbol_session,
+)
 from verification_pilot.self_trust.ladder import RUNGS
 
 
@@ -54,3 +59,12 @@ def test_prepare_failure_stops_script_before_query(
     monkeypatch.setattr(SymbolsCodeIntel, "query", queried)
     with pytest.raises(RuntimeError, match="codeintel_index_failure: grammar unavailable"):
         scripted_symbol_session("resume146", index_root=tmp_path)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_indexed_symbol_span_is_read_through_docker_tool(name: str, tmp_path: Path) -> None:
+    _, result, _ = scripted_symbol_session(name, index_root=tmp_path)
+    runtime_root = Path(__file__).resolve().parents[3] / ".assay" / "code-intel" / "tests"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="span-read-", dir=runtime_root) as temporary:
+        read_symbol_span_through_tool(name, result, work=Path(temporary))

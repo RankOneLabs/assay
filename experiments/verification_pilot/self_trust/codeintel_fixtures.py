@@ -102,6 +102,8 @@ def read_symbol_span_through_tool(name: str, result: QueryResult, *, work: Path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
     item = result.items[0]
+    start_line = item.start_line or 1
+    expected_line = rung.subject_tree("group_a")[item.file_path].splitlines()[start_line - 1]
     sandbox = DockerToolSandbox(
         workspace, cache, image, f"codeintel-{name}-{os.getpid()}"
     )
@@ -117,6 +119,8 @@ def read_symbol_span_through_tool(name: str, result: QueryResult, *, work: Path)
             raise RuntimeError(f"{name}: read_file could not retrieve indexed span")
         if output.read_range[0] != item.start_line:
             raise RuntimeError(f"{name}: read_file returned a different span")
+        if not output.text.removeprefix("exit=0\n").startswith(expected_line):
+            raise RuntimeError(f"{name}: read_file returned different source content")
     finally:
         sandbox.close()
 
