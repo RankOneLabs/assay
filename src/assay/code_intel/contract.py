@@ -64,4 +64,3 @@ def append_code_intel_prefix(
     message_prefix: Sequence[dict[str, object]], block: Sequence[dict[str, object]],
 ) -> list[dict[str, object]]:
     return [*message_prefix, *block]
-

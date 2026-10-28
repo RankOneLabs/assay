@@ -100,4 +100,3 @@ class PreloadedSummary(WireModel):
 class QueryResult(WireModel):
     query_kind: NonEmpty
     items: tuple[ContextItem, ...]
-
