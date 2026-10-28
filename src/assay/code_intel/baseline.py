@@ -42,8 +42,8 @@ class BaselineCodeIntel:
             cause="codeintel_unsupported_query",
         ))
 
-    def summarize(self, manifest: IndexManifest) -> Result[PreloadedSummary]:
-        return Ok(PreloadedSummary(repo_revision=manifest.repo_revision, text=""))
+    def summarize(self, manifest: IndexManifest) -> Result[PreloadedSummary | None]:
+        return Ok(None)
 
     def tools(self) -> tuple[ToolDefinition, ...]:
         return ()

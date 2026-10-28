@@ -35,13 +35,14 @@ def scan_text(
 
 
 def scan_pre_run(
-    manifest: IndexManifest, summary: PreloadedSummary,
+    manifest: IndexManifest, summary: PreloadedSummary | None,
     query_results: Sequence[QueryResult], term_patterns: Sequence[str],
     hidden_paths: Iterable[str],
 ) -> tuple[LeakHit, ...]:
     """Inspect the full manifest and all content that may be delivered before a run."""
-    sources = [("index_manifest", manifest.model_dump_json()),
-               ("summary", summary.model_dump_json())]
+    sources = [("index_manifest", manifest.model_dump_json())]
+    if summary is not None:
+        sources.append(("summary", summary.model_dump_json()))
     for position, result in enumerate(query_results):
         sources.append((f"query:{position}", result.model_dump_json()))
     paths = tuple(hidden_paths)

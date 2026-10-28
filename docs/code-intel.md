@@ -12,7 +12,7 @@ operation, entity ID, detail, and `codeintel_` cause; this prefix does not
 match the study's model-provider exclusion prefix.
 
 The baseline declares no query kinds and no summary capability. Its summary
-is empty, its tool and prefix additions are empty, and its prompt addition is
+result is absent, its tool and prefix additions are empty, and its prompt addition is
 absent. `append_code_intel_tools` preserves every baseline tool definition and
 its position, then appends additions. The same rule applies to the prefix.
 The baseline therefore leaves the existing st-v2 prompt and per-turn tool

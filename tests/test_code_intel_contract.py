@@ -12,7 +12,11 @@ from assay.code_intel.models import BaselineMode
 
 
 def test_baseline_has_no_prompt_tool_or_query_surface() -> None:
-    selected = select_code_intel(CodeIntelSettings(mode=BaselineMode()))
+    settings = CodeIntelSettings.model_validate({
+        "mode": {"kind": "baseline"}, "delivery": {"kind": "tool"},
+    })
+    assert settings.mode == BaselineMode()
+    selected = select_code_intel(settings)
     assert isinstance(selected, Ok)
     code_intel = selected.value
     assert code_intel.capabilities().query_kinds == ()
@@ -34,8 +38,7 @@ def test_baseline_has_no_prompt_tool_or_query_surface() -> None:
     assert isinstance(prepared, Ok)
     summary = code_intel.summarize(prepared.value)
     assert isinstance(summary, Ok)
-    assert summary.value.text == ""
+    assert summary.value is None
     assert "omissions.test.ts" not in prepared.value.model_dump_json()
-    assert "omissions.test.ts" not in summary.value.model_dump_json()
     assert not isinstance(code_intel.query(prepared.value, "symbol", "x"), Ok)
     code_intel.close()
