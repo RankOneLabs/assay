@@ -21,6 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from assay.code_intel.contract import CodeIntelSettings
+from assay.code_intel.delivery import CodeIntelDeliveryConfig
 
 # Canonical JSON digest of PILOT_TOOL_SCHEMAS (T1 and T2/T3) in agent_loop.py.
 # The separate legacy TOOLS digest remains pinned by workflow_edit's identity test.
@@ -33,6 +34,7 @@ class VerificationPilotSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     code_intel: CodeIntelSettings = Field(default_factory=CodeIntelSettings)
+    code_intel_delivery: CodeIntelDeliveryConfig | None = None
 
     max_turns: Literal[20] = 20
     attempts: Literal[1] = 1

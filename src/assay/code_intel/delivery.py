@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
-from assay.code_intel.models import CodeIntelDelivery, CodeIntelMode
+from assay.code_intel.models import BaselineMode, CodeIntelDelivery, CodeIntelMode, ToolDelivery
 from assay.models import Sha256Ref, WireModel
 
 
@@ -22,6 +22,13 @@ class CodeIntelDeliveryConfig(WireModel):
     provider_options: dict[str, Any] = Field(default_factory=dict)
     index_mount: str
     index_agent_readable: bool
+
+    @model_validator(mode="after")
+    def validate_tool_readability(self) -> CodeIntelDeliveryConfig:
+        if (isinstance(self.delivery, ToolDelivery) and
+                not isinstance(self.mode, BaselineMode) and not self.index_agent_readable):
+            raise ValueError("tool delivery requires an agent-readable index")
+        return self
 
     @field_validator("index_mount")
     @classmethod

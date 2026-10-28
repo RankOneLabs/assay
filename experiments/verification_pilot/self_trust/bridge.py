@@ -6,16 +6,19 @@ prefix from ``session.py`` in place of the pilot's contributor blocks.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, cast
 
 from assay.adapters.pier import PierAdapter
+from assay.code_intel.query_script import QUERY_SCRIPT
 from assay.execution import AdmissionHalt, WorkerFailure, WorkerResult
 from assay.models import CellCoordinate, RuntimeProfile
 from assay.pier_protocol import PierExchange, RuntimeBinding
 from assay.store import ObjectStore
 from verification_pilot.bridge import (
+    PILOT_TOOL_SCHEMAS,
     DockerTmpfsStagingStorage,
     DockerTmpfsToolSandbox,
     PilotBridgeClient,
@@ -26,6 +29,7 @@ from verification_pilot.bridge import (
 from verification_pilot.dispatch import cell_idempotency_key
 from verification_pilot.fixtures import read_raw_repository
 from verification_pilot.self_trust import refactor_session
+from verification_pilot.self_trust.codeintel import PreparedDelivery, prepare_delivery
 from verification_pilot.self_trust.ladder import REFACTOR, RUNGS
 from verification_pilot.self_trust.prompts import (
     T2_TEXT,
@@ -114,17 +118,38 @@ class SelfTrustBridgeClient(PilotBridgeClient):
     system_prompt: str = build_system_prompt(REFACTOR, framing_for(REFACTOR, "group_a"))
     timeout_s: float = CELL_SECONDS
 
+    def _delivery(self, subject: SelfTrustSubject) -> PreparedDelivery:
+        return prepare_delivery(
+            subject, self.settings.code_intel_delivery, image_digest=self.image,
+            index_root=self.runs_root / "codeintel-indexes",
+        )
+
+    @staticmethod
+    def _tools(prepared: PreparedDelivery) -> dict[str, list[dict[str, Any]]] | None:
+        if prepared.tool is None:
+            return None
+        return {turn: [*deepcopy(baseline), deepcopy(prepared.tool)]
+                for turn, baseline in PILOT_TOOL_SCHEMAS.items()}
+
     def configuration(self, subject: SelfTrustSubject | None = None,
                       arm_id: str = "st-native") -> dict[str, Any]:
+        prepared = self._delivery(subject) if subject is not None else PreparedDelivery()
         prompt = (subject_system_prompt(subject, arm_id) if subject is not None
                   else self.system_prompt)
-        return {**self._configuration_for(
+        prefix = (tuple(subject_prefix(subject, arm_id, codeintel_block=prepared.block))
+                  if subject is not None else ())
+        configuration = {**self._configuration_for(
             system_prompt=prompt, next_user_turns=subject_turns(),
             subject_rendering="self-trust-session-v2",
+            message_prefix=prefix, pilot_tools_by_turn=self._tools(prepared),
             writable_prefixes=(RUNGS[subject.fixture].writable_prefixes
                                if subject is not None and subject.fixture in RUNGS else None),
         ), "protocol_version": PROTOCOL_VERSION, "sdk_retries": self.settings.sdk_retries,
             "image_digest": self.image}
+        if self.settings.code_intel_delivery is not None:
+            configuration["code_intel_delivery"] = self.settings.code_intel_delivery.model_dump(
+                mode="json")
+        return configuration
 
     def create(self, *, exchange: PierExchange, package: Any) -> Any:
         from assay_pier_bridge import protocol as bridge_protocol
@@ -134,7 +159,17 @@ class SelfTrustBridgeClient(PilotBridgeClient):
 
         coordinate = CellCoordinate.model_validate(exchange.coordinate.model_dump(mode="json"))
         subject = cast(SelfTrustSubject, self.subjects[coordinate.subject_id])
-        prefix = tuple(subject_prefix(subject, coordinate.arm_id))
+        prepared = self._delivery(subject)
+        prefix = tuple(subject_prefix(subject, coordinate.arm_id,
+                                      codeintel_block=prepared.block))
+        delivery = self.settings.code_intel_delivery
+        sandbox_options: dict[str, Any] = {"limits": SandboxLimits()}
+        if prepared.index_files is not None and delivery is not None:
+            sandbox_options.update({
+                "index_mount": delivery.index_mount,
+                "index_files": prepared.index_files,
+                "index_agent_readable": delivery.index_agent_readable,
+            })
         completion = (SmithersTurnCompletion(self.factory,
                                              cell_idempotency_key(self.run_label, coordinate),
                                              authorized=self.authorized_smithers)
@@ -144,10 +179,21 @@ class SelfTrustBridgeClient(PilotBridgeClient):
             model_route=self.model_route, completion=completion,
             next_user_turns=subject_turns(), api_key=self.api_key,
             message_prefix=prefix,
+            pilot_tools_by_turn=self._tools(prepared),
+            codeintel_query_script=QUERY_SCRIPT if prepared.tool is not None else None,
+            codeintel_index_mount=(delivery.index_mount if prepared.index_files is not None
+                                   and delivery is not None else None),
+            codeintel_index_agent_readable=(delivery.index_agent_readable
+                                            if prepared.index_files is not None
+                                            and delivery is not None else None),
+            codeintel_max_context_tokens=(delivery.max_context_tokens if prepared.tool is not None
+                                          and delivery is not None else 0),
+            codeintel_query_limit=(delivery.query_limit if prepared.tool is not None
+                                   and delivery is not None else 0),
             system_prompt=subject_system_prompt(subject, coordinate.arm_id),
             writable_prefixes=(RUNGS[subject.fixture].writable_prefixes
                                if subject.fixture in RUNGS else None),
-            sandbox_factory=partial(DockerTmpfsToolSandbox, limits=SandboxLimits()),
+            sandbox_factory=partial(DockerTmpfsToolSandbox, **sandbox_options),
             storage_factory=DockerTmpfsStagingStorage, spend_gate=self.spend_gate,
         )
         limits = SandboxLimits()
