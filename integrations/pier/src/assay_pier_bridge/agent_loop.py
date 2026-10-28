@@ -28,6 +28,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -468,6 +469,9 @@ class DockerToolSandbox:
         *,
         tmpfs_storage: bool = False,
         limits: SandboxLimits | None = None,
+        index_mount: str | None = None,
+        index_files: Mapping[str, bytes] | None = None,
+        index_agent_readable: bool = True,
     ) -> None:
         limits = limits or SandboxLimits()
         self.name = f"assay-agent-{uuid.uuid4().hex}"
@@ -475,6 +479,28 @@ class DockerToolSandbox:
         self._close_lock = threading.Lock()
         self._workspace = workspace
         self._tmpfs_storage = tmpfs_storage
+        if (index_mount is None) != (index_files is None):
+            raise ValueError("codeintel_index_failure")
+        if index_mount is not None and (
+            not index_mount.startswith("/") or index_mount == "/workspace"
+            or index_mount.startswith("/workspace/")
+        ):
+            raise ValueError("codeintel_index_failure")
+        index_host: Path | None = None
+        if index_mount is not None and not tmpfs_storage:
+            index_host = (cache / index_mount.removeprefix("/cache/")) if (
+                index_mount.startswith("/cache/")
+            ) else (cache if index_mount == "/cache" else cache.parent / "codeintel-index")
+            try:
+                index_host.mkdir(parents=True, exist_ok=True)
+                for filename, content in (index_files or {}).items():
+                    if filename != "index.json":
+                        raise ValueError("unsupported index file")
+                    target = index_host / filename
+                    target.write_bytes(content)
+                    target.chmod(0o644 if index_agent_readable else 0o000)
+            except (OSError, ValueError) as error:
+                raise ValueError("codeintel_index_failure") from error
         mounts = (
             [
                 "--tmpfs", f"/workspace:size={limits.workspace_mb}m,mode=1777",
@@ -483,6 +509,14 @@ class DockerToolSandbox:
             if tmpfs_storage
             else ["-v", f"{workspace}:/workspace:rw", "-v", f"{cache}:/cache:rw"]
         )
+        if index_mount is not None and not (
+            index_mount == "/cache" or index_mount.startswith("/cache/")
+        ):
+            if tmpfs_storage:
+                mounts.extend(["--tmpfs", f"{index_mount}:size={limits.cache_mb}m,mode=1777"])
+            else:
+                assert index_host is not None
+                mounts.extend(["-v", f"{index_host}:{index_mount}:rw"])
         command = [
             "docker",
             "run",
@@ -546,6 +580,33 @@ class DockerToolSandbox:
                 self._failed_start(-1, cause=error)
             if copied.returncode:
                 self._failed_start(copied.returncode)
+            if index_mount is not None:
+                try:
+                    archive = io.BytesIO()
+                    with tarfile.open(fileobj=archive, mode="w") as stream:
+                        for filename, content in (index_files or {}).items():
+                            if filename != "index.json":
+                                raise ValueError("unsupported index file")
+                            member = tarfile.TarInfo(filename)
+                            member.size = len(content)
+                            member.mode = 0o644 if index_agent_readable else 0o000
+                            stream.addfile(member, io.BytesIO(content))
+                    made = subprocess.run(
+                        ["docker", "exec", self.name, "mkdir", "-p", index_mount],
+                        capture_output=True, timeout=30, check=False,
+                    )
+                    if made.returncode:
+                        raise RuntimeError("index mount directory")
+                    copied = subprocess.run(
+                        ["docker", "exec", "-i", self.name, "tar", "-x", "-C", index_mount],
+                        input=archive.getvalue(), capture_output=True, timeout=30, check=False,
+                    )
+                    if copied.returncode:
+                        raise RuntimeError("index tar stream")
+                except Exception as error:
+                    with suppress(OSError, RuntimeError, subprocess.SubprocessError):
+                        self.close()
+                    raise ValueError("codeintel_index_failure") from error
         self.observed = self._inspect()
 
     def _inspect(self) -> dict[str, Any]:
@@ -735,9 +796,16 @@ class DockerTmpfsToolSandbox(DockerToolSandbox):
 
     def __init__(
         self, workspace: Path, cache: Path, image: str, cell_id: str,
-        *, limits: SandboxLimits | None = None
+        *, limits: SandboxLimits | None = None,
+        index_mount: str | None = None,
+        index_files: Mapping[str, bytes] | None = None,
+        index_agent_readable: bool = True,
     ) -> None:
-        super().__init__(workspace, cache, image, cell_id, tmpfs_storage=True, limits=limits)
+        super().__init__(
+            workspace, cache, image, cell_id, tmpfs_storage=True, limits=limits,
+            index_mount=index_mount, index_files=index_files,
+            index_agent_readable=index_agent_readable,
+        )
 
 
 SandboxFactory = Callable[[Path, Path, str, str], ToolSandbox]
@@ -1075,7 +1143,24 @@ def _execute_tool(
     arguments: dict[str, Any],
     max_output_bytes: int,
     timeout_s: float,
+    *,
+    codeintel_query_script: str | None = None,
+    codeintel_index_mount: str | None = None,
+    codeintel_max_context_tokens: int = 0,
 ) -> ToolOutput:
+    if name == "codeintel_query" and set(arguments) == {"kind", "text"}:
+        kind, query = arguments["kind"], arguments["text"]
+        if kind not in ("symbol", "references") or not isinstance(query, str) or not query:
+            raise ToolArgumentError("query needs a supported kind and non-empty text")
+        if (not codeintel_query_script or not codeintel_index_mount or
+                codeintel_max_context_tokens < 1):
+            raise ToolArgumentError("code-intelligence query is not configured")
+        return sandbox.execute(
+            ["python", "-c", codeintel_query_script,
+             f"{codeintel_index_mount}/index.json", kind, query,
+             str(min(codeintel_max_context_tokens, max(1, (max_output_bytes - 64) // 4)))],
+            max_output_bytes=max_output_bytes, timeout_s=timeout_s,
+        )
     if name == "search_files" and set(arguments) == {"scope", "query"}:
         scope, query = arguments["scope"], arguments["query"]
         if not isinstance(scope, str) or not isinstance(query, str) or not query:
@@ -1241,6 +1326,11 @@ class RepositoryAgentClient:
     bounds: LoopBounds = field(default_factory=LoopBounds)
     tools: list[dict[str, Any]] = field(default_factory=lambda: deepcopy(TOOLS))
     pilot_tools_by_turn: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    codeintel_query_script: str | None = None
+    codeintel_index_mount: str | None = None
+    codeintel_index_agent_readable: bool | None = None
+    codeintel_max_context_tokens: int = 0
+    codeintel_query_limit: int = 0
     system_prompt: str = SYSTEM_PROMPT
     message_prefix: tuple[dict[str, Any], ...] = ()
     writable_prefixes: tuple[str, ...] = ()
@@ -1309,6 +1399,11 @@ class RepositoryAgentClient:
             raise ValueError("pilot tools require pilot mode")
         if self.max_tool_calls_per_turn < 0 or self.max_tool_calls_per_cell < 0:
             raise ValueError("tool call limits must not be negative")
+        if self.codeintel_query_script is not None and (
+            not self.codeintel_index_mount or
+            min(self.codeintel_max_context_tokens, self.codeintel_query_limit) < 1
+        ):
+            raise ValueError("incomplete code-intelligence query configuration")
         tool_lists = self.pilot_tools_by_turn.values() if self.pilot_mode else (self.tools,)
         if any(len(_json_bytes(tools)) > self.bounds.max_tool_schema_bytes
                for tools in tool_lists):
@@ -1577,6 +1672,11 @@ class RepositoryAgentClient:
             "turns": [],
             "config": asdict(self.resolved_config),
         }
+        if self.codeintel_index_mount is not None:
+            trajectory["code_intel_index"] = {
+                "path": self.codeintel_index_mount,
+                "agent_readable": self.codeintel_index_agent_readable is True,
+            }
         events: list[dict[str, Any]] = trajectory["events"]
         instruction = package.get("instruction.md")
         if not isinstance(instruction, str) or not instruction.strip():
@@ -1621,6 +1721,13 @@ class RepositoryAgentClient:
         completion_tokens: int | None = 0
         requests = 0
         cell_tool_calls = 0
+        codeintel_queries = 0
+        trajectory["limits"] = {
+            "max_turns": self.bounds.max_turns,
+            "max_tool_calls_per_turn": self.max_tool_calls_per_turn,
+            "max_tool_calls_per_cell": self.max_tool_calls_per_cell,
+            "codeintel_query_limit": self.codeintel_query_limit,
+        }
         logical_turn = 1
         turn_tool_calls = 0
         turn_record: dict[str, Any] = {
@@ -1639,12 +1746,17 @@ class RepositoryAgentClient:
         oom_kills_seen = 0
 
         def usage() -> dict[str, int | float | None]:
-            return {
+            billed: dict[str, int | float | None] = {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "requests": requests,
                 "cost_usd": cost_usd,
             }
+            trajectory["actual_usage"] = {
+                **billed, "tool_calls": cell_tool_calls,
+                "codeintel_queries": codeintel_queries,
+            }
+            return billed
 
         def count_dispatch() -> None:
             nonlocal requests
@@ -1979,6 +2091,7 @@ class RepositoryAgentClient:
                                 })
                                 advance_pilot_turn()
                                 break
+                            usage()
                             return LoopResult(
                                 pilot_summary() if self.pilot_mode else submission["summary"],
                                 patch, files, before_digest, after_digest, trajectory,
@@ -1986,9 +2099,16 @@ class RepositoryAgentClient:
                             )
                         limit = remaining()
                         try:
+                            if name == "codeintel_query":
+                                if codeintel_queries >= self.codeintel_query_limit:
+                                    raise ToolArgumentError("code-intelligence query limit reached")
+                                codeintel_queries += 1
                             output = _execute_tool(
                                 sandbox, name, arguments, self.bounds.max_tool_output_bytes,
                                 limit,
+                                codeintel_query_script=self.codeintel_query_script,
+                                codeintel_index_mount=self.codeintel_index_mount,
+                                codeintel_max_context_tokens=self.codeintel_max_context_tokens,
                             )
                         except RuntimeError as error:
                             if str(error) != "tool_timeout":

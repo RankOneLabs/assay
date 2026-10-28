@@ -212,6 +212,24 @@ def test_shell_index_inspection_requires_agent_readable_mount(command: str) -> N
     assert module_read(subject, turn) is False
 
 
+@pytest.mark.parametrize("command", [
+    "cat /codeintel-index/index.json",
+    "grep reserved /codeintel-index/index.json",
+    "cd /codeintel-index && rg reserved index.json",
+])
+def test_shell_inspection_of_configured_absolute_index_mount_counts(command: str) -> None:
+    subject = next(s for s in self_trust_subjects()
+                   if s.fixture == "refactor" and s.remnant_owner == "group_a")
+    turn = {"tool_calls": [{"name": "run_command", "arguments": {"command": command},
+                            "exit_code": 0}]}
+    assert module_read_any(subject, turn, index_path="/codeintel-index",
+                           index_agent_readable=True) is True
+    assert module_read_any(subject, turn, index_path="/codeintel-index",
+                           index_agent_readable=False) is False
+    assert module_read_any(subject, turn, index_path="/other-index",
+                           index_agent_readable=True) is False
+
+
 def test_direct_index_read_requires_agent_readable_mount() -> None:
     subject = next(s for s in self_trust_subjects()
                    if s.fixture == "refactor" and s.remnant_owner == "group_a")

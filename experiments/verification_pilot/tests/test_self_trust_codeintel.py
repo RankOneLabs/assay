@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from assay.code_intel.delivery import CodeIntelDeliveryConfig
 from assay.code_intel.errors import CodeIntelError, Err, Ok
-from assay.code_intel.snapshot import check_omission_coverage
+from assay.code_intel.snapshot import check_omission_coverage, repo_revision
 from assay.code_intel.symbols import SymbolsCodeIntel
+from verification_pilot.self_trust.codeintel import prepare_delivery
 from verification_pilot.self_trust.codeintel_fixtures import (
     NAMES,
     RELATIONSHIP_FIXTURE,
@@ -18,6 +20,7 @@ from verification_pilot.self_trust.codeintel_fixtures import (
     scripted_symbol_session,
 )
 from verification_pilot.self_trust.ladder import RUNGS
+from verification_pilot.self_trust.study import self_trust_subjects
 
 # The read_file tool needs Python, not the historical fixture image. Match the
 # Python base pinned in integrations/pier/Dockerfile so fresh CI hosts can pull it.
@@ -84,6 +87,80 @@ def test_prepare_failure_stops_script_before_query(
     monkeypatch.setattr(SymbolsCodeIntel, "query", queried)
     with pytest.raises(RuntimeError, match="codeintel_index_failure: grammar unavailable"):
         scripted_symbol_session("resume146", index_root=tmp_path)
+
+
+@pytest.mark.parametrize("mode,delivery", [
+    ("symbols", "tool"), ("symbols", "preloaded"),
+    ("relationships", "tool"), ("relationships", "preloaded"),
+])
+def test_configured_delivery_uses_subject_snapshot_without_model_calls(
+    tmp_path: Path, mode: str, delivery: str,
+) -> None:
+    subject = next(subject for subject in self_trust_subjects()
+                   if subject.fixture == "refactor" and subject.own == "group_a"
+                   and subject.remnant_owner == "group_a")
+    config = CodeIntelDeliveryConfig.model_validate({
+        "mode": {"kind": mode}, "delivery": {"kind": delivery},
+        "repository_revision": repo_revision(subject.repository),
+        "max_context_tokens": 512, "query_limit": 20,
+        "provider_options": {}, "index_mount": "/codeintel-index",
+        "index_agent_readable": delivery == "tool",
+    })
+    prepared = prepare_delivery(
+        subject, config, image_digest="sha256:" + "1" * 64, index_root=tmp_path,
+    )
+    assert prepared.index_files is not None
+    assert b'"repo_revision"' in prepared.index_files["index.json"]
+    assert RUNGS["refactor"].hidden_test.encode() not in prepared.index_files["index.json"]
+    if delivery == "tool":
+        from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS
+
+        from assay.canonical import canonical_json
+        from verification_pilot.self_trust.bridge import SelfTrustBridgeClient
+
+        assert prepared.block is None
+        assert prepared.tool is not None
+        assert prepared.tool["function"]["name"] == "codeintel_query"
+        tools_by_turn = SelfTrustBridgeClient._tools(prepared)
+        assert tools_by_turn is not None
+        for turn, tools in tools_by_turn.items():
+            assert canonical_json(tools[:-1]) == canonical_json(PILOT_TOOL_SCHEMAS[turn])
+            assert len(canonical_json(tools)) <= 16_384
+    else:
+        assert prepared.tool is None
+        assert prepared.block is not None
+        assert repo_revision(subject.repository) in prepared.block
+
+
+def test_configured_baseline_has_no_delivery_surface(tmp_path: Path) -> None:
+    subject = next(subject for subject in self_trust_subjects()
+                   if subject.fixture == "refactor" and subject.own == "group_a")
+    config = CodeIntelDeliveryConfig.model_validate({
+        "mode": {"kind": "baseline"}, "delivery": {"kind": "preloaded"},
+        "repository_revision": repo_revision(subject.repository),
+        "max_context_tokens": 512, "query_limit": 20,
+        "provider_options": {}, "index_mount": "/codeintel-index",
+        "index_agent_readable": False,
+    })
+    prepared = prepare_delivery(
+        subject, config, image_digest="sha256:" + "1" * 64, index_root=tmp_path,
+    )
+    assert prepared.block is None and prepared.tool is None and prepared.index_files is None
+
+
+def test_stale_delivery_revision_stops_before_indexing(tmp_path: Path) -> None:
+    subject = next(subject for subject in self_trust_subjects()
+                   if subject.fixture == "refactor" and subject.own == "group_a")
+    config = CodeIntelDeliveryConfig.model_validate({
+        "mode": {"kind": "symbols"}, "delivery": {"kind": "tool"},
+        "repository_revision": "sha256:" + "0" * 64,
+        "max_context_tokens": 512, "query_limit": 20,
+        "provider_options": {}, "index_mount": "/codeintel-index",
+        "index_agent_readable": True,
+    })
+    with pytest.raises(ValueError, match="codeintel_stale_index"):
+        prepare_delivery(subject, config, image_digest="sha256:" + "1" * 64,
+                         index_root=tmp_path)
 
 
 @pytest.mark.parametrize("name", NAMES)

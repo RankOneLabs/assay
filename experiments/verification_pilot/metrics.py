@@ -16,12 +16,13 @@ def calls(turn: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [call for call in turn.get("tool_calls", ()) if isinstance(call, dict)]
 
 
-def inspection_calls(turn: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+def inspection_calls(turn: Mapping[str, Any], *,
+                     index_mount: str | None = None) -> list[Mapping[str, Any]]:
     """Tool calls in order, each ``run_command`` followed by its D18 shell inspections."""
     expanded: list[Mapping[str, Any]] = []
     for call in calls(turn):
         expanded.append(call)
-        expanded.extend(shell_inspections(call))
+        expanded.extend(shell_inspections(call, index_mount=index_mount))
     return expanded
 
 

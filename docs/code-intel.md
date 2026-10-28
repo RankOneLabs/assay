@@ -54,8 +54,10 @@ The self-trust archive scanner retains its 16 study terms and
 archive traversal, calls `scan_text`, and writes its CSV to
 `experiments/verification_pilot/raw/self_trust/ledger/leak-scan.csv`.
 
-The contract and accounting phases define no indexer or model call. Index mount
-and agent visibility remain operator choices.
+Delivery configuration requires an explicit absolute `index_mount` outside
+`/workspace` and an explicit `index_agent_readable` flag. Neither has a default.
+The operator supplies the mount for each provider comparison; a tool-delivered
+index must be readable by the agent.
 
 ## Self-trust accounting
 
@@ -69,12 +71,18 @@ visible replacement that `replacement_for` allows.
 The broad `module_read_any` measure is published for T1, T2 and T3 beside
 `module_read`. A successful `codeintel_query` counts only when its returned
 `QueryResult` JSON has an item whose `file_path` is the omission module. Query
-attempts and errors are counted per session in the ledger. For shell reads and
-greps, or a direct `read_file` of an index, the trajectory must carry host-recorded
-`code_intel_index: {"path": "...", "agent_readable": true}` metadata; the
-path is relative to `/workspace`, and the route counts only when
-`agent_readable` is true. The existing shell inspection parser supplies virtual
-reads and searches for shell calls; direct `read_file` needs no expansion.
+attempts and errors are counted per session in the ledger. The trajectory
+carries host-recorded `code_intel_index: {"path": "...", "agent_readable": true}`
+metadata. The delivery mount path is absolute and outside `/workspace`. The
+shell inspection parser normalizes paths under the configured mount only for
+this broad measure, so a successful read or grep of the index counts when the
+trajectory says it is agent-readable. `codeintel_query` counts from its
+structured result. The `index_agent_readable` flag declares the operator's
+intended access policy; it is not an enforced access boundary for a preloaded
+arm. In particular, an agent that owns an index file with mode `000` can
+restore read permission with `chmod`. Interpret the measure using the declared
+flag. Enforcing a boundary would require a separate root-owned, read-only mount
+implementation.
 
 ## TypeScript symbols mode
 
@@ -141,3 +149,29 @@ the `resume146`, `forge-move`, and `forge-rewrite` omission-owner trees with no
 model call. It runs the contract's omission-coverage check and pre-run leak
 scan, then writes the scan result to
 `experiments/verification_pilot/raw/self_trust/ledger/codeintel-leak-scan.json`.
+
+## Self-trust delivery
+
+`VerificationPilotSettings.code_intel_delivery` holds the validated delivery
+configuration: `mode`, `delivery`, `repository_revision`,
+`max_context_tokens`, `query_limit`, `provider_options`, `index_mount`, and
+`index_agent_readable`. The revision is the digest of the generated subject
+tree. Baseline mode leaves the pinned prompt, prefix, and tool lists alone.
+`symbols` and `relationships` use the existing TypeScript index; the latter
+exposes its recorded references without adding an indexer.
+
+Preloaded delivery inserts the summary into the final user prefix message,
+directly before T1 with one blank line. Tool delivery appends `codeintel_query`
+after each baseline per-turn tool list. It runs a dependency-free `python -c`
+script inside the same sandbox as `read_file` and `search_files`. Each query
+counts toward the existing 100-per-turn and 300-per-cell call ceilings, and
+the configured query limit applies inside those ceilings. The trajectory
+records the caps and actual calls and tokens.
+
+The index is mounted outside `/workspace`. Bind storage writes `index.json`
+into the host directory mounted at the configured path; tmpfs storage streams
+it through `docker exec -i ... tar -x -C <mount>`. A failed population stops
+the cell with `codeintel_index_failure` before its first model request. The
+captured tree remains the existing `/workspace` tar stream, so the index does
+not enter the submission diff or change the image digest. No delivery test
+makes a model call.

@@ -406,6 +406,33 @@ def test_pilot_configuration_refuses_changed_tool_identity(
     assert failure.value.cause == "enforcement"
 
 
+def test_pilot_configuration_refuses_message_prefix_digest_mismatch(tmp_path: Path) -> None:
+    prefix = ({"role": "user", "content": "Pinned pilot session"},)
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([]), pilot_mode=True, message_prefix=prefix,
+        next_user_turns=("Review", "Check"), writable_prefixes=("src/",),
+        max_tool_calls_per_turn=15, max_tool_calls_per_cell=40,
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    configuration = agent_configuration(
+        bounds=agent.bounds, limits=LIMITS, writable_prefixes=agent.writable_prefixes,
+        model_route=LOCAL, pilot_mode=True, pilot_tools_by_turn=agent.pilot_tools_by_turn,
+        next_user_turns=agent.next_user_turns, system_prompt=agent.system_prompt,
+        message_prefix=agent.message_prefix,
+        max_tool_calls_per_turn=agent.max_tool_calls_per_turn,
+        max_tool_calls_per_cell=agent.max_tool_calls_per_cell,
+    )
+    configuration["message_prefix_sha256"] = digest_bytes(b"different prefix")
+    handle = RepositoryAgentTrialHandle(
+        request=_request(), agent=agent, package=PACKAGE, limits=LIMITS,
+        configuration=configuration,
+    )
+    with pytest.raises(InfrastructureTrialError, match="message prefix") as failure:
+        handle._check_request()
+    assert failure.value.cause == "enforcement"
+
+
 def test_timed_out_run_command_counts_as_unclassified(tmp_path: Path) -> None:
     completion = Scripted(
         [_call("run_command", {"command": "hang"}, 1)],

@@ -20,10 +20,12 @@ from assay.code_intel.models import BaselineMode
 from assay.pier_packaging import REPOSITORY_AGENT_WORKSPACE, render_instruction
 from verification_pilot.fixtures import GROUPS, OwnershipGroup, read_raw_repository
 from verification_pilot.self_trust.bridge import (
+    SelfTrustBridgeClient,
     subject_prefix,
     subject_system_prompt,
     subject_turns,
 )
+from verification_pilot.self_trust.codeintel import PreparedDelivery
 from verification_pilot.self_trust.concepts import CONCEPTS, Concept
 from verification_pilot.self_trust.ladder import (
     RESUME_146,
@@ -46,6 +48,7 @@ from verification_pilot.self_trust.refactor_session import (
     session_prefix as refactor_session_prefix,
 )
 from verification_pilot.self_trust.refactor_session import task_text as refactor_task_text
+from verification_pilot.self_trust.session import T1_TEXT
 from verification_pilot.self_trust.session import task_text as rename_task_text
 from verification_pilot.self_trust.study import (
     ARMS,
@@ -55,6 +58,7 @@ from verification_pilot.self_trust.study import (
     realization_payload,
     self_trust_subjects,
 )
+from verification_pilot.settings import PILOT_TOOLS_SHA256
 
 
 @pytest.mark.parametrize("own", GROUPS)
@@ -245,3 +249,69 @@ def test_subject_owners_have_distinct_snapshot_and_index_keys() -> None:
     keys = [index_cache_key(revision, "sha256:" + "1" * 64, "symbols/1")
             for revision in revisions]
     assert len(set(keys)) == 3
+
+
+@pytest.mark.parametrize("fixture", ("refactor", "rewrite0", "rename"))
+@pytest.mark.parametrize("arm_id", ARMS)
+def test_preloaded_block_has_one_position_in_every_arm(
+    fixture: str, arm_id: str,
+) -> None:
+    if fixture == "rename" and arm_id in ("st-quoted-first", "st-quoted-last"):
+        pytest.skip("the rename fixture does not vary log order")
+    subject = next(subject for subject in self_trust_subjects()
+                   if subject.fixture == fixture and subject.own == "group_a"
+                   and subject.remnant_owner == "group_a")
+    before = subject_prefix(subject, arm_id)
+    after = subject_prefix(subject, arm_id, codeintel_block="INDEX BLOCK\n")
+    assert len(after) == len(before)
+    assert after[:-1] == before[:-1]
+    assert after[-1]["role"] == "user"
+    turn1 = t1_message(RUNGS[fixture]) if fixture in RUNGS else T1_TEXT
+    assert before[-1]["content"].endswith(turn1)
+    assert after[-1]["content"] == before[-1]["content"][:-len(turn1)] + (
+        "INDEX BLOCK\n\n" + turn1
+    )
+
+
+@pytest.mark.parametrize("delivery", ("tool", "preloaded"))
+def test_provider_delta_is_identical_across_all_15_arm_pairs(delivery: str) -> None:
+    from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS
+
+    subject = next(subject for subject in self_trust_subjects()
+                   if subject.fixture == "refactor" and subject.own == "group_a"
+                   and subject.remnant_owner == "group_b")
+    extra = {"type": "function", "function": {"name": "codeintel_query"}}
+    prepared = (PreparedDelivery(tool=extra) if delivery == "tool"
+                else PreparedDelivery(block="INDEX BLOCK"))
+    base = {}
+    delivered = {}
+    for arm in ARMS:
+        baseline_prefix = subject_prefix(subject, arm)
+        base[arm] = (subject_system_prompt(subject, arm), baseline_prefix,
+                     PILOT_TOOL_SCHEMAS)
+        delivered[arm] = (
+            subject_system_prompt(subject, arm),
+            subject_prefix(subject, arm, codeintel_block=prepared.block),
+            SelfTrustBridgeClient._tools(prepared) or PILOT_TOOL_SCHEMAS,
+        )
+        assert delivered[arm][0] == base[arm][0]
+        assert digest_bytes(canonical_json(base[arm][2])) == PILOT_TOOLS_SHA256
+        if delivery == "tool":
+            assert delivered[arm][1] == base[arm][1]
+            for turn, tools in delivered[arm][2].items():
+                assert tools[:-1] == PILOT_TOOL_SCHEMAS[turn]
+                assert tools[-1] == extra
+                assert len(canonical_json(tools)) < 16_384
+        else:
+            assert delivered[arm][2] == base[arm][2]
+            assert delivered[arm][1][:-1] == base[arm][1][:-1]
+    pairs = list(combinations(ARMS, 2))
+    assert len(pairs) == 15
+    for left, right in pairs:
+        for arm in (left, right):
+            original = base[arm][1][-1]["content"]
+            changed = delivered[arm][1][-1]["content"]
+            if delivery == "preloaded":
+                assert changed.replace("INDEX BLOCK\n\n", "", 1) == original
+            else:
+                assert changed == original
