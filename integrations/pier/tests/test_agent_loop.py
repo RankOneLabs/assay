@@ -42,6 +42,7 @@ from assay_pier_bridge.agent_loop import (
     _shrink_conversation,
     _submission,
 )
+from assay_pier_bridge.identity import canonical_json, digest_bytes
 from assay_pier_bridge.paths import ArtifactCollectionRejected, extract_workspace_archive
 from assay_pier_bridge.protocol import ModelRoute
 from assay_pier_bridge.provider import MODEL, PROVIDER_NAME
@@ -461,6 +462,52 @@ def test_default_tools_are_independent_of_other_clients(tmp_path: Path) -> None:
 
     first.tools[0]["function"]["name"] = "changed"
     assert second.tools == TOOLS
+
+
+def test_pilot_tool_digest_follows_only_the_dispatched_instance_turn(tmp_path: Path) -> None:
+    baseline_t1 = digest_bytes(canonical_json(PILOT_TOOLS_T1))
+    baseline_review = digest_bytes(canonical_json(PILOT_TOOLS_REVIEW))
+    t1_global = json.loads(json.dumps(PILOT_TOOLS_T1))
+    review_global = json.loads(json.dumps(PILOT_TOOLS_REVIEW))
+    completion = Scripted(
+        [_call("submit_output", {"title": "Change", "body": "Body"}, 1)],
+        [_call("submit_output", {"verdict": "incomplete", "remaining_v1": "one",
+                                  "checks_performed": "read"}, 2)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "test"}, 3)],
+    )
+    first = _pilot(tmp_path, completion)
+    first.pilot_tools_by_turn["T2_T3"].append({
+        "type": "function", "function": {"name": "extra",
+                                         "parameters": {"type": "object", "properties": {}}},
+    })
+    changed_review = digest_bytes(canonical_json(first.pilot_tools_by_turn["T2_T3"]))
+    assert changed_review != baseline_review
+    assert digest_bytes(canonical_json(first.pilot_tools_by_turn["T1"])) == baseline_t1
+    result = first.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert [turn["tools_sha256"] for turn in result.trajectory["turns"]] == [
+        baseline_t1, changed_review, changed_review,
+    ]
+    assert [digest_bytes(canonical_json(tools)) for tools in completion.tool_schemas] == [
+        baseline_t1, changed_review, changed_review,
+    ]
+    assert t1_global == PILOT_TOOLS_T1 and review_global == PILOT_TOOLS_REVIEW
+    second = _pilot(tmp_path, Scripted())
+    assert [digest_bytes(canonical_json(second.pilot_tools_by_turn[key]))
+            for key in ("T1", "T2_T3")] == [baseline_t1, baseline_review]
+
+
+def test_pilot_checks_review_tool_schema_size_at_construction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extra = {"type": "function", "function": {"name": "large", "description": "x" * 16_384}}
+    monkeypatch.setattr(agent_loop, "PILOT_TOOLS_REVIEW", [*PILOT_TOOLS_REVIEW, extra])
+    assert len(canonical_json(PILOT_TOOLS_T1)) < LoopBounds().max_tool_schema_bytes
+    assert len(canonical_json(agent_loop.PILOT_TOOLS_REVIEW)) > LoopBounds().max_tool_schema_bytes
+    with pytest.raises(ValueError, match="tool_schema_limit"):
+        _pilot(tmp_path, Scripted())
+    monkeypatch.undo()
+    assert _pilot(tmp_path, Scripted()).pilot_tools_by_turn["T2_T3"] == PILOT_TOOLS_REVIEW
 
 
 def test_pilot_three_submissions_share_workspace_and_capture_each_diff(tmp_path: Path) -> None:
