@@ -95,6 +95,44 @@ manifest advertises only `symbol` and notes dynamic `import()`, string-keyed
 dispatch, and `any`-typed calls as cases static analysis cannot resolve. Call
 edges and import graphs are reserved for the relationships phase.
 
+## TypeScript relationships mode
+
+`RelationshipsMode` adds three query kinds to the same host-side index:
+`callers_and_callees`, `importers`, and `affected`. For calls, the query text
+is `callers:<symbol>` or `callees:<symbol>`; a bare symbol returns both
+directions. The importer and affected queries take a snapshot module path.
+Each result is a context item with revision, source path, rank, content hash,
+token estimate, retrieval method, and raw source reference. Call results
+also carry the call's line range and a tagged `resolved` or `unresolved`
+status. Import edges have no line range because the metrics graph does not
+provide one.
+
+The import graph comes directly from `code_metrics.typescript.extract_typescript_graph`.
+The index stores its `ModuleGraphV2`, plus the `CycleReportV4` and
+`PropagationReportV4` produced by `analyze_cycles` and `analyze_propagation`.
+`importers` returns those graph edges without reconstructing imports. The
+`affected` query follows those edges in reverse: a change to M affects M and
+each module that transitively imports M. Its set size equals M's `reached_by`
+count, which includes M itself. Type-only imports remain edges; unresolved
+and external imports remain external dependencies in the metrics graph.
+
+Call candidates come from the syntax tree already parsed for symbols. A
+direct identifier call resolves only when it has one matching local or
+imported definition in the snapshot. Dynamic `import()`, string-keyed
+dispatch, and calls through an `any`-typed value remain visible with an
+unresolved reason. Unknown or ambiguous targets are unresolved too. A graph
+edge is a static inference, not proof that the call executes at runtime.
+This analysis does not perform TypeScript type checking or full lexical
+binding, so callers should treat its resolved edges as candidates to inspect.
+
+Run `uv run python -m verification_pilot.self_trust.codeintel_fixtures
+--relationships` from `experiments/` for the model-free cross-file caller
+demonstration. Its synthetic snapshot omits an access guard in
+`src/access.ts`, while the effect appears in `src/report.ts`. The script
+reads the caller span with the bridge's Docker `read_file` tool, records query
+latency and supplied tokens, and writes the pre-run leak scan to
+`experiments/verification_pilot/raw/self_trust/ledger/codeintel-relationships-leak-scan.json`.
+
 `verification_pilot.self_trust.codeintel_fixtures` runs scripted queries over
 the `resume146`, `forge-move`, and `forge-rewrite` omission-owner trees with no
 model call. It runs the contract's omission-coverage check and pre-run leak

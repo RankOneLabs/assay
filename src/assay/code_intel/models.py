@@ -146,7 +146,10 @@ class ResolvedCall(WireModel):
 
 class UnresolvedCall(WireModel):
     kind: Literal["unresolved"] = "unresolved"
-    reason: Literal["dynamic import()", "string-keyed dispatch", "any-typed value"]
+    reason: Literal[
+        "dynamic import()", "string-keyed dispatch", "any-typed value",
+        "unknown target", "ambiguous target",
+    ]
 
 
 CallResolution = Annotated[ResolvedCall | UnresolvedCall, Field(discriminator="kind")]

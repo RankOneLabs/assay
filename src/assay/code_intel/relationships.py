@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
-from pathlib import Path
 from time import perf_counter
 
 from assay.canonical import digest_bytes
-from assay.code_intel.contract import CodeIntelSettings
 from assay.code_intel.errors import CodeIntelError, Err, Ok, Result
 from assay.code_intel.index import approximate_tokens, build_index
 from assay.code_intel.models import (
@@ -17,7 +15,6 @@ from assay.code_intel.models import (
     CapabilityManifest,
     ImportEdgeItem,
     IndexManifest,
-    PreloadedSummary,
     QueryResult,
     RelationshipIndexManifest,
     RelationshipQueryResult,
@@ -25,11 +22,13 @@ from assay.code_intel.models import (
 )
 from assay.code_intel.snapshot import index_cache_key
 from assay.code_intel.symbols import SymbolsCodeIntel
+from assay.code_intel.typescript_calls import CallCandidate, resolve_call_targets
 from assay.code_metrics.cycles import analyze_cycles
 from assay.code_metrics.models import (
     CycleReportV4,
     ImportEdgeV2,
     ModuleGraphV2,
+    ModuleVisibilityV4,
     PropagationReportV4,
 )
 from assay.code_metrics.propagation import analyze_propagation
@@ -54,9 +53,6 @@ def _affected(graph: ModuleGraphV2, changed: str) -> tuple[str, ...]:
 class RelationshipsCodeIntel(SymbolsCodeIntel):
     """Keep the symbols index and add metrics-backed and parse-backed relationships."""
 
-    def __init__(self, settings: CodeIntelSettings, *, index_root: Path | None = None) -> None:
-        super().__init__(settings, index_root=index_root)
-
     def prepare(
         self, snapshot_mapping: Mapping[str, str], *, image_digest: str,
         excluded_paths: frozenset[str],
@@ -65,14 +61,17 @@ class RelationshipsCodeIntel(SymbolsCodeIntel):
         try:
             visible = {path: source for path, source in snapshot_mapping.items()
                        if path not in excluded_paths}
+            call_candidates: list[CallCandidate] = []
             base = build_index(
                 snapshot_mapping, image_digest=image_digest,
                 excluded_paths=excluded_paths, index_root=self.index_root,
+                call_sink=call_candidates,
             )
             extraction = extract_typescript_graph(visible)
             graph: ModuleGraphV2 = extraction.graph
             cycles: CycleReportV4 = analyze_cycles(graph)
             propagation: PropagationReportV4 = analyze_propagation(graph)
+            call_edges = resolve_call_targets(tuple(call_candidates), base.definitions, graph)
             indexer_version = base.indexer_version.replace(
                 "typescript-symbols/", "typescript-relationships/", 1
             )
@@ -89,7 +88,7 @@ class RelationshipsCodeIntel(SymbolsCodeIntel):
                 structures=base.structures,
                 tool_versions=base.tool_versions,
                 build_time_ms=(perf_counter() - started) * 1000,
-                graph=graph, cycles=cycles, propagation=propagation,
+                graph=graph, cycles=cycles, propagation=propagation, call_edges=call_edges,
             )
             (self.index_root / f"{manifest.cache_key.removeprefix('sha256:')}.json").write_text(
                 manifest.model_dump_json() + "\n", encoding="utf-8",
@@ -138,7 +137,18 @@ class RelationshipsCodeIntel(SymbolsCodeIntel):
                 if edge.imported == needle:
                     results.append(self._import_item(manifest, edge, len(results)))
         elif query_kind == "affected":
-            for module in _affected(manifest.graph, needle):
+            affected = _affected(manifest.graph, needle)
+            visibility: ModuleVisibilityV4 | None = next(
+                (entry for entry in manifest.propagation.module_visibility
+                 if entry.module == needle), None,
+            )
+            if visibility is None or len(affected) != visibility.reached_by:
+                return Err(CodeIntelError(
+                    operation="query relationships", entity_id=manifest.cache_key,
+                    detail=f"propagation count disagrees for {needle}",
+                    cause="codeintel_index_failure",
+                ))
+            for module in affected:
                 results.append(self._affected_item(manifest, module, needle, len(results)))
         else:
             direction, _, symbol = needle.partition(":")
@@ -194,8 +204,3 @@ class RelationshipsCodeIntel(SymbolsCodeIntel):
             raw_source_ref=module, content=content,
             module=module, changed_module=changed,
         )
-
-    def summarize(
-        self, manifest: IndexManifest, *, token_budget: int = 512
-    ) -> Result[PreloadedSummary | None]:
-        return super().summarize(manifest, token_budget=token_budget)

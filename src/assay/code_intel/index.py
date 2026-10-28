@@ -10,6 +10,7 @@ from time import perf_counter
 from assay.canonical import digest_bytes
 from assay.code_intel.models import ContextItem, IndexManifest
 from assay.code_intel.snapshot import make_index_manifest, repo_revision
+from assay.code_intel.typescript_calls import CallCandidate
 from assay.code_metrics.pins import (
     assert_pinned_tools,
     node_binary,
@@ -26,6 +27,7 @@ def approximate_tokens(text: str) -> int:
 def build_index(
     snapshot_mapping: Mapping[str, str], *, image_digest: str,
     excluded_paths: frozenset[str], index_root: Path,
+    call_sink: list[CallCandidate] | None = None,
 ) -> IndexManifest:
     """Persist a JSON index under its version-sensitive snapshot cache key."""
     start = perf_counter()
@@ -45,7 +47,9 @@ def build_index(
     visible = {path: text for path, text in snapshot_mapping.items()
                if path not in excluded_paths}
     revision = repo_revision(snapshot_mapping)
-    extracted = extract_typescript_symbols(visible)
+    extracted = extract_typescript_symbols(visible, include_calls=call_sink is not None)
+    if call_sink is not None:
+        call_sink.extend(extracted.calls)
     items: list[ContextItem] = []
     for definition in extracted.definitions:
         lines = visible[definition.file_path].splitlines()

@@ -9,6 +9,7 @@ import tree_sitter_typescript
 from tree_sitter import Language, Node, Parser
 
 from assay.code_intel.models import AstStructure, SymbolDefinition, SymbolReference
+from assay.code_intel.typescript_calls import CallCandidate, extract_calls_from_tree
 from assay.code_metrics.errors import AnalyzerFailed
 from assay.code_metrics.models import LanguageCoverage
 
@@ -34,6 +35,7 @@ class TypeScriptExtraction:
     references: tuple[SymbolReference, ...]
     structures: tuple[AstStructure, ...]
     coverage: LanguageCoverage
+    calls: tuple[CallCandidate, ...] = ()
 
 
 def _walk(root: Node) -> Iterator[tuple[Node, str | None]]:
@@ -56,12 +58,15 @@ def _signature(node: Node, source: bytes) -> str:
     return source[node.start_byte:limit].decode("utf-8", errors="replace").strip()[:400]
 
 
-def extract_typescript_symbols(files: Mapping[str, str]) -> TypeScriptExtraction:
+def extract_typescript_symbols(
+    files: Mapping[str, str], *, include_calls: bool = False,
+) -> TypeScriptExtraction:
     """Extract source spans and identifiers without inferring runtime relations."""
     definitions: list[SymbolDefinition] = []
     references: list[SymbolReference] = []
     structures: list[AstStructure] = []
     analyzed: list[str] = []
+    calls: list[CallCandidate] = []
     for path, text in sorted(files.items()):
         if not path.endswith((".ts", ".tsx", ".mts", ".cts")) or path.endswith(".d.ts"):
             continue
@@ -72,6 +77,8 @@ def extract_typescript_symbols(files: Mapping[str, str]) -> TypeScriptExtraction
         except Exception as error:
             raise AnalyzerFailed(f"parse {path}: {error}") from error
         analyzed.append(path)
+        if include_calls:
+            calls.extend(extract_calls_from_tree(path, source, root))
         definition_positions: set[tuple[int, int]] = set()
         for node, parent in _walk(root):
             if node.type in _STRUCTURES:
@@ -107,4 +114,5 @@ def extract_typescript_symbols(files: Mapping[str, str]) -> TypeScriptExtraction
             modules_discovered=len(analyzed),
             files_without_module=tuple(sorted(set(files) - set(analyzed))),
         ),
+        calls=tuple(calls),
     )
