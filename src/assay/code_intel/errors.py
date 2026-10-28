@@ -12,7 +12,8 @@ class CodeIntelError:
     entity_id: str
     detail: str
     cause: Literal[
-        "codeintel_stale_index", "codeintel_omission_uncovered", "codeintel_unsupported_query"
+        "codeintel_stale_index", "codeintel_omission_uncovered", "codeintel_unsupported_query",
+        "codeintel_index_failure",
     ]
 
     def __str__(self) -> str:

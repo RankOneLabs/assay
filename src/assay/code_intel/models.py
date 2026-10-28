@@ -57,6 +57,30 @@ class ContextItem(WireModel):
     content: str | None = None
 
 
+class SymbolDefinition(WireModel):
+    name: NonEmpty
+    kind: NonEmpty
+    file_path: NonEmpty
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    signature: str | None = None
+
+
+class SymbolReference(WireModel):
+    name: NonEmpty
+    file_path: NonEmpty
+    line: int = Field(ge=1)
+    column: int = Field(ge=1)
+
+
+class AstStructure(WireModel):
+    kind: NonEmpty
+    file_path: NonEmpty
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    parent_kind: str | None = None
+
+
 class IndexManifest(WireModel):
     """One index for one subject tree, including its cache-key inputs.
 
@@ -77,6 +101,11 @@ class IndexManifest(WireModel):
     cache_key: Sha256Ref
     indexed_paths: tuple[str, ...]
     items: tuple[ContextItem, ...] = ()
+    definitions: tuple[SymbolDefinition, ...] = ()
+    references: tuple[SymbolReference, ...] = ()
+    structures: tuple[AstStructure, ...] = ()
+    tool_versions: dict[str, str] = Field(default_factory=dict)
+    build_time_ms: float = Field(default=0, ge=0)
 
 
 class CapabilityManifest(WireModel):
@@ -89,6 +118,7 @@ class CapabilityManifest(WireModel):
     delivery: CodeIntelDelivery
     query_kinds: tuple[str, ...]
     supports_summary: bool
+    unresolvable_cases: tuple[str, ...] = ()
 
 
 class PreloadedSummary(WireModel):
@@ -100,3 +130,6 @@ class PreloadedSummary(WireModel):
 class QueryResult(WireModel):
     query_kind: NonEmpty
     items: tuple[ContextItem, ...]
+    latency_ms: float = Field(default=0, ge=0)
+    supplied_tokens: int = Field(default=0, ge=0)
+    snippets: tuple[str, ...] = ()

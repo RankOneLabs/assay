@@ -54,8 +54,8 @@ The self-trust archive scanner retains its 16 study terms and
 archive traversal, calls `scan_text`, and writes its CSV to
 `experiments/verification_pilot/raw/self_trust/ledger/leak-scan.csv`.
 
-This phase defines no indexer or model call. Index mount and agent visibility
-remain operator choices.
+The contract and accounting phases define no indexer or model call. Index mount
+and agent visibility remain operator choices.
 
 ## Self-trust accounting
 
@@ -75,3 +75,28 @@ greps, or a direct `read_file` of an index, the trajectory must carry host-recor
 path is relative to `/workspace`, and the route counts only when
 `agent_readable` is true. The existing shell inspection parser supplies virtual
 reads and searches for shell calls; direct `read_file` needs no expansion.
+
+## TypeScript symbols mode
+
+`SymbolsMode` selects a host-side TypeScript and TSX indexer. The grammar is
+`tree-sitter-typescript==0.23.2` in the `code-metrics` extra and in the asserted
+pin table. `prepare()` indexes only delivered snapshot entries outside the
+fixture-derived hidden-path set. It writes one JSON manifest under
+`.assay/code-intel/indexes/`, keyed by the snapshot and image digests and an
+indexer version containing the resolved grammar, `dependency-cruiser`, and
+`typescript` versions. The manifest carries definitions, signatures,
+references, AST structure, source provenance, and build time. A toolchain or
+parser failure returns `codeintel_index_failure` before a query can run.
+
+The `symbol` query returns definition spans and signature snippets with rank,
+hash, token estimate, and query latency. `summarize()` lists files and their
+first symbols in stable path order within its token budget. The capability
+manifest advertises only `symbol` and notes dynamic `import()`, string-keyed
+dispatch, and `any`-typed calls as cases static analysis cannot resolve. Call
+edges and import graphs are reserved for the relationships phase.
+
+`verification_pilot.self_trust.codeintel_fixtures` runs scripted queries over
+the `resume146`, `forge-move`, and `forge-rewrite` omission-owner trees with no
+model call. It runs the contract's omission-coverage check and pre-run leak
+scan, then writes the scan result to
+`experiments/verification_pilot/raw/self_trust/ledger/codeintel-leak-scan.json`.

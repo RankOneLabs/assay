@@ -28,6 +28,7 @@ RUST_PINS = {
     "tree-sitter": "0.25.2",
     "tree-sitter-rust": "0.24.2",
 }
+TYPESCRIPT_PINS = {"tree-sitter-typescript": "0.23.2"}
 NODE_PINS = {"jscpd": JSCPD, "dependency-cruiser": DEPENDENCY_CRUISER, "typescript": TYPESCRIPT}
 _SOURCE_NODE_TOOLS = Path(__file__).resolve().parents[3] / "vendor" / "node-tools"
 _BUNDLED_NODE_TOOLS = (
@@ -126,7 +127,7 @@ def rust_tool_versions() -> dict[str, str]:
 
 
 def assert_pinned_tools() -> None:
-    for tool, expected in (PINS | RUST_PINS).items():
+    for tool, expected in (PINS | RUST_PINS | TYPESCRIPT_PINS).items():
         resolved = version(tool)
         if resolved != expected:
             raise ToolVersionMismatch(tool, expected, resolved)

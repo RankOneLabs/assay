@@ -1,0 +1,50 @@
+[
+  {
+    "build_time_ms": 459.30902496911585,
+    "cache_key": "sha256:ddeed8538dd26b108ea1c26cfc1c663f6399d6429f4c326ec9687448d329f0a7",
+    "definition_end_line": 475,
+    "definition_path": "adapters/claude-code/index.ts",
+    "definition_start_line": 62,
+    "fixture": "resume146",
+    "image_digest": "sha256:ff0edbdfca1e89954bf429dde6f0172ba47e1f525831b41b4621374f0969de9a",
+    "indexed_files": 75,
+    "leak_hits": [],
+    "model_calls": 0,
+    "query_kind": "symbol",
+    "query_latency_ms": 0.783249968662858,
+    "supplied_tokens": 39,
+    "tool_read": "passed"
+  },
+  {
+    "build_time_ms": 161.41745680943131,
+    "cache_key": "sha256:083bc21815044f2ab42abda4d3a217bf4fc9293d6eede9ac7032fea50493942b",
+    "definition_end_line": 171,
+    "definition_path": "src/forge/final-pull-request.ts",
+    "definition_start_line": 102,
+    "fixture": "forge-move",
+    "image_digest": "sha256:ff0edbdfca1e89954bf429dde6f0172ba47e1f525831b41b4621374f0969de9a",
+    "indexed_files": 32,
+    "leak_hits": [],
+    "model_calls": 0,
+    "query_kind": "symbol",
+    "query_latency_ms": 0.27962890453636646,
+    "supplied_tokens": 27,
+    "tool_read": "passed"
+  },
+  {
+    "build_time_ms": 152.91877114214003,
+    "cache_key": "sha256:da273a70b8977307f677b748631fa57440815c4b8610ad313cb5f818ad81820c",
+    "definition_end_line": 164,
+    "definition_path": "src/forge/final-pull-request.ts",
+    "definition_start_line": 102,
+    "fixture": "forge-rewrite",
+    "image_digest": "sha256:ff0edbdfca1e89954bf429dde6f0172ba47e1f525831b41b4621374f0969de9a",
+    "indexed_files": 33,
+    "leak_hits": [],
+    "model_calls": 0,
+    "query_kind": "symbol",
+    "query_latency_ms": 0.30100904405117035,
+    "supplied_tokens": 27,
+    "tool_read": "passed"
+  }
+]

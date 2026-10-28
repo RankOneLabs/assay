@@ -12,6 +12,7 @@ from assay.code_intel.models import (
     IndexManifest,
     PreloadedSummary,
     QueryResult,
+    SymbolsMode,
 )
 from assay.code_intel.snapshot import make_index_manifest
 
@@ -42,7 +43,9 @@ class BaselineCodeIntel:
             cause="codeintel_unsupported_query",
         ))
 
-    def summarize(self, manifest: IndexManifest) -> Result[PreloadedSummary | None]:
+    def summarize(
+        self, manifest: IndexManifest, *, token_budget: int = 512
+    ) -> Result[PreloadedSummary | None]:
         return Ok(None)
 
     def tools(self) -> tuple[ToolDefinition, ...]:
@@ -61,6 +64,10 @@ class BaselineCodeIntel:
 def select_code_intel(settings: CodeIntelSettings) -> Result[CodeIntelContract]:
     if isinstance(settings.mode, BaselineMode):
         return Ok(BaselineCodeIntel(settings))
+    if isinstance(settings.mode, SymbolsMode):
+        from assay.code_intel.symbols import SymbolsCodeIntel
+
+        return Ok(SymbolsCodeIntel(settings))
     return Err(CodeIntelError(
         operation="select mode", entity_id=settings.mode.kind,
         detail="index implementation has not been installed",
