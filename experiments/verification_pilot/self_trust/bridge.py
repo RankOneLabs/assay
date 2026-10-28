@@ -32,9 +32,11 @@ from verification_pilot.self_trust.prompts import (
     T3_TEXT,
     build_system_prompt,
     framing_for,
+    t1_message,
 )
 from verification_pilot.self_trust.session import (
     SYSTEM_PROMPT,
+    T1_TEXT,
     Placement,
     session_prefix,
 )
@@ -53,7 +55,7 @@ from verification_pilot.self_trust.study import (
 RUNTIME_VERSION = "self-trust-v2"
 
 
-def subject_prefix(subject: SelfTrustSubject, arm_id: str) -> list[dict[str, Any]]:
+def _subject_prefix_base(subject: SelfTrustSubject, arm_id: str) -> list[dict[str, Any]]:
     """The recorded session after the task message, for either fixture."""
     placement: Placement = placement_for(arm_id)
     if subject.fixture in RUNGS:
@@ -74,6 +76,23 @@ def subject_prefix(subject: SelfTrustSubject, arm_id: str) -> list[dict[str, Any
                                      arm_id == MATCHED_ARMS[0])
     return session_prefix(read_raw_repository(), subject.concept, subject.own,
                           subject.remnant_owner, placement)
+
+
+def subject_prefix(
+    subject: SelfTrustSubject, arm_id: str, *, codeintel_block: str | None = None,
+) -> list[dict[str, Any]]:
+    """Insert provider study material into the final user message before T1."""
+    prefix = _subject_prefix_base(subject, arm_id)
+    if codeintel_block is None:
+        return prefix
+    turn1 = t1_message(RUNGS[subject.fixture]) if subject.fixture in RUNGS else T1_TEXT
+    final = prefix[-1]
+    content = final["content"]
+    if final["role"] != "user" or not isinstance(content, str) or not content.endswith(turn1):
+        raise ValueError("the final prefix message must end with T1 text")
+    prefix[-1] = {**final, "content": content[:-len(turn1)] + codeintel_block.rstrip("\n")
+                  + "\n\n" + turn1}
+    return prefix
 
 
 def subject_system_prompt(subject: SelfTrustSubject, arm_id: str) -> str:

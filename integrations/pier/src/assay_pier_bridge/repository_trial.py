@@ -178,6 +178,12 @@ class RepositoryAgentTrialHandle:
                 raise InfrastructureTrialError(
                     "enforcement", "pilot configuration differs from the agent's tool surface"
                 )
+            if ("message_prefix_sha256" in self._configuration and
+                    self._configuration["message_prefix_sha256"] !=
+                    expected.get("message_prefix_sha256")):
+                raise InfrastructureTrialError(
+                    "enforcement", "pilot configuration differs from the agent's message prefix"
+                )
         if package_digest(self._package) != request.package_digest:
             raise InfrastructureTrialError(
                 "enforcement", "package does not match the request's authorized package_digest"

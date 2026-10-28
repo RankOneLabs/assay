@@ -163,6 +163,7 @@ class PilotBridgeClient:
     def _configuration_for(self, *, system_prompt: str,
                            next_user_turns: tuple[str, ...],
                            subject_rendering: str,
+                           message_prefix: tuple[dict[str, Any], ...] = (),
                            writable_prefixes: tuple[str, ...] | None = None) -> dict[str, Any]:
         probe = create_pilot_agent(
             settings=self.settings, image=self.image, runs_root=self.runs_root,
@@ -170,6 +171,7 @@ class PilotBridgeClient:
             completion=(cast(TurnCompletion, lambda **_: None)
                         if self.factory is not None else None),
             next_user_turns=next_user_turns,
+            message_prefix=message_prefix,
             api_key=self.api_key, system_prompt=system_prompt,
             writable_prefixes=writable_prefixes,
         )
@@ -177,6 +179,7 @@ class PilotBridgeClient:
             bounds=probe.bounds, limits=SandboxLimits(),
             writable_prefixes=probe.writable_prefixes,
             model_route=self.model_route, system_prompt=probe.system_prompt,
+            message_prefix=probe.message_prefix,
             pilot_mode=True, pilot_tools_by_turn=probe.pilot_tools_by_turn,
             next_user_turns=probe.next_user_turns,
             max_tool_calls_per_turn=probe.max_tool_calls_per_turn,

@@ -46,6 +46,7 @@ from verification_pilot.self_trust.refactor_session import (
     session_prefix as refactor_session_prefix,
 )
 from verification_pilot.self_trust.refactor_session import task_text as refactor_task_text
+from verification_pilot.self_trust.session import T1_TEXT
 from verification_pilot.self_trust.session import task_text as rename_task_text
 from verification_pilot.self_trust.study import (
     ARMS,
@@ -245,3 +246,25 @@ def test_subject_owners_have_distinct_snapshot_and_index_keys() -> None:
     keys = [index_cache_key(revision, "sha256:" + "1" * 64, "symbols/1")
             for revision in revisions]
     assert len(set(keys)) == 3
+
+
+@pytest.mark.parametrize("fixture", ("refactor", "rewrite0", "rename"))
+@pytest.mark.parametrize("arm_id", ARMS)
+def test_preloaded_block_has_one_position_in_every_arm(
+    fixture: str, arm_id: str,
+) -> None:
+    if fixture == "rename" and arm_id in ("st-quoted-first", "st-quoted-last"):
+        pytest.skip("the rename fixture does not vary log order")
+    subject = next(subject for subject in self_trust_subjects()
+                   if subject.fixture == fixture and subject.own == "group_a"
+                   and subject.remnant_owner == "group_a")
+    before = subject_prefix(subject, arm_id)
+    after = subject_prefix(subject, arm_id, codeintel_block="INDEX BLOCK\n")
+    assert len(after) == len(before)
+    assert after[:-1] == before[:-1]
+    assert after[-1]["role"] == "user"
+    turn1 = t1_message(RUNGS[fixture]) if fixture in RUNGS else T1_TEXT
+    assert before[-1]["content"].endswith(turn1)
+    assert after[-1]["content"] == before[-1]["content"][:-len(turn1)] + (
+        "INDEX BLOCK\n\n" + turn1
+    )
