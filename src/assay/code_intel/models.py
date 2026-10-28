@@ -124,6 +124,7 @@ class CapabilityManifest(WireModel):
     query_kinds: tuple[str, ...]
     supports_summary: bool
     unresolvable_cases: tuple[str, ...] = ()
+    graph_edge_caveat: str | None = None
 
 
 class PreloadedSummary(WireModel):

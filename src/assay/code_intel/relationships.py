@@ -107,7 +107,9 @@ class RelationshipsCodeIntel(SymbolsCodeIntel):
             supports_summary=True,
             unresolvable_cases=(
                 "dynamic import()", "string-keyed dispatch", "any-typed calls",
-                "A graph edge is a static inference, not proof of runtime execution.",
+            ),
+            graph_edge_caveat=(
+                "A graph edge is a static inference, not proof of runtime execution."
             ),
         )
 

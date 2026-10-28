@@ -119,11 +119,12 @@ def test_cross_file_caller_and_unresolved_shapes(tmp_path: Path) -> None:
     assert result.value.supplied_tokens == sum(item.approximate_tokens for item in calls)
     capabilities = provider.capabilities()
     assert capabilities.query_kinds == ("callers_and_callees", "importers", "affected")
-    assert {"dynamic import()", "string-keyed dispatch", "any-typed calls"}.issubset(
-        capabilities.unresolvable_cases
+    assert capabilities.unresolvable_cases == (
+        "dynamic import()", "string-keyed dispatch", "any-typed calls",
     )
-    assert any("static inference" in case and "not proof" in case
-               for case in capabilities.unresolvable_cases)
+    assert capabilities.graph_edge_caveat is not None
+    assert "static inference" in capabilities.graph_edge_caveat
+    assert "not proof" in capabilities.graph_edge_caveat
 
 
 def test_relationships_reuse_the_symbols_parse(

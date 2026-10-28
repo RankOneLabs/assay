@@ -113,8 +113,11 @@ The index stores its `ModuleGraphV2`, plus the `CycleReportV4` and
 `importers` returns those graph edges without reconstructing imports. The
 `affected` query follows those edges in reverse: a change to M affects M and
 each module that transitively imports M. Its set size equals M's `reached_by`
-count, which includes M itself. Type-only imports remain edges; unresolved
-and external imports remain external dependencies in the metrics graph.
+count, which includes M itself. The propagation report retains counts rather
+than member sets, so this reverse traversal is needed to list modules; the
+query checks its result against the published `reached_by` count. Type-only
+imports remain edges; unresolved and external imports remain external
+dependencies in the metrics graph.
 
 Call candidates come from the syntax tree already parsed for symbols. A
 direct identifier call resolves only when it has one matching local or
