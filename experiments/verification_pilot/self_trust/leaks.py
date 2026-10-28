@@ -48,6 +48,7 @@ def hidden_paths() -> set[str]:
 def main() -> None:
     hits = []
     sessions = 0
+    excluded_paths = hidden_paths()
     for index_path in sorted(RUNS.glob("*/index.json")):
         run = index_path.parent
         for cell_id, entry in sorted(json.loads(index_path.read_text(encoding="utf-8")).items()):
@@ -61,7 +62,7 @@ def main() -> None:
                 text = message.get("content") or ""
                 if not isinstance(text, str):
                     text = json.dumps(text)
-                for hit in scan_text(text, TERMS, hidden_paths(), source=message["role"]):
+                for hit in scan_text(text, TERMS, excluded_paths, source=message["role"]):
                     hits.append(
                         {
                             "run_id": run.name,

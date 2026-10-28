@@ -45,3 +45,5 @@ def test_scan_pre_run_finds_declared_hidden_source_text() -> None:
     hits = scan_pre_run(manifest, summary, (), (), (), ("answer\nline",))
     assert len(hits) == 1
     assert hits[0].source == "summary"
+    upper_summary = PreloadedSummary(repo_revision=manifest.repo_revision, text="ANSWER\nLINE")
+    assert scan_pre_run(manifest, upper_summary, (), (), (), ("answer\nline",)) == ()
