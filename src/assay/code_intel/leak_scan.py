@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -37,7 +38,7 @@ def scan_text(
 def scan_pre_run(
     manifest: IndexManifest, summary: PreloadedSummary | None,
     query_results: Sequence[QueryResult], term_patterns: Sequence[str],
-    hidden_paths: Iterable[str],
+    hidden_paths: Iterable[str], hidden_source_texts: Iterable[str] = (),
 ) -> tuple[LeakHit, ...]:
     """Inspect the full manifest and all content that may be delivered before a run."""
     sources = [("index_manifest", manifest.model_dump_json())]
@@ -46,5 +47,9 @@ def scan_pre_run(
     for position, result in enumerate(query_results):
         sources.append((f"query:{position}", result.model_dump_json()))
     paths = tuple(hidden_paths)
+    # Serialized wire models escape newlines; search for the fixture's declared
+    # hidden_tests source in the same encoding as the material being scanned.
+    patterns = [*term_patterns, *(re.escape(json.dumps(source, ensure_ascii=False)[1:-1])
+                                 for source in hidden_source_texts if source)]
     return tuple(hit for source, content in sources
-                 for hit in scan_text(content, term_patterns, paths, source=source))
+                 for hit in scan_text(content, patterns, paths, source=source))

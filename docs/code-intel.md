@@ -42,7 +42,8 @@ attribute an uncovered omission to an agent.
 `scan_text` takes term patterns and hidden paths, returns typed hits, and uses
 the existing 80-character context on either side of a match. `scan_pre_run`
 scans the serialized index manifest, preloaded summary, and query results
-before a run. The self-trust archive scanner retains its 16 study terms and
+before a run. It can also match the fixture's declared hidden test source.
+The self-trust archive scanner retains its 16 study terms and
 archive traversal, calls `scan_text`, and writes its CSV to
 `experiments/verification_pilot/raw/self_trust/ledger/leak-scan.csv`.
 

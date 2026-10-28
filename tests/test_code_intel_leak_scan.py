@@ -33,3 +33,15 @@ def test_scan_pre_run_covers_manifest_summary_and_queries() -> None:
     assert [(hit.source, hit.term) for hit in hits] == [
         ("summary", "oracle"), ("query:0", "planted")
     ]
+
+
+def test_scan_pre_run_finds_declared_hidden_source_text() -> None:
+    tree = {"src/main.ts": "x"}
+    manifest = make_index_manifest(
+        tree, image_digest=REVISION, indexer_version="v1", excluded_paths=(),
+        indexed_paths=tree,
+    )
+    summary = PreloadedSummary(repo_revision=manifest.repo_revision, text="answer\nline")
+    hits = scan_pre_run(manifest, summary, (), (), (), ("answer\nline",))
+    assert len(hits) == 1
+    assert hits[0].source == "summary"
