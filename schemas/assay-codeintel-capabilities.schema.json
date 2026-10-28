@@ -125,6 +125,14 @@
     "supports_summary": {
       "title": "Supports Summary",
       "type": "boolean"
+    },
+    "unresolvable_cases": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolvable Cases",
+      "type": "array"
     }
   },
   "required": [

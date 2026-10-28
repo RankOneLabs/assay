@@ -11,8 +11,11 @@ from assay.code_intel.models import ContextItem, IndexManifest
 
 
 class HiddenFixture(Protocol):
-    hidden_test: str
-    hidden_tests: str
+    @property
+    def hidden_test(self) -> str: ...
+
+    @property
+    def hidden_tests(self) -> str: ...
 
 
 def delivered_workspace(package: Mapping[str, str]) -> dict[str, str]:

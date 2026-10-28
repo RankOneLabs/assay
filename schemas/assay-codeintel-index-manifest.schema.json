@@ -1,5 +1,50 @@
 {
   "$defs": {
+    "AstStructure": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "file_path": {
+          "minLength": 1,
+          "title": "File Path",
+          "type": "string"
+        },
+        "start_line": {
+          "minimum": 1,
+          "title": "Start Line",
+          "type": "integer"
+        },
+        "end_line": {
+          "minimum": 1,
+          "title": "End Line",
+          "type": "integer"
+        },
+        "parent_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Kind"
+        }
+      },
+      "required": [
+        "kind",
+        "file_path",
+        "start_line",
+        "end_line"
+      ],
+      "title": "AstStructure",
+      "type": "object"
+    },
     "ContextItem": {
       "additionalProperties": false,
       "description": "Source provenance required to audit what a session could retrieve.",
@@ -101,6 +146,90 @@
       ],
       "title": "ContextItem",
       "type": "object"
+    },
+    "SymbolDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "kind": {
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "file_path": {
+          "minLength": 1,
+          "title": "File Path",
+          "type": "string"
+        },
+        "start_line": {
+          "minimum": 1,
+          "title": "Start Line",
+          "type": "integer"
+        },
+        "end_line": {
+          "minimum": 1,
+          "title": "End Line",
+          "type": "integer"
+        },
+        "signature": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signature"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "file_path",
+        "start_line",
+        "end_line"
+      ],
+      "title": "SymbolDefinition",
+      "type": "object"
+    },
+    "SymbolReference": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "file_path": {
+          "minLength": 1,
+          "title": "File Path",
+          "type": "string"
+        },
+        "line": {
+          "minimum": 1,
+          "title": "Line",
+          "type": "integer"
+        },
+        "column": {
+          "minimum": 1,
+          "title": "Column",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "file_path",
+        "line",
+        "column"
+      ],
+      "title": "SymbolReference",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -151,6 +280,43 @@
       },
       "title": "Items",
       "type": "array"
+    },
+    "definitions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SymbolDefinition"
+      },
+      "title": "Definitions",
+      "type": "array"
+    },
+    "references": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SymbolReference"
+      },
+      "title": "References",
+      "type": "array"
+    },
+    "structures": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AstStructure"
+      },
+      "title": "Structures",
+      "type": "array"
+    },
+    "tool_versions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Tool Versions",
+      "type": "object"
+    },
+    "build_time_ms": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Build Time Ms",
+      "type": "number"
     }
   },
   "required": [
