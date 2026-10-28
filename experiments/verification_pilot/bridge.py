@@ -14,6 +14,9 @@ if str(_BRIDGE_SRC) not in sys.path:
     sys.path.insert(0, str(_BRIDGE_SRC))
 
 from assay_pier_bridge.agent_loop import (  # noqa: E402
+    PILOT_TOOL_SCHEMAS as PILOT_TOOL_SCHEMAS,
+)
+from assay_pier_bridge.agent_loop import (  # noqa: E402
     CellStorage,
     DockerTmpfsStagingStorage,
     DockerTmpfsToolSandbox,
@@ -37,6 +40,13 @@ from workflow_edit.bridge import (  # noqa: E402
 
 from assay.adapters.pier import PierAdapter  # noqa: E402
 from assay.adapters.smithers import SmithersFactory  # noqa: E402
+from assay.code_intel.baseline import select_code_intel  # noqa: E402
+from assay.code_intel.contract import (  # noqa: E402
+    append_code_intel_prefix,
+    append_code_intel_tools,
+    render_code_intel_prompt,
+)
+from assay.code_intel.errors import Err  # noqa: E402
 from assay.execution import AdmissionHalt, WorkerFailure, WorkerResult  # noqa: E402
 from assay.models import CellCoordinate, RuntimeProfile  # noqa: E402
 from assay.pier_protocol import PierExchange, RuntimeBinding  # noqa: E402
@@ -66,6 +76,12 @@ def create_pilot_agent(
     spend_gate: SpendGate | None = None,
     system_prompt: str = PILOT_SYSTEM_PROMPT,
     writable_prefixes: tuple[str, ...] | None = None,
+    pilot_tools_by_turn: dict[str, list[dict[str, Any]]] | None = None,
+    codeintel_query_script: str | None = None,
+    codeintel_index_mount: str | None = None,
+    codeintel_index_agent_readable: bool | None = None,
+    codeintel_max_context_tokens: int = 0,
+    codeintel_query_limit: int = 0,
 ) -> RepositoryAgentClient:
     """Use the pilot's declared scope and call budgets for the actual loop.
 
@@ -73,6 +89,15 @@ def create_pilot_agent(
     """
     if spend_gate is not None and not model_route.paid_route_reachable:
         raise ValueError("the zero-paid local route takes no spend gate")
+    selected = select_code_intel(settings.code_intel)
+    if isinstance(selected, Err):
+        raise ValueError(str(selected.error))
+    code_intel = selected.value
+    baseline_tools = pilot_tools_by_turn or PILOT_TOOL_SCHEMAS
+    dispatched_tools = {
+        turn: append_code_intel_tools(tools, code_intel.tools())
+        for turn, tools in baseline_tools.items()
+    }
     budgeted: dict[str, Any] = {"spend_gate": spend_gate} if spend_gate is not None else {}
     client = BudgetedAgentClient if spend_gate is not None else RepositoryAgentClient
     return client(
@@ -92,9 +117,15 @@ def create_pilot_agent(
             max_storage_mb=settings.max_storage_mb,
         ),
         pilot_mode=True,
-        system_prompt=system_prompt,
+        pilot_tools_by_turn=dispatched_tools,
+        codeintel_query_script=codeintel_query_script,
+        codeintel_index_mount=codeintel_index_mount,
+        codeintel_index_agent_readable=codeintel_index_agent_readable,
+        codeintel_max_context_tokens=codeintel_max_context_tokens,
+        codeintel_query_limit=codeintel_query_limit,
+        system_prompt=render_code_intel_prompt(system_prompt, code_intel.prompt_block()),
         next_user_turns=next_user_turns,
-        message_prefix=message_prefix,
+        message_prefix=tuple(append_code_intel_prefix(message_prefix, code_intel.prefix_block())),
         writable_prefixes=(settings.writable_prefixes if writable_prefixes is None
                            else writable_prefixes),
         max_tool_calls_per_turn=settings.max_tool_calls_per_turn,
@@ -144,6 +175,8 @@ class PilotBridgeClient:
     def _configuration_for(self, *, system_prompt: str,
                            next_user_turns: tuple[str, ...],
                            subject_rendering: str,
+                           message_prefix: tuple[dict[str, Any], ...] = (),
+                           pilot_tools_by_turn: dict[str, list[dict[str, Any]]] | None = None,
                            writable_prefixes: tuple[str, ...] | None = None) -> dict[str, Any]:
         probe = create_pilot_agent(
             settings=self.settings, image=self.image, runs_root=self.runs_root,
@@ -151,6 +184,8 @@ class PilotBridgeClient:
             completion=(cast(TurnCompletion, lambda **_: None)
                         if self.factory is not None else None),
             next_user_turns=next_user_turns,
+            message_prefix=message_prefix,
+            pilot_tools_by_turn=pilot_tools_by_turn,
             api_key=self.api_key, system_prompt=system_prompt,
             writable_prefixes=writable_prefixes,
         )
@@ -158,7 +193,9 @@ class PilotBridgeClient:
             bounds=probe.bounds, limits=SandboxLimits(),
             writable_prefixes=probe.writable_prefixes,
             model_route=self.model_route, system_prompt=probe.system_prompt,
-            pilot_mode=True, next_user_turns=probe.next_user_turns,
+            message_prefix=probe.message_prefix,
+            pilot_mode=True, pilot_tools_by_turn=probe.pilot_tools_by_turn,
+            next_user_turns=probe.next_user_turns,
             max_tool_calls_per_turn=probe.max_tool_calls_per_turn,
             max_tool_calls_per_cell=probe.max_tool_calls_per_cell,
             extra={"image": self.image, "timeout_s": self.timeout_s,

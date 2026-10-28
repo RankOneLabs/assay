@@ -57,6 +57,7 @@ def agent_configuration(
     model_route: ModelRoute,
     extra: Mapping[str, Any] | None = None,
     tools: list[dict[str, Any]] | None = None,
+    pilot_tools_by_turn: Mapping[str, list[dict[str, Any]]] | None = None,
     system_prompt: str = SYSTEM_PROMPT,
     message_prefix: tuple[dict[str, Any], ...] = (),
     pilot_mode: bool = False,
@@ -67,6 +68,7 @@ def agent_configuration(
     """The stable, authorizable description of how this loop runs a cell."""
     if pilot_mode and min(max_tool_calls_per_turn, max_tool_calls_per_cell) < 1:
         raise ValueError("pilot configuration requires positive tool call limits")
+    pilot_schemas = PILOT_TOOL_SCHEMAS if pilot_tools_by_turn is None else pilot_tools_by_turn
     return {
         "loop": "assay-repository-agent/1",
         "bounds": asdict(bounds),
@@ -75,7 +77,7 @@ def agent_configuration(
         "network": "none",
         "writable_prefixes": list(writable_prefixes),
         "tools_sha256": digest_bytes(canonical_json(
-            PILOT_TOOL_SCHEMAS if pilot_mode else (TOOLS if tools is None else tools)
+            pilot_schemas if pilot_mode else (TOOLS if tools is None else tools)
         )),
         "system_prompt_sha256": digest_bytes(system_prompt.encode("utf-8")),
         "model_route": model_route.model_dump(mode="json"),
@@ -85,6 +87,8 @@ def agent_configuration(
            if message_prefix else {}),
         **({
             "turn_prompts_sha256": digest_bytes(canonical_json(next_user_turns)),
+            "tools_t1_sha256": digest_bytes(canonical_json(pilot_schemas["T1"])),
+            "tools_t2_t3_sha256": digest_bytes(canonical_json(pilot_schemas["T2_T3"])),
             "max_tool_calls_per_turn": max_tool_calls_per_turn,
             "max_tool_calls_per_cell": max_tool_calls_per_cell,
             "turns": 3,
@@ -158,6 +162,7 @@ class RepositoryAgentTrialHandle:
                 bounds=self._agent.bounds, limits=self._limits,
                 writable_prefixes=self._agent.writable_prefixes,
                 model_route=self._agent.model_route, pilot_mode=True,
+                pilot_tools_by_turn=self._agent.pilot_tools_by_turn,
                 next_user_turns=self._agent.next_user_turns,
                 system_prompt=self._agent.system_prompt,
                 message_prefix=self._agent.message_prefix,
@@ -165,12 +170,19 @@ class RepositoryAgentTrialHandle:
                 max_tool_calls_per_cell=self._agent.max_tool_calls_per_cell,
             )
             pinned = (
-                "tools_sha256", "system_prompt_sha256", "turn_prompts_sha256",
+                "tools_sha256", "tools_t1_sha256", "tools_t2_t3_sha256",
+                "system_prompt_sha256", "turn_prompts_sha256",
                 "writable_prefixes", "max_tool_calls_per_turn", "max_tool_calls_per_cell",
             )
             if any(self._configuration.get(key) != expected[key] for key in pinned):
                 raise InfrastructureTrialError(
                     "enforcement", "pilot configuration differs from the agent's tool surface"
+                )
+            if ("message_prefix_sha256" in self._configuration and
+                    self._configuration["message_prefix_sha256"] !=
+                    expected.get("message_prefix_sha256")):
+                raise InfrastructureTrialError(
+                    "enforcement", "pilot configuration differs from the agent's message prefix"
                 )
         if package_digest(self._package) != request.package_digest:
             raise InfrastructureTrialError(

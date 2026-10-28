@@ -1,0 +1,160 @@
+{
+  "$defs": {
+    "BaselineMode": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "baseline",
+          "default": "baseline",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "BaselineMode",
+      "type": "object"
+    },
+    "PreloadedDelivery": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "preloaded",
+          "default": "preloaded",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "PreloadedDelivery",
+      "type": "object"
+    },
+    "RelationshipsMode": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "relationships",
+          "default": "relationships",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "RelationshipsMode",
+      "type": "object"
+    },
+    "SymbolsMode": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "symbols",
+          "default": "symbols",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "SymbolsMode",
+      "type": "object"
+    },
+    "ToolDelivery": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "tool",
+          "default": "tool",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "ToolDelivery",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Declared mode, delivery, and query support of one code-intelligence implementation.",
+  "properties": {
+    "schema_version": {
+      "const": "assay-codeintel-capabilities/0.1.0",
+      "default": "assay-codeintel-capabilities/0.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "mode": {
+      "discriminator": {
+        "mapping": {
+          "baseline": "#/$defs/BaselineMode",
+          "relationships": "#/$defs/RelationshipsMode",
+          "symbols": "#/$defs/SymbolsMode"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/BaselineMode"
+        },
+        {
+          "$ref": "#/$defs/SymbolsMode"
+        },
+        {
+          "$ref": "#/$defs/RelationshipsMode"
+        }
+      ],
+      "title": "Mode"
+    },
+    "delivery": {
+      "discriminator": {
+        "mapping": {
+          "preloaded": "#/$defs/PreloadedDelivery",
+          "tool": "#/$defs/ToolDelivery"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ToolDelivery"
+        },
+        {
+          "$ref": "#/$defs/PreloadedDelivery"
+        }
+      ],
+      "title": "Delivery"
+    },
+    "query_kinds": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Query Kinds",
+      "type": "array"
+    },
+    "supports_summary": {
+      "title": "Supports Summary",
+      "type": "boolean"
+    },
+    "unresolvable_cases": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolvable Cases",
+      "type": "array"
+    },
+    "graph_edge_caveat": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Graph Edge Caveat"
+    }
+  },
+  "required": [
+    "mode",
+    "delivery",
+    "query_kinds",
+    "supports_summary"
+  ],
+  "title": "CapabilityManifest",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-codeintel-capabilities.schema.json"
+}

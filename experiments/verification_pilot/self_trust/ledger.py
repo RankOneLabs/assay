@@ -16,6 +16,7 @@ Terminal status is normalized from the stop cause and the last model request:
 - ``provider_error``: the provider returned an error, refused, failed its
   identity check, or the transport failed. A ``no_tool_call`` stop whose last
   request has ``finish_reason`` "error" lands here, not in the two above.
+- ``codeintel_failure``: the index failed to build or its snapshot was stale.
 - ``budget_cut``: the run's dollar cap stopped the session.
 - ``agent_limit``: a request, tool-call or output-token limit stopped it.
 - ``timeout``: a wall-clock deadline stopped it (agent or Smithers job).
@@ -27,11 +28,13 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from verification_pilot.self_trust.settings import excluded_cause
+from verification_pilot.self_trust.refactor_evaluation import CODEINTEL_QUERY_TOOL
+from verification_pilot.self_trust.settings import CODEINTEL_CAUSE_PREFIX, excluded_cause
 
 PILOT = Path(__file__).resolve().parents[1]
 RUNS = PILOT / "raw" / "self_trust" / "runs"
@@ -69,6 +72,8 @@ FIELDS = [
     "system_prompt_sha256",
     "turn_prompts_sha256",
     "tools_sha256",
+    "tools_t1_sha256",
+    "tools_t2_t3_sha256",
     "subject_rendering",
     "realization_ref",
     "image_digest",
@@ -102,6 +107,12 @@ FIELDS = [
     "module_read_t1",
     "module_read_t2",
     "module_read_t3",
+    "module_read_any_t1",
+    "module_read_any_t2",
+    "module_read_any_t3",
+    "codeintel_query_count",
+    "codeintel_query_error_count",
+    "codeintel_query_error_causes",
     "requests",
     "tokens_in",
     "tokens_out",
@@ -140,6 +151,8 @@ def terminal(
         return "completed_no_verdict"
     if cause == "budget_exhausted":
         return "budget_cut"
+    if cause.startswith(CODEINTEL_CAUSE_PREFIX):
+        return "codeintel_failure"
     if cause in PROVIDER_CAUSES or excluded_cause(cause):
         return "provider_error"
     if cause in LIMIT_CAUSES:
@@ -147,6 +160,23 @@ def terminal(
     if cause in TIMEOUT_CAUSES:
         return "timeout"
     return "unclassified"
+
+
+def _query_accounting(turns: list[dict[str, Any]]) -> tuple[int, list[str]]:
+    calls = [call for turn in turns for call in turn.get("tool_calls", [])
+             if isinstance(call, dict) and call.get("name") == CODEINTEL_QUERY_TOOL]
+    causes = []
+    for call in calls:
+        if call.get("exit_code") == 0:
+            continue
+        cause = call.get("error_cause") or call.get("cause")
+        if not isinstance(cause, str) or not cause:
+            returned = call.get("returned_text")
+            match = (re.search(r"(?:^|\n)error: (codeintel_[a-z_]+)\b", returned)
+                     if isinstance(returned, str) else None)
+            cause = match.group(1) if match else "codeintel_query_error"
+        causes.append(cause)
+    return len(calls), causes
 
 
 def cell_row(
@@ -179,6 +209,7 @@ def cell_row(
         "",
     )
     usage = [t.get("usage") or {} for t in trajectory["turns"]]
+    query_count, query_error_causes = _query_accounting(trajectory["turns"])
     subject = coordinate.get("subject_id", cell_id.split(":")[0])
     parts = subject.split("-")
     checks = value.get(("final", "checks")) or {}
@@ -208,6 +239,8 @@ def cell_row(
         "system_prompt_sha256": config.get("system_prompt_sha256"),
         "turn_prompts_sha256": config.get("turn_prompts_sha256"),
         "tools_sha256": config.get("tools_sha256"),
+        "tools_t1_sha256": config.get("tools_t1_sha256"),
+        "tools_t2_t3_sha256": config.get("tools_t2_t3_sha256"),
         "subject_rendering": config.get("subject_rendering"),
         "realization_ref": coordinate.get("realization_ref"),
         "image_digest": binding.get("image_digest"),
@@ -250,6 +283,12 @@ def cell_row(
         "module_read_t1": value.get(("T1", "module_read")),
         "module_read_t2": value.get(("T2", "module_read")),
         "module_read_t3": value.get(("T3", "module_read")),
+        "module_read_any_t1": value.get(("T1", "module_read_any")),
+        "module_read_any_t2": value.get(("T2", "module_read_any")),
+        "module_read_any_t3": value.get(("T3", "module_read_any")),
+        "codeintel_query_count": query_count,
+        "codeintel_query_error_count": len(query_error_causes),
+        "codeintel_query_error_causes": json.dumps(query_error_causes),
         "requests": len(requests),
         "tokens_in": sum(e.get("prompt_tokens") or 0 for e in requests),
         "tokens_out": sum(e.get("completion_tokens") or 0 for e in requests),

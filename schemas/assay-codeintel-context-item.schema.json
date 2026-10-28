@@ -1,0 +1,104 @@
+{
+  "additionalProperties": false,
+  "description": "Source provenance required to audit what a session could retrieve.",
+  "properties": {
+    "repo_revision": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Repo Revision",
+      "type": "string"
+    },
+    "file_path": {
+      "minLength": 1,
+      "title": "File Path",
+      "type": "string"
+    },
+    "start_line": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Start Line"
+    },
+    "end_line": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "End Line"
+    },
+    "symbol": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Symbol"
+    },
+    "retrieval_method": {
+      "minLength": 1,
+      "title": "Retrieval Method",
+      "type": "string"
+    },
+    "rank": {
+      "minimum": 0,
+      "title": "Rank",
+      "type": "integer"
+    },
+    "content_hash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "approximate_tokens": {
+      "minimum": 0,
+      "title": "Approximate Tokens",
+      "type": "integer"
+    },
+    "raw_source_ref": {
+      "minLength": 1,
+      "title": "Raw Source Ref",
+      "type": "string"
+    },
+    "content": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content"
+    }
+  },
+  "required": [
+    "repo_revision",
+    "file_path",
+    "retrieval_method",
+    "rank",
+    "content_hash",
+    "approximate_tokens",
+    "raw_source_ref"
+  ],
+  "title": "ContextItem",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-codeintel-context-item.schema.json"
+}

@@ -15,13 +15,31 @@ from assay.cli import main
 from assay.code_metrics import analyze, compare, pins, tools
 from assay.code_metrics.errors import ToolVersionMismatch
 from assay.code_metrics.models import _Config
-from assay.code_metrics.pins import PINS, RUST_PINS, assert_pinned_tools
+from assay.code_metrics.pins import PINS, RUST_PINS, TYPESCRIPT_PINS, assert_pinned_tools
 
 
 def test_pins_match_declared_extra() -> None:
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     extra = project["project"]["optional-dependencies"]["code-metrics"]
-    assert {name: pin for name, pin in (item.split("==") for item in extra)} == PINS | RUST_PINS
+    declared = {name: pin for name, pin in (item.split("==") for item in extra)}
+    assert declared == PINS | RUST_PINS | TYPESCRIPT_PINS
+
+
+def test_typescript_grammar_version_mismatch_names_all_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_version = pins.version
+    monkeypatch.setattr(
+        pins, "version",
+        lambda name: "0.0.0" if name == "tree-sitter-typescript" else real_version(name),
+    )
+    with pytest.raises(ToolVersionMismatch) as error:
+        assert_pinned_tools()
+    assert error.value.tool == "tree-sitter-typescript"
+    assert error.value.expected == TYPESCRIPT_PINS["tree-sitter-typescript"]
+    assert error.value.resolved == "0.0.0"
+    assert all(value in str(error.value) for value in ("tree-sitter-typescript", "0.23.2", "0.0.0"))
+    assert "tree-sitter-typescript" not in RUST_PINS
 
 
 def test_relative_node_tools_override_resolves_before_derived_paths(tmp_path: Path) -> None:
