@@ -74,9 +74,15 @@ The broad `module_read_any` measure is published for T1, T2 and T3 beside
 attempts and errors are counted per session in the ledger. The trajectory
 carries host-recorded `code_intel_index: {"path": "...", "agent_readable": true}`
 metadata. The delivery mount path is absolute and outside `/workspace`. The
-existing shell inspection parser only normalizes paths under `/workspace`, so
-it cannot yet count a grep of this mount; `codeintel_query` remains countable
-from its structured result.
+shell inspection parser normalizes paths under the configured mount only for
+this broad measure, so a successful read or grep of the index counts when the
+trajectory says it is agent-readable. `codeintel_query` counts from its
+structured result. The `index_agent_readable` flag declares the operator's
+intended access policy; it is not an enforced access boundary for a preloaded
+arm. In particular, an agent that owns an index file with mode `000` can
+restore read permission with `chmod`. Interpret the measure using the declared
+flag. Enforcing a boundary would require a separate root-owned, read-only mount
+implementation.
 
 ## TypeScript symbols mode
 

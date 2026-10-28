@@ -84,8 +84,8 @@ def _segments(command: str) -> list[list[str]]:
     return cleaned
 
 
-def _repository_path(token: str, cwd: str) -> str | None:
-    """A workspace-relative path, ``.`` for the root, or None when unsafe."""
+def _repository_path(token: str, cwd: str, index_mount: str | None = None) -> str | None:
+    """A workspace-relative or configured index path, or None when unsafe."""
     if not token or _UNSAFE_PATH.search(token):
         return None
     absolute = token if token.startswith("/") else f"{cwd.rstrip('/')}/{token}"
@@ -99,6 +99,10 @@ def _repository_path(token: str, cwd: str) -> str | None:
             parts.pop()
             continue
         parts.append(part)
+    if index_mount is not None:
+        mount_parts = index_mount.strip("/").split("/")
+        if parts[:len(mount_parts)] == mount_parts:
+            return "/" + "/".join(parts)
     root = WORKSPACE.strip("/").split("/")
     if parts[:len(root)] != root:
         return None
@@ -132,7 +136,7 @@ def _operands(tokens: list[str], value_options: frozenset[str]) -> tuple[list[st
     return patterns, operands
 
 
-def _search(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
+def _search(tokens: list[str], cwd: str, index_mount: str | None = None) -> list[dict[str, Any]]:
     name = tokens[0]
     if name == "git":
         if len(tokens) < 2 or tokens[1] != "grep":
@@ -155,7 +159,7 @@ def _search(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
         operands = ["."]
     searches = []
     for operand in operands:
-        scope = _repository_path(operand, cwd)
+        scope = _repository_path(operand, cwd, index_mount)
         if scope is None:
             continue
         if not recursive and scope == ".":
@@ -166,7 +170,7 @@ def _search(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
     return searches
 
 
-def _read(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
+def _read(tokens: list[str], cwd: str, index_mount: str | None = None) -> list[dict[str, Any]]:
     name = tokens[0]
     rest = tokens[1:]
     quiet = any(t == "-n" or (t.startswith("-n") and len(t) > 2) for t in rest)
@@ -178,7 +182,7 @@ def _read(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
         operands = operands[1:]  # the script
     reads = []
     for operand in operands:
-        path = _repository_path(operand, cwd)
+        path = _repository_path(operand, cwd, index_mount)
         if path is None or path == ".":
             continue
         if _GLOB_PATH.search(path):
@@ -190,7 +194,7 @@ def _read(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
     return reads
 
 
-def _find(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
+def _find(tokens: list[str], cwd: str, index_mount: str | None = None) -> list[dict[str, Any]]:
     """Model a successful find whose -exec inspects its selected files."""
     if len(tokens) < 5 or "-exec" not in tokens:
         return []
@@ -220,7 +224,7 @@ def _find(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
         return []
     derived = []
     for root in roots:
-        scope = _repository_path(root, cwd)
+        scope = _repository_path(root, cwd, index_mount)
         if scope is None:
             continue
         for name in names or [""]:
@@ -232,7 +236,8 @@ def _find(tokens: list[str], cwd: str) -> list[dict[str, Any]]:
     return derived
 
 
-def shell_inspections(call: Mapping[str, Any]) -> list[dict[str, Any]]:
+def shell_inspections(call: Mapping[str, Any], *,
+                      index_mount: str | None = None) -> list[dict[str, Any]]:
     """Virtual search and read calls for one successful ``run_command``."""
     arguments = call.get("arguments")
     if call.get("name") != "run_command" or not isinstance(arguments, dict):
@@ -250,14 +255,15 @@ def shell_inspections(call: Mapping[str, Any]) -> list[dict[str, Any]]:
     for tokens in segments:
         head = tokens[0]
         if head == "cd":
-            target = _repository_path(tokens[1], cwd) if len(tokens) > 1 else None
+            target = _repository_path(tokens[1], cwd, index_mount) if len(tokens) > 1 else None
             if target is None:
-                return derived  # left the workspace: later paths are not repository paths
-            cwd = WORKSPACE if target == "." else f"{WORKSPACE}/{target}"
+                return derived  # later paths are neither workspace nor configured index paths
+            cwd = (target if target.startswith("/") else
+                   WORKSPACE if target == "." else f"{WORKSPACE}/{target}")
         elif head in SEARCH_COMMANDS or head == "git":
-            derived.extend(_search(tokens, cwd))
+            derived.extend(_search(tokens, cwd, index_mount))
         elif head in READ_COMMANDS:
-            derived.extend(_read(tokens, cwd))
+            derived.extend(_read(tokens, cwd, index_mount))
         elif head == "find":
-            derived.extend(_find(tokens, cwd))
+            derived.extend(_find(tokens, cwd, index_mount))
     return derived

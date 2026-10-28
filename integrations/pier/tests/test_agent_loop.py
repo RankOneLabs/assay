@@ -43,7 +43,13 @@ from assay_pier_bridge.agent_loop import (
     _submission,
 )
 from assay_pier_bridge.identity import canonical_json, digest_bytes
-from assay_pier_bridge.paths import ArtifactCollectionRejected, extract_workspace_archive
+from assay_pier_bridge.paths import (
+    ArtifactCollectionRejected,
+    check_submission_scope,
+    extract_workspace_archive,
+    regular_tree,
+    submission_patch,
+)
 from assay_pier_bridge.protocol import ModelRoute
 from assay_pier_bridge.provider import MODEL, PROVIDER_NAME
 
@@ -2038,6 +2044,54 @@ def test_tmpfs_capture_streams_the_tree_and_replaces_staging(
     }
     assert not (workspace / "deleted.txt").exists()
     assert (workspace / "src" / "new.txt").read_text() == "new"
+
+
+@pytest.mark.parametrize("tmpfs", (False, True))
+def test_index_mount_does_not_change_capture_diff_or_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmpfs: bool,
+) -> None:
+    source = b"export const value = 1;\n"
+    member, _ = _file("./src/a.ts", source)
+    archive = _tar([member], {"./src/a.ts": source})
+    capture_commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        if command[:2] == ["docker", "inspect"]:
+            return SimpleNamespace(returncode=0, stdout=_inspect_stdout(), stderr="")
+        if command[:4] == ["docker", "exec", "-u", "0:0"]:
+            capture_commands.append(command)
+            return SimpleNamespace(returncode=0, stdout=archive, stderr=b"")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    real_run = subprocess.run
+    observations: list[tuple[dict[str, bytes], bytes]] = []
+    for with_index in (False, True):
+        monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+        root = tmp_path / ("mounted" if with_index else "baseline")
+        baseline, workspace, cache = root / "before", root / "workspace", root / "cache"
+        for directory in (baseline / "src", workspace / "src", cache):
+            directory.mkdir(parents=True)
+        (baseline / "src" / "a.ts").write_bytes(source)
+        (workspace / "src" / "a.ts").write_bytes(source)
+        options: dict[str, Any] = (
+            {"index_mount": "/codeintel-index", "index_files": {"index.json": b"{}"}}
+            if with_index else {}
+        )
+        sandbox = DockerToolSandbox(
+            workspace, cache, "img", "s:a:w0", tmpfs_storage=tmpfs, **options,
+        )
+        sandbox.execute = lambda *args, **kwargs: ToolOutput(  # type: ignore[method-assign]
+            "exit=0\n1024\n2\n0\n5000\n6000\n", 30, False,
+        )
+        sandbox.capture_workspace()
+        monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", real_run)
+        before, after = regular_tree(baseline), regular_tree(workspace)
+        check_submission_scope(before, after, writable_prefixes=("src/",))
+        observations.append((after, submission_patch(baseline, workspace).patch))
+    assert observations == [({"src/a.ts": source}, b"")] * 2
+    if tmpfs:
+        assert len(capture_commands) == 2
+        assert all(command[-3:] == ["-C", "/workspace", "."] for command in capture_commands)
 
 
 @pytest.mark.parametrize(
