@@ -1,0 +1,14 @@
+{
+  "build_time_ms": 1142.5906899385154,
+  "cache_key": "sha256:5c357c4a2a235ed8c12561abc1baf1fa4e32129c896f1025d9fd48affda0f69f",
+  "caller_line": 3,
+  "caller_module": "src/report.ts",
+  "effect_module": "src/report.ts",
+  "fixture": "cross-file-caller",
+  "leak_hits": [],
+  "model_calls": 0,
+  "omission_module": "src/access.ts",
+  "query_latency_ms": 0.15202700160443783,
+  "supplied_tokens": 7,
+  "tool_read": "passed"
+}

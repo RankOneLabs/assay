@@ -42,7 +42,14 @@ from assay_pier_bridge.agent_loop import (
     _shrink_conversation,
     _submission,
 )
-from assay_pier_bridge.paths import ArtifactCollectionRejected, extract_workspace_archive
+from assay_pier_bridge.identity import canonical_json, digest_bytes
+from assay_pier_bridge.paths import (
+    ArtifactCollectionRejected,
+    check_submission_scope,
+    extract_workspace_archive,
+    regular_tree,
+    submission_patch,
+)
 from assay_pier_bridge.protocol import ModelRoute
 from assay_pier_bridge.provider import MODEL, PROVIDER_NAME
 
@@ -461,6 +468,66 @@ def test_default_tools_are_independent_of_other_clients(tmp_path: Path) -> None:
 
     first.tools[0]["function"]["name"] = "changed"
     assert second.tools == TOOLS
+
+
+def test_pilot_tool_digest_follows_only_the_dispatched_instance_turn(tmp_path: Path) -> None:
+    baseline_t1 = digest_bytes(canonical_json(PILOT_TOOLS_T1))
+    baseline_review = digest_bytes(canonical_json(PILOT_TOOLS_REVIEW))
+    t1_global = json.loads(json.dumps(PILOT_TOOLS_T1))
+    review_global = json.loads(json.dumps(PILOT_TOOLS_REVIEW))
+    completion = Scripted(
+        [_call("submit_output", {"title": "Change", "body": "Body"}, 1)],
+        [_call("submit_output", {"verdict": "incomplete", "remaining_v1": "one",
+                                  "checks_performed": "read"}, 2)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "",
+                                  "checks_performed": "test"}, 3)],
+    )
+    supplied = {"T1": json.loads(json.dumps(PILOT_TOOLS_T1)),
+                "T2_T3": json.loads(json.dumps(PILOT_TOOLS_REVIEW))}
+    supplied["T2_T3"].append({
+        "type": "function", "function": {"name": "extra",
+                                         "parameters": {"type": "object", "properties": {}}},
+    })
+    first = _pilot(tmp_path, completion, pilot_tools_by_turn=supplied)
+    changed_review = digest_bytes(canonical_json(first.pilot_tools_by_turn["T2_T3"]))
+    assert changed_review != baseline_review
+    assert digest_bytes(canonical_json(first.pilot_tools_by_turn["T1"])) == baseline_t1
+    supplied["T2_T3"].append({"type": "function", "function": {"name": "later"}})
+    assert digest_bytes(canonical_json(first.pilot_tools_by_turn["T2_T3"])) == changed_review
+    result = first.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert [turn["tools_turn_sha256"] for turn in result.trajectory["turns"]] == [
+        baseline_t1, changed_review, changed_review,
+    ]
+    assert [digest_bytes(canonical_json(tools)) for tools in completion.tool_schemas] == [
+        baseline_t1, changed_review, changed_review,
+    ]
+    assert t1_global == PILOT_TOOLS_T1 and review_global == PILOT_TOOLS_REVIEW
+    second = _pilot(tmp_path, Scripted())
+    assert [digest_bytes(canonical_json(second.pilot_tools_by_turn[key]))
+            for key in ("T1", "T2_T3")] == [baseline_t1, baseline_review]
+
+
+def test_pilot_checks_review_tool_schema_size_at_construction(tmp_path: Path) -> None:
+    extra = {"type": "function", "function": {"name": "large", "description": "x" * 16_384}}
+    supplied = {"T1": json.loads(json.dumps(PILOT_TOOLS_T1)),
+                "T2_T3": [*json.loads(json.dumps(PILOT_TOOLS_REVIEW)), extra]}
+    assert len(canonical_json(PILOT_TOOLS_T1)) < LoopBounds().max_tool_schema_bytes
+    assert len(canonical_json(supplied["T2_T3"])) > LoopBounds().max_tool_schema_bytes
+    with pytest.raises(ValueError, match="tool_schema_limit"):
+        _pilot(tmp_path, Scripted(), pilot_tools_by_turn=supplied)
+    assert _pilot(tmp_path, Scripted()).pilot_tools_by_turn["T2_T3"] == PILOT_TOOLS_REVIEW
+
+
+def test_pilot_rechecks_review_tool_size_before_dispatch(tmp_path: Path) -> None:
+    completion = Scripted([_call("submit_output", {"title": "Change", "body": "Body"}, 1)])
+    client = _pilot(tmp_path, completion)
+    client.pilot_tools_by_turn["T2_T3"].append({
+        "type": "function", "function": {"name": "large", "description": "x" * 16_384},
+    })
+    with pytest.raises(AgentLoopError) as failure:
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.cause == "tool_schema_limit"
+    assert len(completion.tool_schemas) == 1
 
 
 def test_pilot_three_submissions_share_workspace_and_capture_each_diff(tmp_path: Path) -> None:
@@ -1761,6 +1828,136 @@ def test_tmpfs_sandbox_takes_its_limits(tmp_path: Path, monkeypatch: pytest.Monk
     assert run[run.index("--cpus") + 1] == "2.0"
 
 
+@pytest.mark.parametrize("tmpfs", (False, True))
+def test_index_mount_is_populated_in_both_storage_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmpfs: bool,
+) -> None:
+    commands: list[list[str]] = []
+    streamed: list[bytes] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        commands.append(command)
+        if command[:2] == ["docker", "exec"] and "input" in kwargs:
+            streamed.append(kwargs["input"])
+        stdout = _inspect_stdout() if command[:2] == ["docker", "inspect"] else ""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    workspace, cache = tmp_path / "workspace", tmp_path / "cache"
+    workspace.mkdir()
+    cache.mkdir()
+    DockerToolSandbox(
+        workspace, cache, "img", "s:a:w0", tmpfs_storage=tmpfs,
+        index_mount="/codeintel-index", index_files={"index.json": b'{"items":[]}'},
+    )
+    run = commands[0]
+    if tmpfs:
+        assert "/codeintel-index:size=256m,mode=1777" in run
+        assert any(command[-4:] == ["tar", "-x", "-C", "/codeintel-index"]
+                   for command in commands)
+        with tarfile.open(fileobj=io.BytesIO(streamed[-1])) as archive:
+            assert archive.extractfile("index.json").read() == b'{"items":[]}'
+    else:
+        assert f"{tmp_path / 'codeintel-index'}:/codeintel-index:rw" in run
+        assert (tmp_path / "codeintel-index" / "index.json").read_bytes() == b'{"items":[]}'
+
+
+def test_index_transfer_failure_stops_before_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        commands.append(command)
+        failure = command[-4:] == ["tar", "-x", "-C", "/codeintel-index"]
+        stdout = _inspect_stdout() if command[:2] == ["docker", "inspect"] else ""
+        return SimpleNamespace(returncode=1 if failure else 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+    with pytest.raises(ValueError, match="codeintel_index_failure"):
+        DockerToolSandbox(
+            tmp_path, tmp_path, "img", "s:a:w0", tmpfs_storage=True,
+            index_mount="/codeintel-index", index_files={"index.json": b"{}"},
+        )
+    assert commands[-1][:3] == ["docker", "rm", "-f"]
+
+
+def test_unpopulated_index_fails_cell_before_model_turn(tmp_path: Path) -> None:
+    completion = Scripted()
+
+    def failed_mount(workspace: Path, cache: Path, image: str, cell_id: str) -> Any:
+        raise ValueError("codeintel_index_failure")
+
+    client = _pilot(tmp_path, completion, sandbox_factory=failed_mount)
+    with pytest.raises(AgentLoopError) as failure:
+        client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert failure.value.cause == "codeintel_index_failure"
+    assert completion.seen == []
+
+
+def test_codeintel_query_uses_in_container_python() -> None:
+    calls: list[list[str]] = []
+
+    class Sandbox:
+        def execute(self, argv: list[str], **kwargs: Any) -> ToolOutput:
+            calls.append(argv)
+            return ToolOutput("exit=0\n{}", 10, False)
+
+    output = agent_loop._execute_tool(
+        Sandbox(), "codeintel_query", {"kind": "symbol", "text": "createThing"},
+        1024, 5.0, codeintel_query_script="print('{}')",
+        codeintel_index_mount="/codeintel-index", codeintel_max_context_tokens=128,
+    )
+    assert output.text.startswith("exit=0")
+    assert calls == [["python", "-c", "print('{}')", "/codeintel-index/index.json",
+                      "symbol", "createThing", "128"]]
+
+
+def test_pilot_trajectory_records_actual_use_beside_caps(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("submit_output", {"title": "Change", "body": "Body"}, 1)],
+        [_call("submit_output", {"verdict": "incomplete", "remaining_v1": "one",
+                                  "checks_performed": "read"}, 2)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "none",
+                                  "checks_performed": "read"}, 3)],
+    )
+    client = _pilot(
+        tmp_path, completion, codeintel_index_mount="/codeintel-index",
+        codeintel_index_agent_readable=True,
+    )
+    result = client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    assert result.trajectory["limits"]["max_tool_calls_per_turn"] == 15
+    assert result.trajectory["limits"]["max_tool_calls_per_cell"] == 40
+    assert result.trajectory["actual_usage"]["tool_calls"] == 3
+    assert result.trajectory["actual_usage"]["prompt_tokens"] == 21
+    assert result.trajectory["code_intel_index"] == {
+        "path": "/codeintel-index", "agent_readable": True,
+    }
+
+
+def test_provider_query_limit_counts_with_normal_tool_calls(tmp_path: Path) -> None:
+    completion = Scripted(
+        [_call("codeintel_query", {"kind": "symbol", "text": "first"}, 1),
+         _call("codeintel_query", {"kind": "symbol", "text": "second"}, 2),
+         _call("submit_output", {"title": "Change", "body": "Body"}, 3)],
+        [_call("submit_output", {"verdict": "incomplete", "remaining_v1": "one",
+                                  "checks_performed": "read"}, 4)],
+        [_call("submit_output", {"verdict": "complete", "remaining_v1": "none",
+                                  "checks_performed": "read"}, 5)],
+    )
+    client = _pilot(
+        tmp_path, completion, codeintel_query_script="print('{}')",
+        codeintel_index_mount="/codeintel-index", codeintel_max_context_tokens=128,
+        codeintel_query_limit=1,
+    )
+    result = client.run_cell(cell_id="s:a:w0", package={"instruction.md": "Edit"})
+    calls = result.trajectory["turns"][0]["tool_calls"]
+    assert calls[0]["returned_text"] == "exit=0\n{}\n"
+    assert "query limit reached" in calls[1]["returned_text"]
+    assert result.trajectory["actual_usage"]["tool_calls"] == 5
+    assert result.trajectory["actual_usage"]["codeintel_queries"] == 1
+
+
 def test_sandbox_limits_keep_memory_above_tmpfs() -> None:
     with pytest.raises(ValueError, match="memory_mb must exceed"):
         SandboxLimits(memory_mb=700, workspace_mb=256, cache_mb=256, tmp_mb=256)
@@ -1847,6 +2044,54 @@ def test_tmpfs_capture_streams_the_tree_and_replaces_staging(
     }
     assert not (workspace / "deleted.txt").exists()
     assert (workspace / "src" / "new.txt").read_text() == "new"
+
+
+@pytest.mark.parametrize("tmpfs", (False, True))
+def test_index_mount_does_not_change_capture_diff_or_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmpfs: bool,
+) -> None:
+    source = b"export const value = 1;\n"
+    member, _ = _file("./src/a.ts", source)
+    archive = _tar([member], {"./src/a.ts": source})
+    capture_commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        if command[:2] == ["docker", "inspect"]:
+            return SimpleNamespace(returncode=0, stdout=_inspect_stdout(), stderr="")
+        if command[:4] == ["docker", "exec", "-u", "0:0"]:
+            capture_commands.append(command)
+            return SimpleNamespace(returncode=0, stdout=archive, stderr=b"")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    real_run = subprocess.run
+    observations: list[tuple[dict[str, bytes], bytes]] = []
+    for with_index in (False, True):
+        monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", fake_run)
+        root = tmp_path / ("mounted" if with_index else "baseline")
+        baseline, workspace, cache = root / "before", root / "workspace", root / "cache"
+        for directory in (baseline / "src", workspace / "src", cache):
+            directory.mkdir(parents=True)
+        (baseline / "src" / "a.ts").write_bytes(source)
+        (workspace / "src" / "a.ts").write_bytes(source)
+        options: dict[str, Any] = (
+            {"index_mount": "/codeintel-index", "index_files": {"index.json": b"{}"}}
+            if with_index else {}
+        )
+        sandbox = DockerToolSandbox(
+            workspace, cache, "img", "s:a:w0", tmpfs_storage=tmpfs, **options,
+        )
+        sandbox.execute = lambda *args, **kwargs: ToolOutput(  # type: ignore[method-assign]
+            "exit=0\n1024\n2\n0\n5000\n6000\n", 30, False,
+        )
+        sandbox.capture_workspace()
+        monkeypatch.setattr("assay_pier_bridge.agent_loop.subprocess.run", real_run)
+        before, after = regular_tree(baseline), regular_tree(workspace)
+        check_submission_scope(before, after, writable_prefixes=("src/",))
+        observations.append((after, submission_patch(baseline, workspace).patch))
+    assert observations == [({"src/a.ts": source}, b"")] * 2
+    if tmpfs:
+        assert len(capture_commands) == 2
+        assert all(command[-3:] == ["-C", "/workspace", "."] for command in capture_commands)
 
 
 @pytest.mark.parametrize(

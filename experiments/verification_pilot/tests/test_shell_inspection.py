@@ -72,3 +72,17 @@ def test_shell_inspections_sit_where_their_command_ran() -> None:
     assert names == ["write_file", "run_command", "read_file"]
     assert inspected_path(turn, "src/a.ts")
     assert not inspected_path(turn, "src/b.ts")
+
+
+def test_configured_index_mount_is_the_only_extra_shell_scope() -> None:
+    direct = _run("grep symbol /codeintel-index/index.json")
+    assert shell_inspections(direct) == []
+    assert shell_inspections(direct, index_mount="/codeintel-index") == [{
+        "name": "search_files", "exit_code": 0, "derived_from": "shell",
+        "arguments": {"query": "symbol", "scope": "/codeintel-index/index.json"},
+    }]
+    assert shell_inspections(_run("cat /codeintel-index-other/index.json"),
+                             index_mount="/codeintel-index") == []
+    assert shell_inspections(_run("cd /codeintel-index && cat index.json"),
+                             index_mount="/codeintel-index")[0]["arguments"] == {
+                                 "path": "/codeintel-index/index.json"}

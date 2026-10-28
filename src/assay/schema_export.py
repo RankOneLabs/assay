@@ -10,6 +10,7 @@ from typing import Any
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from assay.code_intel.models import CapabilityManifest, ContextItem, IndexManifest
 from assay.code_metrics.models import (
     CodeMetricsComparison,
     CodeMetricsComparisonV2,
@@ -40,6 +41,9 @@ from assay.models import (
 )
 
 SCHEMA_MODELS: dict[str, type[WireModel]] = {
+    "assay-codeintel-context-item": ContextItem,
+    "assay-codeintel-index-manifest": IndexManifest,
+    "assay-codeintel-capabilities": CapabilityManifest,
     "assay-arm-declaration": Arm,
     "assay-evaluation-failure": EvaluationFailure,
     "assay-execution-outcome": ExecutionOutcome,

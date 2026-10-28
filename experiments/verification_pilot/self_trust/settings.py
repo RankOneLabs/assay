@@ -42,11 +42,24 @@ CELL_SECONDS = 1_800.0
 
 PROTOCOL_VERSION = "st-v2"
 EXCLUDED_CAUSE_PREFIX = "provider_"
+CODEINTEL_CAUSE_PREFIX = "codeintel_"
 EXCLUDED_CAUSES = frozenset({"transport_failure", "budget_exhausted", "billing_uncertain"})
 
 
 def excluded_cause(cause: str | None) -> bool:
     """The sole denominator exclusion rule shared with the report command."""
+    return cause is not None and (cause.startswith(EXCLUDED_CAUSE_PREFIX)
+                                  or cause.startswith(CODEINTEL_CAUSE_PREFIX)
+                                  or cause in EXCLUDED_CAUSES)
+
+
+def replaceable_cause(cause: str | None) -> bool:
+    """Only a model-provider exclusion earns the one visible replacement.
+
+    A code-intelligence failure leaves the denominator the same way a provider
+    failure does, but it does not earn a replacement cell: the operator ruled
+    that a cell lost to the study's own indexing is not re-run.
+    """
     return cause is not None and (cause.startswith(EXCLUDED_CAUSE_PREFIX)
                                   or cause in EXCLUDED_CAUSES)
 
@@ -79,9 +92,11 @@ def requires_route_probe(terminal_cause: str | None) -> bool:
 
 def replacement_for(original_cell: str, terminal_cause: str | None,
                     prior_retry_of: Collection[str]) -> str:
-    """Allow one visible replacement for an excluded original cell."""
+    """Allow one visible replacement for a provider-excluded original cell."""
     if not excluded_cause(terminal_cause):
         raise ValueError("only an excluded-cause session can be replaced")
+    if not replaceable_cause(terminal_cause):
+        raise ValueError("a code-intelligence exclusion earns no replacement")
     if original_cell in prior_retry_of:
         raise ValueError("the original cell already has a replacement")
     return original_cell
