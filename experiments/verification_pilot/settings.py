@@ -20,6 +20,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from assay.code_intel.contract import CodeIntelSettings
+
 # Canonical JSON digest of PILOT_TOOL_SCHEMAS (T1 and T2/T3) in agent_loop.py.
 # The separate legacy TOOLS digest remains pinned by workflow_edit's identity test.
 PILOT_TOOLS_SHA256 = "sha256:615837c38e0f50abc34b5c5e4d3b41571d241b3199ca70743ef4346583c73cdd"
@@ -29,6 +31,8 @@ class VerificationPilotSettings(BaseModel):
     """Frozen bounds for one verification-pilot repository-agent attempt."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    code_intel: CodeIntelSettings = Field(default_factory=CodeIntelSettings)
 
     max_turns: Literal[20] = 20
     attempts: Literal[1] = 1
