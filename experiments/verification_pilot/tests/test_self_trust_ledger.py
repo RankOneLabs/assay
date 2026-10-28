@@ -5,7 +5,17 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from verification_pilot.self_trust.ledger import FIELDS, ledger
+import pytest
+
+from verification_pilot.run import _terminal_fields
+from verification_pilot.self_trust.ledger import FIELDS, ledger, terminal
+
+
+@pytest.mark.parametrize("cause", ["codeintel_index_failure", "codeintel_stale_index"])
+def test_codeintel_failure_has_its_own_terminal_status(cause: str) -> None:
+    assert terminal("failed", cause, None, None) == "codeintel_failure"
+    assert _terminal_fields({}, {"events": [{"kind": "stopped", "cause": cause}]},
+                            "failed") == ("codeintel_failure", cause)
 
 
 def test_committed_archive_ledger_is_store_free(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]

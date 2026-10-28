@@ -16,6 +16,7 @@ Terminal status is normalized from the stop cause and the last model request:
 - ``provider_error``: the provider returned an error, refused, failed its
   identity check, or the transport failed. A ``no_tool_call`` stop whose last
   request has ``finish_reason`` "error" lands here, not in the two above.
+- ``codeintel_failure``: the index failed to build or its snapshot was stale.
 - ``budget_cut``: the run's dollar cap stopped the session.
 - ``agent_limit``: a request, tool-call or output-token limit stopped it.
 - ``timeout``: a wall-clock deadline stopped it (agent or Smithers job).
@@ -31,7 +32,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from verification_pilot.self_trust.settings import excluded_cause
+from verification_pilot.self_trust.settings import CODEINTEL_CAUSE_PREFIX, excluded_cause
 
 PILOT = Path(__file__).resolve().parents[1]
 RUNS = PILOT / "raw" / "self_trust" / "runs"
@@ -142,6 +143,8 @@ def terminal(
         return "completed_no_verdict"
     if cause == "budget_exhausted":
         return "budget_cut"
+    if cause.startswith(CODEINTEL_CAUSE_PREFIX):
+        return "codeintel_failure"
     if cause in PROVIDER_CAUSES or excluded_cause(cause):
         return "provider_error"
     if cause in LIMIT_CAUSES:

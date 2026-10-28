@@ -243,6 +243,25 @@ def test_v2_bounds_and_terminal_policy() -> None:
         assert not did_not_complete(status, cause)
 
 
+@pytest.mark.parametrize(("cause", "expected"), [
+    (None, False),
+    ("provider_response", True),
+    ("provider_identity", True),
+    ("provider_future_cause", True),
+    ("transport_failure", True),
+    ("budget_exhausted", True),
+    ("billing_uncertain", True),
+    ("codeintel_index_failure", True),
+    ("codeintel_stale_index", True),
+    ("agent_deadline", False),
+    ("turn_limit", False),
+    ("no_tool_call", False),
+    ("unrelated", False),
+])
+def test_excluded_cause_classification(cause: str | None, expected: bool) -> None:
+    assert excluded_cause(cause) is expected
+
+
 def test_excluded_cause_definition_has_one_production_home() -> None:
     """The report command must import the rule, not restate either half of it."""
     package = Path(__file__).resolve().parents[1]

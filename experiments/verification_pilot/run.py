@@ -56,7 +56,7 @@ from verification_pilot.ground_truth import GroundTruth
 from verification_pilot.ground_truth import subject_truth as fixture_subject_truth
 from verification_pilot.inputs import T2_TEXT, T3_TEXT
 from verification_pilot.observations import RecordedTrace, observe
-from verification_pilot.self_trust.settings import excluded_cause
+from verification_pilot.self_trust.settings import CODEINTEL_CAUSE_PREFIX, excluded_cause
 from verification_pilot.settings import VerificationPilotSettings
 from verification_pilot.study import (
     PilotSubject,
@@ -294,6 +294,8 @@ def _terminal_fields(worker_trace: Any, trajectory: Any, status: str) -> tuple[s
             return "timeout", cause
         if cause == "budget_exhausted":
             return "budget_cut", cause
+        if cause.startswith(CODEINTEL_CAUSE_PREFIX):
+            return "codeintel_failure", cause
         if excluded_cause(cause):
             return "provider_error", cause
         if cause in ("turn_limit", "turn_tool_call_limit", "cell_tool_call_limit",
