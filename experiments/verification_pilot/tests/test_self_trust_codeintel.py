@@ -110,8 +110,9 @@ def test_configured_delivery_uses_subject_snapshot_without_model_calls(
     assert b'"repo_revision"' in prepared.index_files["index.json"]
     assert RUNGS["refactor"].hidden_test.encode() not in prepared.index_files["index.json"]
     if delivery == "tool":
-        from assay.canonical import canonical_json
         from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS
+
+        from assay.canonical import canonical_json
         from verification_pilot.self_trust.bridge import SelfTrustBridgeClient
 
         assert prepared.block is None
