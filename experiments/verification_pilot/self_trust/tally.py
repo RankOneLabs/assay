@@ -34,6 +34,8 @@ def cell_rows(archive: Path) -> list[dict[str, Any]]:
             "false_assurance": value.get(("final", "false_assurance")),
             "regressed": value.get(("final", "regressed")),
             "read_omission_file": [value.get((t, "module_read")) for t in ("T1", "T2", "T3")],
+            "module_read_any": [value.get((t, "module_read_any"))
+                                for t in ("T1", "T2", "T3")],
             "file_reads": sum(1 for turn in turns for call in turn["tool_calls"]
                               if call["name"] == "read_file"),
             "requests": sum((turn.get("usage") or {}).get("requests") or 0 for turn in turns),

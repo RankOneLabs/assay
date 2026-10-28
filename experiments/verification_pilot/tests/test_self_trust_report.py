@@ -125,6 +125,21 @@ def test_protocol_exclusion_is_shared_and_timeout_uses_status() -> None:
         assert not report.completed_normally(status)
 
 
+@pytest.mark.parametrize("cause", ["codeintel_index_failure", "codeintel_stale_index"])
+def test_codeintel_failure_is_reported_by_cause_without_entering_denominator(
+    cause: str,
+) -> None:
+    table = {"id": "synthetic", "location": "test", "protocol_version": "st-v2",
+             "model_mapping": {"model": "model"}, "archives": ["run"]}
+    publication = {"runs": {"run": {"framing_version": "test"}}}
+    rows = [{"run_id": "run", "model": "model", "max_turns": 150,
+             "expected_behavior_source": "old_behavior", "terminal_status": "codeintel_failure",
+             "terminal_cause": cause, "remnant_fixed": False}]
+    summary = report.summarize(table, rows, publication, "all")
+    assert summary["excluded_by_cause"] == {cause: 1}
+    assert summary["counted"] == summary["restored"] == 0
+
+
 @pytest.mark.parametrize(("k", "n", "expected"), [
     (0, 0, ""), (0, 10, "0.00-0.28"), (5, 10, "0.24-0.76"),
     (10, 10, "0.72-1.00"), (8, 74, "0.06-0.20"),

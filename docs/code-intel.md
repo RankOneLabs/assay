@@ -56,3 +56,22 @@ archive traversal, calls `scan_text`, and writes its CSV to
 
 This phase defines no indexer or model call. Index mount and agent visibility
 remain operator choices.
+
+## Self-trust accounting
+
+The study excludes `codeintel_index_failure` and `codeintel_stale_index` through
+the same denominator rule as model-provider failures, while recording their
+terminal status as `codeintel_failure`. The report lists each cause separately.
+This does not change the strict `module_read` measure or the replacement rule.
+The operator permits a `codeintel_`-excluded original session to use the one
+visible replacement that `replacement_for` allows.
+
+The broad `module_read_any` measure is published for T1, T2 and T3 beside
+`module_read`. A successful `codeintel_query` counts only when its returned
+`QueryResult` JSON has an item whose `file_path` is the omission module. Query
+attempts and errors are counted per session in the ledger. For shell reads and
+greps, or a direct `read_file` of an index, the trajectory must carry host-recorded
+`code_intel_index: {"path": "...", "agent_readable": true}` metadata; the
+path is relative to `/workspace`, and the route counts only when
+`agent_readable` is true. The existing shell inspection parser supplies virtual
+reads and searches for shell calls; direct `read_file` needs no expansion.
