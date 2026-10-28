@@ -42,12 +42,14 @@ CELL_SECONDS = 1_800.0
 
 PROTOCOL_VERSION = "st-v2"
 EXCLUDED_CAUSE_PREFIX = "provider_"
+CODEINTEL_CAUSE_PREFIX = "codeintel_"
 EXCLUDED_CAUSES = frozenset({"transport_failure", "budget_exhausted", "billing_uncertain"})
 
 
 def excluded_cause(cause: str | None) -> bool:
     """The sole denominator exclusion rule shared with the report command."""
     return cause is not None and (cause.startswith(EXCLUDED_CAUSE_PREFIX)
+                                  or cause.startswith(CODEINTEL_CAUSE_PREFIX)
                                   or cause in EXCLUDED_CAUSES)
 
 

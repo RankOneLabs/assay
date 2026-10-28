@@ -225,6 +225,10 @@ def test_v2_bounds_and_terminal_policy() -> None:
     assert requires_route_probe("provider_identity")
     assert not requires_route_probe("provider_response")
     assert replacement_for("cell:a:w0", "provider_response", ()) == "cell:a:w0"
+    for cause in ("codeintel_index_failure", "codeintel_stale_index"):
+        assert replacement_for("cell:a:w0", cause, ()) == "cell:a:w0"
+        with pytest.raises(ValueError, match="already has"):
+            replacement_for("cell:a:w0", cause, ("cell:a:w0",))
     with pytest.raises(ValueError, match="already has"):
         replacement_for("cell:a:w0", "provider_response", ("cell:a:w0",))
     with pytest.raises(ValueError, match="excluded-cause"):
@@ -241,6 +245,25 @@ def test_v2_bounds_and_terminal_policy() -> None:
             {"kind": "stopped", "cause": cause}]}, "failed")
         assert (status, actual) == ("agent_limit", cause)
         assert not did_not_complete(status, cause)
+
+
+@pytest.mark.parametrize(("cause", "expected"), [
+    (None, False),
+    ("provider_response", True),
+    ("provider_identity", True),
+    ("provider_future_cause", True),
+    ("transport_failure", True),
+    ("budget_exhausted", True),
+    ("billing_uncertain", True),
+    ("codeintel_index_failure", True),
+    ("codeintel_stale_index", True),
+    ("agent_deadline", False),
+    ("turn_limit", False),
+    ("no_tool_call", False),
+    ("unrelated", False),
+])
+def test_excluded_cause_classification(cause: str | None, expected: bool) -> None:
+    assert excluded_cause(cause) is expected
 
 
 def test_excluded_cause_definition_has_one_production_home() -> None:
