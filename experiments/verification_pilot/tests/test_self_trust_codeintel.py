@@ -1,5 +1,6 @@
 """The real omission-owner trees remain searchable without hidden material."""
 
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -14,6 +15,27 @@ from verification_pilot.self_trust.codeintel_fixtures import (
     scripted_symbol_session,
 )
 from verification_pilot.self_trust.ladder import RUNGS
+
+# The read_file tool needs Python, not the historical fixture image. Match the
+# Python base pinned in integrations/pier/Dockerfile so fresh CI hosts can pull it.
+READ_TOOL_IMAGE = (
+    "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285"
+)
+
+
+@pytest.fixture(scope="module")
+def read_tool_image() -> str:
+    present = subprocess.run(
+        ["docker", "image", "inspect", READ_TOOL_IMAGE],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    if present.returncode:
+        pulled = subprocess.run(
+            ["docker", "pull", READ_TOOL_IMAGE],
+            capture_output=True, text=True, timeout=300, check=False,
+        )
+        assert pulled.returncode == 0, f"read-tool image pull failed:\n{pulled.stderr[-2000:]}"
+    return READ_TOOL_IMAGE
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -62,9 +84,11 @@ def test_prepare_failure_stops_script_before_query(
 
 
 @pytest.mark.parametrize("name", NAMES)
-def test_indexed_symbol_span_is_read_through_docker_tool(name: str, tmp_path: Path) -> None:
+def test_indexed_symbol_span_is_read_through_docker_tool(
+    name: str, tmp_path: Path, read_tool_image: str,
+) -> None:
     _, result, _ = scripted_symbol_session(name, index_root=tmp_path)
     runtime_root = Path(__file__).resolve().parents[3] / ".assay" / "code-intel" / "tests"
     runtime_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="span-read-", dir=runtime_root) as temporary:
-        read_symbol_span_through_tool(name, result, work=Path(temporary))
+        read_symbol_span_through_tool(name, result, work=Path(temporary), image=read_tool_image)

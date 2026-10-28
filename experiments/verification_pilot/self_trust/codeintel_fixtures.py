@@ -89,10 +89,12 @@ def scripted_symbol_session(
     return manifest, result, entry
 
 
-def read_symbol_span_through_tool(name: str, result: QueryResult, *, work: Path) -> None:
+def read_symbol_span_through_tool(
+    name: str, result: QueryResult, *, work: Path, image: str | None = None,
+) -> None:
     """Exercise the normal read-file tool on the span returned by the index."""
     rung = RUNGS[name]
-    image = json.loads(rung.logs.read_text(encoding="utf-8"))["image"]
+    image = image or json.loads(rung.logs.read_text(encoding="utf-8"))["image"]
     root = work / name
     workspace, cache = root / "workspace", root / "cache"
     workspace.mkdir(parents=True)
