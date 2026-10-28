@@ -23,7 +23,12 @@ from verification_pilot.self_trust import probe_routes
 from verification_pilot.self_trust.bridge import SelfTrustBridgeClient, subject_turns
 from verification_pilot.self_trust.concepts import LEGACY_READER
 from verification_pilot.self_trust.evaluation import measures, remnant_shown, verdict
-from verification_pilot.self_trust.ladder import RESUME_146, REWRITE, REWRITE_0
+from verification_pilot.self_trust.ladder import RUNGS
+from verification_pilot.self_trust.pins import (
+    RENAME_SYSTEM_PROMPT_SHA256,
+    SYSTEM_PROMPT_SHA256,
+    TURN_PROMPTS_SHA256,
+)
 from verification_pilot.self_trust.prompts import build_system_prompt, framing_for
 from verification_pilot.self_trust.run import main as self_trust_main
 from verification_pilot.self_trust.run import remeasure
@@ -161,23 +166,36 @@ def test_bridge_configuration_pins_the_self_trust_prompt(tmp_path: Path) -> None
     )
     rename = SUBJECTS["stage_run-own_c-remnant_c"]
     rename_configuration = bridge.configuration(rename)
-    assert rename_configuration["system_prompt_sha256"] == digest_bytes(
-        SYSTEM_PROMPT.encode("utf-8"))
+    assert digest_bytes(SYSTEM_PROMPT.encode("utf-8")) == RENAME_SYSTEM_PROMPT_SHA256, "rename"
+    assert rename_configuration["system_prompt_sha256"] == RENAME_SYSTEM_PROMPT_SHA256
     assert rename_configuration["subject_rendering"] == "self-trust-session-v2"
     assert bridge.timeout_s == rename_configuration["timeout_s"] == CELL_SECONDS
     assert rename_configuration["protocol_version"] == "st-v2"
     assert rename_configuration["image_digest"] == bridge.image
     assert rename_configuration["sdk_retries"] == 0
-    assert rename_configuration["turn_prompts_sha256"] == digest_bytes(
-        canonical_json(list(subject_turns())))
-    for rung in (REWRITE, REWRITE_0, RESUME_146):
+    assert digest_bytes(canonical_json(list(subject_turns()))) == TURN_PROMPTS_SHA256, \
+        "turn-prompts constant"
+    assert rename_configuration["turn_prompts_sha256"] == TURN_PROMPTS_SHA256
+    reachable = {(rung.name, framing_for(rung, own)) for rung in RUNGS.values()
+                 for own in GROUPS}
+    reachable.update((rung.name, "matched") for rung in RUNGS.values())
+    assert set(SYSTEM_PROMPT_SHA256) == reachable
+    assert len(SYSTEM_PROMPT_SHA256) == 27
+    assert len(set(SYSTEM_PROMPT_SHA256.values())) == 22
+    for name, framing in sorted(reachable):
+        prompt = build_system_prompt(RUNGS[name], framing)
+        assert digest_bytes(prompt.encode("utf-8")) == SYSTEM_PROMPT_SHA256[(name, framing)], \
+            f"system prompt {(name, framing)}"
+    for rung in RUNGS.values():
         for own in GROUPS:
             subject = SUBJECTS[f"{rung.name}-own_{own.removeprefix('group_')}-remnant_none"]
-            prompt = build_system_prompt(rung, framing_for(rung, own))
+            key = (rung.name, framing_for(rung, own))
             configuration = bridge.configuration(subject)
-            assert configuration["system_prompt_sha256"] == digest_bytes(prompt.encode("utf-8"))
-            assert configuration["turn_prompts_sha256"] == digest_bytes(
-                canonical_json(list(subject_turns())))
+            assert configuration["system_prompt_sha256"] == SYSTEM_PROMPT_SHA256[key], key
+            assert configuration["turn_prompts_sha256"] == TURN_PROMPTS_SHA256
+        matched = bridge.configuration(subject, MATCHED_ARMS[0])
+        assert matched["system_prompt_sha256"] == SYSTEM_PROMPT_SHA256[(rung.name, "matched")], \
+            (rung.name, "matched")
 
 
 def test_existing_arm_placements_and_orders_are_stable() -> None:
