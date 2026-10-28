@@ -65,8 +65,11 @@ The study excludes `codeintel_index_failure` and `codeintel_stale_index` through
 the same denominator rule as model-provider failures, while recording their
 terminal status as `codeintel_failure`. The report lists each cause separately.
 This does not change the strict `module_read` measure or the replacement rule.
-The operator permits a `codeintel_`-excluded original session to use the one
-visible replacement that `replacement_for` allows.
+`replaceable_cause` keeps the replacement rule narrower than the denominator
+rule: only a model-provider exclusion earns the one visible replacement
+`replacement_for` allows. A `codeintel_`-excluded session leaves the
+denominator and is not re-run, by operator decision, so a code-intelligence
+outage costs cells rather than quietly spending the study's replacements.
 
 The broad `module_read_any` measure is published for T1, T2 and T3 beside
 `module_read`. A successful `codeintel_query` counts only when its returned

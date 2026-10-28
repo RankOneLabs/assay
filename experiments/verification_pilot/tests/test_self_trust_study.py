@@ -42,6 +42,7 @@ from verification_pilot.self_trust.settings import (
     countable,
     did_not_complete,
     excluded_cause,
+    replaceable_cause,
     replacement_for,
     requires_route_probe,
 )
@@ -226,9 +227,8 @@ def test_v2_bounds_and_terminal_policy() -> None:
     assert not requires_route_probe("provider_response")
     assert replacement_for("cell:a:w0", "provider_response", ()) == "cell:a:w0"
     for cause in ("codeintel_index_failure", "codeintel_stale_index"):
-        assert replacement_for("cell:a:w0", cause, ()) == "cell:a:w0"
-        with pytest.raises(ValueError, match="already has"):
-            replacement_for("cell:a:w0", cause, ("cell:a:w0",))
+        with pytest.raises(ValueError, match="code-intelligence"):
+            replacement_for("cell:a:w0", cause, ())
     with pytest.raises(ValueError, match="already has"):
         replacement_for("cell:a:w0", "provider_response", ("cell:a:w0",))
     with pytest.raises(ValueError, match="excluded-cause"):
@@ -245,6 +245,25 @@ def test_v2_bounds_and_terminal_policy() -> None:
             {"kind": "stopped", "cause": cause}]}, "failed")
         assert (status, actual) == ("agent_limit", cause)
         assert not did_not_complete(status, cause)
+
+
+@pytest.mark.parametrize(("cause", "expected"), [
+    (None, False),
+    ("provider_response", True),
+    ("provider_identity", True),
+    ("provider_future_cause", True),
+    ("transport_failure", True),
+    ("budget_exhausted", True),
+    ("billing_uncertain", True),
+    ("codeintel_index_failure", False),
+    ("codeintel_stale_index", False),
+    ("agent_deadline", False),
+    ("turn_limit", False),
+])
+def test_replaceable_cause_withholds_replacement_from_code_intelligence(
+    cause: str | None, expected: bool,
+) -> None:
+    assert replaceable_cause(cause) is expected
 
 
 @pytest.mark.parametrize(("cause", "expected"), [
