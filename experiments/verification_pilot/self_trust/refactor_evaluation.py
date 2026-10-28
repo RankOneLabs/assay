@@ -151,7 +151,8 @@ def module_read_any(
         if not successful(call) or not isinstance(call.get("arguments"), dict):
             continue
         args = call["arguments"]
-        if index_agent_readable and index_path and call.get("derived_from") == "shell":
+        if (index_agent_readable and index_path
+                and (call.get("derived_from") == "shell" or call.get("name") == "read_file")):
             path = args.get("path") if call.get("name") == "read_file" else args.get("scope")
             if (call.get("name") in ("read_file", "search_files") and isinstance(path, str)
                     and path.removeprefix("./").rstrip("/") == index_path.rstrip("/")):

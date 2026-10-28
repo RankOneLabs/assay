@@ -212,6 +212,22 @@ def test_shell_index_inspection_requires_agent_readable_mount(command: str) -> N
     assert module_read(subject, turn) is False
 
 
+def test_direct_index_read_requires_agent_readable_mount() -> None:
+    subject = next(s for s in self_trust_subjects()
+                   if s.fixture == "refactor" and s.remnant_owner == "group_a")
+    call = {"name": "read_file", "arguments": {"path": ".codeintel/index.json"},
+            "exit_code": 0}
+    turn = {"tool_calls": [call]}
+    index = ".codeintel/index.json"
+    assert module_read_any(subject, turn, index_path=index, index_agent_readable=True) is True
+    assert module_read_any(subject, turn, index_path=index, index_agent_readable=False) is False
+    assert module_read_any(subject, turn, index_path=".codeintel/other.json",
+                           index_agent_readable=True) is False
+    assert module_read_any(subject, {"tool_calls": [{**call, "exit_code": 1}]},
+                           index_path=index, index_agent_readable=True) is False
+    assert module_read(subject, turn) is False
+
+
 def test_shell_grep_of_omission_module_still_counts_without_index() -> None:
     subject = next(s for s in self_trust_subjects()
                    if s.fixture == "refactor" and s.remnant_owner == "group_a")

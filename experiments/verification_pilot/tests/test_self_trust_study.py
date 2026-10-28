@@ -225,6 +225,10 @@ def test_v2_bounds_and_terminal_policy() -> None:
     assert requires_route_probe("provider_identity")
     assert not requires_route_probe("provider_response")
     assert replacement_for("cell:a:w0", "provider_response", ()) == "cell:a:w0"
+    for cause in ("codeintel_index_failure", "codeintel_stale_index"):
+        assert replacement_for("cell:a:w0", cause, ()) == "cell:a:w0"
+        with pytest.raises(ValueError, match="already has"):
+            replacement_for("cell:a:w0", cause, ("cell:a:w0",))
     with pytest.raises(ValueError, match="already has"):
         replacement_for("cell:a:w0", "provider_response", ("cell:a:w0",))
     with pytest.raises(ValueError, match="excluded-cause"):
