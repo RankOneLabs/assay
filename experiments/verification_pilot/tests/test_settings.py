@@ -89,7 +89,8 @@ def test_pilot_agent_and_configuration_consume_settings(tmp_path: Path) -> None:
     configuration = agent_configuration(
         bounds=agent.bounds, limits=SandboxLimits(),
         writable_prefixes=agent.writable_prefixes, model_route=agent.model_route,
-        pilot_mode=True, next_user_turns=agent.next_user_turns,
+        pilot_mode=True, pilot_tools_by_turn=agent.pilot_tools_by_turn,
+        next_user_turns=agent.next_user_turns,
         system_prompt=agent.system_prompt,
         max_tool_calls_per_turn=agent.max_tool_calls_per_turn,
         max_tool_calls_per_cell=agent.max_tool_calls_per_cell,
@@ -97,11 +98,50 @@ def test_pilot_agent_and_configuration_consume_settings(tmp_path: Path) -> None:
     assert configuration["writable_prefixes"] == ["src/"]
     assert configuration["max_tool_calls_per_turn"] == 7
     assert configuration["max_tool_calls_per_cell"] == 19
-    from assay_pier_bridge.identity import digest_bytes
+    from assay_pier_bridge.identity import canonical_json, digest_bytes
 
+    assert digest_bytes(canonical_json(agent.pilot_tools_by_turn)) == PILOT_TOOLS_SHA256
+    assert configuration["tools_sha256"] == PILOT_TOOLS_SHA256
+    assert configuration["tools_t1_sha256"] == digest_bytes(
+        canonical_json(agent.pilot_tools_by_turn["T1"]))
+    assert configuration["tools_t2_t3_sha256"] == digest_bytes(
+        canonical_json(agent.pilot_tools_by_turn["T2_T3"]))
     assert configuration["system_prompt_sha256"] == digest_bytes(
         PILOT_SYSTEM_PROMPT.encode("utf-8")
     )
+
+
+def test_pilot_agent_accepts_instance_turn_tools_before_size_check(tmp_path: Path) -> None:
+    from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS
+    from assay_pier_bridge.protocol import ModelRoute
+
+    supplied: dict[str, list[dict[str, Any]]] = json.loads(json.dumps(PILOT_TOOL_SCHEMAS))
+    supplied["T2_T3"].append({
+        "type": "function", "function": {"name": "extra", "description": "provider tool"},
+    })
+    route = ModelRoute(
+        endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local")
+
+    def completion(**kwargs: Any) -> Any:
+        raise AssertionError("construction must not dispatch a turn")
+
+    agent = create_pilot_agent(
+        settings=VerificationPilotSettings(), image="img", runs_root=tmp_path,
+        model_route=route, completion=completion,
+        next_user_turns=("Review", "Check"), pilot_tools_by_turn=supplied,
+    )
+    assert agent.pilot_tools_by_turn == supplied
+    assert agent.pilot_tools_by_turn["T1"] == PILOT_TOOL_SCHEMAS["T1"]
+    assert agent.pilot_tools_by_turn["T2_T3"] != PILOT_TOOL_SCHEMAS["T2_T3"]
+    supplied["T2_T3"].append({
+        "type": "function", "function": {"name": "large", "description": "x" * 16_384},
+    })
+    with pytest.raises(ValueError, match="tool_schema_limit"):
+        create_pilot_agent(
+            settings=VerificationPilotSettings(), image="img", runs_root=tmp_path,
+            model_route=route, completion=completion,
+            next_user_turns=("Review", "Check"), pilot_tools_by_turn=supplied,
+        )
 
 
 def test_pilot_turn_texts_and_byte_envelope() -> None:

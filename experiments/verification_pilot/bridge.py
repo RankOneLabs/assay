@@ -66,6 +66,7 @@ def create_pilot_agent(
     spend_gate: SpendGate | None = None,
     system_prompt: str = PILOT_SYSTEM_PROMPT,
     writable_prefixes: tuple[str, ...] | None = None,
+    pilot_tools_by_turn: dict[str, list[dict[str, Any]]] | None = None,
 ) -> RepositoryAgentClient:
     """Use the pilot's declared scope and call budgets for the actual loop.
 
@@ -92,6 +93,7 @@ def create_pilot_agent(
             max_storage_mb=settings.max_storage_mb,
         ),
         pilot_mode=True,
+        pilot_tools_by_turn=pilot_tools_by_turn or {},
         system_prompt=system_prompt,
         next_user_turns=next_user_turns,
         message_prefix=message_prefix,
@@ -158,7 +160,8 @@ class PilotBridgeClient:
             bounds=probe.bounds, limits=SandboxLimits(),
             writable_prefixes=probe.writable_prefixes,
             model_route=self.model_route, system_prompt=probe.system_prompt,
-            pilot_mode=True, next_user_turns=probe.next_user_turns,
+            pilot_mode=True, pilot_tools_by_turn=probe.pilot_tools_by_turn,
+            next_user_turns=probe.next_user_turns,
             max_tool_calls_per_turn=probe.max_tool_calls_per_turn,
             max_tool_calls_per_cell=probe.max_tool_calls_per_cell,
             extra={"image": self.image, "timeout_s": self.timeout_s,

@@ -37,7 +37,7 @@ from assay_pier_bridge.repository_trial import (
     _container_count,
     agent_configuration,
 )
-from assay_pier_bridge.runtime import BridgeRuntime
+from assay_pier_bridge.runtime import BridgeRuntime, InfrastructureTrialError
 from test_agent_loop import FakeSandbox, FakeStorage, _call
 from test_support import exchange_for
 
@@ -345,11 +345,16 @@ def test_pilot_configuration_and_sealed_per_turn_submissions(tmp_path: Path) -> 
     )
     configuration = agent_configuration(
         bounds=agent.bounds, limits=LIMITS, writable_prefixes=agent.writable_prefixes,
-        model_route=LOCAL, pilot_mode=True, next_user_turns=turns,
+        model_route=LOCAL, pilot_mode=True, pilot_tools_by_turn=agent.pilot_tools_by_turn,
+        next_user_turns=turns,
         max_tool_calls_per_turn=agent.max_tool_calls_per_turn,
         max_tool_calls_per_cell=agent.max_tool_calls_per_cell,
     )
     assert configuration["tools_sha256"] == digest_bytes(canonical_json(PILOT_TOOL_SCHEMAS))
+    assert configuration["tools_t1_sha256"] == digest_bytes(
+        canonical_json(agent.pilot_tools_by_turn["T1"]))
+    assert configuration["tools_t2_t3_sha256"] == digest_bytes(
+        canonical_json(agent.pilot_tools_by_turn["T2_T3"]))
     assert configuration["turn_prompts_sha256"] == digest_bytes(canonical_json(turns))
     result = BridgeRuntime(RepositoryAgentTrialClient(
         agent=agent, package=PACKAGE, limits=LIMITS, configuration=configuration,
@@ -362,7 +367,43 @@ def test_pilot_configuration_and_sealed_per_turn_submissions(tmp_path: Path) -> 
     ]
     trajectory = json.loads(result.artifacts["trajectory.json"])
     assert len(trajectory["turns"]) == 3
+    assert [turn["tools_turn_sha256"] for turn in trajectory["turns"]] == [
+        configuration["tools_t1_sha256"], configuration["tools_t2_t3_sha256"],
+        configuration["tools_t2_t3_sha256"],
+    ]
     assert all(turn["workspace_diff"] == "" for turn in trajectory["turns"])
+
+
+@pytest.mark.parametrize("changed_field", ("tools_t1_sha256", "tools_t2_t3_sha256", "surface"))
+def test_pilot_configuration_refuses_changed_tool_identity(
+    tmp_path: Path, changed_field: str,
+) -> None:
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([]), pilot_mode=True, next_user_turns=("Review", "Check"),
+        writable_prefixes=("src/",), max_tool_calls_per_turn=15,
+        max_tool_calls_per_cell=40, sandbox_factory=FakeSandbox,
+        storage_factory=FakeStorage,
+    )
+    configuration = agent_configuration(
+        bounds=agent.bounds, limits=LIMITS, writable_prefixes=agent.writable_prefixes,
+        model_route=LOCAL, pilot_mode=True, pilot_tools_by_turn=agent.pilot_tools_by_turn,
+        next_user_turns=agent.next_user_turns,
+        max_tool_calls_per_turn=agent.max_tool_calls_per_turn,
+        max_tool_calls_per_cell=agent.max_tool_calls_per_cell,
+    )
+    if changed_field == "surface":
+        agent.pilot_tools_by_turn["T2_T3"].append(
+            {"type": "function", "function": {"name": "extra"}})
+    else:
+        configuration[changed_field] = "sha256:changed"
+    handle = RepositoryAgentTrialHandle(
+        request=_request(), agent=agent, package=PACKAGE, limits=LIMITS,
+        configuration=configuration,
+    )
+    with pytest.raises(InfrastructureTrialError) as failure:
+        handle._check_request()
+    assert failure.value.cause == "enforcement"
 
 
 def test_timed_out_run_command_counts_as_unclassified(tmp_path: Path) -> None:

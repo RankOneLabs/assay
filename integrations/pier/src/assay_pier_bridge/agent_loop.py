@@ -36,7 +36,7 @@ from typing import Any, Literal, NoReturn, Protocol
 
 import httpx
 
-from assay_pier_bridge.identity import digest_bytes
+from assay_pier_bridge.identity import canonical_json, digest_bytes
 from assay_pier_bridge.paths import (
     ArtifactCollectionRejected,
     check_submission_scope,
@@ -1240,6 +1240,7 @@ class RepositoryAgentClient:
     completion: TurnCompletion | None = None
     bounds: LoopBounds = field(default_factory=LoopBounds)
     tools: list[dict[str, Any]] = field(default_factory=lambda: deepcopy(TOOLS))
+    pilot_tools_by_turn: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     system_prompt: str = SYSTEM_PROMPT
     message_prefix: tuple[dict[str, Any], ...] = ()
     writable_prefixes: tuple[str, ...] = ()
@@ -1288,16 +1289,29 @@ class RepositoryAgentClient:
                 isinstance(prompt, str) and prompt.strip() for prompt in self.next_user_turns
             ):
                 raise ValueError("pilot mode requires two next user turns")
-            self.tools = deepcopy(PILOT_TOOLS_T1)
+            if self.pilot_tools_by_turn:
+                if set(self.pilot_tools_by_turn) != {"T1", "T2_T3"}:
+                    raise ValueError("pilot tools require T1 and T2_T3 lists")
+                self.pilot_tools_by_turn = deepcopy(self.pilot_tools_by_turn)
+            else:
+                self.pilot_tools_by_turn = {
+                    "T1": deepcopy(PILOT_TOOLS_T1),
+                    "T2_T3": deepcopy(PILOT_TOOLS_REVIEW),
+                }
+            self.tools = self.pilot_tools_by_turn["T1"]
             if not self.writable_prefixes:
                 raise ValueError("pilot mode requires writable prefixes")
             if min(self.max_tool_calls_per_turn, self.max_tool_calls_per_cell) < 1:
                 raise ValueError("pilot mode requires positive tool call limits")
         elif self.next_user_turns:
             raise ValueError("next user turns require pilot mode")
+        elif self.pilot_tools_by_turn:
+            raise ValueError("pilot tools require pilot mode")
         if self.max_tool_calls_per_turn < 0 or self.max_tool_calls_per_cell < 0:
             raise ValueError("tool call limits must not be negative")
-        if len(_json_bytes(self.tools)) > self.bounds.max_tool_schema_bytes:
+        tool_lists = self.pilot_tools_by_turn.values() if self.pilot_mode else (self.tools,)
+        if any(len(_json_bytes(tools)) > self.bounds.max_tool_schema_bytes
+               for tools in tool_lists):
             raise ValueError("tool_schema_limit")
         for prefix in self.writable_prefixes:
             if not prefix.endswith("/"):
@@ -1612,6 +1626,8 @@ class RepositoryAgentClient:
         turn_record: dict[str, Any] = {
             "turn": "T1", "tool_calls": [], "submission": None,
             "workspace_diff": None,
+            "tools_turn_sha256": digest_bytes(canonical_json(
+                self.pilot_tools_by_turn["T1"] if self.pilot_mode else self.tools)),
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "requests": 0,
                       "cost_usd": 0.0 if self.model_route.paid_route_reachable else None},
         }
@@ -1715,6 +1731,8 @@ class RepositoryAgentClient:
             turn_record = {
                 "turn": f"T{logical_turn}", "tool_calls": [],
                 "submission": None, "workspace_diff": None,
+                "tools_turn_sha256": digest_bytes(canonical_json(
+                    self.pilot_tools_by_turn["T2_T3"])),
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0,
                           "requests": 0,
                           "cost_usd": 0.0 if cost_usd is not None else None},
@@ -1754,9 +1772,12 @@ class RepositoryAgentClient:
             )
             for turn in range(1, self.bounds.max_turns + 1):
                 remaining()
-                turn_tools = (
-                    PILOT_TOOLS_T1 if logical_turn == 1 else PILOT_TOOLS_REVIEW
-                ) if self.pilot_mode else self.tools
+                turn_tools = self.pilot_tools_by_turn[
+                    "T1" if logical_turn == 1 else "T2_T3"
+                ] if self.pilot_mode else self.tools
+                turn_record["tools_turn_sha256"] = digest_bytes(canonical_json(turn_tools))
+                if len(_json_bytes(turn_tools)) > self.bounds.max_tool_schema_bytes:
+                    raise ValueError("tool_schema_limit")
                 _shrink_conversation(
                     messages, self.bounds.max_conversation_bytes, events, prefix_length
                 )
