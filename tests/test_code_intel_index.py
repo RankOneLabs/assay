@@ -69,3 +69,20 @@ def test_prepare_failure_stops_before_query(
     assert isinstance(result, Err)
     assert result.error.cause == "codeintel_index_failure"
     assert "grammar missing" in result.error.detail
+
+
+def test_map_skips_oversized_path_and_includes_later_entry(tmp_path: Path) -> None:
+    provider = SymbolsCodeIntel(CodeIntelSettings(mode=SymbolsMode()), index_root=tmp_path)
+    long_path = "a/" + "very_long_name_" * 20 + ".ts"
+    built = provider.prepare({
+        long_path: "export function longName() {}\n",
+        "z.ts": "export function shortName() {}\n",
+    }, image_digest=IMAGE, excluded_paths=frozenset())
+    assert isinstance(built, Ok)
+
+    first = provider.summarize(built.value, token_budget=10)
+    second = provider.summarize(built.value, token_budget=10)
+    assert isinstance(first, Ok) and isinstance(second, Ok)
+    assert first.value is not None and second.value is not None
+    assert first.value.text == "z.ts: shortName\n"
+    assert first.value.model_dump_json() == second.value.model_dump_json()

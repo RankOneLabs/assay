@@ -92,7 +92,7 @@ class SymbolsCodeIntel:
             line = path + (": " + ", ".join(dict.fromkeys(names[:8])) if names else "") + "\n"
             cost = approximate_tokens(line)
             if used + cost > token_budget:
-                break
+                continue
             lines.append(line)
             used += cost
         return Ok(PreloadedSummary(repo_revision=manifest.repo_revision, text="".join(lines)))
