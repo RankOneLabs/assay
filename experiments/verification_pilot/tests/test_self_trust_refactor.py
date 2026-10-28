@@ -181,6 +181,60 @@ def test_module_read_any_counts_named_inspections_but_not_whole_tree_searches(
     assert "by ``read_file`` or a D18 shell read" in (refactor_evaluation.__doc__ or "")
 
 
+def test_query_result_names_omission_without_changing_strict_read() -> None:
+    subject = next(s for s in self_trust_subjects()
+                   if s.fixture == "refactor" and s.remnant_owner == "group_a")
+    query = {"name": "codeintel_query", "arguments": {"text": "units"}, "exit_code": 0,
+             "returned_text": "exit=0\n" + json.dumps({
+                 "items": [{"file_path": "src/decision/units.ts"}]})}
+    turn = {"tool_calls": [query]}
+    assert module_read_any(subject, turn) is True
+    assert module_read(subject, turn) is False
+    assert module_read_any(subject, {"tool_calls": [{**query, "exit_code": 1}]}) is False
+    other = {**query, "returned_text": json.dumps({"items": [
+        {"file_path": "src/decision/other.ts"}]})}
+    assert module_read_any(subject, {"tool_calls": [other]}) is False
+
+
+@pytest.mark.parametrize("command", [
+    "cat .codeintel/index.json",
+    "grep reserved .codeintel/index.json",
+])
+def test_shell_index_inspection_requires_agent_readable_mount(command: str) -> None:
+    subject = next(s for s in self_trust_subjects()
+                   if s.fixture == "refactor" and s.remnant_owner == "group_a")
+    turn = {"tool_calls": [{"name": "run_command", "arguments": {"command": command},
+                            "exit_code": 0}]}
+    index = ".codeintel/index.json"
+    assert module_read_any(subject, turn, index_path=index, index_agent_readable=True) is True
+    assert module_read_any(subject, turn, index_path=index, index_agent_readable=False) is False
+    assert module_read_any(subject, turn) is False
+    assert module_read(subject, turn) is False
+
+
+def test_shell_grep_of_omission_module_still_counts_without_index() -> None:
+    subject = next(s for s in self_trust_subjects()
+                   if s.fixture == "refactor" and s.remnant_owner == "group_a")
+    turn = {"tool_calls": [{"name": "run_command", "arguments": {
+        "command": "grep reserved src/decision/units.ts"}, "exit_code": 0}]}
+    assert module_read_any(subject, turn) is True
+    assert module_read(subject, turn) is False
+
+
+def test_refactor_measures_uses_recorded_index_mount_choice() -> None:
+    subject = next(s for s in self_trust_subjects()
+                   if s.fixture == "refactor" and s.remnant_owner == "group_a")
+    turn = {"turn": "T1", "tool_calls": [{"name": "run_command", "arguments": {
+        "command": "cat .codeintel/index.json"}, "exit_code": 0}]}
+    for readable in (False, True):
+        trajectory = {"turns": [turn], "code_intel_index": {
+            "path": ".codeintel/index.json", "agent_readable": readable}}
+        rows = refactor_measures(subject, trajectory, None, "image")
+        broad = next(row["result"]["value"] for row in rows
+                     if row["turn"] == "T1" and row["name"] == "module_read_any")
+        assert broad is readable
+
+
 def test_run_checks_cache_includes_image_and_hidden_test_digests(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

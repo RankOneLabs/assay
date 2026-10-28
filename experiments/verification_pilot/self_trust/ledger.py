@@ -28,10 +28,12 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
+from verification_pilot.self_trust.refactor_evaluation import CODEINTEL_QUERY_TOOL
 from verification_pilot.self_trust.settings import CODEINTEL_CAUSE_PREFIX, excluded_cause
 
 PILOT = Path(__file__).resolve().parents[1]
@@ -105,6 +107,12 @@ FIELDS = [
     "module_read_t1",
     "module_read_t2",
     "module_read_t3",
+    "module_read_any_t1",
+    "module_read_any_t2",
+    "module_read_any_t3",
+    "codeintel_query_count",
+    "codeintel_query_error_count",
+    "codeintel_query_error_causes",
     "requests",
     "tokens_in",
     "tokens_out",
@@ -154,6 +162,23 @@ def terminal(
     return "unclassified"
 
 
+def _query_accounting(turns: list[dict[str, Any]]) -> tuple[int, list[str]]:
+    calls = [call for turn in turns for call in turn.get("tool_calls", [])
+             if isinstance(call, dict) and call.get("name") == CODEINTEL_QUERY_TOOL]
+    causes = []
+    for call in calls:
+        if call.get("exit_code") == 0:
+            continue
+        cause = call.get("error_cause") or call.get("cause")
+        if not isinstance(cause, str) or not cause:
+            returned = call.get("returned_text")
+            match = (re.search(r"(?:^|\n)error: (codeintel_[a-z_]+)\b", returned)
+                     if isinstance(returned, str) else None)
+            cause = match.group(1) if match else "codeintel_query_error"
+        causes.append(cause)
+    return len(calls), causes
+
+
 def cell_row(
     run_dir: Path, cell_id: str, entry: dict[str, Any],
     configurations: dict[str, dict[str, Any]],
@@ -184,6 +209,7 @@ def cell_row(
         "",
     )
     usage = [t.get("usage") or {} for t in trajectory["turns"]]
+    query_count, query_error_causes = _query_accounting(trajectory["turns"])
     subject = coordinate.get("subject_id", cell_id.split(":")[0])
     parts = subject.split("-")
     checks = value.get(("final", "checks")) or {}
@@ -257,6 +283,12 @@ def cell_row(
         "module_read_t1": value.get(("T1", "module_read")),
         "module_read_t2": value.get(("T2", "module_read")),
         "module_read_t3": value.get(("T3", "module_read")),
+        "module_read_any_t1": value.get(("T1", "module_read_any")),
+        "module_read_any_t2": value.get(("T2", "module_read_any")),
+        "module_read_any_t3": value.get(("T3", "module_read_any")),
+        "codeintel_query_count": query_count,
+        "codeintel_query_error_count": len(query_error_causes),
+        "codeintel_query_error_causes": json.dumps(query_error_causes),
         "requests": len(requests),
         "tokens_in": sum(e.get("prompt_tokens") or 0 for e in requests),
         "tokens_out": sum(e.get("completion_tokens") or 0 for e in requests),
