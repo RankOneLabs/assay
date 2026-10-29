@@ -16,9 +16,11 @@ from code_extension.fixture import (
     materialize,
     read_tree,
 )
+from code_extension.qualify import CHECKS, read_evidence
 from code_extension.settings import SMOKE_SUBJECT_IDS
 
 from assay.canonical import canonical_json, digest_bytes
+from assay.fixture_manifest import FixtureManifestV3
 from assay.investigations.workflow_correctness import workflow_tree_digest
 from assay.repository import DEFAULT_MAX_REPOSITORY_BYTES, DEFAULT_MAX_REPOSITORY_FILES
 
@@ -102,3 +104,39 @@ def test_added_scenario_qualification_records(name: str) -> None:
         assert record["reference"]["groups"] == {group: "passed" for group in group_names}
         assert record["negative"]["groups"]["new_behavior"] == "failed"
         assert record["reference"]["verdict"] == "correct"
+
+
+@pytest.mark.parametrize("name", ADDED_SCENARIOS)
+def test_added_manifest_binds_every_arm_and_check(name: str) -> None:
+    fixture = load_committed_scenario(name)
+    root = PILOT.parent / name
+    manifest = FixtureManifestV3.model_validate_json(
+        (root / "qualification" / "manifest.json").read_bytes()
+    )
+    manifest.require_qualified()
+    scenario = manifest.scenario(fixture.subject_id)
+    assert scenario is not None
+    assert scenario.checkpoint_sha == CHECKPOINT_SHA
+    assert manifest.arm_set.factor == ("code_shape" if name == "stage-pass-through" else "baseline")
+    frozen_groups = {
+        group.name: group.digest for group in (*scenario.visible_tests, *scenario.hidden_tests)
+    }
+    assert frozen_groups == {
+        group.name: digest_bytes(canonical_json(group.model_dump(mode="json")))
+        for group in fixture.groups
+    }
+    for arm in fixture.arms:
+        realization = next(item for item in scenario.arms if item.arm_id == arm.arm_id)
+        assert realization.tree_digest == workflow_tree_digest(arm.repository)
+        assert realization.reference_patch == digest_bytes(arm.reference_patch.encode())
+        assert realization.negative_patches == (digest_bytes(arm.negative_patch.encode()),)
+        for check in CHECKS:
+            record, digest = read_evidence(root / "qualification" / "evidence", arm.arm_id, check)
+            result = getattr(realization.qualification, check)
+            assert result.evidence == digest
+            assert record["subject_id"] == fixture.subject_id
+            assert record["image_digest"] == manifest.observed_runtime_image_digest
+            assert record["tree_digest"] == realization.tree_digest
+            assert record["outcome"] == result.outcome
+            expected_patch = arm.reference_patch if check == "reference_passes" else ""
+            assert record["patch_digest"] == digest_bytes(expected_patch.encode())

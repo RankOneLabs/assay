@@ -54,4 +54,6 @@ which shows that merely recognizing the new spelling is insufficient. There
 is no architectural comparison within this control; its one-file edit is
 intentionally less complex than the stage compiler arms. Qualification records
 under `qualification/` report baseline, reference, and negative verdicts from
-the frozen runtime image.
+the frozen runtime image. `qualification/manifest.json` binds the tree, task,
+patches, and groups to the three retained check records. Its routing digest is
+null because the offline checks make no model request.

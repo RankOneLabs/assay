@@ -62,4 +62,6 @@ patches express the intended behavior; each negative patch defines a compiler
 but omits its dispatch registration. All patches are private siblings of the
 repository trees. The qualification records under `qualification/` report the
 three group verdicts for baseline, reference, and negative runs against the
-frozen runtime image.
+frozen runtime image. The `qualification/manifest.json` arm records bind each
+tree, task, patch, and frozen group to the three retained check records. Its
+routing digest is null because the offline checks make no model request.
