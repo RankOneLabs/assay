@@ -21,6 +21,7 @@ import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
     CANDIDATE_STOP_CAUSES,
+    EXTENSION_TOOLS,
     HAIKU_TURN_ROUTE,
     MAX_MODEL_TURNS,
     MODEL_REQUEST_SECONDS,
@@ -1241,6 +1242,20 @@ def test_tool_schemas_are_fixed_ordered_and_under_their_byte_cap() -> None:
     for tool in TOOLS:
         parameters = tool["function"]["parameters"]
         assert parameters["required"] == list(parameters["properties"])
+
+
+def test_extension_tool_surface_has_its_own_pinned_digest_and_order() -> None:
+    assert digest_bytes(canonical_json(TOOLS)) == (
+        "sha256:0c99814308ccae7f60e1b3746f40053394e719dfbee07e81e5e9c302d258b45c"
+    )
+    assert digest_bytes(canonical_json(EXTENSION_TOOLS)) == (
+        "sha256:698286ad88a625d2ebdccb8c5f1fffc7d7831692f09eac7b146123fd2f8c8c9c"
+    )
+    assert [tool["function"]["name"] for tool in EXTENSION_TOOLS] == [
+        "read_file", "write_file", "replace_in_file", "run_command", "submit_output"
+    ]
+    assert EXTENSION_TOOLS[:-1] == TOOLS[:-1]
+    assert EXTENSION_TOOLS[0] is not TOOLS[0]
 
 
 def _tool_results(result: Any) -> list[str]:

@@ -900,6 +900,23 @@ _REVIEW_SUBMIT_TOOL = _tool(
 PILOT_TOOLS_T1 = [*deepcopy(TOOLS[:-1]), _SEARCH_FILES_TOOL, _T1_SUBMIT_TOOL]
 PILOT_TOOLS_REVIEW = [*deepcopy(TOOLS[:-1]), _SEARCH_FILES_TOOL, _REVIEW_SUBMIT_TOOL]
 PILOT_TOOL_SCHEMAS = {"T1": PILOT_TOOLS_T1, "T2_T3": PILOT_TOOLS_REVIEW}
+
+# Extension trials have their own pinned surface.  The three nullable fields
+# preserve an explicit "no self-assessment" submission under strict tool schemas.
+_EXTENSION_SUBMIT_TOOL = _tool(
+    "submit_output",
+    "Finish this extension attempt and report your assessment of the submitted files.",
+    {
+        "summary": {"type": "string"},
+        "self_assessed_verdict": {
+            "type": ["string", "null"],
+            "enum": ["complete", "incomplete", "unsure", None],
+        },
+        "checks_performed": {"type": ["string", "null"]},
+        "remaining_work": {"type": ["string", "null"]},
+    },
+)
+EXTENSION_TOOLS = [*deepcopy(TOOLS[:-1]), _EXTENSION_SUBMIT_TOOL]
 _FORBIDDEN_REPOSITORY_PARTS = frozenset({"hidden_tests", "hidden-tests", "reference_solutions"})
 # Causes that end a cell because of what the model did, not the harness.
 CANDIDATE_STOP_CAUSES = frozenset(
@@ -941,8 +958,25 @@ def _bounded_text(text: str, limit: int) -> tuple[str, bool]:
     return encoded[:limit].decode("utf-8", errors="ignore"), True
 
 
-def _submission(arguments: dict[str, Any], logical_turn: int, pilot_mode: bool) -> dict[str, str]:
+def _submission(
+    arguments: dict[str, Any], logical_turn: int, pilot_mode: bool,
+    extension_mode: bool = False,
+) -> dict[str, Any]:
     """Validate exactly the schema advertised for this turn."""
+    if extension_mode:
+        fields = {"summary", "self_assessed_verdict", "checks_performed", "remaining_work"}
+        if set(arguments) != fields or not isinstance(arguments["summary"], str):
+            raise ToolArgumentError("extension submit_output requires summary and assessment fields")
+        if arguments["self_assessed_verdict"] not in {"complete", "incomplete", "unsure", None}:
+            raise ToolArgumentError("invalid self-assessed verdict")
+        if any(arguments[key] is not None and not isinstance(arguments[key], str)
+               for key in ("checks_performed", "remaining_work")):
+            raise ToolArgumentError("assessment details must be strings or null")
+        if arguments["self_assessed_verdict"] is None and any(
+            arguments[key] is not None for key in ("checks_performed", "remaining_work")
+        ):
+            raise ToolArgumentError("assessment details require a verdict")
+        return arguments
     if not pilot_mode:
         if set(arguments) == {"summary"} and isinstance(arguments["summary"], str):
             return {"summary": arguments["summary"]}
@@ -1335,6 +1369,7 @@ class RepositoryAgentClient:
     message_prefix: tuple[dict[str, Any], ...] = ()
     writable_prefixes: tuple[str, ...] = ()
     pilot_mode: bool = False
+    extension_mode: bool = False
     next_user_turns: tuple[str, ...] = ()
     max_tool_calls_per_turn: int = 0
     max_tool_calls_per_cell: int = 0
@@ -1355,6 +1390,10 @@ class RepositoryAgentClient:
             sandbox.close()
 
     def __post_init__(self) -> None:
+        if self.extension_mode and self.pilot_mode:
+            raise ValueError("extension and pilot modes are mutually exclusive")
+        if self.extension_mode and self.tools != EXTENSION_TOOLS:
+            raise ValueError("extension mode requires the pinned extension tool surface")
         if self.model_route.paid_route_reachable:
             if self.completion is not None:
                 raise ValueError("the paid route is built in and takes no injected completion")
@@ -2067,7 +2106,9 @@ class RepositoryAgentClient:
                         if not isinstance(name, str) or not isinstance(arguments, dict):
                             raise ToolArgumentError("tool call needs a name and object arguments")
                         if name == "submit_output":
-                            submission = _submission(arguments, logical_turn, self.pilot_mode)
+                            submission = _submission(
+                                arguments, logical_turn, self.pilot_mode, self.extension_mode
+                            )
                             if call_index != len(calls) - 1:
                                 raise ToolArgumentError("submit_output must be the last call")
                             events.append({"kind": "submit_requested", "turn": turn})
