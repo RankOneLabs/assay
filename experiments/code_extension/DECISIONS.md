@@ -1,5 +1,31 @@
 # Code extension model decisions
 
+## Study authorization and evaluation
+
+- `study.check_fixture` validates the 0.3.0 manifest against operator-held
+  per-arm trees and content-addressed test groups before planning. It refuses
+  image or routing drift, an unqualified arm, tree drift, hidden checks in a
+  shipped tree, and visible tests that differ across arms. It also re-reads
+  the three retained qualification records and binds each outcome to its
+  scenario, arm, image and tree.
+- A study plan uses scenarios as subjects and the manifest's single arm-set
+  factor as its arm dimension. Every arm declares `subject-rotated-v1` in its
+  conditions, and `shape.validate_worker_grid` runs before plan bytes are
+  returned for authorization. The shared planner currently accepts this
+  schedule only for at least two arms, so the committed single-arm baseline
+  pilot cannot yet be compiled with the required schedule; that planner change
+  is outside this cohort's files.
+- `evaluation.CellEvaluator` reads its arm and subject from the cell, its
+  baseline from the realization, and its baseline digest from worker evidence.
+  A mismatch is a named `unavailable` verdict. It passes only the frozen
+  visible, hidden regression and new-behavior groups to the runner and retains
+  status and cause per group, never test output. Diagnosis remains a separate
+  replay.
+- `dispatch.cell_idempotency_key` is the same stable run-and-coordinate key
+  the extension bridge already uses, so a lost response reuses the same
+  Smithers job at each turn. The core run manifest records unsettled and
+  unevaluated coordinates as incomplete; study execution uses that manifest.
+
 - The 0.3.0 manifest is a new wire version. The 0.1.0 and 0.2.0 models and
   their published schemas remain unchanged.
 - One discriminated arm set declares the factor for the whole manifest. The
