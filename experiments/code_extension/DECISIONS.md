@@ -61,3 +61,34 @@ This small smoke verifies the final image, route bindings, extension tool
 surface, and that these live cells fit inside the named envelopes. It does
 not saturate the byte ceilings; the larger ceilings retain the already
 qualified Part 1 and pilot headroom. No extension fixture was qualified.
+
+# Pilot qualification decisions
+
+- The first study subject is `oakridge-dbos-context-defaults`, a pinned slice of
+  oakridge-dbos at `f3b3ffca43e43672ff2f58ab797d65c7532aaed8`. It promotes
+  the bounded context-binding request exercised by the workflow-edit smoke into
+  the extension study's committed pilot. The pilot is a study subject and is not
+  added to `SMOKE_SUBJECT_IDS`. Its README records the archive invocation,
+  path mapping, exclusions, and mechanical adaptations.
+- `fixture.py` loads only committed content. Visible tests are frozen from
+  `repository/tests/visible/`; the held-out regression and feature groups and
+  both patches live outside `repository/`. The negative patch is deliberately
+  incomplete: it accepts and types defaults but omits resolution and launch
+  requirement behavior.
+- `qualify.py` runs `baseline_passes`, `feature_fails`, and `reference_passes`
+  separately through `DockerWorkflowRunner` in the image inspected as
+  `sha256:a63b8377bf057a7d888f279c42b54ff904c6b1353af509a5016573ab7ac2cdf3`.
+  The runner restores visible tests before typecheck and bun build, then copies
+  the private groups and runs all three with `--network=none` and `--pull=never`.
+  The reference patch is used only for `reference_passes`; it is not an evaluator
+  oracle. Each retained canonical JSON record contains only group verdicts and
+  causes, and its digest appears in the 0.3.0 manifest. Assembly re-reads and
+  validates the records and the current image digest and reads the routing file
+  at assembly time. It raises on a dead feature group or any other unqualified
+  arm, so no unqualified manifest is returned.
+- The committed baseline and feature checks observed visible regression and
+  hidden regression passing and new behavior failing. The committed reference
+  check observed all three groups passing. Repeating qualification produced
+  byte-identical retained records. `diagnose.py` replays a recorded failed group
+  in the same image to name failing tests or the first typecheck errors. It has
+  no path that writes a verdict or evidence record.
