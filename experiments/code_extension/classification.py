@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, assert_never
+from typing import Annotated, Literal, assert_never
+
+from pydantic import Field, TypeAdapter
 
 from assay.investigations.workflow_correctness import Verdict
 from assay.pier_protocol import CandidateCause, InfrastructureCause
@@ -68,7 +70,15 @@ type OperatorCategory = (
     | CodeGenerationDefect | InvalidVerificationClaim | AmbiguousFixture
 )
 type MechanicalCategory = HarnessOrProviderFailure | Timeout
-type FailureCategory = OperatorCategory | MechanicalCategory
+type FailureCategory = Annotated[OperatorCategory | MechanicalCategory, Field(discriminator="tag")]
+_category_adapter: TypeAdapter[OperatorCategory | MechanicalCategory] = TypeAdapter(
+    FailureCategory
+)
+
+
+def parse_category(value: object) -> FailureCategory:
+    """Reject an unknown tag or missing operator provenance at the wire boundary."""
+    return _category_adapter.validate_python(value)
 
 
 @dataclass(frozen=True)
