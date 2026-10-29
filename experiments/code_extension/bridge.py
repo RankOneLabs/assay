@@ -16,7 +16,6 @@ from workflow_edit.bridge import (
     WorkflowEditHandle,
     trial_limits,
 )
-from workflow_edit.dispatch import cell_idempotency_key
 
 from assay_pier_bridge import protocol as bridge_protocol
 from assay_pier_bridge.agent_loop import (
@@ -39,6 +38,7 @@ from assay.models import CellCoordinate
 from assay.pier_protocol import PierExchange
 from code_extension.arms import require_declared_codeintel_arm
 from code_extension.codeintel import PreparedExtensionCodeIntel, prepare_extension_codeintel
+from code_extension.dispatch import cell_idempotency_key
 from code_extension.prompts import render_arm_prompts
 from code_extension.settings import ExtensionAgentSettings
 

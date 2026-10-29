@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 from assay.fixture_manifest import ExtensionArmSet
 from assay.models import CellCoordinate
+from code_extension.arms import ARM_SET_FACTORS
 from code_extension.settings import SMOKE_SUBJECT_IDS
 
 
@@ -15,6 +16,8 @@ def validate_worker_grid(
     worker_repeats: int,
 ) -> None:
     """Require one cell per declared subject, arm and repeat of one factor."""
+    if not isinstance(arm_ids.factor, str) or arm_ids.factor not in ARM_SET_FACTORS:
+        raise ValueError("extension grid requires exactly one declared arm-set factor")
     if not subject_ids or len(subject_ids) != len(set(subject_ids)):
         raise ValueError("extension subject ids must be nonempty and unique")
     if SMOKE_SUBJECT_IDS.intersection(subject_ids):
