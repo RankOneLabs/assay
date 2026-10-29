@@ -65,3 +65,5 @@ uv run --project experiments python -m code_extension.qualify --routing-config /
 ```
 
 The committed manifest binds the routing file's exact bytes as `sha256:1a241e5535f28094ad103e82af57bce52441ec321ebf6cd0013b2773feb4f3f0`. Use a copy with that digest to verify the committed manifest; a different routing file produces a different manifest identity. The pinned runtime image must also be available locally under the qualification command's default image tag (or supply `--image` for an equivalent image with the same observed digest). The command runs the checks without network access or dependency installation.
+
+The Docker replay test accepts `ASSAY_EXTENSION_ROUTING_CONFIG=/absolute/path/to/routing_config.yaml`. It skips replay when the pinned image or routing file is not provisioned, while the committed record and manifest checks still run.
