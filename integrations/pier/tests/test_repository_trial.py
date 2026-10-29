@@ -8,6 +8,7 @@ import assay_pier_bridge.repository_trial as repository_trial
 import httpx
 import pytest
 from assay_pier_bridge.agent_loop import (
+    EXTENSION_TOOLS,
     PILOT_TOOL_SCHEMAS,
     SYSTEM_PROMPT,
     AgentLoopError,
@@ -96,6 +97,60 @@ def _runtime(tmp_path: Path, completion: Scripted, package: dict[str, str] = PAC
         agent=agent, package=package, limits=LIMITS, configuration=configuration
     )
     return BridgeRuntime(client)
+
+
+def test_extension_self_assessment_survives_in_sealed_evidence(tmp_path: Path) -> None:
+    assessment = {
+        "summary": "Edited the source", "self_assessed_verdict": "incomplete",
+        "checks_performed": "typecheck", "remaining_work": "one failing test",
+    }
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=Scripted([_call("submit_output", assessment, 1)]),
+        tools=EXTENSION_TOOLS, extension_mode=True,
+        writable_prefixes=("src/", "tests/visible/"),
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    configuration = agent_configuration(
+        bounds=LoopBounds(), limits=LIMITS, writable_prefixes=agent.writable_prefixes,
+        model_route=LOCAL, tools=EXTENSION_TOOLS,
+    )
+    result = BridgeRuntime(RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration=configuration,
+    )).run_cell(_request())
+    assert isinstance(result.outcome, CandidateSubmission)
+    assert json.loads(result.artifacts["result.json"])["submissions"] == [assessment]
+
+
+def test_extension_trial_refuses_tool_digest_drift_before_model_turn(tmp_path: Path) -> None:
+    class Counting(Scripted):
+        calls = 0
+
+        def __call__(self, *, turn: int, **kwargs: Any) -> ModelTurn:
+            self.calls += 1
+            return super().__call__(turn=turn, **kwargs)
+
+    completion = Counting([_call("submit_output", {
+        "summary": "done", "self_assessed_verdict": None,
+        "checks_performed": None, "remaining_work": None,
+    }, 1)])
+    agent = RepositoryAgentClient(
+        api_key=None, image="img", runs_root=tmp_path, model_route=LOCAL,
+        completion=completion, tools=EXTENSION_TOOLS, extension_mode=True,
+        writable_prefixes=("src/", "tests/visible/"),
+        sandbox_factory=FakeSandbox, storage_factory=FakeStorage,
+    )
+    configuration = agent_configuration(
+        bounds=LoopBounds(), limits=LIMITS, writable_prefixes=agent.writable_prefixes,
+        model_route=LOCAL, tools=EXTENSION_TOOLS,
+    )
+    configuration["tools_sha256"] = "sha256:" + "0" * 64
+    result = BridgeRuntime(RepositoryAgentTrialClient(
+        agent=agent, package=PACKAGE, limits=LIMITS, configuration=configuration,
+    )).run_cell(_request())
+    assert isinstance(result.outcome, InfrastructureFailure)
+    assert result.outcome.cause == "enforcement"
+    assert completion.calls == 0
 
 
 def test_enforcement_is_unverified_without_a_sandbox_observation(tmp_path: Path) -> None:

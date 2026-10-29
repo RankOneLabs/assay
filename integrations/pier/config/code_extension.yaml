@@ -1,0 +1,34 @@
+# Coder envelope: experiments/workflow_edit/SMOKE.md qualified bounds.
+# Qwen3.6 envelope: experiments/verification_pilot/settings.py measured source
+# slice; extension image smoke observations: experiments/code_extension/DECISIONS.md.
+routes:
+  qwen-coder-32b:
+    served_context_tokens: 32768
+    max_turns: 20
+    timeout_s: 900.0
+    attempts: 1
+    concurrency: 1
+    provider_retries: 0
+    sdk_retries: 0
+    max_tool_schema_bytes: 16384
+    max_tool_output_bytes: 32768
+    max_conversation_bytes: 81920
+    max_request_bytes: 98304
+    max_response_bytes: 131072
+    max_output_tokens: 8192
+    max_storage_mb: 512
+  qwen3.6-27b:
+    served_context_tokens: 131072
+    max_turns: 20
+    timeout_s: 900.0
+    attempts: 1
+    concurrency: 1
+    provider_retries: 0
+    sdk_retries: 0
+    max_tool_schema_bytes: 16384
+    max_tool_output_bytes: 32768
+    max_conversation_bytes: 3670016
+    max_request_bytes: 3932160
+    max_response_bytes: 131072
+    max_output_tokens: 8192
+    max_storage_mb: 512
