@@ -131,7 +131,7 @@ def test_added_manifest_binds_every_arm_and_check(name: str) -> None:
         assert realization.reference_patch == digest_bytes(arm.reference_patch.encode())
         assert realization.negative_patches == (digest_bytes(arm.negative_patch.encode()),)
         for check in CHECKS:
-            record, digest = read_evidence(root / "qualification" / "evidence", arm.arm_id, check)
+            record, digest = read_evidence(root / "qualification" / "checks", arm.arm_id, check)
             result = getattr(realization.qualification, check)
             assert result.evidence == digest
             assert record["subject_id"] == fixture.subject_id
