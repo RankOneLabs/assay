@@ -1,0 +1,35 @@
+diff --git a/src/compiler/compile-workflow.ts b/src/compiler/compile-workflow.ts
+--- a/src/compiler/compile-workflow.ts
++++ b/src/compiler/compile-workflow.ts
+@@ -105,11 +105,25 @@
+   },
+ };
+ 
++export const passThroughStageTypeCompiler: StageTypeCompiler = {
++  compile(stageKey, rawConfig) {
++    if (rawConfig === null || Array.isArray(rawConfig) || typeof rawConfig !== "object" || Object.keys(rawConfig).length !== 0) {
++      return err({ operation: "compile_workflow", stage_key: stageKey, detail: "pass_through config must be an empty object" });
++    }
++    return ok({
++      definition_config: rawConfig,
++      materialization: { kind: "scalar" },
++      output_release: () => ({ kind: "immediate" }),
++    });
++  },
++};
++
+ export type StageTypeCompilerRegistry = Readonly<Record<string, StageTypeCompiler>>;
+ 
+ const availableCompilers: StageTypeCompilerRegistry = {
+   delegated_session: delegatedSessionStageTypeCompiler,
+   [PROVISION_REPOSITORY_REFS_STAGE_TYPE]: repositoryProvisioningStageTypeCompiler,
++  pass_through: passThroughStageTypeCompiler,
+ };
+ const builtInStageTypeCompilers: StageTypeCompilerRegistry = configureStagePlugins(stagePluginConfig, availableCompilers);
+ 
+diff --git a/src/compiler/stage-plugin-config.json b/src/compiler/stage-plugin-config.json
+--- a/src/compiler/stage-plugin-config.json
++++ b/src/compiler/stage-plugin-config.json
+@@ -1 +1 @@
+-["delegated_session", "provision_repository_refs"]
++["delegated_session", "provision_repository_refs", "pass_through"]

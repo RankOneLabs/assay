@@ -1,5 +1,10 @@
 # Code extension model decisions
 
+- The operator will decide whether the final committed set contains three or
+  four scenarios after reviewing the baseline pilot. The scenario-set cohort
+  targets three total, including the pilot, and will not add an unqualified
+  fourth merely to reach a count.
+
 ## Study authorization and evaluation
 
 - `study.check_fixture` validates the 0.3.0 manifest against operator-held
@@ -24,7 +29,6 @@
   stable run-and-coordinate key, so a lost response reuses the same
   Smithers job at each turn. The core run manifest records unsettled and
   unevaluated coordinates as incomplete; study execution uses that manifest.
-
 - The 0.3.0 manifest is a new wire version. The 0.1.0 and 0.2.0 models and
   their published schemas remain unchanged.
 - One discriminated arm set declares the factor for the whole manifest. The
