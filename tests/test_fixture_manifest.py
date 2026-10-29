@@ -20,6 +20,7 @@ from assay.fixture_manifest import (
     DOSED_ARMS,
     FixtureManifest,
     FixtureManifestV2,
+    FixtureManifestV3,
     TreatmentSite,
     dose_count,
     fixture_identity,
@@ -415,3 +416,139 @@ def test_manifest_v2_hidden_assets_are_digest_only() -> None:
     for content in ("subject-a mess-low reference", "subject-a new behavior", "subject-a rubric"):
         assert content not in wire
         assert _digest(content) in wire
+
+
+# --- assay-fixture-manifest/0.3.0 -------------------------------------------
+
+
+def _extension_qualification(arm_id: str, *, feature: str = "failed") -> dict[str, Any]:
+    return {
+        name: {"outcome": outcome, "evidence": _digest(f"{arm_id} {name} record")}
+        for name, outcome in (
+            ("baseline_passes", "passed"),
+            ("feature_fails", feature),
+            ("reference_passes", "passed"),
+        )
+    }
+
+
+def _extension_wire(
+    factor: str = "code_shape", *, subject_id: str = "extension-a"
+) -> dict[str, Any]:
+    arm_ids = ["baseline"] if factor == "baseline" else ["arm-a", "arm-b"]
+    arms = [
+        {
+            "arm_id": arm_id,
+            "tree_digest": _digest(
+                f"{subject_id} {arm_id if factor == 'code_shape' else 'shared'} tree"
+            ),
+            "task_prompt": "Add strict pointer handling.",
+            "reference_patch": _digest(f"{subject_id} {arm_id} reference"),
+            "negative_patches": [_digest(f"{subject_id} {arm_id} negative")],
+            "qualification": _extension_qualification(arm_id),
+        }
+        for arm_id in arm_ids
+    ]
+    return {
+        "schema_version": "assay-fixture-manifest/0.3.0",
+        "arm_set": {"factor": factor, "arm_ids": arm_ids},
+        "observed_runtime_image_digest": _digest("extension runtime"),
+        "routing_config_digest": None,
+        "scenarios": [
+            {
+                "subject_id": subject_id,
+                "checkpoint_sha": "c" * 40,
+                "included_paths": ["src/", "tests/visible/"],
+                "excluded_paths": ["tests/hidden/"],
+                "dependency_lock_digests": {"bun.lock": _digest("extension lock")},
+                "feature_request": "Add strict pointer handling.",
+                "visible_requirements": ["Reject malformed pointers."],
+                "visible_tests": [{"name": "baseline", "digest": _digest("visible group")}],
+                "hidden_tests": [{"name": "feature", "digest": _digest("hidden group")}],
+                "arms": arms,
+            }
+        ],
+    }
+
+
+def test_manifest_v3_round_trips_and_preserves_older_versions() -> None:
+    wire = _extension_wire()
+    schema_bytes = schema_documents()["assay-fixture-manifest-v0.3.schema.json"]
+    assert (SCHEMAS / "assay-fixture-manifest-v0.3.schema.json").read_bytes() == schema_bytes
+    schema = json.loads(schema_bytes)
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema).validate(wire)
+    manifest = parse_fixture_manifest(wire)
+    assert isinstance(manifest, FixtureManifestV3)
+    assert manifest.model_dump(mode="json") == wire
+    assert manifest.qualified
+    manifest.require_qualified()
+    assert manifest.scenario("extension-a") == manifest.scenarios[0]
+    assert manifest.scenario("absent") is None
+    assert fixture_identity(manifest).startswith("sha256:")
+    assert isinstance(parse_fixture_manifest(_manifest().model_dump(mode="json")), FixtureManifest)
+    assert isinstance(parse_fixture_manifest(_manifest_v2_wire()), FixtureManifestV2)
+    with pytest.raises(ValidationError):
+        parse_fixture_manifest({**wire, "schema_version": "assay-fixture-manifest/9.9.9"})
+
+
+@pytest.mark.parametrize(
+    "factor",
+    ["code_shape", "handoff_detail", "model_profile", "code_intelligence_mode", "baseline"],
+)
+def test_extension_arm_set_tree_and_prompt_rules(factor: str) -> None:
+    wire = _extension_wire(factor)
+    assert FixtureManifestV3.model_validate(wire).qualified
+    arms = wire["scenarios"][0]["arms"]
+    if factor == "baseline":
+        return
+    changed_tree = copy.deepcopy(wire)
+    changed_arms = changed_tree["scenarios"][0]["arms"]
+    changed_arms[1]["tree_digest"] = (
+        changed_arms[0]["tree_digest"] if factor == "code_shape" else _digest("other tree")
+    )
+    with pytest.raises(ValidationError, match="repository tree"):
+        FixtureManifestV3.model_validate(changed_tree)
+    changed_prompt = copy.deepcopy(wire)
+    changed_prompt["scenarios"][0]["arms"][1]["task_prompt"] = "A different prompt."
+    if factor == "handoff_detail":
+        FixtureManifestV3.model_validate(changed_prompt)
+    else:
+        with pytest.raises(ValidationError, match="byte-identical task prompts"):
+            FixtureManifestV3.model_validate(changed_prompt)
+    assert len(arms) == 2
+
+
+def test_extension_qualification_is_per_arm_and_exactly_three_checks() -> None:
+    wire = _extension_wire()
+    arms = wire["scenarios"][0]["arms"]
+    arms[1]["qualification"] = _extension_qualification("arm-b", feature="passed")
+    manifest = FixtureManifestV3.model_validate(wire)
+    assert manifest.scenarios[0].arms[0].qualification.qualified
+    assert not manifest.scenarios[0].arms[1].qualification.qualified
+    assert not manifest.qualified
+    with pytest.raises(ValueError, match="unqualified arm"):
+        manifest.require_qualified()
+    del arms[1]["qualification"]["feature_fails"]
+    with pytest.raises(ValidationError, match="feature_fails"):
+        FixtureManifestV3.model_validate(wire)
+    arms[1]["qualification"] = _extension_qualification("arm-b")
+    arms[1]["qualification"]["equivalence_passes"] = {
+        "outcome": "passed",
+        "evidence": _digest("extraneous"),
+    }
+    with pytest.raises(ValidationError, match="equivalence_passes"):
+        FixtureManifestV3.model_validate(wire)
+
+
+def test_extension_rejects_undeclared_arms_and_per_arm_test_groups() -> None:
+    wire = _extension_wire("handoff_detail")
+    wire["scenarios"][0]["arms"][1]["visible_tests"] = [
+        {"name": "other", "digest": _digest("other")}
+    ]
+    with pytest.raises(ValidationError, match="visible_tests"):
+        FixtureManifestV3.model_validate(wire)
+    del wire["scenarios"][0]["arms"][1]["visible_tests"]
+    wire["scenarios"][0]["arms"][1]["arm_id"] = "unlisted"
+    with pytest.raises(ValidationError, match="declared arms"):
+        FixtureManifestV3.model_validate(wire)

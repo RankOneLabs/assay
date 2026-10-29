@@ -1,0 +1,72 @@
+diff --git a/src/domain/delegated-session.ts b/src/domain/delegated-session.ts
+--- a/src/domain/delegated-session.ts
++++ b/src/domain/delegated-session.ts
+@@ -31,9 +31,20 @@
+ export const isDelegatedRuntimeId = (value: unknown): value is DelegatedRuntimeId =>
+   DELEGATED_RUNTIME_IDS.includes(value as DelegatedRuntimeId);
+ 
++/**
++ * A read from the run context. Mandatory unless it declares a `default`: the
++ * value used when the pointer does not resolve. A value the launcher actually
++ * sent — `null` included — always wins over the default.
++ */
++export interface ContextSlotBinding {
++  readonly from: "context";
++  readonly path: string;
++  readonly default?: string | null;
++}
++
+ export type SlotBinding =
+   | { readonly from: "input"; readonly input_name: string; readonly path?: string | null }
+-  | { readonly from: "context"; readonly path: string }
++  | ContextSlotBinding
+   | { readonly from: "literal"; readonly value: string }
+   | { readonly from: "item"; readonly path: string }
+   | { readonly from: "context_lookup"; readonly collection_path: string; readonly collection_key_path: string; readonly item_key_path: string; readonly value_path: string }
+diff --git a/src/domain/json-pointer.ts b/src/domain/json-pointer.ts
+--- a/src/domain/json-pointer.ts
++++ b/src/domain/json-pointer.ts
+@@ -3,6 +3,9 @@
+ /** RFC 6901 escaping: `~1` is `/`, `~0` is `~`, and order matters. */
+ const decodeJsonPointerSegment = (segment: string): string => segment.replaceAll("~1", "/").replaceAll("~0", "~");
+ 
++/** Whether `readJsonPointer` can ever resolve this pointer: the whole document, or a `/`-rooted path. */
++export const isAbsoluteJsonPointer = (pointer: string): boolean => pointer === "" || pointer.startsWith("/");
++
+ /**
+  * Read a JSON Pointer, or `undefined` where it does not resolve.
+  *
+@@ -15,7 +18,7 @@
+  */
+ export const readJsonPointer = (value: JsonValue, pointer: string): JsonValue | undefined => {
+   if (pointer === "") return value;
+-  if (!pointer.startsWith("/")) return undefined;
++  if (!isAbsoluteJsonPointer(pointer)) return undefined;
+   let current: JsonValue | undefined = value;
+   for (const token of pointer.slice(1).split("/").map(decodeJsonPointerSegment)) {
+     if (Array.isArray(current)) {
+diff --git a/src/validation/slot-binding.ts b/src/validation/slot-binding.ts
+--- a/src/validation/slot-binding.ts
++++ b/src/validation/slot-binding.ts
+@@ -1,4 +1,5 @@
+ import { z } from "zod";
++import { isAbsoluteJsonPointer } from "../domain/json-pointer";
+ 
+ /**
+  * The wire schema for `SlotBinding`, shared by every stage type that binds
+@@ -8,7 +9,14 @@
+  */
+ export const slotBindingSchema = z.discriminatedUnion("from", [
+   z.object({ from: z.literal("input"), input_name: z.string().min(1), path: z.string().nullable().default(null) }),
+-  z.object({ from: z.literal("context"), path: z.string() }),
++  z.object({ from: z.literal("context"), path: z.string(), default: z.string().nullable().optional() })
++    // A default answers "the pointer did not resolve". A relative path never
++    // resolves, so with a default it would silently read the fallback forever
++    // instead of failing the way a mistyped mandatory binding does.
++    .refine((binding) => binding.default === undefined || isAbsoluteJsonPointer(binding.path), {
++      message: "context binding with a default must use an absolute JSON pointer path",
++      path: ["path"],
++    }),
+   z.object({ from: z.literal("literal"), value: z.string() }),
+   z.object({ from: z.literal("item"), path: z.string() }),
+   z.object({

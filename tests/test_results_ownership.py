@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_BUNDLES: set[PurePosixPath] = {
     # SMOKE.md is recomputed from this bundle, and a test fails if they drift.
     PurePosixPath("experiments/workflow_edit/evidence/wf13"),
+    # The pilot manifest binds these deterministic qualification records by digest.
+    PurePosixPath("experiments/code_extension/fixtures/pilot/qualification/evidence"),
 }
 RUN_RECEIPTS_PROSE = {
     PurePosixPath("experiments/typesafe_relevance/run_packet.py"),

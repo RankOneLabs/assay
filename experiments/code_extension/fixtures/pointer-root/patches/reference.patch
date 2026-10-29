@@ -1,0 +1,12 @@
+diff --git a/src/domain/json-pointer.ts b/src/domain/json-pointer.ts
+--- a/src/domain/json-pointer.ts
++++ b/src/domain/json-pointer.ts
+@@ -14,7 +14,7 @@
+  * both resolve to nothing.
+  */
+ export const readJsonPointer = (value: JsonValue, pointer: string): JsonValue | undefined => {
+-  if (pointer === "") return value;
++  if (pointer === "" || pointer === "#") return value;
+   if (!pointer.startsWith("/")) return undefined;
+   let current: JsonValue | undefined = value;
+   for (const token of pointer.slice(1).split("/").map(decodeJsonPointerSegment)) {

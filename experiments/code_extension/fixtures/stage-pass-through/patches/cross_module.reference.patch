@@ -1,0 +1,42 @@
+diff --git a/src/compiler/compile-workflow.ts b/src/compiler/compile-workflow.ts
+--- a/src/compiler/compile-workflow.ts
++++ b/src/compiler/compile-workflow.ts
+@@ -104,11 +104,24 @@
+   },
+ };
+ 
++export const passThroughStageTypeCompiler: StageTypeCompiler = {
++  compile(stageKey, rawConfig) {
++    if (rawConfig === null || Array.isArray(rawConfig) || typeof rawConfig !== "object" || Object.keys(rawConfig).length !== 0) {
++      return err({ operation: "compile_workflow", stage_key: stageKey, detail: "pass_through config must be an empty object" });
++    }
++    return ok({
++      definition_config: rawConfig,
++      materialization: { kind: "scalar" },
++      output_release: () => ({ kind: "immediate" }),
++    });
++  },
++};
++
+ export type StageTypeCompilerRegistry = Readonly<Record<string, StageTypeCompiler>>;
+ 
+ export const delegatedCompiler = delegatedSessionStageTypeCompiler;
+ export const repositoryCompiler = repositoryProvisioningStageTypeCompiler;
+-const builtInStageTypeCompilers: StageTypeCompilerRegistry = registerBuiltInCompilers(delegatedCompiler, repositoryCompiler);
++const builtInStageTypeCompilers: StageTypeCompilerRegistry = registerBuiltInCompilers(delegatedCompiler, repositoryCompiler, passThroughStageTypeCompiler);
+ 
+ const compileStage = (stageKey: string, node: StageNodeDefinition, registry: StageTypeCompilerRegistry): Result<CompiledStageContract, CompileWorkflowError> => {
+   const compiler = registry[node.stage_type];
+diff --git a/src/compiler/stage-registration.ts b/src/compiler/stage-registration.ts
+--- a/src/compiler/stage-registration.ts
++++ b/src/compiler/stage-registration.ts
+@@ -4,7 +4,9 @@
+ export const registerBuiltInCompilers = (
+   delegated: StageTypeCompiler,
+   repository: StageTypeCompiler,
++  passThrough: StageTypeCompiler,
+ ): StageTypeCompilerRegistry => ({
+   delegated_session: delegated,
+   [PROVISION_REPOSITORY_REFS_STAGE_TYPE]: repository,
++  pass_through: passThrough,
+ });

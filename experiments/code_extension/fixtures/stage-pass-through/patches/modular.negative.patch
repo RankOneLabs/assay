@@ -1,0 +1,23 @@
+diff --git a/src/compiler/compile-workflow.ts b/src/compiler/compile-workflow.ts
+--- a/src/compiler/compile-workflow.ts
++++ b/src/compiler/compile-workflow.ts
+@@ -103,6 +103,19 @@
+   },
+ };
+ 
++export const passThroughStageTypeCompiler: StageTypeCompiler = {
++  compile(stageKey, rawConfig) {
++    if (rawConfig === null || Array.isArray(rawConfig) || typeof rawConfig !== "object" || Object.keys(rawConfig).length !== 0) {
++      return err({ operation: "compile_workflow", stage_key: stageKey, detail: "pass_through config must be an empty object" });
++    }
++    return ok({
++      definition_config: rawConfig,
++      materialization: { kind: "scalar" },
++      output_release: () => ({ kind: "immediate" }),
++    });
++  },
++};
++
+ export type StageTypeCompilerRegistry = Readonly<Record<string, StageTypeCompiler>>;
+ 
+ const builtInStageTypeCompilers: StageTypeCompilerRegistry = {

@@ -296,20 +296,180 @@ class FixtureManifestV2(WireModel):
         return next((task for task in self.tasks if task.subject_id == subject_id), None)
 
 
-AnyFixtureManifest = Annotated[
-    FixtureManifest | FixtureManifestV2, Field(discriminator="schema_version")
+# --- assay-fixture-manifest/0.3.0 -------------------------------------------
+
+
+class _ExtensionArmSet(WireModel):
+    arm_ids: tuple[Identifier, ...] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def unique_arms(self) -> Self:
+        if len(set(self.arm_ids)) != len(self.arm_ids):
+            raise ValueError("arm ids must be unique")
+        return self
+
+
+class CodeShapeArmSet(_ExtensionArmSet):
+    factor: Literal["code_shape"]
+
+
+class HandoffDetailArmSet(_ExtensionArmSet):
+    factor: Literal["handoff_detail"]
+
+
+class ModelProfileArmSet(_ExtensionArmSet):
+    factor: Literal["model_profile"]
+
+
+class CodeIntelligenceModeArmSet(_ExtensionArmSet):
+    factor: Literal["code_intelligence_mode"]
+
+
+class BaselineArmSet(WireModel):
+    factor: Literal["baseline"]
+    arm_ids: tuple[Literal["baseline"]]
+
+
+ExtensionArmSet = Annotated[
+    CodeShapeArmSet
+    | HandoffDetailArmSet
+    | ModelProfileArmSet
+    | CodeIntelligenceModeArmSet
+    | BaselineArmSet,
+    Field(discriminator="factor"),
 ]
-_manifest_adapter: TypeAdapter[FixtureManifest | FixtureManifestV2] = TypeAdapter(
-    AnyFixtureManifest
+
+
+class ExtensionArmQualification(WireModel):
+    """The three retained qualification outcomes for one extension arm."""
+
+    baseline_passes: QualificationResult
+    feature_fails: QualificationResult
+    reference_passes: QualificationResult
+
+    @property
+    def qualified(self) -> bool:
+        return (
+            self.baseline_passes.outcome == "passed"
+            and self.feature_fails.outcome == "failed"
+            and self.reference_passes.outcome == "passed"
+        )
+
+
+class ExtensionArmRealization(WireModel):
+    """One arm's tree, prompt and private qualification assets by digest."""
+
+    arm_id: Identifier
+    tree_digest: Sha256Ref
+    task_prompt: NonEmpty
+    reference_patch: Sha256Ref
+    negative_patches: tuple[Sha256Ref, ...] = Field(min_length=1)
+    qualification: ExtensionArmQualification
+
+    @field_validator("negative_patches")
+    @classmethod
+    def unique_negatives(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("negative patches must be distinct")
+        return value
+
+
+class ExtensionScenario(WireModel):
+    """A pinned checkpoint slice and one bounded feature request."""
+
+    subject_id: Identifier
+    checkpoint_sha: CheckpointSha
+    included_paths: tuple[str, ...] = Field(min_length=1)
+    excluded_paths: tuple[str, ...]
+    dependency_lock_digests: dict[str, Sha256Ref]
+    feature_request: NonEmpty
+    visible_requirements: tuple[NonEmpty, ...] = Field(min_length=1)
+    visible_tests: tuple[NamedTestGroup, ...] = Field(min_length=1)
+    hidden_tests: tuple[NamedTestGroup, ...] = Field(min_length=1)
+    arms: tuple[ExtensionArmRealization, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def unique_groups(self) -> Self:
+        groups = (*self.visible_tests, *self.hidden_tests)
+        if len({group.name for group in groups}) != len(groups):
+            raise ValueError("test group names must be unique across visible and hidden groups")
+        if len({group.digest for group in groups}) != len(groups):
+            raise ValueError("test group digests must be distinct")
+        return self
+
+    @property
+    def qualified(self) -> bool:
+        return all(arm.qualification.qualified for arm in self.arms)
+
+    def require_qualified(self) -> None:
+        """Refuse this subject before planning if any arm missed its gate."""
+        if not self.qualified:
+            raise ValueError(f"scenario {self.subject_id} has an unqualified arm")
+
+
+class FixtureManifestV3(WireModel):
+    """One factor's extension subjects, with all private assets by digest."""
+
+    schema_version: Literal["assay-fixture-manifest/0.3.0"]
+    arm_set: ExtensionArmSet
+    observed_runtime_image_digest: Sha256Ref
+    routing_config_digest: Sha256Ref | None
+    scenarios: tuple[ExtensionScenario, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def consistent(self) -> Self:
+        ids = [scenario.subject_id for scenario in self.scenarios]
+        if ids != sorted(set(ids)):
+            raise ValueError("scenarios must have unique subject ids, listed in sorted order")
+        expected = set(self.arm_set.arm_ids)
+        for scenario in self.scenarios:
+            arms = scenario.arms
+            if len(arms) != len(expected) or {arm.arm_id for arm in arms} != expected:
+                raise ValueError(
+                    f"scenario {scenario.subject_id} must have exactly the declared arms"
+                )
+            trees = {arm.tree_digest for arm in arms}
+            if self.arm_set.factor == "code_shape":
+                if len(trees) != len(arms):
+                    raise ValueError("code_shape arms must have distinct repository trees")
+            elif len(trees) != 1:
+                raise ValueError(f"{self.arm_set.factor} arms must share one repository tree")
+            if (
+                self.arm_set.factor != "handoff_detail"
+                and len({arm.task_prompt for arm in arms}) != 1
+            ):
+                raise ValueError(
+                    f"{self.arm_set.factor} arms must have byte-identical task prompts"
+                )
+        return self
+
+    @property
+    def qualified(self) -> bool:
+        return all(scenario.qualified for scenario in self.scenarios)
+
+    def require_qualified(self) -> None:
+        """Refuse planning while any subject has an unqualified arm."""
+        for scenario in self.scenarios:
+            scenario.require_qualified()
+
+    def scenario(self, subject_id: str) -> ExtensionScenario | None:
+        return next((item for item in self.scenarios if item.subject_id == subject_id), None)
+
+
+AnyFixtureManifest = Annotated[
+    FixtureManifest | FixtureManifestV2 | FixtureManifestV3, Field(discriminator="schema_version")
+]
+_manifest_adapter: TypeAdapter[FixtureManifest | FixtureManifestV2 | FixtureManifestV3] = (
+    TypeAdapter(AnyFixtureManifest)
 )
 
 
-def parse_fixture_manifest(value: Any) -> FixtureManifest | FixtureManifestV2:
+def parse_fixture_manifest(value: Any) -> FixtureManifest | FixtureManifestV2 | FixtureManifestV3:
     """Select the manifest model from ``schema_version``; an unknown version is rejected."""
     return _manifest_adapter.validate_python(value)
 
 
-def fixture_identity(manifest: FixtureManifest | FixtureManifestV2) -> str:
+def fixture_identity(manifest: FixtureManifest | FixtureManifestV2 | FixtureManifestV3) -> str:
     """Digest the complete canonical manifest, including image and routing."""
     return digest_bytes(canonical_json(manifest.model_dump(mode="json")))
 
