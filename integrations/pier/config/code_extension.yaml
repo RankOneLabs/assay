@@ -1,6 +1,6 @@
-# Served contexts: experiments/workflow_edit/publish.py:30 for qwen-coder-32b
-# and experiments/workflow_edit/DECISIONS.md:312 for qwen3.6-27b. Requalification
-# must verify these routes and measure the new extension request envelope.
+# Coder envelope: experiments/workflow_edit/SMOKE.md qualified bounds.
+# Qwen3.6 envelope: experiments/verification_pilot/settings.py measured source
+# slice; extension image smoke observations: experiments/code_extension/DECISIONS.md.
 routes:
   qwen-coder-32b:
     served_context_tokens: 32768
@@ -10,12 +10,12 @@ routes:
     concurrency: 1
     provider_retries: 0
     sdk_retries: 0
-    max_tool_schema_bytes: 12288
-    max_tool_output_bytes: 24576
+    max_tool_schema_bytes: 16384
+    max_tool_output_bytes: 32768
     max_conversation_bytes: 81920
     max_request_bytes: 98304
-    max_response_bytes: 65536
-    max_output_tokens: 4096
+    max_response_bytes: 131072
+    max_output_tokens: 8192
     max_storage_mb: 512
   qwen3.6-27b:
     served_context_tokens: 131072
@@ -25,10 +25,10 @@ routes:
     concurrency: 1
     provider_retries: 0
     sdk_retries: 0
-    max_tool_schema_bytes: 49152
-    max_tool_output_bytes: 98304
-    max_conversation_bytes: 327680
-    max_request_bytes: 393216
-    max_response_bytes: 262144
+    max_tool_schema_bytes: 16384
+    max_tool_output_bytes: 32768
+    max_conversation_bytes: 3670016
+    max_request_bytes: 3932160
+    max_response_bytes: 131072
     max_output_tokens: 8192
     max_storage_mb: 512

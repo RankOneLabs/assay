@@ -67,7 +67,7 @@ SHA = "sha256:" + "a" * 64
 TREE = "sha256:" + "b" * 64
 
 
-def test_extension_settings_match_image_copy_and_scale_with_served_context() -> None:
+def test_extension_settings_match_image_copy_and_qualified_route_envelopes() -> None:
     root = Path(__file__).resolve().parents[3]
     image_settings = yaml.safe_load(
         (root / "integrations/pier/config/code_extension.yaml").read_text()
@@ -78,6 +78,15 @@ def test_extension_settings_match_image_copy_and_scale_with_served_context() -> 
     }}
     assert ExtensionAgentSettings.for_model("qwen-coder-32b") != (
         ExtensionAgentSettings.for_model("qwen3.6-27b")
+    )
+    coder = ExtensionAgentSettings.for_model("qwen-coder-32b")
+    assert (coder.max_tool_schema_bytes, coder.max_tool_output_bytes,
+            coder.max_response_bytes, coder.max_output_tokens) == (
+                16_384, 32_768, 131_072, 8_192,
+            )
+    newer = ExtensionAgentSettings.for_model("qwen3.6-27b")
+    assert (newer.max_conversation_bytes, newer.max_request_bytes) == (
+        3_670_016, 3_932_160,
     )
     assert all(
         DERIVATION_SOURCE in (field.description or "")
