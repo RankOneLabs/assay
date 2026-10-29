@@ -18,7 +18,9 @@ git -C /home/steve/codes/rol/oakridge archive f3b3ffca43e43672ff2f58ab797d65c753
 
 | Included fixture path in each `repository/<arm>/` | Source at pin | Why included |
 | --- | --- | --- |
-| `src/domain/*.ts`, `src/decision/*.ts`, `src/compiler/*.ts`, `src/validation/*.ts`, `src/seed/dev-flow-v14.ts` | `oakridge-dbos/` equivalents | Compiler contracts, callers, validation, and seed used by checks. |
+| `src/domain/*.ts`, `src/decision/*.ts`, `src/compiler/{compile-workflow,context-requirements,resolve-execution}.ts`, `src/validation/*.ts`, `src/seed/dev-flow-v14.ts` | `oakridge-dbos/` equivalents | Compiler contracts, callers, validation, and seed used by checks. |
+| `src/compiler/stage-registration.ts` (`cross_module`) | Authored adaptation; absent at pin | Separates the registration contract from the compiler. |
+| `src/compiler/stage-plugins.ts` and `src/compiler/stage-plugin-config.json` (`plugin`) | Authored adaptations; absent at pin | Resolve enabled stage types from configuration data. |
 | `tests/visible/**` | Selected `oakridge-dbos/tests/**` | Known-good public baseline; assertions are unchanged. |
 | `workflow-config/definitions/{dev_flow_v11,dev_flow_v14}.json`, `workflow-config/prompts/dev-flow/**` | Same monorepo-root paths | Seed and public tests load these files. |
 | `package.json`, `package-lock.json`, `tsconfig.json` | Pilot runtime-toolchain adaptations | Frozen image dependencies and strict TypeScript compilation. |
