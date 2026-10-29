@@ -1,0 +1,416 @@
+{
+  "$defs": {
+    "BaselineArmSet": {
+      "additionalProperties": false,
+      "properties": {
+        "factor": {
+          "const": "baseline",
+          "title": "Factor",
+          "type": "string"
+        },
+        "arm_ids": {
+          "maxItems": 1,
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "const": "baseline",
+              "type": "string"
+            }
+          ],
+          "title": "Arm Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "factor",
+        "arm_ids"
+      ],
+      "title": "BaselineArmSet",
+      "type": "object"
+    },
+    "CodeIntelligenceModeArmSet": {
+      "additionalProperties": false,
+      "properties": {
+        "arm_ids": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Arm Ids",
+          "type": "array"
+        },
+        "factor": {
+          "const": "code_intelligence_mode",
+          "title": "Factor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "arm_ids",
+        "factor"
+      ],
+      "title": "CodeIntelligenceModeArmSet",
+      "type": "object"
+    },
+    "CodeShapeArmSet": {
+      "additionalProperties": false,
+      "properties": {
+        "arm_ids": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Arm Ids",
+          "type": "array"
+        },
+        "factor": {
+          "const": "code_shape",
+          "title": "Factor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "arm_ids",
+        "factor"
+      ],
+      "title": "CodeShapeArmSet",
+      "type": "object"
+    },
+    "ExtensionArmQualification": {
+      "additionalProperties": false,
+      "description": "The three retained qualification outcomes for one extension arm.",
+      "properties": {
+        "baseline_passes": {
+          "$ref": "#/$defs/QualificationResult"
+        },
+        "feature_fails": {
+          "$ref": "#/$defs/QualificationResult"
+        },
+        "reference_passes": {
+          "$ref": "#/$defs/QualificationResult"
+        }
+      },
+      "required": [
+        "baseline_passes",
+        "feature_fails",
+        "reference_passes"
+      ],
+      "title": "ExtensionArmQualification",
+      "type": "object"
+    },
+    "ExtensionArmRealization": {
+      "additionalProperties": false,
+      "description": "One arm's tree, prompt and private qualification assets by digest.",
+      "properties": {
+        "arm_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Arm Id",
+          "type": "string"
+        },
+        "tree_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Tree Digest",
+          "type": "string"
+        },
+        "task_prompt": {
+          "minLength": 1,
+          "title": "Task Prompt",
+          "type": "string"
+        },
+        "reference_patch": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Reference Patch",
+          "type": "string"
+        },
+        "negative_patches": {
+          "items": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Negative Patches",
+          "type": "array"
+        },
+        "qualification": {
+          "$ref": "#/$defs/ExtensionArmQualification"
+        }
+      },
+      "required": [
+        "arm_id",
+        "tree_digest",
+        "task_prompt",
+        "reference_patch",
+        "negative_patches",
+        "qualification"
+      ],
+      "title": "ExtensionArmRealization",
+      "type": "object"
+    },
+    "ExtensionScenario": {
+      "additionalProperties": false,
+      "description": "A pinned checkpoint slice and one bounded feature request.",
+      "properties": {
+        "subject_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Subject Id",
+          "type": "string"
+        },
+        "checkpoint_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Checkpoint Sha",
+          "type": "string"
+        },
+        "included_paths": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Included Paths",
+          "type": "array"
+        },
+        "excluded_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Excluded Paths",
+          "type": "array"
+        },
+        "dependency_lock_digests": {
+          "additionalProperties": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Dependency Lock Digests",
+          "type": "object"
+        },
+        "feature_request": {
+          "minLength": 1,
+          "title": "Feature Request",
+          "type": "string"
+        },
+        "visible_requirements": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Visible Requirements",
+          "type": "array"
+        },
+        "visible_tests": {
+          "items": {
+            "$ref": "#/$defs/NamedTestGroup"
+          },
+          "minItems": 1,
+          "title": "Visible Tests",
+          "type": "array"
+        },
+        "hidden_tests": {
+          "items": {
+            "$ref": "#/$defs/NamedTestGroup"
+          },
+          "minItems": 1,
+          "title": "Hidden Tests",
+          "type": "array"
+        },
+        "arms": {
+          "items": {
+            "$ref": "#/$defs/ExtensionArmRealization"
+          },
+          "minItems": 1,
+          "title": "Arms",
+          "type": "array"
+        }
+      },
+      "required": [
+        "subject_id",
+        "checkpoint_sha",
+        "included_paths",
+        "excluded_paths",
+        "dependency_lock_digests",
+        "feature_request",
+        "visible_requirements",
+        "visible_tests",
+        "hidden_tests",
+        "arms"
+      ],
+      "title": "ExtensionScenario",
+      "type": "object"
+    },
+    "HandoffDetailArmSet": {
+      "additionalProperties": false,
+      "properties": {
+        "arm_ids": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Arm Ids",
+          "type": "array"
+        },
+        "factor": {
+          "const": "handoff_detail",
+          "title": "Factor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "arm_ids",
+        "factor"
+      ],
+      "title": "HandoffDetailArmSet",
+      "type": "object"
+    },
+    "ModelProfileArmSet": {
+      "additionalProperties": false,
+      "properties": {
+        "arm_ids": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Arm Ids",
+          "type": "array"
+        },
+        "factor": {
+          "const": "model_profile",
+          "title": "Factor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "arm_ids",
+        "factor"
+      ],
+      "title": "ModelProfileArmSet",
+      "type": "object"
+    },
+    "NamedTestGroup": {
+      "additionalProperties": false,
+      "description": "A frozen test group by name and the digest of its stored group object.",
+      "properties": {
+        "name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "digest"
+      ],
+      "title": "NamedTestGroup",
+      "type": "object"
+    },
+    "QualificationResult": {
+      "additionalProperties": false,
+      "description": "One observed qualification run and the digest of its retained record.",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "passed",
+            "failed",
+            "unavailable"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "evidence": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Evidence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "evidence"
+      ],
+      "title": "QualificationResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One factor's extension subjects, with all private assets by digest.",
+  "properties": {
+    "schema_version": {
+      "const": "assay-fixture-manifest/0.3.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "arm_set": {
+      "discriminator": {
+        "mapping": {
+          "baseline": "#/$defs/BaselineArmSet",
+          "code_intelligence_mode": "#/$defs/CodeIntelligenceModeArmSet",
+          "code_shape": "#/$defs/CodeShapeArmSet",
+          "handoff_detail": "#/$defs/HandoffDetailArmSet",
+          "model_profile": "#/$defs/ModelProfileArmSet"
+        },
+        "propertyName": "factor"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CodeShapeArmSet"
+        },
+        {
+          "$ref": "#/$defs/HandoffDetailArmSet"
+        },
+        {
+          "$ref": "#/$defs/ModelProfileArmSet"
+        },
+        {
+          "$ref": "#/$defs/CodeIntelligenceModeArmSet"
+        },
+        {
+          "$ref": "#/$defs/BaselineArmSet"
+        }
+      ],
+      "title": "Arm Set"
+    },
+    "observed_runtime_image_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Observed Runtime Image Digest",
+      "type": "string"
+    },
+    "routing_config_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Routing Config Digest"
+    },
+    "scenarios": {
+      "items": {
+        "$ref": "#/$defs/ExtensionScenario"
+      },
+      "minItems": 1,
+      "title": "Scenarios",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "arm_set",
+    "observed_runtime_image_digest",
+    "routing_config_digest",
+    "scenarios"
+  ],
+  "title": "FixtureManifestV3",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://assay.dev/schemas/assay-fixture-manifest-v0.3.schema.json"
+}
