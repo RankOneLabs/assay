@@ -34,9 +34,10 @@ from assay.code_intel.delivery import CodeIntelDeliveryConfig
 from assay.code_intel.models import BaselineMode, ToolDelivery
 from assay.code_intel.query_script import QUERY_SCRIPT
 from assay.code_intel.snapshot import delivered_workspace
-from assay.fixture_manifest import ExtensionArmSet, ExtensionScenario
+from assay.fixture_manifest import CodeIntelligenceModeArmSet, ExtensionArmSet, ExtensionScenario
 from assay.models import CellCoordinate
 from assay.pier_protocol import PierExchange
+from code_extension.arms import require_declared_codeintel_arm
 from code_extension.codeintel import PreparedExtensionCodeIntel, prepare_extension_codeintel
 from code_extension.prompts import render_arm_prompts
 from code_extension.settings import ExtensionAgentSettings
@@ -171,6 +172,10 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
 
     def configuration(self) -> dict[str, Any]:
         require_authorized_route(self.route)
+        require_declared_codeintel_arm(
+            self.arm_set if isinstance(self.arm_set, CodeIntelligenceModeArmSet) else None,
+            self.arm_id, self.codeintel_delivery,
+        )
         settings = self._settings()
         if self.codeintel_delivery is not None and self.prepared is None:
             if self.repository_snapshot is None:
@@ -206,6 +211,10 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
 
     def create(self, *, exchange: PierExchange, package: Mapping[str, str]) -> WorkflowEditHandle:
         require_authorized_route(self.route)
+        require_declared_codeintel_arm(
+            self.arm_set if isinstance(self.arm_set, CodeIntelligenceModeArmSet) else None,
+            self.arm_id, self.codeintel_delivery,
+        )
         if self.factory.model != self.route.model:
             raise UnauthorizedModelRoute("Smithers factory model differs from the extension route")
         coordinate = CellCoordinate.model_validate(exchange.coordinate.model_dump(mode="json"))

@@ -8,6 +8,12 @@ from typing import Any
 
 import pytest
 import yaml
+from code_extension.arms import (
+    CODE_INTEL_ARM_POLICIES,
+    INDEX_MOUNT,
+    codeintel_arm_configs,
+    require_declared_codeintel_arm,
+)
 from code_extension.bridge import (
     EXTENSION_TOOLS,
     ExtensionBridgeClient,
@@ -39,7 +45,9 @@ from assay.code_intel.models import (
     PreloadedDelivery,
     PreloadedSummary,
     QueryResult,
+    RelationshipsMode,
     SymbolsMode,
+    ToolDelivery,
 )
 from assay.code_intel.snapshot import make_index_manifest, repo_revision
 from assay.execution import WorkerFailure
@@ -108,6 +116,37 @@ def test_handoff_prompts_are_distinct_and_other_factors_share_one_prompt() -> No
     }
     with pytest.raises(ValueError, match="byte-identical"):
         render_arm_prompts(intel, scenario)
+
+
+def test_codeintel_arm_set_declares_mount_mode_and_delivery_together() -> None:
+    arm_set = CodeIntelligenceModeArmSet(
+        factor="code_intelligence_mode", arm_ids=("symbols", "relationships")
+    )
+    configs = codeintel_arm_configs(
+        arm_set, repository_revision=SHA, max_context_tokens=512, query_limit=10,
+    )
+    assert set(configs) == set(arm_set.arm_ids)
+    assert {config.index_mount for config in configs.values()} == {INDEX_MOUNT}
+    assert isinstance(configs["symbols"].mode, SymbolsMode)
+    assert isinstance(configs["symbols"].delivery, ToolDelivery)
+    assert isinstance(configs["relationships"].mode, RelationshipsMode)
+    assert isinstance(configs["relationships"].delivery, PreloadedDelivery)
+    assert CODE_INTEL_ARM_POLICIES["relationships"].index_agent_readable is False
+    for arm_id, config in configs.items():
+        require_declared_codeintel_arm(arm_set, arm_id, config)
+    with pytest.raises(ValueError, match="differs from declared arm"):
+        require_declared_codeintel_arm(
+            arm_set, "relationships", configs["relationships"].model_copy(update={
+                "delivery": ToolDelivery(),
+            }),
+        )
+    with pytest.raises(ValueError, match="missing code-intelligence delivery"):
+        require_declared_codeintel_arm(arm_set, "symbols", None)
+    with pytest.raises(ValueError, match="undeclared code-intelligence arm"):
+        codeintel_arm_configs(
+            CodeIntelligenceModeArmSet(factor="code_intelligence_mode", arm_ids=("a", "b")),
+            repository_revision=SHA, max_context_tokens=512, query_limit=10,
+        )
 
 
 def test_unauthorized_route_is_typed_and_never_dispatches() -> None:
