@@ -184,6 +184,28 @@ class RepositoryAgentTrialHandle:
                 raise InfrastructureTrialError(
                     "enforcement", "pilot configuration differs from the agent's message prefix"
                 )
+        if self._agent.extension_mode:
+            expected = agent_configuration(
+                bounds=self._agent.bounds, limits=self._limits,
+                writable_prefixes=self._agent.writable_prefixes,
+                model_route=self._agent.model_route, tools=self._agent.tools,
+                system_prompt=self._agent.system_prompt,
+                message_prefix=self._agent.message_prefix,
+            )
+            extension_pinned = (
+                "tools_sha256", "system_prompt_sha256", "writable_prefixes",
+                "model_route", "bounds", "sandbox",
+            )
+            if any(self._configuration.get(key) != expected[key] for key in extension_pinned):
+                raise InfrastructureTrialError(
+                    "enforcement", "extension configuration differs from the agent"
+                )
+            if self._configuration.get("message_prefix_sha256") != expected.get(
+                "message_prefix_sha256"
+            ):
+                raise InfrastructureTrialError(
+                    "enforcement", "extension message prefix differs from the agent"
+                )
         if package_digest(self._package) != request.package_digest:
             raise InfrastructureTrialError(
                 "enforcement", "package does not match the request's authorized package_digest"

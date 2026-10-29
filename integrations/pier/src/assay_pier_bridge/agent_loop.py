@@ -966,7 +966,9 @@ def _submission(
     if extension_mode:
         fields = {"summary", "self_assessed_verdict", "checks_performed", "remaining_work"}
         if set(arguments) != fields or not isinstance(arguments["summary"], str):
-            raise ToolArgumentError("extension submit_output requires summary and assessment fields")
+            raise ToolArgumentError(
+                "extension submit_output requires summary and assessment fields"
+            )
         if arguments["self_assessed_verdict"] not in {"complete", "incomplete", "unsure", None}:
             raise ToolArgumentError("invalid self-assessed verdict")
         if any(arguments[key] is not None and not isinstance(arguments[key], str)
@@ -1392,8 +1394,8 @@ class RepositoryAgentClient:
     def __post_init__(self) -> None:
         if self.extension_mode and self.pilot_mode:
             raise ValueError("extension and pilot modes are mutually exclusive")
-        if self.extension_mode and self.tools != EXTENSION_TOOLS:
-            raise ValueError("extension mode requires the pinned extension tool surface")
+        if self.extension_mode and self.tools[:len(EXTENSION_TOOLS)] != EXTENSION_TOOLS:
+            raise ValueError("extension mode requires the pinned extension tool prefix")
         if self.model_route.paid_route_reachable:
             if self.completion is not None:
                 raise ValueError("the paid route is built in and takes no injected completion")
