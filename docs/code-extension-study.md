@@ -13,9 +13,11 @@ typed infrastructure, provider, and timeout causes mechanically. It also marks
 incorrect candidates as invalid or incomplete versus valid but wrong using the
 retained group verdicts. The six judgment categories require an operator
 identity and the digest of the retained trace being reviewed. An operator
-judgment cannot override a mechanical category. A passing candidate has no
-failure category. A cell that never started has no patch or trace bytes; its
-reference resolves to the run manifest that records its missing coordinate.
+judgment cannot override a mechanical category. A passing row deliberately has
+`category = None` because all eight category tags describe failures. A cell
+that never started still has a ledger row: its reference resolves to the run
+manifest that records the missing coordinate, while `patch_ref` and `trace_ref`
+are absent because no patch or trace bytes were produced.
 Partial patches and trajectories retained by Pier are linked when present.
 
 The evaluator's per-group verdict remains the oracle. Agent self-assessment is
@@ -50,6 +52,7 @@ run's declared `index_agent_readable` policy; that policy does not enforce
 access to hidden paths.
 
 The pinned statistical profile requires ten common subjects for inference.
+Only runs with at least two arms contribute common subjects to that count.
 Below that floor, the report is descriptive only and contains raw counts,
 without significance tests or adjusted intervals. Scenario difficulty and
 operational failures must be discussed separately from code-shape effects.

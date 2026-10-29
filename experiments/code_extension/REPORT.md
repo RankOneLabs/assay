@@ -4,7 +4,7 @@ Generated from committed fixture manifests and retained run evidence. The fixtur
 
 ## Implementation success
 
-Common subjects with an attempt in every arm of their run: 0. Descriptive only; no inferential statistics are calculated.
+Common subjects with an attempt in every arm of a multi-arm run: 0. Descriptive only; no inferential statistics are calculated.
 
 | Scope | Attempted | Completed | Passed |
 |---|---|---|---|

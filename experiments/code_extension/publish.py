@@ -162,7 +162,7 @@ def render_from_ledgers(
     common: set[tuple[int, str]] = set()
     for index, ledger in enumerate(ledgers):
         run_arms = {row.arm_id for row in ledger.rows}
-        if run_arms:
+        if len(run_arms) >= 2:
             subjects_in_every_arm = set.intersection(*(
                 {row.subject_id for row in ledger.rows if row.arm_id == arm}
                 for arm in sorted(run_arms)
@@ -193,7 +193,7 @@ def render_from_ledgers(
         "",
         "## Implementation success",
         "",
-        f"Common subjects with an attempt in every arm of their run: {len(common)}. "
+        f"Common subjects with an attempt in every arm of a multi-arm run: {len(common)}. "
         + ("Descriptive only; no inferential statistics are calculated."
            if len(common) < 10 else "Paired inference is eligible but not calculated here."),
         "",
