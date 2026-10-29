@@ -112,9 +112,15 @@ def load_fixture(root: Path = PILOT) -> PilotFixture:
     )
 
 
-ADDED_SCENARIOS = {
-    "pointer-root": ("oakridge-dbos-pointer-root", ("baseline",)),
-    "stage-pass-through": (
+@dataclass(frozen=True, slots=True)
+class CommittedScenarioSpec:
+    subject_id: str
+    arm_ids: tuple[str, ...]
+
+
+ADDED_SCENARIOS: dict[str, CommittedScenarioSpec] = {
+    "pointer-root": CommittedScenarioSpec("oakridge-dbos-pointer-root", ("baseline",)),
+    "stage-pass-through": CommittedScenarioSpec(
         "oakridge-dbos-stage-pass-through",
         ("modular", "central", "cross_module", "plugin"),
     ),
@@ -141,7 +147,8 @@ def load_committed_scenario(name: str) -> CommittedScenario:
     """Read one added scenario using the pilot's frozen group construction."""
     if name not in ADDED_SCENARIOS:
         raise ValueError(f"unknown extension scenario: {name}")
-    subject_id, arm_ids = ADDED_SCENARIOS[name]
+    spec = ADDED_SCENARIOS[name]
+    subject_id, arm_ids = spec.subject_id, spec.arm_ids
     root = PILOT.parent / name
     arms: list[CommittedArm] = []
     for arm_id in arm_ids:

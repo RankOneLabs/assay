@@ -67,3 +67,10 @@ three group verdicts for baseline, reference, and negative runs against the
 frozen runtime image. The `qualification/manifest.json` arm records bind each
 tree, task, patch, and frozen group to the three retained check records. Its
 routing digest is null because the offline checks make no model request.
+
+For reporting, only `modular` retains the dispatch architecture at the pin.
+The central, cross-module, and plugin architectures are authored adaptations,
+so their results provide weaker evidence about naturally occurring code shapes.
+The central arm distinguishes the built-in registry from an injected one by
+object identity (`registry === builtInStageTypeCompilers`), an additional
+constraint when interpreting that arm's outcome.

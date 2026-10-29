@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
+from code_extension import qualify
 from code_extension.fixture import (
     ADDED_SCENARIOS,
     CHECKPOINT_SHA,
@@ -104,6 +108,115 @@ def test_added_scenario_qualification_records(name: str) -> None:
         assert record["reference"]["groups"] == {group: "passed" for group in group_names}
         assert record["negative"]["groups"]["new_behavior"] == "failed"
         assert record["reference"]["verdict"] == "correct"
+
+
+def test_stage_arms_share_every_file_outside_the_compiler() -> None:
+    scenario = load_committed_scenario("stage-pass-through")
+    assert tuple(arm.arm_id for arm in scenario.arms) == ADDED_SCENARIOS[
+        "stage-pass-through"
+    ].arm_ids
+    common = {
+        path: source
+        for path, source in scenario.arms[0].repository.items()
+        if not path.startswith("src/compiler/")
+    }
+    for arm in scenario.arms[1:]:
+        assert {
+            path: source
+            for path, source in arm.repository.items()
+            if not path.startswith("src/compiler/")
+        } == common
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ADDED_SCENARIOS)
+async def test_added_scenario_image_reproduces_qualification_records(
+    name: str, tmp_path: Path
+) -> None:
+    if shutil.which("docker") is None or subprocess.run(
+        ("docker", "info"), capture_output=True, check=False, timeout=30
+    ).returncode != 0:
+        if os.environ.get("ASSAY_REQUIRE_DOCKER"):
+            pytest.fail("Docker is unavailable")
+        pytest.skip("Docker is unavailable")
+    if subprocess.run(
+        ("docker", "image", "inspect", qualify.IMAGE_TAG),
+        capture_output=True,
+        check=False,
+        timeout=30,
+    ).returncode != 0:
+        pytest.skip("pinned Docker image is not provisioned")
+
+    scenario = load_committed_scenario(name)
+    root = PILOT.parent / name
+    manifest = FixtureManifestV3.model_validate_json(
+        (root / "qualification" / "manifest.json").read_bytes()
+    )
+    image_digest = qualify.observed_image_digest(qualify.IMAGE_TAG)
+    assert image_digest == manifest.observed_runtime_image_digest
+    runner = qualify.make_runner(image_digest)
+    for arm in scenario.arms:
+        baseline_digest = workflow_tree_digest(arm.repository)
+        baseline = await runner.run(
+            baseline=arm.repository,
+            baseline_tree_digest=baseline_digest,
+            expected_tree_digest=baseline_digest,
+            patch="",
+            groups=scenario.groups,
+        )
+        patched = tmp_path / arm.arm_id
+        materialize(patched, arm.repository, arm.reference_patch)
+        reference = await runner.run(
+            baseline=arm.repository,
+            baseline_tree_digest=baseline_digest,
+            expected_tree_digest=workflow_tree_digest(read_tree(patched)),
+            patch=arm.reference_patch,
+            groups=scenario.groups,
+        )
+        negative_tree = tmp_path / f"{arm.arm_id}-negative"
+        materialize(negative_tree, arm.repository, arm.negative_patch)
+        negative = await runner.run(
+            baseline=arm.repository,
+            baseline_tree_digest=baseline_digest,
+            expected_tree_digest=workflow_tree_digest(read_tree(negative_tree)),
+            patch=arm.negative_patch,
+            groups=scenario.groups,
+        )
+        summary = json.loads((root / "qualification" / f"{arm.arm_id}.json").read_text())
+        for label, result in (
+            ("baseline", baseline),
+            ("reference", reference),
+            ("negative", negative),
+        ):
+            assert summary[label] == {
+                "cause": result.cause,
+                "groups": {group.name: group.status for group in result.groups},
+                "verdict": result.verdict,
+            }
+        for check, result in (
+            ("baseline_passes", baseline),
+            ("feature_fails", baseline),
+            ("reference_passes", reference),
+        ):
+            record, _ = read_evidence(root / "qualification" / "checks", arm.arm_id, check)
+            assert record["image_digest"] == image_digest
+            assert record["cause"] == result.cause
+            assert record["groups"] == {
+                group.name: {"status": group.status, "cause": group.cause}
+                for group in result.groups
+            }
+            assert record["outcome"] == (
+                "failed" if check == "feature_fails" else "passed"
+            )
+        statuses = {group.name: group.status for group in baseline.groups}
+        assert statuses == {
+            "visible_regression": "passed",
+            "hidden_regression": "passed",
+            "new_behavior": "failed",
+        }
+        assert baseline.cause == "group_failure"
+        assert reference.verdict == "correct"
+        assert all(group.status == "passed" for group in reference.groups)
 
 
 @pytest.mark.parametrize("name", ADDED_SCENARIOS)
