@@ -16,17 +16,27 @@ from code_extension.study import (
     load_pilot_study_fixture,
     plan_study,
     prepare_study,
+    run_study,
 )
 
+from assay._version import __version__
 from assay.canonical import canonical_json
-from assay.execution import WorkerFailure
+from assay.execution import AdmissionHalt, RunFailed, WorkerFailure
 from assay.fixture_manifest import CodeShapeArmSet, FixtureManifestV3
 from assay.investigations.workflow_correctness import (
     DockerWorkflowRunner,
     WorkflowRunnerSettings,
     workflow_tree_digest,
 )
-from assay.models import CellCoordinate, ExecutionCeiling, RuntimeProfile, parse_execution_plan
+from assay.models import (
+    CellCoordinate,
+    ExecutionCeiling,
+    ReportConfig,
+    RuntimeProfile,
+    StatisticalProfile,
+    parse_execution_plan,
+)
+from assay.report_engine import ReportError, build_report
 from assay.store import ObjectStore
 
 
@@ -203,6 +213,28 @@ def test_plan_uses_declared_factor_full_grid_and_rotated_schedule(tmp_path: Path
     assert len(prepared.snapshot.realizations) == 2
 
 
+def test_committed_qualified_pilot_compiles_and_authorizes(tmp_path: Path) -> None:
+    store, fixture = _pilot(tmp_path)
+    image = fixture.manifest.observed_runtime_image_digest
+    prepared = plan_study(
+        store, fixture, workers={"baseline": PlanWorker()},
+        runner=DockerWorkflowRunner(WorkflowRunnerSettings(image=image, toolchain="bun")),
+        runtime=RuntimeProfile(
+            id="pier", version="scripted", configuration_ref=str(store.publish_json({"v": 1})),
+        ),
+        image=image, routing_digest=fixture.manifest.routing_config_digest, repeats=1,
+        ceiling=ExecutionCeiling(max_cells=1, max_wall_time_seconds=600, max_fleet_occupancy=1),
+    )
+    plan = parse_execution_plan(json.loads(prepared.plan_bytes))
+    assert prepared.authorization == str(store.publish_bytes(prepared.plan_bytes))
+    assert len(plan.cells) == 1
+    assert plan.cells[0].subject_id == fixture.scenarios[0].subject_id
+    assert plan.cells[0].arm_id == "baseline"
+    assert prepared.snapshot.arms[0].conditions == {
+        "assay_execution_schedule": "subject-rotated-v1"
+    }
+
+
 def test_prepare_reads_current_routing_file_before_planning(tmp_path: Path) -> None:
     store, fixture = _pilot(tmp_path)
     route = tmp_path / "routing.yaml"
@@ -225,3 +257,48 @@ def test_prepare_reads_current_routing_file_before_planning(tmp_path: Path) -> N
         b'"schema_version":"assay-execution-plan/0.3.0"' in path.read_bytes()
         for path in store.objects.iterdir()
     )
+
+
+@pytest.mark.asyncio
+async def test_run_study_retains_missing_cell_and_report_refuses_it(tmp_path: Path) -> None:
+    store, pilot = _pilot(tmp_path)
+    fixture = _two_arm_fixture(store, pilot)
+    image = fixture.manifest.observed_runtime_image_digest
+
+    class HaltingWorker(PlanWorker):
+        async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerFailure:
+            raise AdmissionHalt("ceiling_exhausted", "stop before the next cell")
+
+    class NeverDispatched(PlanWorker):
+        async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerFailure:
+            raise AssertionError("the halted run must not dispatch the second cell")
+
+    prepared = plan_study(
+        store, fixture,
+        workers={"shape-a": HaltingWorker(), "shape-b": NeverDispatched()},
+        runner=DockerWorkflowRunner(WorkflowRunnerSettings(image=image, toolchain="bun")),
+        runtime=RuntimeProfile(
+            id="pier", version="scripted", configuration_ref=str(store.publish_json({"v": 1})),
+        ),
+        image=image, routing_digest=fixture.manifest.routing_config_digest, repeats=1,
+        ceiling=ExecutionCeiling(max_cells=2, max_wall_time_seconds=600, max_fleet_occupancy=1),
+    )
+    plan = parse_execution_plan(json.loads(prepared.plan_bytes))
+    result = await run_study(prepared, store)
+    assert isinstance(result, RunFailed)
+    assert result.manifest is not None and result.manifest_ref is not None
+    assert result.manifest.status == "incomplete"
+    assert plan.cells[1].id in result.manifest.missing_coordinates
+    assert plan.cells[1].id not in result.manifest.execution_records
+    assert result.manifest_ref == store.publish_json(result.manifest.model_dump(mode="json"))
+
+    report = ReportConfig(
+        manifest_refs=(str(result.manifest_ref),), record_refs=(),
+        reference_arm="shape-a", candidates=("shape-b",), evaluator_id="correctness",
+        metric="ordinal", categories=("incorrect", "correct", "unavailable"),
+        evaluator_repeat_aggregation="majority", worker_repeat_aggregation="majority",
+        statistical_profile=StatisticalProfile(seed=1, bootstrap_samples=100),
+        engine_version=__version__,
+    )
+    with pytest.raises(ReportError, match="invalid manifest|reports require"):
+        build_report(store, report)

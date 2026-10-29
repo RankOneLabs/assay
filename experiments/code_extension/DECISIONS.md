@@ -11,18 +11,17 @@
 - A study plan uses scenarios as subjects and the manifest's single arm-set
   factor as its arm dimension. Every arm declares `subject-rotated-v1` in its
   conditions, and `shape.validate_worker_grid` runs before plan bytes are
-  returned for authorization. The shared planner currently accepts this
-  schedule only for at least two arms, so the committed single-arm baseline
-  pilot cannot yet be compiled with the required schedule; that planner change
-  is outside this cohort's files.
+  returned for authorization. The shared planner treats this schedule as a
+  no-op for the committed single-arm baseline pilot, so the same authorized
+  schedule covers both pilot and multi-arm study runs.
 - `evaluation.CellEvaluator` reads its arm and subject from the cell, its
   baseline from the realization, and its baseline digest from worker evidence.
   A mismatch is a named `unavailable` verdict. It passes only the frozen
   visible, hidden regression and new-behavior groups to the runner and retains
   status and cause per group, never test output. Diagnosis remains a separate
   replay.
-- `dispatch.cell_idempotency_key` is the same stable run-and-coordinate key
-  the extension bridge already uses, so a lost response reuses the same
+- `dispatch.cell_idempotency_key` is imported by the extension bridge for the
+  stable run-and-coordinate key, so a lost response reuses the same
   Smithers job at each turn. The core run manifest records unsettled and
   unevaluated coordinates as incomplete; study execution uses that manifest.
 

@@ -87,9 +87,9 @@ def _compile_common(
             for arm in (arms if (subject_index + repeat) % 2 == 0 else list(reversed(arms)))
             if (subject.id, arm.id) not in excluded
         )
-    elif schedules == {"subject-rotated-v1"} and len(arms) >= 2:
-        # Each subject/repeat block starts one arm later than the previous one,
-        # so no arm always runs first.
+    elif schedules == {"subject-rotated-v1"} and arms:
+        # Each subject/repeat block starts one arm later than the previous one.
+        # A single declared arm has a no-op rotation.
         ordered_coordinates = (
             (subject, arm, repeat)
             for subject_index, subject in enumerate(subjects)

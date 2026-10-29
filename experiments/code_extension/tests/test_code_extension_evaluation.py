@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from code_extension import bridge
 from code_extension.dispatch import cell_idempotency_key
 from code_extension.evaluation import CellEvaluator, evaluate_scenario_candidate
 from code_extension.study import load_pilot_study_fixture
@@ -136,6 +137,7 @@ async def test_candidate_visible_test_edit_and_addition_use_frozen_group(tmp_pat
 
 
 def test_dispatch_key_reuses_a_job_per_run_cell_and_turn(tmp_path: Path) -> None:
+    assert bridge.cell_idempotency_key is cell_idempotency_key
     store = ObjectStore(tmp_path / "store")
     fixture = load_pilot_study_fixture(store)
     coordinate = CellCoordinate(
