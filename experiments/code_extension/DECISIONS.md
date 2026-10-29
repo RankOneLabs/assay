@@ -121,3 +121,24 @@ qualified Part 1 and pilot headroom. No extension fixture was qualified.
   byte-identical retained records. `diagnose.py` replays a recorded failed group
   in the same image to name failing tests or the first typecheck errors. It has
   no path that writes a verdict or evidence record.
+
+## Measurement and reporting
+
+- The classification first pass is exhaustive over the typed Pier candidate
+  and infrastructure causes. It distinguishes invalid or incomplete work from
+  valid but wrong work, then requires an attributed, trace-bound operator
+  judgment for the six interpretive categories.
+- A passing attempt has no failure category. An unstarted cell cannot have
+  patch or trace bytes; its row retains the run-manifest reference and absent
+  artifact references. Settled failures expose any partial patch and trajectory
+  retained by the bridge.
+- The ledger counts planned cells as attempted, submitted candidate cells as
+  completed, and externally correct cells as passed. Self-report remains a
+  separate measure. Missing judgments for settled candidate failures stop
+  ledger construction rather than silently dropping their rows.
+- The committed report is a descriptive template until run evidence is
+  committed. Its fixture roster is read from the three committed qualification
+  manifests. No run observations or inferential statistics are invented.
+- Code metrics reuse the sibling study's locked TypeScript toolchain and the
+  existing `assay.code_metrics` snapshot/compare API. Installing locked tools
+  is an explicit preparation step; measurement is offline.
