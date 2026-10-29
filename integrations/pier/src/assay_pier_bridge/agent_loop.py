@@ -974,10 +974,6 @@ def _submission(
         if any(arguments[key] is not None and not isinstance(arguments[key], str)
                for key in ("checks_performed", "remaining_work")):
             raise ToolArgumentError("assessment details must be strings or null")
-        if arguments["self_assessed_verdict"] is None and any(
-            arguments[key] is not None for key in ("checks_performed", "remaining_work")
-        ):
-            raise ToolArgumentError("assessment details require a verdict")
         return arguments
     if not pilot_mode:
         if set(arguments) == {"summary"} and isinstance(arguments["summary"], str):

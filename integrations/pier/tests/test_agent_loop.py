@@ -1258,6 +1258,16 @@ def test_extension_tool_surface_has_its_own_pinned_digest_and_order() -> None:
     assert EXTENSION_TOOLS[0] is not TOOLS[0]
 
 
+def test_extension_submission_accepts_details_with_no_self_assessed_verdict() -> None:
+    submitted = {
+        "summary": "Implemented the change",
+        "self_assessed_verdict": None,
+        "checks_performed": "python -m compileall src",
+        "remaining_work": "Run the hidden checks",
+    }
+    assert _submission(submitted, 1, False, True) == submitted
+
+
 def _tool_results(result: Any) -> list[str]:
     return [m["content"] for m in result.trajectory["messages"] if m["role"] == "tool"]
 
