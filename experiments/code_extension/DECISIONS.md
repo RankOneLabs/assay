@@ -1,5 +1,10 @@
 # Code extension model decisions
 
+- The operator will decide whether the final committed set contains three or
+  four scenarios after reviewing the baseline pilot. This cohort targets three
+  total, including the pilot, and will not add an unqualified fourth merely to
+  reach a count.
+
 - The 0.3.0 manifest is a new wire version. The 0.1.0 and 0.2.0 models and
   their published schemas remain unchanged.
 - One discriminated arm set declares the factor for the whole manifest. The
