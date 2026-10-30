@@ -78,3 +78,8 @@ The manifest binds the frozen task, tree, groups, patches and three records;
 the versioned sidecar binds the remaining gate evidence. No control makes a
 model request. The reference and incomplete patches are evaluator controls,
 not model-generated observations.
+
+The full `experiments/` pytest suite also requires the pinned Node `jscpd`
+tool for the separate `code_metrics` tests. Provision that tool before using
+the full suite as a checkout-wide check; it is not part of this fixture's
+TypeScript runtime image.

@@ -15,6 +15,7 @@ Per-scenario counts:
 | Scenario | Attempted | Completed | Passed |
 |---|---|---|---|
 | oakridge-dbos-context-defaults | 0 | 0 | 0 |
+| oakridge-dbos-dispatch-handler | 0 | 0 | 0 |
 | oakridge-dbos-pointer-root | 0 | 0 | 0 |
 | oakridge-dbos-stage-pass-through | 0 | 0 | 0 |
 
@@ -33,6 +34,7 @@ Scenario/arm cells, including cells with no completed attempt:
 | Scenario | Arm | Attempted | Completed | Passed |
 |---|---|---|---|---|
 | oakridge-dbos-context-defaults | baseline | 0 | 0 | 0 |
+| oakridge-dbos-dispatch-handler | baseline | 0 | 0 | 0 |
 | oakridge-dbos-pointer-root | baseline | 0 | 0 | 0 |
 | oakridge-dbos-stage-pass-through | central | 0 | 0 | 0 |
 | oakridge-dbos-stage-pass-through | cross_module | 0 | 0 | 0 |

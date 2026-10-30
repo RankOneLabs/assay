@@ -25,8 +25,13 @@
   omitted identity validation. Both compile and preserve unrelated regression
   groups. A no-op candidate and every start/reference/incomplete control run
   twice in fresh evaluator sandboxes. The scripted worker applies the known
-  patch through the real `write_file` and `submit_output` path; the independent
-  evaluator checks the captured candidate.
+  patch through `ExtensionBridgeClient`, `write_file` and `submit_output`; the
+  independent evaluator checks the captured candidate. The bridge resolves
+  the scenario sidecar by subject and enforces `src/domain/` for dispatch-handler,
+  so the protected visible tests are outside the writable scope. Existing
+  committed subjects keep their prior scope until they gain sidecars. Scripted
+  turns replace model calls while the bridge still supplies its production
+  system prompt, bounds, tools, scope and trial sealing.
 - `probe.py` scripts attempts through all five baseline tools, including shell
   and symlink paths. `leaks.py` uses the shared `scan_text` scanner with
   extension-specific markers over the agent-visible tree, rendered prompt and

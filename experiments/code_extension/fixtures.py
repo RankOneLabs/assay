@@ -84,6 +84,18 @@ def touched_paths(patch: str) -> tuple[str, ...]:
     return tuple(sorted(paths))
 
 
+def sidecar_for_subject(subject_id: str) -> ExtensionScenarioSidecar | None:
+    """Resolve a committed scenario's scope by subject, refusing duplicate records."""
+    matches = []
+    for path in sorted(PILOT.parent.glob("*/qualification/sidecar.json")):
+        sidecar = ExtensionScenarioSidecar.model_validate_json(path.read_bytes())
+        if sidecar.subject_id == subject_id:
+            matches.append(sidecar)
+    if len(matches) > 1:
+        raise ValueError(f"duplicate sidecars for extension subject {subject_id}")
+    return matches[0] if matches else None
+
+
 def load_scenario(name: str, root: Path | None = None) -> ScenarioFixture:
     if not name or name in {".", ".."} or "/" in name or "\\" in name:
         raise ValueError("invalid scenario key")

@@ -472,7 +472,7 @@ async def run_scenario_gates(
         submission,
         verify=verify,
     )
-    access = access_probe(fixture, image)
+    access = access_probe(fixture, manifest, image)
     access_ref = _write_gate(
         qualification_dir / "gates" / "access-probe.json",
         access,
