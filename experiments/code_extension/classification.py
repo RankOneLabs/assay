@@ -7,7 +7,7 @@ from typing import Annotated, Literal, assert_never
 
 from pydantic import Field, TypeAdapter
 
-from assay.investigations.workflow_correctness import Verdict
+from assay.investigations.workflow_correctness import Attribution, PreflightResult, Verdict
 from assay.pier_protocol import CandidateCause, InfrastructureCause
 
 
@@ -123,6 +123,8 @@ class EvaluatorVerdict:
     value: Verdict
     groups: tuple[GroupVerdict, ...]
     cause: str | None = None
+    preflight: PreflightResult | None = None
+    attribution: Attribution | None = None
 
 
 @dataclass(frozen=True)
@@ -175,9 +177,11 @@ def classify(stop: StopCause, verdict: EvaluatorVerdict | None) -> Classificatio
         if verdict.value == "correct":
             return Passed()
         if verdict.value == "incorrect":
-            invalid = any(
-                group.cause in {"patch_rejected", "typecheck_failure"}
-                for group in verdict.groups
+            invalid = (
+                verdict.cause == "patch_rejected"
+                or verdict.preflight is not None and verdict.preflight.status != "passed"
+                or verdict.preflight is None and bool(verdict.groups)
+                and all(group.status == "unavailable" for group in verdict.groups)
             )
             return NeedsOperatorJudgment(
                 "invalid_or_incomplete" if invalid else "valid_but_wrong"
