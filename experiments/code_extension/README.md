@@ -24,10 +24,13 @@ ceiling is recorded as unavailable: extension mode does not enforce that limit,
 because the loop honors it only in pilot mode. Sampling remains unset unless a
 route requires it, with requested and provider-reported values held separately.
 
-**Open operator decision:** changing `ExtensionAgentSettings` requires a
-lockstep update to `integrations/pier/config/code_extension.yaml`, an image
-rebuild, a new observed image digest and requalification of the three committed
-fixtures. The image-side copy and fixtures are outside this cohort's scope.
+The operator authorized the lockstep update to
+`integrations/pier/config/code_extension.yaml`. The rebuilt
+`assay-code-extension:ce-v1-bounds` image inspected as
+`sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee`.
+The pilot, pointer-root and stage-pass-through fixtures were requalified against
+that observed digest; their baseline, reference and negative verdicts matched
+the previous qualified records.
 
 This package fixes the Spec 3 domain shape before any study runs. The fixture
 manifest version `assay-fixture-manifest/0.3.0` declares one factor in `arm_set`

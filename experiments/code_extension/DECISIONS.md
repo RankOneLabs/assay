@@ -19,11 +19,12 @@
   unavailable because the loop enforces such ceilings only in pilot_mode,
   which is incompatible with extension_mode. Requested and provider-reported
   sampling values are separate and unset by default.
-- **Open operator decision:** the settings edit requires updating the
-  image-side `integrations/pier/config/code_extension.yaml` in lockstep,
-  rebuilding the image, observing its new digest and requalifying the three
-  committed fixtures bound to the current image digest. This cohort does not
-  absorb that image and fixture work.
+- The operator authorized the lockstep image-side config update and
+  requalification. `assay-code-extension:ce-v1-bounds` was rebuilt from the
+  updated config and inspected as
+  `sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee`.
+  The pilot, pointer-root and stage-pass-through fixtures were requalified;
+  their baseline, reference and negative verdicts matched the old records.
 
 - The operator will decide whether the final committed set contains three or
   four scenarios after reviewing the baseline pilot. The scenario-set cohort

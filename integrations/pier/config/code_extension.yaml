@@ -4,7 +4,9 @@
 routes:
   qwen-coder-32b:
     served_context_tokens: 32768
-    max_turns: 20
+    model_context_limit_tokens: 32768
+    request_timeout_s: 120.0
+    max_turns: 60
     timeout_s: 900.0
     attempts: 1
     concurrency: 1
@@ -17,9 +19,15 @@ routes:
     max_response_bytes: 131072
     max_output_tokens: 8192
     max_storage_mb: 512
+    per_cell_tool_call_ceiling: unavailable
+    per_cell_tool_call_ceiling_reason: "extension_mode cannot enforce a per-cell tool-call ceiling: the repository-agent loop honors max_tool_calls_per_cell and max_tool_calls_per_turn only under pilot_mode"
+    requested_sampling: null
+    provider_reported_sampling: null
   qwen3.6-27b:
     served_context_tokens: 131072
-    max_turns: 20
+    model_context_limit_tokens: 131072
+    request_timeout_s: 120.0
+    max_turns: 60
     timeout_s: 900.0
     attempts: 1
     concurrency: 1
@@ -32,3 +40,7 @@ routes:
     max_response_bytes: 131072
     max_output_tokens: 8192
     max_storage_mb: 512
+    per_cell_tool_call_ceiling: unavailable
+    per_cell_tool_call_ceiling_reason: "extension_mode cannot enforce a per-cell tool-call ceiling: the repository-agent loop honors max_tool_calls_per_cell and max_tool_calls_per_turn only under pilot_mode"
+    requested_sampling: null
+    provider_reported_sampling: null

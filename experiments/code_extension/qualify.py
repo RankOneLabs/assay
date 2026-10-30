@@ -42,7 +42,7 @@ from code_extension.fixture import (
     read_tree,
 )
 
-IMAGE_TAG = "assay-code-extension:run-bfb5dd7d9189a983"
+IMAGE_TAG = "assay-code-extension:ce-v1-bounds"
 CHECKS = ("baseline_passes", "feature_fails", "reference_passes")
 EXPECTED = {"baseline_passes": "passed", "feature_fails": "failed", "reference_passes": "passed"}
 ExpectedOutcome = Literal["passed", "failed"]
