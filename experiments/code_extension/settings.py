@@ -83,7 +83,11 @@ class ExtensionAgentSettings(BaseModel):
         return value
 
     @classmethod
-    def for_model(cls, model: str) -> Self:
+    def for_model(
+        cls, model: str, *, per_cell_tool_call_ceiling: int | None = None,
+    ) -> Self:
+        if per_cell_tool_call_ceiling is not None:
+            raise UnsupportedExtensionBound(TOOL_CALL_CEILING_REASON)
         if model == "qwen-coder-32b":
             return cls(
                 served_context_tokens=SERVED_CONTEXT_BY_MODEL[model],

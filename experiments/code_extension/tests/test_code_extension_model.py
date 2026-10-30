@@ -8,6 +8,7 @@ from code_extension.settings import (
     SMOKE_SUBJECT_IDS,
     ExtensionAgentSettings,
     UnauthorizedExtensionRoute,
+    UnsupportedExtensionBound,
 )
 from code_extension.shape import validate_worker_grid
 from pydantic import ValidationError
@@ -103,6 +104,8 @@ def test_effective_bounds_are_explicit() -> None:
 
 
 def test_unsupported_bound_and_route_are_refused() -> None:
+    with pytest.raises(UnsupportedExtensionBound, match="only under pilot_mode"):
+        ExtensionAgentSettings.for_model("qwen-coder-32b", per_cell_tool_call_ceiling=120)
     with pytest.raises(ValidationError, match="extension_mode cannot enforce"):
         ExtensionAgentSettings(per_cell_tool_call_ceiling=120)
     with pytest.raises(UnauthorizedExtensionRoute, match="unknown-route"):
