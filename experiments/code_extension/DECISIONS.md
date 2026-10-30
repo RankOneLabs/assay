@@ -1,5 +1,30 @@
 # Code extension model decisions
 
+## ce-v1 contract freeze
+
+- `assay-extension-scenario-sidecar/0.1.0` holds the six missing contracts:
+  per-scenario writable implementation scope; declared protected test,
+  dependency and configuration files; requirements-to-tests links; reference
+  and incomplete patch inventory with intent; and refs for leak-scan,
+  access-probe, no-op, scripted-submission and double-reproduction evidence.
+  The 0.3.0 fixture manifest and its predecessors remain fixed.
+- `ce-v1` version `1.0.0` has one initial user turn, with feature request,
+  workspace and test instructions, declared scope and budget. Its system
+  prompt, rendered task witness, ordered extension tool schemas and submission
+  schema have literal digest pins. Scenario-specific rendered task digests are
+  recorded at delivery.
+- Calibration defaults are timeout_s 900.0, max_turns 60,
+  max_output_tokens 8192 and max_tool_output_bytes 32768. Model context limit
+  and request timeout are explicit. The 120 per-cell tool-call ceiling is
+  unavailable because the loop enforces such ceilings only in pilot_mode,
+  which is incompatible with extension_mode. Requested and provider-reported
+  sampling values are separate and unset by default.
+- **Open operator decision:** the settings edit requires updating the
+  image-side `integrations/pier/config/code_extension.yaml` in lockstep,
+  rebuilding the image, observing its new digest and requalifying the three
+  committed fixtures bound to the current image digest. This cohort does not
+  absorb that image and fixture work.
+
 - The operator will decide whether the final committed set contains three or
   four scenarios after reviewing the baseline pilot. The scenario-set cohort
   targets three total, including the pilot, and will not add an unqualified

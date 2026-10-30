@@ -4,7 +4,11 @@ from collections.abc import Sequence
 
 import pytest
 from code_extension.arms import ARM_SET_FACTORS, BASELINE_ARM_ID, BASELINE_ARM_IDS
-from code_extension.settings import SMOKE_SUBJECT_IDS
+from code_extension.settings import (
+    SMOKE_SUBJECT_IDS,
+    ExtensionAgentSettings,
+    UnauthorizedExtensionRoute,
+)
 from code_extension.shape import validate_worker_grid
 from pydantic import ValidationError
 
@@ -83,3 +87,23 @@ def test_arm_set_refuses_duplicate_ids_and_mixed_factor_tag() -> None:
         CodeShapeArmSet.model_validate(
             {"factor": ["code_shape", "model_profile"], "arm_ids": ["shape", "model"]}
         )
+
+
+def test_effective_bounds_are_explicit() -> None:
+    for model, context in (("qwen-coder-32b", 32_768), ("qwen3.6-27b", 131_072)):
+        settings = ExtensionAgentSettings.for_model(model)
+        assert (settings.timeout_s, settings.max_turns, settings.max_output_tokens,
+                settings.max_tool_output_bytes) == (900.0, 60, 8192, 32768)
+        assert settings.model_context_limit_tokens == settings.served_context_tokens == context
+        assert settings.request_timeout_s == 120.0
+        assert settings.per_cell_tool_call_ceiling == "unavailable"
+        assert "only under pilot_mode" in settings.per_cell_tool_call_ceiling_reason
+        assert settings.requested_sampling is None
+        assert settings.provider_reported_sampling is None
+
+
+def test_unsupported_bound_and_route_are_refused() -> None:
+    with pytest.raises(ValidationError, match="extension_mode cannot enforce"):
+        ExtensionAgentSettings(per_cell_tool_call_ceiling=120)
+    with pytest.raises(UnauthorizedExtensionRoute, match="unknown-route"):
+        ExtensionAgentSettings.for_model("unknown-route")

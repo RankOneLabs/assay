@@ -1,5 +1,34 @@
 # Code extension experiment
 
+## ce-v1 contract and protocol
+
+`contract.py` defines `assay-extension-scenario-sidecar/0.1.0` alongside the
+unchanged fixture manifest. The sidecar declares six contracts per scenario:
+writable implementation scope; protected test, dependency and configuration
+files; a requirements-to-tests table; reference and incomplete patch inventory
+with intent; and content-addressed refs for leak scan, access probe, no-op,
+scripted submission and double reproduction evidence. The fixture cohort will
+load and bind these declarations to its committed scenarios.
+
+`protocol.py` identifies the one-turn extension protocol as `ce-v1` version
+`1.0.0`. Literal digests freeze the bridge's system prompt, a four-part rendered
+task witness, ordered tool schemas and `submit_output` submission schema.
+Individual trials must additionally record the digest of the rendered
+`instruction.md` they deliver. The worker cohort will wire the new renderer to
+the bridge; this cohort defines the renderer and pins before dispatch changes.
+
+Calibration defaults are 900 seconds per attempt, 60 model requests, 8,192
+output tokens per request and 32 KiB of tool output. The served model context
+and 120-second request timeout are explicit settings. The 120 per-cell tool-call
+ceiling is recorded as unavailable: extension mode does not enforce that limit,
+because the loop honors it only in pilot mode. Sampling remains unset unless a
+route requires it, with requested and provider-reported values held separately.
+
+**Open operator decision:** changing `ExtensionAgentSettings` requires a
+lockstep update to `integrations/pier/config/code_extension.yaml`, an image
+rebuild, a new observed image digest and requalification of the three committed
+fixtures. The image-side copy and fixtures are outside this cohort's scope.
+
 This package fixes the Spec 3 domain shape before any study runs. The fixture
 manifest version `assay-fixture-manifest/0.3.0` declares one factor in `arm_set`
 and one or more scenarios. Each scenario pins its checkpoint slice, bounded
