@@ -12,6 +12,7 @@ from typing import Any
 
 from workflow_edit.bridge import (
     SmithersTurnCompletion,
+    TurnCompletion,
     WorkflowEditBridgeClient,
     WorkflowEditHandle,
     trial_limits,
@@ -39,6 +40,8 @@ from assay.pier_protocol import PierExchange
 from code_extension.arms import require_declared_codeintel_arm
 from code_extension.codeintel import PreparedExtensionCodeIntel, prepare_extension_codeintel
 from code_extension.dispatch import cell_idempotency_key
+from code_extension.fixture import ADDED_SCENARIOS, SUBJECT_ID
+from code_extension.fixtures import ExtensionScenarioSidecar, sidecar_for_subject
 from code_extension.prompts import render_arm_prompts
 from code_extension.settings import ExtensionAgentSettings
 
@@ -48,7 +51,10 @@ AUTHORIZED_MODEL_ROUTES = frozenset({
     ("http://willie:8900", "qwen-coder-32b", "smithers-local"),
     ("http://willie:8900", "qwen3.6-27b", "smithers-local"),
 })
-WRITABLE_PREFIXES = ("src/", "tests/visible/")
+LEGACY_WRITABLE_PREFIXES = ("src/", "tests/visible/")
+LEGACY_SUBJECT_IDS = frozenset(
+    {SUBJECT_ID, *(item.subject_id for item in ADDED_SCENARIOS.values())}
+)
 EXTENSION_SYSTEM_PROMPT = (
     "You are editing one repository copy in /workspace. Read instruction.md and use "
     "the repository tools to implement and check the feature. Call submit_output when "
@@ -105,6 +111,7 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
     """One arm's declared prompt, route, tool surface and provider delivery."""
 
     scenario: ExtensionScenario | None = None
+    scenario_sidecar: ExtensionScenarioSidecar | None = None
     arm_set: ExtensionArmSet | None = None
     arm_id: str = "baseline"
     route: bridge_protocol.ModelRoute = bridge_protocol.ModelRoute(
@@ -129,6 +136,21 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
         if self.scenario is None or self.arm_set is None:
             raise ValueError("extension scenario and arm set are required")
         return render_arm_prompts(self.arm_set, self.scenario)[self.arm_id]
+
+    def _writable_prefixes(self) -> tuple[str, ...]:
+        if self.scenario is None:
+            raise ValueError("extension scenario is required for writable scope")
+        sidecar = self.scenario_sidecar or sidecar_for_subject(self.scenario.subject_id)
+        if sidecar is not None:
+            if sidecar.subject_id != self.scenario.subject_id:
+                raise ValueError("extension sidecar subject differs from scenario")
+            prefixes = sidecar.writable_implementation_scope
+            if any(not prefix.endswith("/") for prefix in prefixes):
+                raise ValueError("extension writable scope must contain directory prefixes")
+            return prefixes
+        if self.scenario.subject_id in LEGACY_SUBJECT_IDS:
+            return LEGACY_WRITABLE_PREFIXES
+        raise ValueError("extension scenario has no writable-scope sidecar")
 
     def _bounds(self) -> LoopBounds:
         settings = self._settings()
@@ -190,7 +212,7 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
             prefix = ({"role": "user", "content": self.prepared.prompt_block},)
         return agent_configuration(
             bounds=self._bounds(), limits=self.limits,
-            writable_prefixes=WRITABLE_PREFIXES, model_route=self.route,
+            writable_prefixes=self._writable_prefixes(), model_route=self.route,
             tools=tools, system_prompt=EXTENSION_SYSTEM_PROMPT, message_prefix=prefix,
             extra={
                 "image": self.image, "image_digest": observed_image_digest(self.image),
@@ -240,16 +262,20 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
         prefix: tuple[dict[str, Any], ...] = ()
         if self.prepared is not None and self.prepared.prompt_block is not None:
             prefix = ({"role": "user", "content": self.prepared.prompt_block},)
-        completion = SmithersTurnCompletion(
-            self.factory, cell_idempotency_key(self.run_label, coordinate),
-            authorized=self.authorized_smithers,
+        cell_key = cell_idempotency_key(self.run_label, coordinate)
+        completion: TurnCompletion = (
+            self.completion_for(cell_key)
+            if self.completion_for is not None
+            else SmithersTurnCompletion(
+                self.factory, cell_key, authorized=self.authorized_smithers,
+            )
         )
         agent = RepositoryAgentClient(
             api_key=None, image=self.image, runs_root=self.runs_root,
             model_route=self.route, completion=completion, bounds=self._bounds(),
             tools=deepcopy(self.prepared.tools if self.prepared is not None else EXTENSION_TOOLS),
             extension_mode=True, system_prompt=EXTENSION_SYSTEM_PROMPT,
-            message_prefix=prefix, writable_prefixes=WRITABLE_PREFIXES,
+            message_prefix=prefix, writable_prefixes=self._writable_prefixes(),
             codeintel_query_script=(
                 QUERY_SCRIPT if self.prepared is not None and isinstance(
                     delivery.delivery, ToolDelivery

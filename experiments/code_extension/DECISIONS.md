@@ -1,5 +1,51 @@
 # Code extension model decisions
 
+## Dispatch-handler WP1 fixture and gate
+
+- `dispatch-handler` is the only new scenario in this cohort. Its subject id is
+  `oakridge-dbos-dispatch-handler`, distinct from the three refused smoke ids.
+  The three existing committed subjects and their evidence remain unchanged.
+- `fixtures.py` loads the `assay-extension-scenario-sidecar/0.1.0` record using
+  the core types from `contract.py`. The study-local extension carries tool
+  instructions, the declared outcome of every unrelated check for each
+  incomplete patch, and provenance: extraction invocation and rules, license
+  notices, local adaptations, tree size and digest, and dependency lock
+  digests. The existing sidecar fields carry writable scope, protected assets,
+  requirements-to-tests links, patch intent and five gate-evidence digests.
+  The loader reads actual patch headers and refuses undeclared or protected
+  paths; the 0.3.0 manifest schema is unchanged.
+- `qualify.py` has one model-free entry point with required `--scenario` and
+  `--image`. It defaults evidence and manifest paths beneath that scenario's
+  qualification directory. It inspects the image and binds its observed
+  sha256 digest, never the mutable tag. Feature failure counts only when both
+  regression groups pass, the feature group fails with `group_failure`, and
+  a separate `diagnose_candidate` replay names a test that ran. Only a boolean
+  gate decision is retained; test names and output are not retained.
+- Three incomplete patches exercise a missing dispatcher registration, omitted
+  identity validation, and missing public payload type export. They compile
+  before hidden checks and preserve unrelated regression groups. A no-op
+  candidate and every start/reference/incomplete control run
+  twice in fresh evaluator sandboxes. The scripted worker applies the known
+  patch through `ExtensionBridgeClient`, `write_file` and `submit_output`; the
+  independent evaluator checks the captured candidate. The bridge resolves
+  the scenario sidecar by subject and enforces `src/domain/` for dispatch-handler,
+  so the protected visible tests are outside the writable scope. Existing
+  committed subjects keep their prior scope until they gain sidecars. Scripted
+  turns replace model calls while the bridge still supplies its production
+  system prompt, bounds, tools, scope and trial sealing.
+- `probe.py` scripts attempts through all five baseline tools, including shell
+  and symlink paths. `leaks.py` uses the shared `scan_text` scanner with
+  extension-specific markers over the agent-visible tree, rendered prompt and
+  observed tool output. Per-attempt results and scanner hits are retained in
+  `fixtures/dispatch-handler/qualification/gates/`, with their digests in the
+  sidecar. These are operator-authored controls, not model observations.
+- The experiments CI job sets `ASSAY_REQUIRE_DOCKER=1` to require the daemon,
+  but it does not provision the dispatch-handler fixture's exact image. Its
+  replay test skips only when that image is absent; setting
+  `ASSAY_REQUIRE_EXTENSION_IMAGE=1` makes image absence a failure on a
+  qualification machine. The committed records and gate files, plus exact
+  replay on the provisioned machine, remain the qualification evidence.
+
 ## ce-v1 contract freeze
 
 - `assay-extension-scenario-sidecar/0.1.0` holds the six missing contracts:

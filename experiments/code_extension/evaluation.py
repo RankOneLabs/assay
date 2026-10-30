@@ -20,7 +20,7 @@ from assay.investigations.workflow_correctness import (
 from assay.models import EvaluationCoordinate
 from assay.pier_protocol import CandidateSubmission
 from assay.store import ObjectIntegrityError, ObjectStore
-from code_extension.bridge import WRITABLE_PREFIXES
+from code_extension.bridge import LEGACY_WRITABLE_PREFIXES
 
 STUDY_GROUPS = (("visible_regression", False), ("hidden_regression", True), ("new_behavior", True))
 CORRECTNESS_CATEGORIES = ("correct", "incorrect", "unavailable")
@@ -113,7 +113,9 @@ class CellEvaluator:
             "id": "code-extension-correctness",
             "version": "1",
             "grader_revision": GRADER_REVISION,
-            "writable_prefixes": list(WRITABLE_PREFIXES),
+            # The evaluator's broad capture policy is separate from the worker's
+            # scenario sidecar scope; the runner restores visible tests itself.
+            "writable_prefixes": list(LEGACY_WRITABLE_PREFIXES),
             "categories": list(CORRECTNESS_CATEGORIES),
             "runner": self.runner.configuration(),
             "fixture": fixture_identity(self.manifest),

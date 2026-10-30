@@ -11,6 +11,8 @@ ALLOWED_BUNDLES: set[PurePosixPath] = {
     PurePosixPath("experiments/workflow_edit/evidence/wf13"),
     # The pilot manifest binds these deterministic qualification records by digest.
     PurePosixPath("experiments/code_extension/fixtures/pilot/qualification/evidence"),
+    # The dispatch-handler manifest binds its deterministic qualification records too.
+    PurePosixPath("experiments/code_extension/fixtures/dispatch-handler/qualification/evidence"),
 }
 RUN_RECEIPTS_PROSE = {
     PurePosixPath("experiments/typesafe_relevance/run_packet.py"),
