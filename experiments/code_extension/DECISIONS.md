@@ -48,9 +48,27 @@
 - `evaluation.CellEvaluator` reads its arm and subject from the cell, its
   baseline from the realization, and its baseline digest from worker evidence.
   A mismatch is a named `unavailable` verdict. It passes only the frozen
-  visible, hidden regression and new-behavior groups to the runner and retains
-  status and cause per group, never test output. Diagnosis remains a separate
-  replay.
+  visible, hidden regression and new-behavior groups to the runner. Preflight
+  has its own passed, failed or unavailable outcome; a failed preflight leaves
+  all three functional groups unavailable. The evaluator retains each group's
+  status, cause, stdout, stderr, exit status and timeout limit only in its
+  operator record. The record is published to the operator object store, and the
+  saved evaluation detail carries its digest reference. Test output never
+  reaches the agent workspace or tool result.
+  Diagnosis remains a separate replay.
+- Attribution is additive: candidate compile errors, rejected patches and test
+  failures are candidate failures; missing images, broken runners and invalid
+  evaluator inputs are infrastructure failures. Unknown causes are unresolved
+  and withhold the correctness category. Each rejected protected or out-of-scope
+  path is recorded with its disposition and baseline and candidate digests.
+  Candidate tree digest comparison happens before restoration or commands.
+  A missing tool during typecheck or build is a failed preflight with the
+  stage-prefixed `*_toolchain_unavailable` cause. Failure to verify the pinned
+  toolchain itself uses the bare `toolchain_unavailable` infrastructure cause.
+- Grader cache identity covers the candidate and baseline tree digests, image
+  digest, dependency locks, all three named group digests, evaluator configuration
+  digest and grader revision. Frozen test-group commands and the harness source
+  remain evaluator controlled.
 - `dispatch.cell_idempotency_key` is imported by the extension bridge for the
   stable run-and-coordinate key, so a lost response reuses the same
   Smithers job at each turn. The core run manifest records unsettled and
