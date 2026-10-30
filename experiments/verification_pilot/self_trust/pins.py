@@ -115,3 +115,9 @@ RENAME_SYSTEM_PROMPT_SHA256 = (
     "sha256:a6d260a73a2a3474aac9579d1a61c11c6fd4b0f64cbea6f822afffab2cb71b7b"
 )
 TURN_PROMPTS_SHA256 = "sha256:2756db22bf70f7d851e9cc1da10d8ff7e58c6b88efb446d9a860a9c1bd3fdfc6"
+
+# digest_bytes(canonical_json(PILOT_TOOL_SCHEMAS[turn])) before shared bridge edits.
+TOOL_SURFACE_SHA256 = {
+    "T1": "sha256:3ad37fbe54f3b2b6963becd6b2f8bfd2654a81d11b3da444473c38514241f1bd",
+    "T2_T3": "sha256:84e35748e18b2173c679ffcb92b823b88de402e0a5a55dec1708937a52cb479e",
+}
