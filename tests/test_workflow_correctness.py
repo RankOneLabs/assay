@@ -314,6 +314,8 @@ async def test_missing_candidate_tool_after_version_check_fails_preflight(
 ) -> None:
     prepare_fake_toolchain(tmp_path, monkeypatch)
     tools = tmp_path / "tools"
+    # Keep a host-installed tsc from replacing the executable removed below.
+    monkeypatch.setenv("PATH", str(tools))
     if stage == "typecheck":
         script = tools / "node"
         script.write_text(script.read_text() + (
