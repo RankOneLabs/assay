@@ -127,6 +127,92 @@ def test_infrastructure_failure_preserves_partial_trace(tmp_path: Path) -> None:
     assert archive.read(coordinate.id) == failure
 
 
+def test_unlisted_credentials_are_redacted_before_persistence(tmp_path: Path) -> None:
+    archive, coordinate = _open(tmp_path)
+    trace = canonical_json({
+        "x-api-key": "unlisted-token", "api_key": "another-unlisted-token",
+        "nested": {"access_token": "nested-token"},
+        "messages": ["Basic dXNlcjpwYXNz", "sk-standalone12345"],
+    })
+    failure = archive.fail_attempt(coordinate.id, cause="provider_error", trace=trace)
+    assert failure.worker_trace_ref is not None
+    assert archive.objects.read_bytes(failure.worker_trace_ref) == canonical_json({
+        "redacted_header": "[REDACTED]", "nested": {
+            "redacted_header": "[REDACTED]",
+        }, "messages": ["[REDACTED-BASIC]", "[REDACTED-API-KEY]"],
+    })
+    for path in archive.directory.rglob("*"):
+        if path.is_file():
+            data = path.read_bytes()
+            assert b"unlisted-token" not in data
+            assert b"nested-token" not in data
+            assert b"dXNlcjpwYXNz" not in data
+            assert b"sk-standalone12345" not in data
+            assert b"x-api-key" not in data
+
+
+def test_failed_attempt_rejects_redacted_recovery_patch(tmp_path: Path) -> None:
+    archive, coordinate = _open(tmp_path)
+    failure = archive.fail_attempt(
+        coordinate.id, cause="container_stop",
+        workspace_patch=b"diff --git a/src/a b/src/a\n+publication-secret\n",
+    )
+    assert failure.candidate.patch_ref is None
+    assert failure.candidate.recoverable_workspace_ref is None
+    assert "CandidateRedacted: candidate patch contained a credential" in failure.errors
+    assert "CandidateUnavailable: no patch or recoverable workspace" in failure.errors
+    assert all(b"publication-secret" not in path.read_bytes()
+               for path in archive.directory.rglob("*") if path.is_file())
+
+
+def test_evaluator_details_and_grader_output_resolve_from_archive(tmp_path: Path) -> None:
+    archive, coordinate = _open(tmp_path)
+    source = ObjectStore(tmp_path / "source")
+    grader_ref = str(source.publish_json({
+        "groups": {"visible": {"status": "failed", "stdout": "publication-secret"}},
+    }))
+    detail_ref = str(source.publish_json({
+        "groups": {"visible": {"status": "failed", "cause": "assertion"}},
+        "evaluator_record_ref": grader_ref,
+    }))
+    evidence_ref = str(source.publish_json({
+        "verdict": {"value": "incorrect"},
+        "payload": {"detail_refs": [detail_ref]},
+        "source_references": [detail_ref],
+    }))
+    outcome = ExecutionOutcome(
+        run_id="run-1", plan_ref=archive.read(coordinate.id).plan_ref,
+        started_at="2026-01-01T00:00:00Z", completed_at="2026-01-01T00:00:01Z",
+        coordinate=coordinate, status="failed", input_ref=SHA,
+        error_type="CandidateTrialError", error_message="worker stopped",
+    )
+    outcome_ref = str(source.publish_json(outcome.model_dump(mode="json")))
+    manifest = RunManifest(
+        run_id="run-1", plan_ref=archive.read(coordinate.id).plan_ref, status="complete",
+        execution_records={coordinate.id: outcome_ref},
+        evaluation_records={f"{coordinate.id}:correctness:e0": evidence_ref},
+        missing_coordinates=(),
+    )
+    settled = archive.settle_attempt(
+        coordinate.id, source=source,
+        manifest_ref=str(source.publish_json(manifest.model_dump(mode="json"))),
+    )
+    assert len(settled.evaluator_output_refs) == 1
+    archived_evidence = json.loads(archive.objects.read_bytes(
+        settled.evaluator_output_refs[0]
+    ))
+    archived_detail_ref = archived_evidence["payload"]["detail_refs"][0]
+    assert archived_detail_ref in archived_evidence["source_references"]
+    archived_detail = json.loads(archive.objects.read_bytes(archived_detail_ref))
+    archived_grader = json.loads(archive.objects.read_bytes(
+        archived_detail["evaluator_record_ref"]
+    ))
+    assert archived_detail["groups"]["visible"]["status"] == "failed"
+    assert archived_grader["groups"]["visible"]["stdout"] == "[REDACTED]"
+    assert all(b"publication-secret" not in path.read_bytes()
+               for path in archive.directory.rglob("*") if path.is_file())
+
+
 def test_sealed_candidate_triple_and_redaction(tmp_path: Path) -> None:
     secret = "publication-secret"
     archive, coordinate = _open(tmp_path, secret)

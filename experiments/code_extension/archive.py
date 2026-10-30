@@ -38,6 +38,13 @@ ARCHIVE_SCHEMA: Literal["assay-ce-attempt-archive/0.1.0"] = (
 )
 _SECRET_HEADER = re.compile(rb"(?i)(authorization|x-api-key|api[_-]key)\s*[:=]\s*[^\r\n,}\"]+")
 _BEARER = re.compile(rb"(?i)bearer\s+[a-z0-9._~+/-]+")
+_BASIC = re.compile(rb"(?i)\bbasic\s+[a-z0-9+/=]+")
+_API_KEY = re.compile(rb"\b(?:sk-[a-zA-Z0-9_-]{8,}|gh[opurs]_[a-zA-Z0-9_]{8,})\b")
+_SENSITIVE_KEYS = frozenset({
+    "authorization", "x-api-key", "api_key", "api-key", "token", "access_token",
+    "refresh_token", "session_token", "secret", "client_secret", "password",
+    "credential", "credentials", "private_key",
+})
 
 
 class _Wire(BaseModel):
@@ -153,9 +160,9 @@ def _safe_bytes(data: bytes, secrets: tuple[bytes, ...]) -> bytes:
         def clean(value: Any) -> Any:
             if isinstance(value, dict):
                 return {
-                    ("redacted_header" if key.lower() in {
-                        "authorization", "x-api-key", "api_key", "api-key",
-                    } else key): clean(item)
+                    ("redacted_header" if key.lower() in _SENSITIVE_KEYS else key): (
+                        "[REDACTED]" if key.lower() in _SENSITIVE_KEYS else clean(item)
+                    )
                     for key, item in value.items()
                 }
             if isinstance(value, list):
@@ -172,7 +179,9 @@ def _safe_text(data: bytes, secrets: tuple[bytes, ...]) -> bytes:
         if secret:
             data = data.replace(secret, b"[REDACTED]")
     data = _SECRET_HEADER.sub(b"[REDACTED-HEADER]", data)
-    return _BEARER.sub(b"[REDACTED-BEARER]", data)
+    data = _BEARER.sub(b"[REDACTED-BEARER]", data)
+    data = _BASIC.sub(b"[REDACTED-BASIC]", data)
+    return _API_KEY.sub(b"[REDACTED-API-KEY]", data)
 
 
 def _atomic(path: Path, data: bytes) -> None:
@@ -252,7 +261,13 @@ class AttemptArchive:
         record = self.read(cell_id)
         values = record.model_dump(mode="python")
         trace_ref = self._publish(trace) if trace is not None else None
-        patch_ref = self._publish(workspace_patch) if workspace_patch is not None else None
+        candidate_redacted = (
+            workspace_patch is not None and
+            _safe_bytes(workspace_patch, self.secrets) != workspace_patch
+        )
+        patch_ref = self._publish(workspace_patch) if (
+            workspace_patch is not None and not candidate_redacted
+        ) else None
         if trace is not None:
             _atomic(self.directory / "traces" / f"{cell_id}-worker.json",
                     _safe_bytes(trace, self.secrets))
@@ -262,6 +277,9 @@ class AttemptArchive:
             result_ref=None, recoverable_workspace_ref=patch_ref,
         )
         values["errors"] = (*record.errors, cause, *(
+            ("CandidateRedacted: candidate patch contained a credential",)
+            if candidate_redacted else ()
+        ), *(
             ("CandidateUnavailable: no patch or recoverable workspace",)
             if patch_ref is None else ()
         ))
@@ -348,6 +366,28 @@ class AttemptArchive:
         self._record(record)
         return record
 
+    def _copy_evaluation(self, source: ObjectStore, ref: str) -> str:
+        """Retain the evaluator record and the detail and grader output it names."""
+        evidence = json.loads(source.read_bytes(ref))
+        payload = evidence.get("payload", {})
+        replacements: dict[str, str] = {}
+        for detail_ref in payload.get("detail_refs", []):
+            detail = json.loads(source.read_bytes(detail_ref))
+            grader_ref = detail.get("evaluator_record_ref")
+            if grader_ref is not None:
+                copied_grader = self._publish(source.read_bytes(grader_ref))
+                detail["evaluator_record_ref"] = copied_grader
+            replacements[detail_ref] = self._publish(canonical_json(detail))
+        payload["detail_refs"] = [
+            replacements[ref] for ref in payload.get("detail_refs", [])
+        ]
+        if "source_references" in evidence:
+            evidence["source_references"] = [
+                replacements.get(source_ref, source_ref)
+                for source_ref in evidence["source_references"]
+            ]
+        return self._publish(canonical_json(evidence))
+
     def settle_attempt(self, cell_id: str, *, source: ObjectStore,
                        manifest_ref: str | None = None,
                        interruption: str | None = None) -> AttemptArchiveRecord:
@@ -366,7 +406,7 @@ class AttemptArchive:
                 values["execution_ref"] = self._publish(source.read_bytes(execution_ref))
                 outcome = ExecutionOutcome.model_validate_json(source.read_bytes(execution_ref))
             values["evaluator_output_refs"] = tuple(
-                self._publish(source.read_bytes(ref)) for key, ref in
+                self._copy_evaluation(source, ref) for key, ref in
                 manifest.evaluation_records.items() if key.startswith(cell_id + ":")
             )
         trace_ref = outcome.trace_ref if outcome else (
