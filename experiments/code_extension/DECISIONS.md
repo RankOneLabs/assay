@@ -1,5 +1,33 @@
 # Code extension model decisions
 
+## WP2 worker and WP3 per-attempt archive
+
+- The ce-v1 bridge keeps the shared baseline tool definitions in their frozen
+  order and checks the literal system prompt and ordered tool-schema digests
+  before dispatch. It reads writable prefixes from the scenario sidecar and
+  compares the declared scope and protected assets to the qualified sidecar.
+  Prompt and observed image checks remain separate early refusals. Extension
+  configuration records the per-cell tool-call ceiling as `unavailable`, with
+  the pilot-mode-only enforcement reason, alongside the explicit context,
+  request-timeout and cell bounds.
+- `archive.py` writes one run directory under the durable
+  `experiments/code_extension/evidence/runs` default. The directory has an
+  atomic cell-id index, `manifest.json` when a manifest exists, per-attempt
+  worker and trajectory files in `traces/`, and a content-addressed `objects/`
+  store. A row is written at dispatch and updated on settlement; interruption
+  keeps the first row and writes an explicit absent candidate when no workspace
+  or patch was recovered. Run archives are untracked output, never fixtures.
+- The versioned `assay-ce-attempt-archive/0.1.0` record carries coordinate and
+  schedule, plan/snapshot/authorization refs, code revision and dirty-source
+  digest, fixture and protocol identities, declared scope and protected assets,
+  lockfiles, route/model/sampling identities, effective bounds, timestamps,
+  request/response/tool and worker trace refs and request IDs, errors, usage,
+  price and cost coverage, evaluator refs, terminal status, and a candidate
+  triple. The triple references the retained unified patch and uses the final
+  and baseline tree digests read from the bridge's sealed `result.json`.
+  Genuinely absent observations are null. The writer redacts configured secrets
+  and secret-bearing headers before content publication.
+
 ## Dispatch-handler WP1 fixture and gate
 
 - `dispatch-handler` is the only new scenario in this cohort. Its subject id is
