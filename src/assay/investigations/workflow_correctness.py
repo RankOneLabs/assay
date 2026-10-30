@@ -19,6 +19,7 @@ from assay.repository import validate_repository
 
 GroupName = Literal["visible_regression", "hidden_regression", "new_behavior"]
 Verdict = Literal["correct", "incorrect", "unavailable"]
+Attribution = Literal["candidate_failure", "evaluator_infrastructure", "unresolved"]
 GROUP_NAMES: tuple[GroupName, ...] = (
     "visible_regression",
     "hidden_regression",
@@ -67,6 +68,16 @@ class GroupResult:
     name: GroupName
     status: Literal["passed", "failed", "unavailable"]
     cause: str | None = None
+    stdout: str = ""
+    stderr: str = ""
+    exit_status: int | None = None
+    timeout_s: float | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PreflightResult:
+    status: Literal["passed", "failed", "unavailable"]
+    cause: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -74,6 +85,33 @@ class WorkflowCorrectnessResult:
     verdict: Verdict
     groups: tuple[GroupResult, ...]
     cause: str | None = None
+    preflight: PreflightResult | None = None
+    attribution: Attribution | None = None
+    rejected_changes: tuple[dict[str, str | None], ...] = ()
+
+
+_CANDIDATE_CAUSES = frozenset({
+    "patch_rejected", "build_output_missing", "test_path_collision", "nonzero_exit",
+    "candidate_timeout", "output_limit", "group_failure",
+})
+_INFRASTRUCTURE_CAUSES = frozenset({
+    "SandboxImageUnavailable", "SandboxRuntimeMismatch", "SandboxUnavailable",
+    "sandbox_process_failed", "sandbox_cleanup_failed", "sandbox_protocol_error",
+    "infrastructure_deadline", "toolchain_unavailable", "fixture_asset_unavailable",
+    "image_digest_mismatch", "baseline_digest_mismatch", "realization_digest_mismatch",
+    "restored_test_mismatch", "invalid_test_groups", "invalid_test_command",
+    "missing_test_group", "invalid_patch", "invalid_input",
+})
+
+
+def attribute_cause(cause: str | None) -> Attribution | None:
+    if cause is None:
+        return None
+    if cause in _CANDIDATE_CAUSES or cause.startswith(("typecheck_", "build_")):
+        return "candidate_failure"
+    if cause in _INFRASTRUCTURE_CAUSES:
+        return "evaluator_infrastructure"
+    return "unresolved"
 
 
 _HARNESS = r"""import hashlib
@@ -95,40 +133,48 @@ for name, source in payload['baseline'].items():
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source, encoding='utf-8')
 
-def result(status, cause=None):
-    return {'status': status, 'cause': cause}
+def result(status, cause=None, stdout='', stderr='', exit_status=None, timeout_s=None):
+    return {'status': status, 'cause': cause, 'stdout': stdout, 'stderr': stderr,
+            'exit_status': exit_status, 'timeout_s': timeout_s}
 
 def run(args, timeout):
     try:
         child = subprocess.Popen(args, cwd=root, stdin=subprocess.DEVNULL,
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  start_new_session=True)
     except OSError:
         return result('unavailable', 'toolchain_unavailable')
     selector = selectors.DefaultSelector()
-    selector.register(child.stdout, selectors.EVENT_READ)
+    selector.register(child.stdout, selectors.EVENT_READ, 'stdout')
+    selector.register(child.stderr, selectors.EVENT_READ, 'stderr')
     deadline = time.monotonic() + timeout
-    total = 0
+    streams = {'stdout': bytearray(), 'stderr': bytearray()}
     finished = False
+    def capture(status, cause=None, timeout_s=None):
+        return result(status, cause, *(bytes(streams[name]).decode('utf-8', 'ignore')
+                                      for name in ('stdout', 'stderr')),
+                      exit_status=child.poll(), timeout_s=timeout_s)
     try:
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return result('failed', 'candidate_timeout')
+                return capture('failed', 'candidate_timeout', timeout)
             for key, _events in selector.select(remaining):
                 chunk = os.read(key.fileobj.fileno(), 65536)
                 if not chunk:
                     selector.unregister(key.fileobj)
                     continue
-                total += len(chunk)
-                if total > payload['max_output_bytes']:
-                    return result('failed', 'output_limit')
+                stream = streams[key.data]
+                exceeded = len(stream) + len(chunk) > payload['max_output_bytes']
+                stream.extend(chunk[:max(0, payload['max_output_bytes'] - len(stream))])
+                if exceeded:
+                    return capture('failed', 'output_limit')
         try:
             child.wait(timeout=max(0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
-            return result('failed', 'candidate_timeout')
+            return capture('failed', 'candidate_timeout', timeout)
         finished = True
-        return result('passed') if child.returncode == 0 else result('failed', 'nonzero_exit')
+        return capture('passed') if child.returncode == 0 else capture('failed', 'nonzero_exit')
     finally:
         selector.close()
         if not finished:
@@ -157,6 +203,26 @@ def tree_digest(root):
 patch = subprocess.run(['git', 'apply', '--allow-empty', '-'], cwd=root,
                        input=payload['patch'].encode('utf-8'),
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+candidate_files = {path.relative_to(root).as_posix(): path.read_bytes()
+                   for path in root.rglob('*') if path.is_file() and not path.is_symlink()}
+baseline_files = {name: source.encode('utf-8') for name, source in payload['baseline'].items()}
+restored_paths = {name for group in payload['groups'] if group['restores']
+                  for name in group['files']}
+protected = {'package.json', 'package-lock.json', 'tsconfig.json'}
+rejections = []
+for name in sorted(candidate_files.keys() | baseline_files.keys()):
+    original, changed = baseline_files.get(name), candidate_files.get(name)
+    if original == changed:
+        continue
+    restore = name in protected or name.startswith('tests/visible/') or name in restored_paths
+    if not restore and (not payload['enforce_extension_scope']
+                        or name.startswith('src/') or name.startswith('tests/visible/')):
+        continue
+    rejections.append({'path': name, 'disposition': 'restored' if restore else 'refused',
+                       'baseline_digest': 'sha256:' + hashlib.sha256(original).hexdigest()
+                       if original is not None else None,
+                       'candidate_digest': 'sha256:' + hashlib.sha256(changed).hexdigest()
+                       if changed is not None else None})
 if patch.returncode:
     outcome = {'preflight': result('failed', 'patch_rejected'), 'groups': {}}
 elif tree_digest(root) != payload['expected_tree_digest']:
@@ -167,7 +233,18 @@ elif any(group['restores'] for group in payload['groups']) and (
            for name in group['files'] for parent in (root / name).parents)
 ):
     outcome = {'preflight': result('failed', 'test_path_collision'), 'groups': {}}
+elif any(parent.is_file() for group in payload['groups'] for name in group['files']
+         for parent in (root / name).parents if parent != root):
+    outcome = {'preflight': result('failed', 'test_path_collision'), 'groups': {}}
+elif any(item['disposition'] == 'refused' for item in rejections):
+    outcome = {'preflight': result('failed', 'patch_rejected'), 'groups': {}}
 else:
+    for name in protected:
+        target = root / name
+        if name in baseline_files:
+            target.write_bytes(baseline_files[name])
+        elif target.exists():
+            target.unlink()
     def copy_tests(restores):
         for group in payload['groups']:
             if group['restores'] != restores:
@@ -180,10 +257,20 @@ else:
                 target.write_text(source, encoding='utf-8')
 
     def reset_visible_tests():
-        if any(group['restores'] for group in payload['groups']):
+        for name in candidate_files:
+            if name.startswith('tests/visible/') and name not in baseline_files:
+                (root / name).unlink()
+        if payload['enforce_extension_scope'] or any(
+            group['restores'] for group in payload['groups']
+        ):
             visible = root / 'tests' / 'visible'
             if visible.exists():
                 shutil.rmtree(visible)
+            for name, source in baseline_files.items():
+                if name.startswith('tests/visible/'):
+                    target = root / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(source)
             copy_tests(True)
 
     reset_visible_tests()
@@ -254,6 +341,7 @@ else:
         else:
             copy_tests(False)
             outcome = {'preflight': result('passed'), 'groups': run_groups()}
+outcome['rejected_changes'] = rejections
 sys.stdout.write(json.dumps(outcome, separators=(',', ':')))
 """
 
@@ -284,12 +372,17 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
         expected_tree_digest: str,
         patch: str,
         groups: tuple[WorkflowTestGroup, ...],
+        enforce_extension_scope: bool = False,
     ) -> WorkflowCorrectnessResult:
-        def unavailable(cause: str) -> WorkflowCorrectnessResult:
+        def unavailable(
+            cause: str, attribution: Attribution | None = None
+        ) -> WorkflowCorrectnessResult:
             return WorkflowCorrectnessResult(
                 "unavailable",
                 tuple(GroupResult(name, "unavailable", cause) for name in GROUP_NAMES),
                 cause,
+                PreflightResult("unavailable", cause),
+                attribution or attribute_cause(cause),
             )
 
         try:
@@ -308,10 +401,10 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
                     if any(tree.get(path) != text for path, text in group.files.items()):
                         return unavailable("restored_test_mismatch")
                 elif any(path in tree for path in group.files):
-                    return unavailable("test_path_collision")
+                    return unavailable("test_path_collision", "evaluator_infrastructure")
             frozen_paths = [path for group in groups for path in group.files]
             if len(set(frozen_paths)) != len(frozen_paths):
-                return unavailable("test_path_collision")
+                return unavailable("test_path_collision", "evaluator_infrastructure")
             if not isinstance(patch, str):
                 return unavailable("invalid_patch")
         except ValueError:
@@ -329,6 +422,7 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
                 "max_output_bytes": self.settings.max_output_bytes,
                 "toolchain": self.settings.toolchain,
                 "expected_versions": self.settings.expected_versions,
+                "enforce_extension_scope": enforce_extension_scope,
             }
         )
         name = "assay-workflow-correctness-" + uuid.uuid4().hex
@@ -378,14 +472,16 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
                     stderr=asyncio.subprocess.PIPE,
                 )
                 stdout, stderr = await process.communicate(payload)
-                if len(stdout) + len(stderr) > self.settings.max_output_bytes:
+                if len(stdout) + len(stderr) > self.settings.max_output_bytes * (
+                    2 * len(groups) + 2
+                ):
                     failure_cause = "output_limit"
                 elif process.returncode:
                     failure_cause = "sandbox_process_failed"
         except TimeoutError:
             failure_cause = "infrastructure_deadline"
         except OSError:
-            failure_cause = "sandbox_unavailable"
+            failure_cause = "SandboxUnavailable"
         finally:
             cleanup_ok = await self._finish_cleanup(process, name)
         if not cleanup_ok:
@@ -395,36 +491,68 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
         try:
             value = json.loads(stdout)
             preflight = value["preflight"]
+            rejections = tuple(value.get("rejected_changes", ()))
             if preflight["status"] != "passed":
                 if preflight["status"] not in ("failed", "unavailable"):
                     raise ValueError("invalid preflight status")
                 cause = str(preflight["cause"])
                 status: Literal["failed", "unavailable"] = preflight["status"]
-                group_status: Literal["failed", "unavailable"] = status
-                verdict: Verdict = "incorrect" if status == "failed" else "unavailable"
+                attribution = attribute_cause(cause)
+                verdict: Verdict = (
+                    "incorrect" if status == "failed" and attribution != "unresolved"
+                    else "unavailable"
+                )
                 return WorkflowCorrectnessResult(
                     verdict,
-                    tuple(GroupResult(name, group_status, cause) for name in GROUP_NAMES),
+                    tuple(GroupResult(name, "unavailable", cause) for name in GROUP_NAMES),
                     cause,
+                    PreflightResult(status, cause),
+                    attribution,
+                    rejections,
                 )
             group_values = value["groups"]
             if set(group_values) != set(GROUP_NAMES):
                 raise ValueError("missing group")
             results = tuple(
-                GroupResult(name, group_values[name]["status"], group_values[name]["cause"])
+                GroupResult(
+                    name, group_values[name]["status"], group_values[name]["cause"],
+                    group_values[name].get("stdout", ""),
+                    group_values[name].get("stderr", ""),
+                    group_values[name].get("exit_status"),
+                    group_values[name].get("timeout_s"),
+                )
                 for name in GROUP_NAMES
             )
             if any(item.status not in ("passed", "failed", "unavailable") for item in results):
                 raise ValueError("invalid group status")
+            unknown = next(
+                (item.cause for item in results
+                 if item.cause is not None and attribute_cause(item.cause) == "unresolved"),
+                None,
+            )
+            if unknown is not None:
+                return WorkflowCorrectnessResult(
+                    "unavailable", results, unknown, PreflightResult("passed"), "unresolved",
+                    rejections,
+                )
             if any(item.status == "unavailable" for item in results):
-                return WorkflowCorrectnessResult("unavailable", results, "group_unavailable")
+                return WorkflowCorrectnessResult(
+                    "unavailable", results, "group_unavailable", PreflightResult("passed"),
+                    "evaluator_infrastructure", rejections,
+                )
             if any(item.status == "failed" for item in results):
                 cause = (
                     "candidate_timeout"
                     if any(item.cause == "candidate_timeout" for item in results)
                     else "group_failure"
                 )
-                return WorkflowCorrectnessResult("incorrect", results, cause)
-            return WorkflowCorrectnessResult("correct", results)
+                return WorkflowCorrectnessResult(
+                    "incorrect", results, cause, PreflightResult("passed"),
+                    attribute_cause(cause), rejections,
+                )
+            return WorkflowCorrectnessResult(
+                "correct", results, preflight=PreflightResult("passed"),
+                rejected_changes=rejections,
+            )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             return unavailable("sandbox_protocol_error")

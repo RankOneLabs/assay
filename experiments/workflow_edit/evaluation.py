@@ -23,8 +23,10 @@ from assay.investigations.workflow_correctness import (
     DockerWorkflowRunner,
     GroupName,
     GroupResult,
+    PreflightResult,
     WorkflowCorrectnessResult,
     WorkflowTestGroup,
+    attribute_cause,
     workflow_tree_digest,
 )
 from assay.models import EvaluationCoordinate
@@ -265,4 +267,6 @@ def unavailable_result(cause: str) -> WorkflowCorrectnessResult:
             for name in ("visible_regression", "hidden_regression", "new_behavior")
         ),
         cause,
+        PreflightResult("unavailable", cause),
+        attribute_cause(cause),
     )

@@ -64,6 +64,8 @@ def prepare_fake_toolchain(
         "from pathlib import Path\n"
         "import sys\n"
         "args = sys.argv[1:]\n"
+        "if '--noEmit' in args and 'FAIL' in Path('src.ts').read_text():\n"
+        "    sys.exit(1)\n"
         "with open(os.environ['ASSAY_TSC_LOG'], 'a', encoding='utf-8') as log:\n"
         "    log.write(' '.join(args) + '\\n')\n"
         "if args == ['--version']:\n"
@@ -121,6 +123,7 @@ async def run_fake_docker(
     expected_tree_digest: str | None = None,
     patch: str = PATCH,
     baseline: dict[str, str] | None = None,
+    enforce_extension_scope: bool = False,
 ) -> correctness.WorkflowCorrectnessResult:
     source_tree = baseline if baseline is not None else BASELINE
     async def check_runtime() -> None:
@@ -158,6 +161,7 @@ async def run_fake_docker(
         or workflow_tree_digest({**source_tree, "src.ts": FINAL_TREE["src.ts"]}),
         patch=patch,
         groups=groups_to_run,
+        enforce_extension_scope=enforce_extension_scope,
     )
 
 
@@ -198,6 +202,9 @@ async def test_candidate_timeout_and_evaluator_deadline_have_distinct_causes(
     )
     assert candidate.verdict == "incorrect" and candidate.cause == "candidate_timeout"
     assert all(group.cause == "candidate_timeout" for group in candidate.groups)
+    assert candidate.preflight == correctness.PreflightResult("passed")
+    assert candidate.attribution == "candidate_failure"
+    assert all(group.timeout_s == 1.0 for group in candidate.groups)
 
     runner = DockerWorkflowRunner(
         WorkflowRunnerSettings(image=IMAGE, candidate_timeout_s=10, deadline_s=0.05)
@@ -234,6 +241,7 @@ async def test_candidate_timeout_and_evaluator_deadline_have_distinct_causes(
     )
     assert infrastructure.verdict == "unavailable"
     assert infrastructure.cause == "infrastructure_deadline"
+    assert infrastructure.attribution == "evaluator_infrastructure"
 
 
 @pytest.mark.asyncio
@@ -264,7 +272,111 @@ async def test_patched_tree_must_match_declared_candidate_digest(
     )
     assert result.verdict == "unavailable"
     assert result.cause == "candidate_tree_digest_mismatch"
+    assert result.preflight == correctness.PreflightResult(
+        "unavailable", "candidate_tree_digest_mismatch"
+    )
+    assert result.attribution == "unresolved"
+    assert all(group.status == "unavailable" for group in result.groups)
     assert log.read_text().splitlines() == ["call"]
+    assert not (tmp_path / "tsc.log").exists()
+    assert not (tmp_path / "node.log").exists()
+
+
+@pytest.mark.asyncio
+async def test_compile_failure_has_separate_failed_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    patch = PATCH.replace("+export const value = 1;", "+export const value = FAIL;")
+    final = {**BASELINE, "src.ts": "export const value = FAIL;\n"}
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups(), patch=patch,
+        expected_tree_digest=workflow_tree_digest(final),
+    )
+    assert result.verdict == "incorrect"
+    assert result.cause == "typecheck_nonzero_exit"
+    assert result.preflight == correctness.PreflightResult("failed", result.cause)
+    assert result.attribution == "candidate_failure"
+    assert [group.status for group in result.groups] == ["unavailable"] * 3
+    assert sum(group.status == "passed" for group in result.groups) == 0
+    assert (tmp_path / "node.log").read_text().splitlines() == ["--version"]
+
+
+@pytest.mark.asyncio
+async def test_protected_config_edit_is_restored_and_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    baseline = {**BASELINE, "tsconfig.json": "BASELINE\n"}
+    patch = (
+        "diff --git a/tsconfig.json b/tsconfig.json\n"
+        "--- a/tsconfig.json\n+++ b/tsconfig.json\n"
+        "@@ -1 +1 @@\n-BASELINE\n+WEAKENED\n"
+    )
+    submitted = {**baseline, "tsconfig.json": "WEAKENED\n"}
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", baseline=baseline, patch=patch,
+        expected_tree_digest=workflow_tree_digest(submitted), groups_to_run=groups(),
+    )
+    assert result.preflight == correctness.PreflightResult("passed")
+    assert (tmp_path / "work" / "tsconfig.json").read_text() == "BASELINE\n"
+    assert result.rejected_changes == ({
+        "path": "tsconfig.json", "disposition": "restored",
+        "baseline_digest": correctness.digest_bytes(b"BASELINE\n"),
+        "candidate_digest": correctness.digest_bytes(b"WEAKENED\n"),
+    },)
+
+
+@pytest.mark.asyncio
+async def test_extension_scope_refuses_other_paths_and_records_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    patch = (
+        "diff --git a/README.md b/README.md\nnew file mode 100644\n"
+        "--- /dev/null\n+++ b/README.md\n@@ -0,0 +1 @@\n+candidate\n"
+    )
+    source_tree = {**BASELINE, "README.md": "candidate\n"}
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups(), patch=patch,
+        expected_tree_digest=workflow_tree_digest(source_tree),
+        enforce_extension_scope=True,
+    )
+    assert result.verdict == "incorrect" and result.cause == "patch_rejected"
+    assert result.preflight == correctness.PreflightResult("failed", "patch_rejected")
+    assert all(group.status == "unavailable" for group in result.groups)
+    assert result.rejected_changes == ({
+        "path": "README.md", "disposition": "refused", "baseline_digest": None,
+        "candidate_digest": correctness.digest_bytes(b"candidate\n"),
+    },)
+
+
+@pytest.mark.asyncio
+async def test_digest_mismatch_precedes_protected_restoration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    baseline = {**BASELINE, "tsconfig.json": "BASELINE\n"}
+    patch = (
+        "diff --git a/tsconfig.json b/tsconfig.json\n"
+        "--- a/tsconfig.json\n+++ b/tsconfig.json\n"
+        "@@ -1 +1 @@\n-BASELINE\n+WEAKENED\n"
+    )
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", baseline=baseline, patch=patch,
+        expected_tree_digest="sha256:" + "0" * 64, groups_to_run=groups(),
+        enforce_extension_scope=True,
+    )
+    assert result.verdict == "unavailable"
+    assert result.cause == "candidate_tree_digest_mismatch"
+    assert result.attribution == "unresolved"
+    assert (tmp_path / "work" / "tsconfig.json").read_text() == "WEAKENED\n"
+    assert not (tmp_path / "tsc.log").exists()
+    assert not (tmp_path / "node.log").exists()
 
 
 @pytest.mark.asyncio
@@ -302,6 +414,8 @@ async def test_candidate_output_is_bounded_before_buffering(
     )
     assert result.verdict == "incorrect"
     assert all(group.cause == "output_limit" for group in result.groups)
+    assert all(len(group.stdout.encode()) <= 4096 for group in result.groups)
+    assert all(group.exit_status is None for group in result.groups)
 
 
 @pytest.mark.asyncio
@@ -517,7 +631,13 @@ async def test_visible_test_edits_cannot_change_preflight(
         expected_tree_digest=workflow_tree_digest(edited),
         groups_to_run=(visible, *hidden),
     )
-    assert result == unchanged
+    assert (result.verdict, result.groups, result.cause, result.preflight) == (
+        unchanged.verdict, unchanged.groups, unchanged.cause, unchanged.preflight
+    )
+    assert {item["path"] for item in result.rejected_changes} == {
+        path, "tests/visible/added.test.ts"
+    }
+    assert all(item["disposition"] == "restored" for item in result.rejected_changes)
     assert result.verdict == "correct"
 
 
