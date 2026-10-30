@@ -47,21 +47,22 @@ def test_access_attempts_cover_every_tool_and_forbidden_class() -> None:
         EXTENSION_SYSTEM_PROMPT.encode()
     )
     attempts = evidence["attempts"]
-    assert len(attempts) == 17
+    assert len(attempts) == 19
     targets = "\n".join(item["target"] for item in attempts)
     for marker in (
         "tests/hidden/",
         "patches/reference.patch",
         "patches/missing-registration.patch",
         "patches/missing-validation.patch",
+        "patches/missing-type-export.patch",
         "/cache/operator/",
         "/home/steve/",
         "ln -s",
     ):
         assert marker in targets
     for index, attempt in enumerate(attempts):
-        expected = "exit=0\nREFUSED" if 8 <= index <= 13 else (
-            "exit=0" if index in {14, 16} else "error:"
+        expected = "exit=0\nREFUSED" if 9 <= index <= 15 else (
+            "exit=0" if index in {16, 18} else "error:"
         )
         assert attempt["response"].startswith(expected)
 

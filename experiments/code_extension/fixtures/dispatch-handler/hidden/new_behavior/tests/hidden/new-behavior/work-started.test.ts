@@ -21,7 +21,7 @@ test("work-started direct handler preserves payload", () => {
 });
 
 test("work-started is validated through dispatch", () => {
-  expect(events.projectRunEvent(row()).payload.work_order_id).toBe("order-1");
+  expect(String(events.projectRunEvent(row()).payload.work_order_id)).toBe("order-1");
   expect(() => events.projectRunEvent(row({work_order_id: null}))).toThrow("73");
   expect(() => events.projectRunEvent(row({run_unit_id: null}))).toThrow("work_started");
 });

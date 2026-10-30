@@ -21,9 +21,10 @@
   regression groups pass, the feature group fails with `group_failure`, and
   a separate `diagnose_candidate` replay names a test that ran. Only a boolean
   gate decision is retained; test names and output are not retained.
-- The two incomplete patches exercise a missing dispatcher registration and
-  omitted identity validation. Both compile and preserve unrelated regression
-  groups. A no-op candidate and every start/reference/incomplete control run
+- Three incomplete patches exercise a missing dispatcher registration, omitted
+  identity validation, and missing public payload type export. They compile
+  before hidden checks and preserve unrelated regression groups. A no-op
+  candidate and every start/reference/incomplete control run
   twice in fresh evaluator sandboxes. The scripted worker applies the known
   patch through `ExtensionBridgeClient`, `write_file` and `submit_output`; the
   independent evaluator checks the captured candidate. The bridge resolves

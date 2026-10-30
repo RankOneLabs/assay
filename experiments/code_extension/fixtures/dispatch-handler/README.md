@@ -45,7 +45,7 @@ files moved under `repository/src/`; selected tests moved to
 URL and flattened `tsconfig.json` follow the pilot adaptation. The fixed
 package files come from the Assay runtime toolchain, not from the upstream
 monorepo's full service package. No production behavior was changed in the
-start tree. The hidden work-started checks and three qualification patches
+start tree. The hidden work-started checks and four qualification patches
 were authored locally and stay outside `repository/`.
 
 The sidecar declares `src/domain/` as the writable directory because the
@@ -55,7 +55,9 @@ touches only that file. Visible tests, `package.json`, `package-lock.json`, and
 `tsconfig.json` are explicitly protected. The sidecar's
 requirements-to-tests table links every private assertion to a public task
 requirement or an existing behavior. It also records the intent and expected
-unrelated group results for both incomplete patches.
+unrelated group results for all three incomplete patches. The third control
+keeps the runtime behavior but omits the required public payload type export;
+the hidden type-contract check runs after the frozen preflight.
 
 ## Qualification
 

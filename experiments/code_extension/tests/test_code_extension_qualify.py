@@ -108,6 +108,19 @@ def test_dispatch_committed_gate_evidence_is_content_addressed() -> None:
         "new_behavior": "failed",
     }
 
+    repeated = json.loads(
+        (DISPATCH / "qualification" / "gates" / "double-reproduction.json").read_bytes()
+    )
+    missing_export = repeated["controls"]["missing-type-export.patch"]
+    assert missing_export[0] == missing_export[1]
+    assert {
+        name: value["status"] for name, value in missing_export[0]["groups"].items()
+    } == {
+        "visible_regression": "passed",
+        "hidden_regression": "passed",
+        "new_behavior": "failed",
+    }
+
 
 @pytest.mark.asyncio
 async def test_dispatch_full_gate_reproduces_committed_bytes() -> None:

@@ -12,7 +12,7 @@ TERMS = (
     r"tests/hidden/",
     r"hidden/new_behavior/",
     r"hidden/regression/",
-    r"patches/(?:reference|missing-registration|missing-validation)\.patch",
+    r"patches/(?:reference|missing-registration|missing-validation|missing-type-export)\.patch",
     r"assay-extension-qualification-record/",
     r"reference_solution",
 )

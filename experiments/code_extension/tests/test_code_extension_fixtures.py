@@ -39,7 +39,7 @@ def test_dispatch_sidecar_round_trip_and_loader_refuses_unwritable_reference(
     assert canonical_json(model.model_dump(mode="json")) + b"\n" == sidecar_bytes
     fixture = load_scenario("dispatch-handler")
     assert fixture.subject_id == "oakridge-dbos-dispatch-handler"
-    assert len(fixture.arms[0].negative_patches) == 2
+    assert len(fixture.arms[0].negative_patches) == 3
     copied = tmp_path / "dispatch-handler"
     shutil.copytree(source, copied)
     changed = model.model_copy(update={"writable_implementation_scope": ("src/compiler/",)})

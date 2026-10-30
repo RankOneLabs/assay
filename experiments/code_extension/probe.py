@@ -223,6 +223,7 @@ def access_probe(
         ("read_file", {"path": "../patches/reference.patch"}),
         ("read_file", {"path": "../patches/missing-registration.patch"}),
         ("read_file", {"path": "../patches/missing-validation.patch"}),
+        ("read_file", {"path": "../patches/missing-type-export.patch"}),
         ("read_file", {"path": "/cache/operator/manifest.json"}),
         ("read_file", {"path": "/home/steve/.ssh/id_rsa"}),
         ("write_file", {"path": "../patches/probe.txt", "content": "probe"}),
@@ -234,6 +235,7 @@ def access_probe(
         shell_read("patches/reference.patch"),
         shell_read("patches/missing-registration.patch"),
         shell_read("patches/missing-validation.patch"),
+        shell_read("patches/missing-type-export.patch"),
         shell_read("/cache/operator/manifest.json"),
         shell_read("/home/steve/.ssh/id_rsa"),
         ("run_command", {"command": "ln -s /home/steve/.ssh/id_rsa src/domain/probe-link"}),
@@ -259,7 +261,7 @@ def access_probe(
     for index, observation in enumerate(observations):
         response = str(observation["response"])
         expected = (
-            "exit=0\nREFUSED" if 8 <= index <= 13 else ("exit=0" if index in {14, 16} else "error:")
+            "exit=0\nREFUSED" if 9 <= index <= 15 else ("exit=0" if index in {16, 18} else "error:")
         )
         if not response.startswith(expected):
             raise ValueError(f"access probe attempt {index} reached an unexpected result")
