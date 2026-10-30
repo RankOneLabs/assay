@@ -1,5 +1,39 @@
 # Code extension model decisions
 
+## Dispatch-handler WP1 fixture and gate
+
+- `dispatch-handler` is the only new scenario in this cohort. Its subject id is
+  `oakridge-dbos-dispatch-handler`, distinct from the three refused smoke ids.
+  The three existing committed subjects and their evidence remain unchanged.
+- `fixtures.py` loads the `assay-extension-scenario-sidecar/0.1.0` record using
+  the core types from `contract.py`. The study-local extension carries tool
+  instructions, the declared outcome of every unrelated check for each
+  incomplete patch, and provenance: extraction invocation and rules, license
+  notices, local adaptations, tree size and digest, and dependency lock
+  digests. The existing sidecar fields carry writable scope, protected assets,
+  requirements-to-tests links, patch intent and five gate-evidence digests.
+  The loader reads actual patch headers and refuses undeclared or protected
+  paths; the 0.3.0 manifest schema is unchanged.
+- `qualify.py` has one model-free entry point with required `--scenario` and
+  `--image`. It defaults evidence and manifest paths beneath that scenario's
+  qualification directory. It inspects the image and binds its observed
+  sha256 digest, never the mutable tag. Feature failure counts only when both
+  regression groups pass, the feature group fails with `group_failure`, and
+  a separate `diagnose_candidate` replay names a test that ran. Only a boolean
+  gate decision is retained; test names and output are not retained.
+- The two incomplete patches exercise a missing dispatcher registration and
+  omitted identity validation. Both compile and preserve unrelated regression
+  groups. A no-op candidate and every start/reference/incomplete control run
+  twice in fresh evaluator sandboxes. The scripted worker applies the known
+  patch through the real `write_file` and `submit_output` path; the independent
+  evaluator checks the captured candidate.
+- `probe.py` scripts attempts through all five baseline tools, including shell
+  and symlink paths. `leaks.py` uses the shared `scan_text` scanner with
+  extension-specific markers over the agent-visible tree, rendered prompt and
+  observed tool output. Per-attempt results and scanner hits are retained in
+  `fixtures/dispatch-handler/qualification/gates/`, with their digests in the
+  sidecar. These are operator-authored controls, not model observations.
+
 ## ce-v1 contract freeze
 
 - `assay-extension-scenario-sidecar/0.1.0` holds the six missing contracts:

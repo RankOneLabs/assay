@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from code_extension import diagnose, qualify
 from code_extension.fixture import PILOT, SUBJECT_ID, load_fixture, materialize, read_tree
+from code_extension.fixtures import load_scenario
 from code_extension.settings import SMOKE_SUBJECT_IDS
 
 from assay.canonical import digest_bytes
@@ -19,6 +20,7 @@ from assay.investigations.workflow_correctness import workflow_tree_digest
 
 MANIFEST = PILOT / "qualification" / "manifest.json"
 EVIDENCE = PILOT / "qualification" / "evidence"
+DISPATCH = PILOT.parent / "dispatch-handler"
 
 
 def _committed_manifest() -> FixtureManifestV3:
@@ -75,6 +77,62 @@ def test_committed_records_are_canonical_digest_bound_and_qualified() -> None:
         assert record["image_digest"] == manifest.observed_runtime_image_digest
     assert arm.qualification.feature_fails.outcome == "failed"
     assert arm.qualification.reference_passes.outcome == "passed"
+
+
+def test_dispatch_committed_gate_evidence_is_content_addressed() -> None:
+    fixture = load_scenario("dispatch-handler")
+    manifest = FixtureManifestV3.model_validate_json(
+        (DISPATCH / "qualification" / "manifest.json").read_bytes()
+    )
+    manifest.require_qualified()
+    assert manifest.scenario(fixture.subject_id) is not None
+    refs = fixture.sidecar.evidence.model_dump()
+    for field, filename in (
+        ("leak_scan", "leak-scan.json"),
+        ("access_probe", "access-probe.json"),
+        ("no_op", "no-op.json"),
+        ("scripted_submission", "scripted-submission.json"),
+        ("double_reproduction", "double-reproduction.json"),
+    ):
+        data = (DISPATCH / "qualification" / "gates" / filename).read_bytes()
+        assert digest_bytes(data) == refs[field]
+        assert data == qualify.canonical_json(json.loads(data)) + b"\n"
+    no_op = json.loads((DISPATCH / "qualification" / "gates" / "no-op.json").read_bytes())
+    assert {name: value["status"] for name, value in no_op["result"]["groups"].items()} == {
+        "visible_regression": "passed",
+        "hidden_regression": "passed",
+        "new_behavior": "failed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_dispatch_full_gate_reproduces_committed_bytes() -> None:
+    if not _docker_ready():
+        if os.environ.get("ASSAY_REQUIRE_DOCKER"):
+            pytest.fail("Docker is unavailable")
+        pytest.skip("Docker is unavailable")
+    image = "assay-code-extension:run-bfb5dd7d9189a983"
+    if (
+        subprocess.run(
+            ("docker", "image", "inspect", image), capture_output=True, check=False, timeout=30
+        ).returncode
+        != 0
+    ):
+        if os.environ.get("ASSAY_REQUIRE_DOCKER"):
+            pytest.fail("pinned Docker image is not provisioned")
+        pytest.skip("pinned Docker image is not provisioned")
+    manifest = FixtureManifestV3.model_validate_json(
+        (DISPATCH / "qualification" / "manifest.json").read_bytes()
+    )
+    fresh = await qualify.qualify(
+        image=image,
+        routing_config=None,
+        evidence_dir=DISPATCH / "qualification" / "evidence",
+        fixture=load_scenario("dispatch-handler"),
+        expected_manifest=manifest,
+        verify_committed=True,
+    )
+    assert fresh == manifest
 
 
 def test_assembly_refuses_a_dead_feature_group_and_image_mismatch(

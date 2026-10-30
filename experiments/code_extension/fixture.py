@@ -47,6 +47,46 @@ def materialize(root: Path, repository: Mapping[str, str], patch: str = "") -> N
         )
 
 
+def frozen_groups(
+    repository: Mapping[str, str], root: Path
+) -> tuple[WorkflowTestGroup, WorkflowTestGroup, WorkflowTestGroup]:
+    """Build the same public and private evaluator groups for every fixture."""
+    visible = {
+        name: source for name, source in repository.items() if name.startswith(VISIBLE_PREFIX)
+    }
+    if not visible or any(
+        name.startswith(("tests/hidden/", "hidden/", "patches/")) or name.endswith(".patch")
+        for name in repository
+    ):
+        raise ValueError("fixture repository needs visible tests and cannot ship private assets")
+    regression = read_tree(root / "hidden" / "regression")
+    feature = read_tree(root / "hidden" / "new_behavior")
+    if set(repository) & (set(regression) | set(feature)):
+        raise ValueError("hidden tests collide with the shipped repository")
+    return (
+        WorkflowTestGroup(
+            name="visible_regression",
+            files=visible,
+            command=(
+                "bun",
+                "test",
+                *sorted("./" + path for path in visible if path.endswith(".test.ts")),
+            ),
+            restores=True,
+        ),
+        WorkflowTestGroup(
+            name="hidden_regression",
+            files=regression,
+            command=("bun", "test", "./tests/hidden/regression"),
+        ),
+        WorkflowTestGroup(
+            name="new_behavior",
+            files=feature,
+            command=("bun", "test", "./tests/hidden/new-behavior"),
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PilotArm:
     arm_id: str

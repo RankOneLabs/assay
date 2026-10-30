@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.fixture_manifest import (
@@ -41,6 +41,7 @@ from code_extension.fixture import (
     materialize,
     read_tree,
 )
+from code_extension.fixtures import ScenarioFixture, load_scenario
 
 IMAGE_TAG = "assay-code-extension:ce-v1-bounds"
 CHECKS = ("baseline_passes", "feature_fails", "reference_passes")
@@ -93,7 +94,7 @@ def make_runner(image_digest: str) -> DockerWorkflowRunner:
 
 
 def _record(
-    fixture: PilotFixture,
+    fixture: PilotFixture | ScenarioFixture,
     arm_id: str,
     check: str,
     image_digest: str,
@@ -134,7 +135,7 @@ def _record(
         )
     return {
         "schema_version": "assay-extension-qualification-record/0.1.0",
-        "subject_id": SUBJECT_ID,
+        "subject_id": fixture.subject_id if isinstance(fixture, ScenarioFixture) else SUBJECT_ID,
         "arm_id": arm_id,
         "check": check,
         "image_digest": image_digest,
@@ -166,7 +167,18 @@ def read_evidence(directory: Path, arm_id: str, check: str) -> tuple[dict[str, o
     return value, digest_bytes(data)
 
 
-def _patched_digest(fixture: PilotFixture, patch: str) -> str:
+def _write_gate(path: Path, value: Mapping[str, object], *, verify: bool) -> str:
+    data = canonical_json(dict(value)) + b"\n"
+    if verify:
+        if path.read_bytes() != data:
+            raise ValueError(f"committed gate evidence differs: {path.name}")
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return digest_bytes(data)
+
+
+def _patched_digest(fixture: PilotFixture | ScenarioFixture, patch: str) -> str:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         materialize(root, fixture.repository, patch)
@@ -174,7 +186,7 @@ def _patched_digest(fixture: PilotFixture, patch: str) -> str:
 
 
 async def run_checks(
-    fixture: PilotFixture,
+    fixture: PilotFixture | ScenarioFixture,
     runner: DockerWorkflowRunner,
     image_digest: str,
     evidence_dir: Path,
@@ -195,6 +207,24 @@ async def run_checks(
                 patch=patch,
                 groups=fixture.groups,
             )
+            if isinstance(fixture, ScenarioFixture) and check == "feature_fails":
+                from code_extension.diagnose import diagnose_candidate
+
+                groups = {
+                    group.name: {"status": group.status, "cause": group.cause}
+                    for group in result.groups
+                }
+                with tempfile.TemporaryDirectory() as scratch:
+                    diagnosis = diagnose_candidate(
+                        image_digest,
+                        cast(PilotFixture, fixture),
+                        "",
+                        cast(Mapping[str, Mapping[str, str | None]], groups),
+                        scratch=Path(scratch),
+                    )
+                failures = diagnosis.get("failing_tests")
+                if not isinstance(failures, dict) or not failures.get("new_behavior"):
+                    raise ValueError("feature group did not produce a live failing assertion")
             write_record(
                 evidence_dir,
                 arm.arm_id,
@@ -230,11 +260,11 @@ def _group_status(groups: Mapping[str, object], name: str) -> object:
 
 
 def assemble_manifest(
-    fixture: PilotFixture,
+    fixture: PilotFixture | ScenarioFixture,
     evidence_dir: Path,
     *,
     image: str,
-    routing_config: Path,
+    routing_config: Path | None,
 ) -> FixtureManifestV3:
     image_digest = observed_image_digest(image)
     arms: list[ExtensionArmRealization] = []
@@ -244,7 +274,8 @@ def assemble_manifest(
             record, digest = read_evidence(evidence_dir, arm.arm_id, check)
             if (
                 record.get("schema_version") != "assay-extension-qualification-record/0.1.0"
-                or record.get("subject_id") != SUBJECT_ID
+                or record.get("subject_id")
+                != (fixture.subject_id if isinstance(fixture, ScenarioFixture) else SUBJECT_ID)
                 or record.get("arm_id") != arm.arm_id
                 or record.get("check") != check
                 or record.get("image_digest") != image_digest
@@ -300,10 +331,12 @@ def assemble_manifest(
         schema_version="assay-fixture-manifest/0.3.0",
         arm_set=BaselineArmSet(factor="baseline", arm_ids=("baseline",)),
         observed_runtime_image_digest=image_digest,
-        routing_config_digest=digest_bytes(routing_config.read_bytes()),
+        routing_config_digest=digest_bytes(routing_config.read_bytes()) if routing_config else None,
         scenarios=(
             ExtensionScenario(
-                subject_id=SUBJECT_ID,
+                subject_id=fixture.subject_id
+                if isinstance(fixture, ScenarioFixture)
+                else SUBJECT_ID,
                 checkpoint_sha=CHECKPOINT_SHA,
                 included_paths=included,
                 excluded_paths=(
@@ -319,8 +352,14 @@ def assemble_manifest(
                         fixture.repository["package-lock.json"].encode()
                     )
                 },
-                feature_request="Optional run-context bindings with a declared default",
-                visible_requirements=(
+                feature_request=(
+                    "Add a work_started run-event handler"
+                    if isinstance(fixture, ScenarioFixture)
+                    else "Optional run-context bindings with a declared default"
+                ),
+                visible_requirements=fixture.sidecar.public_requirements
+                if isinstance(fixture, ScenarioFixture)
+                else (
                     "Accept string or null defaults on context slot bindings.",
                     "Use the default only when the pointer does not resolve.",
                     "A defaulted binding does not require its pointer at launch.",
@@ -337,13 +376,143 @@ def assemble_manifest(
     return manifest
 
 
+async def run_scenario_gates(
+    fixture: ScenarioFixture,
+    manifest: FixtureManifestV3,
+    image: str,
+    qualification_dir: Path,
+    *,
+    verify: bool,
+) -> None:
+    """Retain the five sidecar controls and compare exact bytes on requalification."""
+    from code_extension.leaks import scan_delivery
+    from code_extension.probe import access_probe, reference_submission
+
+    image_digest = manifest.observed_runtime_image_digest
+    runner = make_runner(image_digest)
+
+    async def one(patch: str) -> dict[str, object]:
+        result = await runner.run(
+            baseline=fixture.repository,
+            baseline_tree_digest=fixture.tree_digest,
+            expected_tree_digest=_patched_digest(fixture, patch) if patch else fixture.tree_digest,
+            patch=patch,
+            groups=fixture.groups,
+        )
+        return {
+            "verdict": result.verdict,
+            "cause": result.cause,
+            "groups": {
+                group.name: {"status": group.status, "cause": group.cause}
+                for group in result.groups
+            },
+        }
+
+    no_op = await one("")
+    no_op_groups = cast(dict[str, dict[str, object]], no_op["groups"])
+    if (
+        no_op_groups["visible_regression"]["status"] != "passed"
+        or no_op_groups["hidden_regression"]["status"] != "passed"
+        or no_op_groups["new_behavior"]["status"] != "failed"
+    ):
+        raise ValueError("no-op candidate did not preserve regressions and fail the feature")
+    no_op_ref = _write_gate(
+        qualification_dir / "gates" / "no-op.json",
+        {
+            "schema_version": "assay-extension-no-op/0.1.0",
+            "image_digest": image_digest,
+            "result": no_op,
+        },
+        verify=verify,
+    )
+    controls = {"start": "", "reference": fixture.arms[0].reference_patch}
+    controls.update(
+        {
+            item.patch_name: (qualification_dir.parent / "patches" / item.patch_name).read_text(
+                encoding="utf-8"
+            )
+            for item in fixture.sidecar.negative_expectations
+        }
+    )
+    repetitions: dict[str, object] = {}
+    for label, patch in controls.items():
+        results = [await one(patch), await one(patch)]
+        if results[0] != results[1]:
+            raise ValueError(f"control {label} did not reproduce")
+        result_groups = cast(dict[str, dict[str, object]], results[0]["groups"])
+        statuses = {name: item["status"] for name, item in result_groups.items()}
+        if label == "reference":
+            expected = {name: "passed" for name in statuses}
+        elif label == "start":
+            expected = {
+                "visible_regression": "passed",
+                "hidden_regression": "passed",
+                "new_behavior": "failed",
+            }
+        else:
+            declared = next(
+                item for item in fixture.sidecar.negative_expectations if item.patch_name == label
+            )
+            expected = {**declared.unrelated_results, declared.intended_group: "failed"}
+        if statuses != expected or (label == "reference" and results[0]["verdict"] != "correct"):
+            raise ValueError(f"control {label} did not match its declared check result")
+        repetitions[label] = results
+    double_ref = _write_gate(
+        qualification_dir / "gates" / "double-reproduction.json",
+        {
+            "schema_version": "assay-extension-double-reproduction/0.1.0",
+            "image_digest": image_digest,
+            "controls": repetitions,
+        },
+        verify=verify,
+    )
+    submission = await reference_submission(fixture, manifest, image)
+    submission_ref = _write_gate(
+        qualification_dir / "gates" / "scripted-submission.json",
+        submission,
+        verify=verify,
+    )
+    access = access_probe(fixture, image)
+    access_ref = _write_gate(
+        qualification_dir / "gates" / "access-probe.json",
+        access,
+        verify=verify,
+    )
+    scan = scan_delivery(fixture, submission["tool_outputs"])  # type: ignore[arg-type]
+    if scan["hits"]:
+        raise ValueError("extension-labelled leak scan found agent-visible material")
+    scan_ref = _write_gate(
+        qualification_dir / "gates" / "leak-scan.json",
+        scan,
+        verify=verify,
+    )
+    evidence = fixture.sidecar.evidence.model_copy(
+        update={
+            "leak_scan": scan_ref,
+            "access_probe": access_ref,
+            "no_op": no_op_ref,
+            "scripted_submission": submission_ref,
+            "double_reproduction": double_ref,
+        }
+    )
+    sidecar = fixture.sidecar.model_copy(update={"evidence": evidence})
+    sidecar_path = qualification_dir / "sidecar.json"
+    data = canonical_json(sidecar.model_dump(mode="json")) + b"\n"
+    if verify:
+        if sidecar_path.read_bytes() != data:
+            raise ValueError("committed sidecar evidence digests differ")
+    else:
+        sidecar_path.write_bytes(data)
+
+
 async def qualify(
     *,
     image: str,
-    routing_config: Path,
+    routing_config: Path | None,
     evidence_dir: Path,
-    fixture: PilotFixture | None = None,
+    fixture: PilotFixture | ScenarioFixture | None = None,
     expected_manifest: FixtureManifestV3 | None = None,
+    verify_committed: bool = False,
 ) -> FixtureManifestV3:
     loaded = fixture or load_fixture()
     image_digest = observed_image_digest(image)
@@ -356,23 +525,32 @@ async def qualify(
     manifest = assemble_manifest(loaded, evidence_dir, image=image, routing_config=routing_config)
     if expected_manifest is not None and manifest != expected_manifest:
         raise ValueError("requalified manifest differs from the committed manifest")
+    if isinstance(loaded, ScenarioFixture):
+        await run_scenario_gates(
+            loaded, manifest, image, evidence_dir.parent, verify=verify_committed
+        )
     return manifest
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", default=IMAGE_TAG)
+    parser.add_argument("--scenario", required=True)
+    parser.add_argument("--image", required=True)
     parser.add_argument(
         "--routing-config",
         type=Path,
-        default=Path.home() / "codes/rol/smithers/routing_config.yaml",
+        default=None,
     )
-    parser.add_argument("--evidence-dir", type=Path, default=PILOT / "qualification" / "evidence")
-    parser.add_argument("--manifest", type=Path, default=PILOT / "qualification" / "manifest.json")
+    parser.add_argument("--evidence-dir", type=Path)
+    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--verify-committed", action="store_true")
     args = parser.parse_args()
+    root = PILOT.parent / args.scenario
+    evidence_dir = args.evidence_dir or root / "qualification" / "evidence"
+    manifest_path = args.manifest or root / "qualification" / "manifest.json"
+    loaded = load_fixture() if args.scenario == "pilot" else load_scenario(args.scenario)
     expected = (
-        FixtureManifestV3.model_validate_json(args.manifest.read_bytes())
+        FixtureManifestV3.model_validate_json(manifest_path.read_bytes())
         if args.verify_committed
         else None
     )
@@ -380,13 +558,15 @@ def main() -> None:
         qualify(
             image=args.image,
             routing_config=args.routing_config,
-            evidence_dir=args.evidence_dir,
+            evidence_dir=evidence_dir,
+            fixture=loaded,
             expected_manifest=expected,
+            verify_committed=args.verify_committed,
         )
     )
     if not args.verify_committed:
-        args.manifest.parent.mkdir(parents=True, exist_ok=True)
-        args.manifest.write_bytes(canonical_json(manifest.model_dump(mode="json")) + b"\n")
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_bytes(canonical_json(manifest.model_dump(mode="json")) + b"\n")
     print(manifest.observed_runtime_image_digest)
     print("qualified", ", ".join(arm.arm_id for arm in manifest.scenarios[0].arms))
 
