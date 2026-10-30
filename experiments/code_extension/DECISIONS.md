@@ -52,7 +52,9 @@
   has its own passed, failed or unavailable outcome; a failed preflight leaves
   all three functional groups unavailable. The evaluator retains each group's
   status, cause, stdout, stderr, exit status and timeout limit only in its
-  operator record. Test output never reaches the agent workspace or tool result.
+  operator record. The record is published to the operator object store, and the
+  saved evaluation detail carries its digest reference. Test output never
+  reaches the agent workspace or tool result.
   Diagnosis remains a separate replay.
 - Attribution is additive: candidate compile errors, rejected patches and test
   failures are candidate failures; missing images, broken runners and invalid

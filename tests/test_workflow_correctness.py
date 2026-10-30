@@ -97,6 +97,10 @@ def prepare_fake_toolchain(
         "elif len(sys.argv) == 3 and sys.argv[1] == '-e':\n"
         "    if 'setInterval' in sys.argv[2]:\n"
         "        time.sleep(30)\n"
+        "    if 'print_nul' in sys.argv[2]:\n"
+        "        os.write(1, bytes(4096))\n"
+        "        os.write(2, bytes(4096))\n"
+        "        sys.exit(0)\n"
         "    if 'print_big' in sys.argv[2]:\n"
         "        print('x' * 1000000)\n"
         "        sys.exit(0)\n"
@@ -445,6 +449,27 @@ async def test_candidate_output_is_bounded_before_buffering(
     assert all(group.cause == "output_limit" for group in result.groups)
     assert all(len(group.stdout.encode()) <= 4096 for group in result.groups)
     assert all(group.exit_status is None for group in result.groups)
+
+
+@pytest.mark.asyncio
+async def test_json_escaped_group_output_preserves_completed_grade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE, max_output_bytes=4096))
+    nul_groups = tuple(
+        WorkflowTestGroup(name=name, files={f"tests/{name}.js": "// frozen\n"},
+                          command=("node", "-e", "print_nul"))
+        for name in correctness.GROUP_NAMES
+    )
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=nul_groups
+    )
+    assert result.verdict == "correct"
+    assert result.preflight == correctness.PreflightResult("passed")
+    assert all(group.status == "passed" and group.exit_status == 0 for group in result.groups)
+    assert all(group.stdout == "\x00" * 4096 for group in result.groups)
+    assert all(group.stderr == "\x00" * 4096 for group in result.groups)
 
 
 @pytest.mark.asyncio

@@ -24,7 +24,7 @@ from code_extension.bridge import WRITABLE_PREFIXES
 
 STUDY_GROUPS = (("visible_regression", False), ("hidden_regression", True), ("new_behavior", True))
 CORRECTNESS_CATEGORIES = ("correct", "incorrect", "unavailable")
-GRADER_REVISION = "2"
+GRADER_REVISION = "3"
 
 
 def grader_cache_key(
@@ -175,7 +175,7 @@ class CellEvaluator:
             test_group_digests=refs,
             evaluator_configuration=self.configuration(),
         )
-        self.records[coordinate.cell_id] = {
+        record: dict[str, object] = {
             "verdict": result.verdict,
             "cause": result.cause,
             "groups": retained_groups,
@@ -190,9 +190,15 @@ class CellEvaluator:
             "seconds": round(time.monotonic() - started, 3),
         }
         if result.attribution != "unresolved":
-            self.records[coordinate.cell_id]["correctness_category"] = result.verdict
+            record["correctness_category"] = result.verdict
+        record_ref = str(self.store.publish_json(record))
+        self.records[coordinate.cell_id] = record
         return EvaluationSuccess(
             result.verdict,
             (result.cause,) if result.cause else (),
-            {"groups": groups, "empty_patch": candidate.patch == b""},
+            {
+                "groups": groups,
+                "empty_patch": candidate.patch == b"",
+                "evaluator_record_ref": record_ref,
+            },
         )

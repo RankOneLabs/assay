@@ -17,6 +17,7 @@ from code_extension.classification import (
 )
 from code_extension.dispatch import cell_idempotency_key
 from code_extension.evaluation import (
+    GRADER_REVISION,
     CellEvaluator,
     evaluate_scenario_candidate,
     grader_cache_key,
@@ -25,6 +26,7 @@ from code_extension.study import load_pilot_study_fixture
 from workflow_edit.bridge import turn_idempotency_key
 
 from assay.canonical import canonical_json
+from assay.execution import EvaluationSuccess
 from assay.investigations.workflow_correctness import (
     DockerWorkflowRunner,
     GroupResult,
@@ -246,7 +248,12 @@ async def test_scripted_evaluator_outcomes(
         ),
     )
     assert result.verdict == verdict
+    assert isinstance(result, EvaluationSuccess)
+    assert isinstance(result.detail, dict)
+    evidence_ref = result.detail["evaluator_record_ref"]
     record = evaluator.records[coordinate.id]
+    assert ObjectStore(tmp_path / "store").read_bytes(evidence_ref) == canonical_json(record)
+    assert b"stdout" not in canonical_json(result.detail)
     assert record["cause"] == cause
     assert record["preflight"] == {
         "status": preflight_status,
@@ -336,7 +343,7 @@ def test_grader_cache_key_changes_with_every_identity_input() -> None:
             "new_behavior": "new",
         },
         "evaluator_configuration": {"deadline_s": 10},
-        "grader_revision": "2",
+        "grader_revision": GRADER_REVISION,
     }
     unchanged = grader_cache_key(**args)
     assert grader_cache_key(**args) == unchanged

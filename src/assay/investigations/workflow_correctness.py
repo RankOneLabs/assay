@@ -471,6 +471,15 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
         process: asyncio.subprocess.Process | None = None
         stdout = b""
         failure_cause: str | None = None
+        # json.dumps may expand one captured byte to six ASCII bytes (for example,
+        # NUL becomes "\\u0000"). The input allowance covers paths and digest
+        # metadata in one rejected-change entry per changed baseline or patch path.
+        reply_limit = (
+            12 * len(groups) * self.settings.max_output_bytes
+            + 8 * len(payload)
+            + 256 * (len(tree) + patch.count("\n") + 1)
+            + 4096
+        )
         try:
             async with asyncio.timeout(self.settings.deadline_s):
                 process = await asyncio.create_subprocess_exec(
@@ -480,9 +489,7 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
                     stderr=asyncio.subprocess.PIPE,
                 )
                 stdout, stderr = await process.communicate(payload)
-                if len(stdout) + len(stderr) > self.settings.max_output_bytes * (
-                    2 * len(groups) + 2
-                ):
+                if len(stdout) + len(stderr) > reply_limit:
                     failure_cause = "output_limit"
                 elif process.returncode:
                     failure_cause = "sandbox_process_failed"
