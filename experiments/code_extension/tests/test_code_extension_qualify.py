@@ -40,6 +40,16 @@ def _docker_ready() -> bool:
     )
 
 
+def _require_dispatch_image(image: str) -> None:
+    available = subprocess.run(
+        ("docker", "image", "inspect", image), capture_output=True, check=False, timeout=30
+    ).returncode == 0
+    if not available:
+        if os.environ.get("ASSAY_REQUIRE_EXTENSION_IMAGE"):
+            pytest.fail("pinned dispatch-handler Docker image is not provisioned")
+        pytest.skip("pinned dispatch-handler Docker image is not provisioned")
+
+
 def test_pilot_is_a_bounded_study_subject_and_private_assets_do_not_ship() -> None:
     fixture = load_fixture()
     assert SUBJECT_ID not in SMOKE_SUBJECT_IDS
@@ -125,19 +135,13 @@ def test_dispatch_committed_gate_evidence_is_content_addressed() -> None:
 @pytest.mark.asyncio
 async def test_dispatch_full_gate_reproduces_committed_bytes() -> None:
     if not _docker_ready():
-        if os.environ.get("ASSAY_REQUIRE_DOCKER"):
+        if os.environ.get("ASSAY_REQUIRE_DOCKER") or os.environ.get(
+            "ASSAY_REQUIRE_EXTENSION_IMAGE"
+        ):
             pytest.fail("Docker is unavailable")
         pytest.skip("Docker is unavailable")
     image = "assay-code-extension:run-bfb5dd7d9189a983"
-    if (
-        subprocess.run(
-            ("docker", "image", "inspect", image), capture_output=True, check=False, timeout=30
-        ).returncode
-        != 0
-    ):
-        if os.environ.get("ASSAY_REQUIRE_DOCKER"):
-            pytest.fail("pinned Docker image is not provisioned")
-        pytest.skip("pinned Docker image is not provisioned")
+    _require_dispatch_image(image)
     manifest = FixtureManifestV3.model_validate_json(
         (DISPATCH / "qualification" / "manifest.json").read_bytes()
     )
@@ -150,6 +154,23 @@ async def test_dispatch_full_gate_reproduces_committed_bytes() -> None:
         verify_committed=True,
     )
     assert fresh == manifest
+
+
+def test_dispatch_image_requirement_is_separate_from_docker_daemon_requirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 1),
+    )
+    monkeypatch.setenv("ASSAY_REQUIRE_DOCKER", "1")
+    monkeypatch.delenv("ASSAY_REQUIRE_EXTENSION_IMAGE", raising=False)
+    with pytest.raises(pytest.skip.Exception, match="not provisioned"):
+        _require_dispatch_image("missing-image")
+    monkeypatch.setenv("ASSAY_REQUIRE_EXTENSION_IMAGE", "1")
+    with pytest.raises(pytest.fail.Exception, match="not provisioned"):
+        _require_dispatch_image("missing-image")
 
 
 @pytest.mark.asyncio

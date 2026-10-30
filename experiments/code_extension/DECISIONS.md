@@ -39,6 +39,12 @@
   observed tool output. Per-attempt results and scanner hits are retained in
   `fixtures/dispatch-handler/qualification/gates/`, with their digests in the
   sidecar. These are operator-authored controls, not model observations.
+- The experiments CI job sets `ASSAY_REQUIRE_DOCKER=1` to require the daemon,
+  but it does not provision the dispatch-handler fixture's exact image. Its
+  replay test skips only when that image is absent; setting
+  `ASSAY_REQUIRE_EXTENSION_IMAGE=1` makes image absence a failure on a
+  qualification machine. The committed records and gate files, plus exact
+  replay on the provisioned machine, remain the qualification evidence.
 
 ## ce-v1 contract freeze
 

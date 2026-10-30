@@ -69,6 +69,11 @@ uv run python -m code_extension.qualify --scenario dispatch-handler --image assa
 
 The observed image digest is
 `sha256:a63b8377bf057a7d888f279c42b54ff904c6b1353af509a5016573ab7ac2cdf3`.
+The experiments CI job requires a working Docker daemon but does not provision
+this exact fixture image; its live replay test skips when the image is absent.
+Set `ASSAY_REQUIRE_EXTENSION_IMAGE=1` on a provisioned qualification machine
+to make a missing image fail. The committed gate evidence records the run that
+used the observed digest above.
 The three canonical qualification records under `qualification/evidence/`
 retain only group verdicts and causes. The five additional controls are
 content-addressed under `qualification/gates/`: a no-op run, twice-reproduced
