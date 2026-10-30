@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from assay_pier_bridge.agent_loop import EXTENSION_TOOLS
-
 from assay.canonical import canonical_json, digest_bytes
-from code_extension.bridge import EXTENSION_SYSTEM_PROMPT
+from code_extension.bridge import (  # type: ignore[attr-defined]
+    EXTENSION_SYSTEM_PROMPT,
+    EXTENSION_TOOLS,
+)
 from code_extension.prompts import render_initial_task
 
 PROTOCOL_ID = "ce-v1"

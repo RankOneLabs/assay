@@ -68,3 +68,21 @@ def test_sidecar_refuses_invalid_contracts(change: str, reason: str) -> None:
         value["requirements_to_tests"][0]["citation"] = "Undeclared"  # type: ignore[index]
     with pytest.raises(ValidationError, match=reason):
         ExtensionScenarioSidecar.model_validate(value)
+
+
+@pytest.mark.parametrize("field,path,reason", [
+    ("patch", "src/../tests/hidden/feature.test.ts", "patch touched paths"),
+    ("patch", "/src/feature.ts", "patch touched paths"),
+    ("patch", "src//feature.ts", "patch touched paths"),
+    ("protected", "tests/hidden/../src/feature.ts", "protected assets"),
+    ("protected", "/tests/hidden/feature.test.ts", "protected assets"),
+    ("protected", "tests//hidden/feature.test.ts", "protected assets"),
+])
+def test_sidecar_refuses_noncanonical_paths(field: str, path: str, reason: str) -> None:
+    value = deepcopy(_record())
+    if field == "patch":
+        value["patch_inventory"][0]["touched_paths"] = [path]  # type: ignore[index]
+    else:
+        value["protected_assets"]["test_files"] = [path]  # type: ignore[index]
+    with pytest.raises(ValidationError, match=reason):
+        ExtensionScenarioSidecar.model_validate(value)

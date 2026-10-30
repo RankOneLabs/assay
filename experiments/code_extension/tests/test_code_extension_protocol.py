@@ -1,6 +1,6 @@
 """Literal ce-v1 pins against the actual bridge and renderer."""
 
-from assay_pier_bridge.agent_loop import EXTENSION_TOOLS
+from code_extension.bridge import EXTENSION_TOOLS
 from code_extension.protocol import (
     ORDERED_TOOL_SCHEMAS_SHA256,
     PROTOCOL_ID,

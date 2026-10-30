@@ -17,12 +17,28 @@ def _path_in_scope(path: str, scope: str) -> bool:
     return path == scope.rstrip("/") or path.startswith(scope.rstrip("/") + "/")
 
 
+def _canonical_relative_path(path: str, *, scope: bool = False) -> bool:
+    """Accept only repository-relative POSIX paths with no traversal segments."""
+    if path.startswith("/") or "\\" in path or ":" in path:
+        return False
+    if scope:
+        path = path.removesuffix("/")
+    return bool(path) and all(part not in ("", ".", "..") for part in path.split("/"))
+
+
 class ProtectedAssets(WireModel):
     """Explicit paths excluded from candidate writes and available to qualification."""
 
     test_files: tuple[NonEmpty, ...]
     dependency_files: tuple[NonEmpty, ...]
     configuration_files: tuple[NonEmpty, ...]
+
+    @field_validator("test_files", "dependency_files", "configuration_files")
+    @classmethod
+    def valid_paths(cls, paths: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not _canonical_relative_path(path) for path in paths):
+            raise ValueError("protected assets must use canonical relative file paths")
+        return paths
 
     @property
     def paths(self) -> tuple[str, ...]:
@@ -53,6 +69,13 @@ class PatchInventoryItem(WireModel):
     digest: Sha256Ref
     intent: NonEmpty
     touched_paths: tuple[NonEmpty, ...] = Field(min_length=1)
+
+    @field_validator("touched_paths")
+    @classmethod
+    def valid_touched_paths(cls, paths: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not _canonical_relative_path(path) for path in paths):
+            raise ValueError("patch touched paths must use canonical relative file paths")
+        return paths
 
 
 class QualificationEvidenceRefs(WireModel):
@@ -85,10 +108,10 @@ class ExtensionScenarioSidecar(WireModel):
     @classmethod
     def valid_scope(cls, scopes: tuple[str, ...]) -> tuple[str, ...]:
         if len(set(scopes)) != len(scopes) or any(
-            path.startswith("/") or ".." in path.split("/") or path == "."
+            not _canonical_relative_path(path, scope=True)
             for path in scopes
         ):
-            raise ValueError("writable implementation scope must use unique relative paths")
+            raise ValueError("writable scope must use unique canonical relative paths")
         return scopes
 
     @model_validator(mode="after")
