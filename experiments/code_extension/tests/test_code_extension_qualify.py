@@ -16,7 +16,11 @@ from code_extension.settings import SMOKE_SUBJECT_IDS
 
 from assay.canonical import digest_bytes
 from assay.fixture_manifest import FixtureManifestV3
-from assay.investigations.workflow_correctness import workflow_tree_digest
+from assay.investigations.workflow_correctness import (
+    GroupResult,
+    WorkflowCorrectnessResult,
+    workflow_tree_digest,
+)
 
 MANIFEST = PILOT / "qualification" / "manifest.json"
 EVIDENCE = PILOT / "qualification" / "evidence"
@@ -133,6 +137,41 @@ async def test_dispatch_full_gate_reproduces_committed_bytes() -> None:
         verify_committed=True,
     )
     assert fresh == manifest
+
+
+@pytest.mark.asyncio
+async def test_scenario_controls_use_loaded_patches_with_custom_evidence_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = load_scenario("dispatch-handler")
+    manifest = FixtureManifestV3.model_validate_json(
+        (DISPATCH / "qualification" / "manifest.json").read_bytes()
+    )
+
+    class StopAfterNoOp:
+        async def run(self, *, patch: str, **_kwargs: object) -> WorkflowCorrectnessResult:
+            if patch:
+                assert patch == fixture.arms[0].reference_patch
+                raise RuntimeError("reference control reached")
+            return WorkflowCorrectnessResult(
+                "incorrect",
+                (
+                    GroupResult("visible_regression", "passed"),
+                    GroupResult("hidden_regression", "passed"),
+                    GroupResult("new_behavior", "failed", "nonzero_exit"),
+                ),
+                "group_failure",
+            )
+
+    monkeypatch.setattr(qualify, "make_runner", lambda _image: StopAfterNoOp())
+    with pytest.raises(RuntimeError, match="reference control reached"):
+        await qualify.run_scenario_gates(
+            fixture,
+            manifest,
+            "image",
+            tmp_path / "different-output-dir",
+            verify=False,
+        )
 
 
 def test_assembly_refuses_a_dead_feature_group_and_image_mismatch(

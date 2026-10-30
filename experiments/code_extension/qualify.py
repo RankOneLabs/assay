@@ -428,10 +428,12 @@ async def run_scenario_gates(
     controls = {"start": "", "reference": fixture.arms[0].reference_patch}
     controls.update(
         {
-            item.patch_name: (qualification_dir.parent / "patches" / item.patch_name).read_text(
-                encoding="utf-8"
+            item.patch_name: patch
+            for item, patch in zip(
+                fixture.sidecar.negative_expectations,
+                fixture.arms[0].negative_patches,
+                strict=True,
             )
-            for item in fixture.sidecar.negative_expectations
         }
     )
     repetitions: dict[str, object] = {}
