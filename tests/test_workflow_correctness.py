@@ -304,6 +304,37 @@ async def test_compile_failure_has_separate_failed_preflight(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["typecheck", "build"])
+async def test_missing_candidate_tool_after_version_check_fails_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    tools = tmp_path / "tools"
+    if stage == "typecheck":
+        script = tools / "node"
+        script.write_text(script.read_text() + (
+            "\nif sys.argv[1:] == ['--version']:\n"
+            "    Path(__file__).with_name('tsc').unlink()\n"
+        ))
+    else:
+        script = tools / "tsc"
+        script.write_text(script.read_text() + (
+            "\nif args == ['--noEmit']:\n"
+            "    Path(__file__).unlink()\n"
+        ))
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups()
+    )
+    cause = f"{stage}_toolchain_unavailable"
+    assert result.verdict == "incorrect" and result.cause == cause
+    assert result.preflight == correctness.PreflightResult("failed", cause)
+    assert result.attribution == "candidate_failure"
+    assert all(group.status == "unavailable" for group in result.groups)
+    assert (tmp_path / "node.log").read_text().splitlines() == ["--version"]
+
+
+@pytest.mark.asyncio
 async def test_protected_config_edit_is_restored_and_recorded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -322,11 +353,10 @@ async def test_protected_config_edit_is_restored_and_recorded(
     )
     assert result.preflight == correctness.PreflightResult("passed")
     assert (tmp_path / "work" / "tsconfig.json").read_text() == "BASELINE\n"
-    assert result.rejected_changes == ({
-        "path": "tsconfig.json", "disposition": "restored",
-        "baseline_digest": correctness.digest_bytes(b"BASELINE\n"),
-        "candidate_digest": correctness.digest_bytes(b"WEAKENED\n"),
-    },)
+    assert result.rejected_changes == (correctness.RejectedChange(
+        "tsconfig.json", "restored", correctness.digest_bytes(b"BASELINE\n"),
+        correctness.digest_bytes(b"WEAKENED\n"),
+    ),)
 
 
 @pytest.mark.asyncio
@@ -348,10 +378,9 @@ async def test_extension_scope_refuses_other_paths_and_records_evidence(
     assert result.verdict == "incorrect" and result.cause == "patch_rejected"
     assert result.preflight == correctness.PreflightResult("failed", "patch_rejected")
     assert all(group.status == "unavailable" for group in result.groups)
-    assert result.rejected_changes == ({
-        "path": "README.md", "disposition": "refused", "baseline_digest": None,
-        "candidate_digest": correctness.digest_bytes(b"candidate\n"),
-    },)
+    assert result.rejected_changes == (correctness.RejectedChange(
+        "README.md", "refused", None, correctness.digest_bytes(b"candidate\n"),
+    ),)
 
 
 @pytest.mark.asyncio
@@ -634,10 +663,10 @@ async def test_visible_test_edits_cannot_change_preflight(
     assert (result.verdict, result.groups, result.cause, result.preflight) == (
         unchanged.verdict, unchanged.groups, unchanged.cause, unchanged.preflight
     )
-    assert {item["path"] for item in result.rejected_changes} == {
+    assert {item.path for item in result.rejected_changes} == {
         path, "tests/visible/added.test.ts"
     }
-    assert all(item["disposition"] == "restored" for item in result.rejected_changes)
+    assert all(item.disposition == "restored" for item in result.rejected_changes)
     assert result.verdict == "correct"
 
 

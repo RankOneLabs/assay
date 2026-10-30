@@ -81,13 +81,21 @@ class PreflightResult:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class RejectedChange:
+    path: str
+    disposition: Literal["restored", "refused"]
+    baseline_digest: str | None
+    candidate_digest: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class WorkflowCorrectnessResult:
     verdict: Verdict
     groups: tuple[GroupResult, ...]
     cause: str | None = None
     preflight: PreflightResult | None = None
     attribution: Attribution | None = None
-    rejected_changes: tuple[dict[str, str | None], ...] = ()
+    rejected_changes: tuple[RejectedChange, ...] = ()
 
 
 _CANDIDATE_CAUSES = frozenset({
@@ -143,7 +151,7 @@ def run(args, timeout):
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  start_new_session=True)
     except OSError:
-        return result('unavailable', 'toolchain_unavailable')
+        return result('failed', 'toolchain_unavailable')
     selector = selectors.DefaultSelector()
     selector.register(child.stdout, selectors.EVENT_READ, 'stdout')
     selector.register(child.stderr, selectors.EVENT_READ, 'stderr')
@@ -491,7 +499,16 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
         try:
             value = json.loads(stdout)
             preflight = value["preflight"]
-            rejections = tuple(value.get("rejected_changes", ()))
+            rejections = tuple(
+                RejectedChange(
+                    path=item["path"], disposition=item["disposition"],
+                    baseline_digest=item["baseline_digest"],
+                    candidate_digest=item["candidate_digest"],
+                )
+                for item in value.get("rejected_changes", ())
+            )
+            if any(item.disposition not in ("restored", "refused") for item in rejections):
+                raise ValueError("invalid rejection disposition")
             if preflight["status"] != "passed":
                 if preflight["status"] not in ("failed", "unavailable"):
                     raise ValueError("invalid preflight status")

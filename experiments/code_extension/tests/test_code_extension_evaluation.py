@@ -26,8 +26,10 @@ from workflow_edit.bridge import turn_idempotency_key
 
 from assay.canonical import canonical_json
 from assay.investigations.workflow_correctness import (
+    DockerWorkflowRunner,
     GroupResult,
     PreflightResult,
+    RejectedChange,
     WorkflowCorrectnessResult,
     WorkflowRunnerSettings,
     WorkflowTestGroup,
@@ -224,7 +226,10 @@ async def test_scripted_evaluator_outcomes(
         cause,
         PreflightResult(preflight_status, cause if preflight_status != "passed" else None),
         attribution,  # type: ignore[arg-type]
-        rejected,
+        (RejectedChange(
+            "tsconfig.json", "restored", "sha256:" + "a" * 64,
+            "sha256:" + "b" * 64,
+        ),) if case == "scope" else (),
     )
 
     class ScriptedRunner(RecordingRunner):
@@ -253,6 +258,57 @@ async def test_scripted_evaluator_outcomes(
     assert all(group["stdout"] == "stdout" and group["stderr"] == "stderr"
                for group in record["groups"].values())  # type: ignore[union-attr]
     assert ("correctness_category" in record) is (case != "unknown")
+
+
+@pytest.mark.asyncio
+async def test_missing_image_is_attributed_through_real_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ObjectStore(tmp_path / "store")
+    fixture = load_pilot_study_fixture(store)
+    scenario = fixture.scenarios[0]
+    baseline = scenario.realizations["baseline"]
+    digest = workflow_tree_digest(baseline)
+    coordinate = CellCoordinate(
+        subject_id=scenario.subject_id, arm_id="baseline", worker_repeat=0,
+        realization_ref=str(store.publish_json({"repository": baseline})),
+    )
+    output = {
+        "cell_id": coordinate.id,
+        "patch_ref": _envelope(store, "candidate.patch", b""),
+        "tree_digest_ref": _envelope(store, "tree_digest", digest.encode()),
+        "result_ref": _envelope(store, "result.json", canonical_json({
+            "baseline_tree_digest": digest,
+        })),
+    }
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(
+        image=fixture.manifest.observed_runtime_image_digest, toolchain="bun"
+    ))
+
+    async def docker_command(*args: str) -> tuple[int, bytes]:
+        if args[1] == "version":
+            return 0, b"29.6.1 29.1.2"
+        assert args[1:3] == ("image", "inspect")
+        return 1, b""
+
+    monkeypatch.setattr(runner, "_command", docker_command)
+    evaluator = CellEvaluator(store, fixture.manifest, runner)
+    result = await evaluator.evaluate(
+        input_value={"repository": baseline}, output=output,
+        coordinate=EvaluationCoordinate(
+            cell_id=coordinate.id, evaluator_id="correctness", evaluator_repeat=0,
+        ),
+    )
+    record = evaluator.records[coordinate.id]
+    assert result.verdict == "unavailable"
+    assert record["cause"] == "SandboxImageUnavailable"
+    assert record["preflight"] == {
+        "status": "unavailable", "cause": "SandboxImageUnavailable",
+    }
+    assert record["attribution"] == "evaluator_infrastructure"
+    assert [group["status"] for group in record["groups"].values()] == [
+        "unavailable", "unavailable", "unavailable"
+    ]  # type: ignore[union-attr]
 
 
 def test_classification_uses_named_preflight() -> None:

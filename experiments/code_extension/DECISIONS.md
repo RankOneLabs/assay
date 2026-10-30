@@ -60,6 +60,9 @@
   and withhold the correctness category. Each rejected protected or out-of-scope
   path is recorded with its disposition and baseline and candidate digests.
   Candidate tree digest comparison happens before restoration or commands.
+  A missing tool during typecheck or build is a failed preflight with the
+  stage-prefixed `*_toolchain_unavailable` cause. Failure to verify the pinned
+  toolchain itself uses the bare `toolchain_unavailable` infrastructure cause.
 - Grader cache identity covers the candidate and baseline tree digests, image
   digest, dependency locks, all three named group digests, evaluator configuration
   digest and grader revision. Frozen test-group commands and the harness source

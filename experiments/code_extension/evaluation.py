@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from workflow_edit.evaluation import cell_arm, unavailable_result, worker_candidate
 
@@ -20,6 +20,7 @@ from assay.investigations.workflow_correctness import (
 from assay.models import EvaluationCoordinate
 from assay.pier_protocol import CandidateSubmission
 from assay.store import ObjectIntegrityError, ObjectStore
+from code_extension.bridge import WRITABLE_PREFIXES
 
 STUDY_GROUPS = (("visible_regression", False), ("hidden_regression", True), ("new_behavior", True))
 CORRECTNESS_CATEGORIES = ("correct", "incorrect", "unavailable")
@@ -112,7 +113,7 @@ class CellEvaluator:
             "id": "code-extension-correctness",
             "version": "1",
             "grader_revision": GRADER_REVISION,
-            "writable_prefixes": ["src/", "tests/visible/"],
+            "writable_prefixes": list(WRITABLE_PREFIXES),
             "categories": list(CORRECTNESS_CATEGORIES),
             "runner": self.runner.configuration(),
             "fixture": fixture_identity(self.manifest),
@@ -183,7 +184,7 @@ class CellEvaluator:
                 if result.preflight is not None else None
             ),
             "attribution": result.attribution,
-            "rejected_changes": list(result.rejected_changes),
+            "rejected_changes": [asdict(change) for change in result.rejected_changes],
             "grader_cache_key": key,
             "empty_patch": candidate.patch == b"",
             "seconds": round(time.monotonic() - started, 3),
