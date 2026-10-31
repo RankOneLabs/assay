@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from assay.fixture_manifest import FixtureManifestV3
 from assay.models import ExecutionPlanV3, StudySnapshot
@@ -49,6 +49,7 @@ class _RunIndex(_Wire):
     manifest_ref: str
     judgments: dict[str, _Judgment]
     expected_change_paths: dict[str, tuple[str, ...]]
+    retry_of: dict[str, str] = Field(default_factory=dict)
 
 
 class _BridgePolicy(BaseModel):
@@ -105,7 +106,11 @@ def _committed_runs(
             for cell, judgment in index.judgments.items()
         }
         ledger = build_ledger(
-            plan=plan, manifest_ref=index.manifest_ref, store=store, judgments=judgments
+            plan=plan,
+            manifest_ref=index.manifest_ref,
+            store=store,
+            judgments=judgments,
+            retry_of=index.retry_of,
         )
         ledgers.append(ledger)
         for arm in snapshot.arms:

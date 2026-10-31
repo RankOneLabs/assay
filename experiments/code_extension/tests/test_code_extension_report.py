@@ -65,7 +65,7 @@ def test_empty_archive_reproduces_committed_report_and_fixed_ledger(
     paths = render_archive(archive, tmp_path / "out")
     first = [path.read_bytes() for path in paths]
     assert paths[0].read_bytes() == REPORT_MD.read_bytes()
-    assert paths[1].read_text().startswith("attempt,scenario,arm,")
+    assert paths[1].read_text().startswith("attempt,retry_of,scenario,arm,")
     assert paths[2].read_text() == "[]\n"
     assert [path.read_bytes() for path in render_archive(archive, tmp_path / "out")] == first
 
@@ -96,13 +96,14 @@ def test_archive_ledger_keeps_undispatched_coordinate_as_unavailable(
                 "manifest_ref": manifest_ref,
                 "judgments": {},
                 "expected_change_paths": {},
+                "retry_of": {plan.cells[1].id: f"run:{plan.cells[0].id}"},
             }
         ),
         encoding="utf-8",
     )
 
     _forbid_model_constructors(monkeypatch)
-    _, csv_path, json_path = render_archive(archive, tmp_path / "out")
+    markdown_path, csv_path, json_path = render_archive(archive, tmp_path / "out")
     entries = json.loads(json_path.read_text(encoding="utf-8"))
     with csv_path.open(newline="", encoding="utf-8") as stream:
         csv_entries = list(csv.DictReader(stream))
@@ -112,8 +113,23 @@ def test_archive_ledger_keeps_undispatched_coordinate_as_unavailable(
     assert len(missing) == 1
     assert missing[0]["planned"] == "yes"
     assert missing[0]["missing"] == "yes"
+    assert missing[0]["retry_of"] == f"run:{plan.cells[0].id}"
+    assert next(entry for entry in entries if entry["dispatched"] == "yes")["retry_of"] == "none"
     for name in ("external_verdict", "duration_seconds", "cost", "tool_calls"):
         assert missing[0][name] == "unavailable"
+    report = markdown_path.read_text(encoding="utf-8")
+    assert "| All attempts | 2 | 0 | 0 |" in report
+    outcomes = report.split("## Scenario outcomes", 1)[1].split(
+        "## Terminal causes", 1
+    )[0]
+    scenario = next(
+        line for line in outcomes.splitlines()
+        if line.startswith("| oakridge-dbos-context-defaults |")
+    )
+    cells = [cell.strip() for cell in scenario.strip("|").split("|")]
+    assert cells[:4] == ["oakridge-dbos-context-defaults", "1", "0", "1"]
+    assert cells[4].startswith("0/1 ")
+    assert cells[-2:] == ["0", "1"]
 
 
 def test_run_index_recomputes_attempt_counts_from_retained_objects(

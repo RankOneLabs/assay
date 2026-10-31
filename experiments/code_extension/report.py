@@ -20,6 +20,7 @@ class ScenarioArm:
 
 LEDGER_COLUMNS = (
     "attempt",
+    "retry_of",
     "scenario",
     "arm",
     "planned",
@@ -59,6 +60,7 @@ def attempt_rows(
         result.append(
             {
                 "attempt": row.attempt_key,
+                "retry_of": row.retry_of or "none",
                 "scenario": row.subject_id,
                 "arm": row.arm_id,
                 "planned": "yes" if row.states.planned else "no",
@@ -341,6 +343,11 @@ def render_from_ledgers(
         [
             "## Scenario outcomes",
             "",
+            "This table counts primary attempts only, including invalid and unevaluable "
+            "primary attempts. Other tables count all retained attempts. In the CSV and JSON "
+            "ledgers, `retry_of` is `none` for a primary attempt and names the original attempt "
+            "for a retry.",
+            "",
             "Intervals use the Wilson score method at alpha 0.05. They describe execution "
             "variability on a fixed task, rather than sampling error over tasks. "
             f"The fixture roster shown here lists {len(subjects)} qualified scenarios; "
@@ -397,12 +404,13 @@ def _rate_cell(numerator: int, denominator: int) -> str:
 
 
 def _scenario_outcome(subject: str, rows: Sequence[AttemptRow]) -> tuple[str, ...]:
-    rates = AttemptLedger(tuple(rows)).cohorts()["primary"].rates()
+    primary = AttemptLedger(tuple(rows)).cohorts()["primary"]
+    rates = primary.rates()
     return (
         subject,
-        str(sum(row.states.planned for row in rows)),
-        str(sum(row.states.missing for row in rows)),
-        str(sum(row.reference.patch_ref is None for row in rows)),
+        str(sum(row.states.planned for row in primary.rows)),
+        str(sum(row.states.missing for row in primary.rows)),
+        str(sum(row.reference.patch_ref is None for row in primary.rows)),
         _rate_cell(rates.operational_yield.numerator, rates.operational_yield.denominator),
         _rate_cell(rates.primary_task_success.numerator, rates.primary_task_success.denominator),
         _rate_cell(
