@@ -67,8 +67,8 @@ Keep the store, runs root and archive root on durable project storage, away
 from the OS temp directory. Waking a GPU worker power-cycles it and wipes its
 temp directory, which would erase the run before evidence can be read.
 
-Pilot launch preconditions are still open. The proposed cross-module-event
-and config-plugin scenarios failed the pinned-slice feasibility check below,
+Pilot launch preconditions are still open. Cross-module-event is feasible at
+the upstream pin, but config-plugin lacks a configuration-driven loading path,
 so there is **no frozen three-scenario pilot configuration or fifteen-attempt
 plan**. No calibration or pilot attempt has been dispatched. A reviewed
 scenario selection and passing qualification for all three selected subjects
@@ -85,23 +85,38 @@ enforce it.
 ## WP6 candidate feasibility review
 
 The checkpoint is `f3b3ffca43e43672ff2f58ab797d65c7532aaed8`. The
-dispatch-handler start tree is the pinned slice being reused. Its
-`src/domain/run-record.ts` defines `RunTransitionOperation`, and
-`src/domain/run-event.ts` defines `RunEventRow`, `RunEvent` and
-`projectRunEvent`. A search of the entire 62-file repository tree finds
-`projectRunEvent` and `RunEventRow` only in `run-event.ts`: the event producer,
-consumer and public package entry point required by cross-module-event are
-absent. Its requested four linked integration points cannot be tested in this
-slice. The proposed replacement for review is a **workflow edge contract**
-scenario using the existing producer output, consumer input, validation and
-compilation paths in `src/validation/workflow-definition.ts` and
-`src/compiler/compile-workflow.ts`. It would measure a different public task;
-it has not been substituted or qualified.
+earlier search covered only the dispatch-handler's deliberately extracted
+62-file start tree, not the upstream pin. A fresh feasibility extraction from
+the pin used:
 
-The same start tree has `compileWorkflowDefinition(definition, registry?)` and
-two built-in stage compilers. It has no stage-plugin configuration file or
-configuration-driven loader. The plugin arm of the separately committed
-stage-pass-through subject contains `stage-plugin-config.json` and
+```sh
+git -C /home/steve/codes/rol/oakridge archive f3b3ffca43e43672ff2f58ab797d65c7532aaed8 tsconfig.json oakridge-dbos/src oakridge-dbos/tests/invalidation-events.test.ts oakridge-dbos/package.json oakridge-dbos/tsconfig.json
+```
+
+The extracted 125 files total 706,674 bytes before dependency installation,
+within both fixture package limits. This review extraction is under `/tmp`,
+not a frozen worker tree. It includes `src/domain/run-event.ts` (event schema,
+`RunEvent` export and `projectRunEvent`),
+`src/storage/postgres-operators.ts` (`PostgresOperatorProjectionRepository.list_run_events`),
+`src/http/invalidation-events.ts` (`createInvalidationEventApp`), and
+`src/http/app.ts` (the producer-to-consumer wiring). The upstream
+`tests/invalidation-events.test.ts` imports only `bun:test` besides source
+modules. The Postgres-backed producer accepts an injected `SqlExecutor` whose
+`query` method returns rows; the real query and projection can be exercised
+with a fake executor and without a live Postgres server. The SSE consumer also
+takes injected callbacks. The extracted upstream `package.json` already names
+`hono`; a runnable frozen fixture must carry it in its dependency lock. The
+upstream SSE test passed all eight checks, and an additional temporary test
+projected a SQL row through the injected producer without Postgres.
+Cross-module-event is feasible at the pin, pending a fully qualified fixture.
+With the pin's root `tsconfig.json` included and the upstream installed dependencies supplied, the
+review extraction also passed `tsc --noEmit -p tsconfig.json`.
+
+At the same upstream pin, `compileWorkflowDefinition(definition, registry?)`
+accepts an injected registry, `src/runtime/executor-registry.ts` registers
+executors imperatively, and `src/http/configuration.ts` reads configuration.
+None loads stage plugins from configuration. The plugin arm of the separately
+committed stage-pass-through subject contains `stage-plugin-config.json` and
 `stage-plugins.ts`, but its README identifies both as authored adaptations
 absent at the pin. Reusing that arm would invent the production loading path
 that config-plugin is meant to extend. The proposed replacement for review is
@@ -109,11 +124,24 @@ an **injected stage compiler registry** scenario using the existing registry
 argument and visible compiler contract. It would not claim configuration
 loading and has not been substituted or qualified.
 
-The two candidate `task.md` files retain the exact requested behaviors and
-requirements-to-intended-tests tables. They are explicitly blocked drafts:
-there are no start trees, sidecars, hidden groups, qualification patches or
+The two candidate `task.md` files retain the requested behaviors and
+requirements-to-intended-tests tables. They remain review drafts: there are
+no committed start trees, sidecars, hidden groups, qualification patches or
 gate records for them. The committed qualification manifests remain
 unchanged, and the descriptive report still reflects only committed evidence.
+
+The independent offline evidence rehearsal is
+`code_extension/tests/test_code_extension_report.py::test_committed_qualification_and_scripted_archive_reproduce_and_export`.
+It binds the existing dispatch-handler qualification manifest and records,
+submits a model-free scripted `write_file` and `submit_output` through the
+production bridge with a fake sandbox, and keeps the resulting run archive
+under pytest's temporary directory. It renders `REPORT.md`, `ledger.csv` and
+`ledger.json` twice and compares exact bytes. It exports the run manifest's
+object closure, accepts only the expected `incomplete_run` observation because
+the scripted rehearsal has no evaluator record, and confirms that changing an
+exported object makes verification fail for integrity. The archive is test
+output, not committed run evidence; the committed report does not gain a live
+attempt row.
 
 ## ce-v1 contract and protocol
 

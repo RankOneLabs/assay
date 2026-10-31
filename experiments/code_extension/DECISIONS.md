@@ -103,26 +103,30 @@
 - The committed qualified set currently contains pilot, pointer-root,
   stage-pass-through and dispatch-handler: four subjects. The proposed WP6
   three-subject pilot would have named pilot, cross-module-event and
-  config-plugin under the single baseline arm. The latter two did not pass
-  the pinned-slice feasibility check and have no qualification refs. No pilot
-  configuration is frozen; the operator must review replacements before a
-  three-subject manifest can be assembled. The operator still decides whether
+  config-plugin under the single baseline arm. Cross-module-event is feasible
+  at the upstream pin, while config-plugin lacks a loading path; neither has
+  a qualification ref. No pilot configuration is frozen; the operator must
+  review replacements before a three-subject manifest can be assembled. The
+  operator still decides whether
   surplus committed subjects remain or are retired after reviewing a baseline
   pilot. The existing four-arm stage-pass-through subject cannot join a
   single-baseline-arm pilot manifest.
 
 ## WP6 feasibility stop before pilot freeze
 
-- In the pinned dispatch-handler slice, `RunEventRow` and `projectRunEvent`
-  occur only in `src/domain/run-event.ts`. The requested cross-module-event
-  producer and consumer are absent, as is a public package entry point.
-  Writing hidden end-to-end assertions would require inventing these
-  production modules, so the candidate is blocked. A workflow edge contract
-  using the existing validation and compilation paths is proposed for review,
-  with no claim that it is the same event feature.
-- The pinned slice has an optional injected `StageTypeCompilerRegistry` in
+- The earlier 62-file dispatch-handler slice omitted storage and HTTP; that
+  search cannot establish infeasibility at the pin. A fresh extraction of the
+  upstream source, package files and `invalidation-events.test.ts` contains
+  the four event integration points. `PostgresOperatorProjectionRepository`
+  takes an injected `SqlExecutor`, so its SQL-backed `list_run_events` can be
+  tested with fake query rows and without Postgres. The SSE consumer accepts
+  injected callbacks, and `src/http/app.ts` wires the two. Cross-module-event
+  is feasible at the pin; `hono` is needed in the fixture dependency lock.
+- The pin has an optional injected `StageTypeCompilerRegistry` in
   `compileWorkflowDefinition` and fixed built-in compilers. It has no
-  configuration-driven plugin loader. The stage-pass-through plugin arm's
+  configuration-driven plugin loader. Its runtime registry is imperative and
+  its HTTP configuration API reads values without loading plugins. The
+  stage-pass-through plugin arm's
   configuration and loader were authored locally rather than extracted from
   the pin, so they cannot establish a pre-existing loading path. The
   config-plugin candidate is blocked. An injected-registry scenario is
@@ -130,10 +134,14 @@
 - The candidate task files and their intended assertion tables document the
   requested behavior. They are not frozen agent tasks or qualified fixtures.
   The identical eight-control gate still applies to any approved replacement.
-  No qualification evidence, combined manifest, fifteen-attempt plan, offline
-  ledger or export from nonexistent pilot evidence is claimed. Calibration
-  remains a separate one-attempt authorization; after a future freeze, every
-  attempt must be retained. A route probe counts as live work. The pilot
+  No qualification evidence, combined manifest or fifteen-attempt plan is
+  claimed for these candidates. Offline ledger, report and export checks can
+  run over existing committed qualification evidence and a model-free scripted
+  archive without a pilot freeze. The offline rehearsal renders ledger and
+  report bytes twice, exports the run object's closure, and rejects a tampered
+  exported object; its missing evaluator is explicitly `incomplete_run`.
+  Calibration remains a separate one-attempt authorization; after a future
+  freeze, every attempt must be retained. A route probe counts as live work. The pilot
   requires a qualified common image and routing digest, current qualification
   and scripted full-path evidence, exact endpoint/model/provider and envelope,
   explicit pricing bound, approved per-attempt and total caps, and prompt,
