@@ -1,5 +1,79 @@
 # Code extension experiment
 
+## Operator runner
+
+Run these commands from `experiments/`:
+
+```sh
+python -m code_extension.run qualify --scenario dispatch-handler --image sha256:<digest> --verify-committed
+python -m code_extension.run scripted --scenario dispatch-handler --image sha256:<digest> --store .assay-extension
+CODE_EXTENSION_ROUTING_CONFIG=/absolute/path/to/smithers-routing.yaml python -m code_extension.run prepare --config run-config.json --store .assay-extension
+CODE_EXTENSION_ROUTING_CONFIG=/absolute/path/to/smithers-routing.yaml python -m code_extension.run execute --plan .assay-extension/plans/<digest>/plan.json --authorize sha256:<digest> --store .assay-extension
+```
+
+`qualify` delegates to the existing scenario qualifier. `python -m
+code_extension.qualify` retains its full argument surface, including
+`--evidence-dir` and `--manifest`. `scripted` enters the existing model-free
+scripted worker and independent evaluator. `python -m code_extension.diagnose`
+remains the separate replay diagnostic and cannot write a verdict.
+
+`run-config.json` is a closed JSON object. Every field is required:
+
+| Field | Meaning and source |
+| --- | --- |
+| `scenario_qualifications` | Array of `{scenario, manifest_digest}` entries. The digest is the exact byte digest of that scenario's committed `qualification/manifest.json`. |
+| `cohort` | Operator's calibration or pilot cohort identity; each gets its own configuration and cap. |
+| `route` | Exact `{endpoint, model, provider}` from the authorized extension route matrix. |
+| `profile` | The qualified Smithers machine name used to resolve that model. |
+| `system_prompt_digest`, `tool_schemas_digest` | Literal ce-v1 pins in `protocol.py`. |
+| `image_digest` | Observed sha256 image digest in every chosen manifest. |
+| `bounds` | Complete `ExtensionAgentSettings.for_model(model)` envelope. |
+| `repeats`, `randomization_seed`, `concurrency` | Declared full-grid repeats, recorded seed, and concurrency 1. The current shared planner still uses `subject-rotated-v1`; see the open order decision below. |
+| `pricing` | `{basis, conservative_request_bound_usd}`. Local Smithers has no billed price, so a positive explicit request bound is required. |
+| `per_attempt_cap_usd`, `total_cap_usd` | Positive dollar caps chosen by the operator; neither has a default. |
+
+Money values in JSON are decimal strings. Secrets are supplied through the
+transport environment, never through this configuration or its archive.
+Credential-like keys or values in the configuration are refused.
+
+`prepare` verifies each manifest, qualification outcome and evidence digest,
+the scripted full-path record, fixture trees, hidden groups, image, route,
+envelope, prompt and tools. It compiles the shared full-grid plan, validates
+every coordinate, and writes canonical plan bytes, a configuration copy and a
+launch summary under `STORE/plans/<digest>/`. It dispatches nothing. A missing
+record produces `scripted full path qualification is absent`; drift names the
+fixture, image, route, prompt or tool identity. An unset cap raises
+`MissingSpendCap`; absent usable pricing raises `UnknownPricing` or
+`pricing_basis_unusable`. An absent routing file raises
+`routing_artifact_unavailable`. The summary lists concrete cells, model,
+maximum requests, attempts, effective limits, estimated and maximum spend,
+coverage, and the unresolved dispatch-order question.
+
+`execute` requires the original stored plan, its exact digest, and the frozen
+configuration. The shared authorizer rejects noncanonical bytes and the
+shared executor rechecks the snapshot and cell list. A digest mismatch names
+both digests. Each cell attempt identity is fsynced before dispatch; every
+turn has a separate fsynced reservation. On resume, unfinished reservations
+are charged at their bound and halt with `billing_uncertain`. A used attempt
+identity is never dispatched again. The route probe is a live, authorized
+request against the same cap; it confirms the worker model and requested
+output bound. The shared spend ledger reserves before each request and halts
+with `budget_exhausted` or `billing_uncertain` when the cap or billing
+certainty fails. Smithers currently reports no billed cost, so the probe
+halts at `billing_uncertain` after its bound is charged. It cannot authorize
+subsequent cell dispatch until a billed-cost source is available.
+
+Keep the store, runs root and archive root on durable project storage, away
+from the OS temp directory. Waking a GPU worker power-cycles it and wipes its
+temp directory, which would erase the run before evidence can be read.
+
+Pilot launch preconditions are still open. Requalify pilot, pointer-root and
+dispatch-handler together against one observed image, retaining passing
+scripted full-path records for each, before preparing the fifteen-attempt
+pilot. Resolve a Smithers billed-cost source before any live cell dispatch;
+until then the charged route probe halts with `billing_uncertain`. These are
+operator inputs to the launch gates, not code defects.
+
 ## ce-v1 contract and protocol
 
 `contract.py` defines `assay-extension-scenario-sidecar/0.1.0` alongside the

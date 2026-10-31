@@ -28,7 +28,9 @@ from assay.models import (
 )
 from assay.store import ObjectIntegrityError, ObjectStore
 from code_extension.evaluation import CellEvaluator
-from code_extension.fixture import PILOT, VISIBLE_PREFIX, load_fixture
+from code_extension.fixture import PILOT, VISIBLE_PREFIX, frozen_groups, load_fixture, read_tree
+from code_extension.fixtures import sidecar_for_subject
+from code_extension.protocol import SYSTEM_PROMPT_SHA256
 from code_extension.shape import validate_worker_grid
 
 STUDY_GROUPS = (("visible_regression", False), ("hidden_regression", True), ("new_behavior", True))
@@ -75,8 +77,11 @@ def check_fixture(
             raise ValueError(f"{item.subject_id} must have one realization per declared arm")
         refs = [
             next(
-                (group for group in (scenario.hidden_tests if hidden else scenario.visible_tests)
-                 if group.name == name),
+                (
+                    group
+                    for group in (scenario.hidden_tests if hidden else scenario.visible_tests)
+                    if group.name == name
+                ),
                 None,
             )
             for name, hidden in STUDY_GROUPS
@@ -86,7 +91,8 @@ def check_fixture(
         try:
             groups = tuple(
                 WorkflowTestGroup.model_validate_json(store.read_bytes(ref.digest))
-                for ref in refs if ref is not None
+                for ref in refs
+                if ref is not None
             )
         except (OSError, ValueError, ObjectIntegrityError) as error:
             raise ValueError(f"{item.subject_id} has unreadable test groups") from error
@@ -149,9 +155,97 @@ def load_pilot_study_fixture(store: ObjectStore) -> StudyFixture:
             if digest_bytes(data) != getattr(arm.qualification, check).evidence:
                 raise ValueError(f"pilot qualification evidence differs: {arm.arm_id}/{check}")
             store.publish_bytes(data)
-    return StudyFixture(manifest, (StudyScenario(manifest.scenarios[0].subject_id, {
-        arm.arm_id: pilot.repository for arm in manifest.scenarios[0].arms
-    }),))
+    return StudyFixture(
+        manifest,
+        (
+            StudyScenario(
+                manifest.scenarios[0].subject_id,
+                {arm.arm_id: pilot.repository for arm in manifest.scenarios[0].arms},
+            ),
+        ),
+    )
+
+
+def load_qualified_study_fixture(
+    store: ObjectStore,
+    refs: Mapping[str, str],
+    *,
+    image: str,
+) -> StudyFixture:
+    """Bind committed manifests, trees, groups and scripted full-path records."""
+    manifests: list[FixtureManifestV3] = []
+    scenarios: list[StudyScenario] = []
+    for name, expected_digest in sorted(refs.items()):
+        if not name or name in {".", ".."} or "/" in name or "\\" in name:
+            raise ValueError("invalid scenario qualification key")
+        root = PILOT.parent / name
+        data = (root / "qualification" / "manifest.json").read_bytes()
+        if digest_bytes(data) != expected_digest:
+            raise ValueError(f"{name}: fixture identity differs from qualification ref")
+        manifest = FixtureManifestV3.model_validate_json(data)
+        manifest.require_qualified()
+        if manifest.observed_runtime_image_digest != image:
+            raise ValueError(f"{name}: image identity differs from qualification")
+        if len(manifest.scenarios) != 1:
+            raise ValueError(f"{name}: expected one committed scenario")
+        scenario = manifest.scenarios[0]
+        sidecar = sidecar_for_subject(scenario.subject_id)
+        if sidecar is None:
+            raise ValueError(f"{name}: scripted full path qualification is absent")
+        gate_path = root / "qualification" / "gates" / "scripted-submission.json"
+        gate_data = gate_path.read_bytes()
+        if digest_bytes(gate_data) != sidecar.evidence.scripted_submission:
+            raise ValueError(f"{name}: scripted full path artifact differs")
+        gate = json.loads(gate_data)
+        if (
+            gate.get("independent_evaluator_verdict") != "correct"
+            or gate.get("image_digest") != image
+            or gate.get("system_prompt_sha256") != SYSTEM_PROMPT_SHA256
+            or gate.get("reference_tree_matches") is not True
+            or gate.get("groups") != {key: "passed" for key, _ in STUDY_GROUPS}
+        ):
+            raise ValueError(f"{name}: scripted full path is not passing")
+        store.publish_bytes(gate_data)
+        trees: dict[str, Mapping[str, str]] = {}
+        for arm in scenario.arms:
+            repository_root = root / "repository" / arm.arm_id
+            if not repository_root.is_dir():
+                repository_root = root / "repository"
+            tree = read_tree(repository_root)
+            trees[arm.arm_id] = tree
+            for group in frozen_groups(tree, root):
+                store.publish_bytes(canonical_json(group.model_dump(mode="json")))
+            for check in ("baseline_passes", "feature_fails", "reference_passes"):
+                path = root / "qualification" / "evidence" / arm.arm_id / f"{check}.json"
+                record = path.read_bytes()
+                if digest_bytes(record) != getattr(arm.qualification, check).evidence:
+                    raise ValueError(
+                        f"{name}: qualification evidence differs: {arm.arm_id}/{check}"
+                    )
+                store.publish_bytes(record)
+        manifests.append(manifest)
+        scenarios.append(StudyScenario(scenario.subject_id, trees))
+    first = manifests[0]
+    if any(
+        item.arm_set != first.arm_set or item.routing_config_digest != first.routing_config_digest
+        for item in manifests
+    ):
+        raise ValueError("scenarios need one arm set and routing qualification")
+    combined = FixtureManifestV3.model_validate(
+        {
+            **first.model_dump(mode="json"),
+            "scenarios": [
+                item.model_dump(mode="json")
+                for item in sorted(
+                    (scenario for manifest in manifests for scenario in manifest.scenarios),
+                    key=lambda scenario: scenario.subject_id,
+                )
+            ],
+        }
+    )
+    fixture = StudyFixture(combined, tuple(sorted(scenarios, key=lambda item: item.subject_id)))
+    check_fixture(fixture, store=store, image=image, routing_digest=first.routing_config_digest)
+    return fixture
 
 
 @dataclass(frozen=True)
@@ -190,27 +284,46 @@ def plan_study(
     for item in sorted(fixture.scenarios, key=lambda scenario: scenario.subject_id):
         scenario = manifest.scenario(item.subject_id)
         assert scenario is not None
-        payload = str(store.publish_json({
-            "fixture": identity,
-            "scenario": digest_bytes(canonical_json(scenario.model_dump(mode="json"))),
-            "feature_request": scenario.feature_request,
-            "visible_requirements": list(scenario.visible_requirements),
-        }))
-        subjects.append(Subject(
-            id=item.subject_id, label=item.subject_id, partition=STUDY_PLAN.partition,
-            digest=payload, payload_ref=payload,
-        ))
+        payload = str(
+            store.publish_json(
+                {
+                    "fixture": identity,
+                    "scenario": digest_bytes(canonical_json(scenario.model_dump(mode="json"))),
+                    "feature_request": scenario.feature_request,
+                    "visible_requirements": list(scenario.visible_requirements),
+                }
+            )
+        )
+        subjects.append(
+            Subject(
+                id=item.subject_id,
+                label=item.subject_id,
+                partition=STUDY_PLAN.partition,
+                digest=payload,
+                payload_ref=payload,
+            )
+        )
         for arm in scenario.arms:
-            ref = str(store.publish_json({
-                "task": arm.task_prompt,
-                "repository": dict(item.realizations[arm.arm_id]),
-            }))
-            realizations.append(Realization(
-                subject_id=item.subject_id, arm_id=arm.arm_id, digest=ref, artifact_ref=ref,
-            ))
+            ref = str(
+                store.publish_json(
+                    {
+                        "task": arm.task_prompt,
+                        "repository": dict(item.realizations[arm.arm_id]),
+                    }
+                )
+            )
+            realizations.append(
+                Realization(
+                    subject_id=item.subject_id,
+                    arm_id=arm.arm_id,
+                    digest=ref,
+                    artifact_ref=ref,
+                )
+            )
     arms = tuple(
         Arm(
-            id=arm_id, worker=workers[arm_id].configuration(arm_id),
+            id=arm_id,
+            worker=workers[arm_id].configuration(arm_id),
             intervention={"factor": manifest.arm_set.factor, "arm": arm_id},
             conditions={"assay_execution_schedule": STUDY_SCHEDULE},
         )
@@ -226,13 +339,24 @@ def plan_study(
         )
 
     snapshot, plan_bytes = compile_workflow_plan(
-        store, STUDY_PLAN, subjects=tuple(subjects), arms=arms,
-        realizations=tuple(realizations), evaluator_configuration=evaluator.configuration(),
-        runtime=runtime, repeats=repeats, ceiling=ceiling, check=check,
+        store,
+        STUDY_PLAN,
+        subjects=tuple(subjects),
+        arms=arms,
+        realizations=tuple(realizations),
+        evaluator_configuration=evaluator.configuration(),
+        runtime=runtime,
+        repeats=repeats,
+        ceiling=ceiling,
+        check=check,
     )
     return PreparedStudy(
-        snapshot, plan_bytes, digest_bytes(plan_bytes),
-        dict[str, Worker | CoordinateAwareWorker](workers), evaluator, manifest,
+        snapshot,
+        plan_bytes,
+        digest_bytes(plan_bytes),
+        dict[str, Worker | CoordinateAwareWorker](workers),
+        evaluator,
+        manifest,
     )
 
 
@@ -250,9 +374,15 @@ def prepare_study(
     """Bind the runner and current routing file to the qualified manifest."""
     routing_digest = digest_bytes(routing_config.read_bytes()) if routing_config else None
     return plan_study(
-        store, fixture, workers=workers, runner=runner, runtime=runtime,
-        image=runner.settings.image, routing_digest=routing_digest,
-        repeats=repeats, ceiling=ceiling,
+        store,
+        fixture,
+        workers=workers,
+        runner=runner,
+        runtime=runtime,
+        image=runner.settings.image,
+        routing_digest=routing_digest,
+        repeats=repeats,
+        ceiling=ceiling,
     )
 
 
