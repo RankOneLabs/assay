@@ -306,3 +306,45 @@ qualified Part 1 and pilot headroom. No extension fixture was qualified.
 - Code metrics reuse the sibling study's locked TypeScript toolchain and the
   existing `assay.code_metrics` snapshot/compare API. Installing locked tools
   is an explicit preparation step; measurement is offline.
+# WP4 operator runner and launch gates
+
+`python -m code_extension.run` owns `qualify`, `scripted`, `prepare`, and
+`execute`. The first two call the existing qualifier and model-free scripted
+path. The existing `code_extension.qualify` and `code_extension.diagnose`
+entry points remain independent and retain their arguments.
+
+The run configuration has no identity or money defaults. Construction refuses
+routes outside the two Smithers-local entries, absent model envelopes, ce-v1
+prompt or tool drift, image drift, unknown pricing, nonpositive caps, and
+credentials. Preparation binds committed qualification manifests, evidence,
+scripted full-path verdicts, fixture trees, and the complete grid. It returns
+canonical plan bytes and digest without a model request. Execution refuses a
+different digest or noncanonical plan, recompiles from the frozen configuration,
+then uses the shared authorizer and coordinate-scoped executor. The route
+probe is itself an authorized, reserved request.
+
+The run-wide budget uses `verification_pilot.budget.SpendGate`: each request,
+including a retry, reserves its conservative upper bound before transport and
+settles its actual cost afterward. `budget_exhausted` refuses a request before
+send; an absent billed cost or an over-bound bill charges the bound or larger
+actual amount and halts with `billing_uncertain`. The journal fsyncs the cell
+coordinate and attempt ID before dispatch, refuses reused identities after a
+restart, and reconciles unfinished reservations from the original plan and
+configuration. A changed configuration is a new plan.
+
+Calibration is one attempt. The pilot specification is five fresh repeats on
+each of three qualified baseline scenarios, exactly fifteen attempts under a
+separate authorization and cap. Calibration is reviewed before the pilot and
+does not contribute to its fifteen attempts. The current committed records
+cannot launch that pilot: the pilot and pointer-root fixtures lack scripted
+full-path evidence, while dispatch-handler has a different image. Smithers
+also reports no billed cost, so the charged route probe halts with
+`billing_uncertain` under the required accounting rule.
+
+The recorded randomization seed currently changes the configuration digest
+but not dispatch order. The shared planner accepts only absent,
+`subject-counterbalanced-v1`, and `subject-rotated-v1` schedules, and execute
+recompiles the plan from its snapshot. A seed-based permutation needs a new
+declared schedule in `src/assay/planning.py` and corresponding shared workflow
+and dry-run review. That is an open operator decision. Until then the plan
+uses `subject-rotated-v1`; the launch summary names this unresolved blocker.
