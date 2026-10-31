@@ -247,9 +247,7 @@ def _build(
     compiled = parse_execution_plan(json.loads(prepared.plan_bytes))
     for worker in workers.values():
         worker.allowed_coordinates = {
-            cell.id: cell.realization_ref
-            for cell in compiled.cells
-            if cell.arm_id == worker.arm_id
+            cell.id: cell.realization_ref for cell in compiled.cells if cell.arm_id == worker.arm_id
         }
     return prepared
 
@@ -401,6 +399,13 @@ def main() -> None:
     e.add_argument("--plan", type=Path, required=True)
     e.add_argument("--authorize", required=True)
     e.add_argument("--store", type=Path, required=True)
+    offline_report = commands.add_parser("report")
+    offline_report.add_argument("--archive", type=Path, required=True)
+    offline_report.add_argument("--output", type=Path, required=True)
+    regrade_command = commands.add_parser("regrade")
+    regrade_command.add_argument("--archive", type=Path, required=True)
+    regrade_command.add_argument("--image", required=True)
+    regrade_command.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "qualify":
         sys.argv = ["code_extension.qualify", "--scenario", args.scenario, "--image", args.image]
@@ -428,6 +433,15 @@ def main() -> None:
         )
     elif args.command == "prepare":
         print(json.dumps(prepare(args.config, args.store), sort_keys=True))
+    elif args.command == "report":
+        from code_extension.publish import render_archive
+
+        print(json.dumps([str(path) for path in render_archive(args.archive, args.output)]))
+    elif args.command == "regrade":
+        from code_extension.diagnose import regrade_archive
+
+        paths = regrade_archive(args.archive, args.image, args.output)
+        print(json.dumps([str(path) for path in paths]))
     else:
         print(
             json.dumps(asyncio.run(execute(args.plan, args.authorize, args.store)), sort_keys=True)

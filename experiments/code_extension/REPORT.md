@@ -2,6 +2,8 @@
 
 Generated from committed fixture manifests and retained run evidence. The fixture roster is qualified; no extension run bundle is committed when the attempt counts below are empty.
 
+Unavailable means no retained measurement. Invalid means a dispatched attempt with an infrastructure failure. Unevaluable means a dispatched attempt without an independent grade. Primary success means normal completion, an independent grade, all checks passing, and a clean edit scope. No candidate counts attempts without a retained patch.
+
 ## Implementation success
 
 Common subjects with an attempt in every arm of a multi-arm run: 0. Descriptive only; no inferential statistics are calculated.
@@ -80,6 +82,28 @@ Scope of diff and unnecessary changed paths come from offline `assay code-metric
 | Attempt | Changed paths | Unnecessary paths | Duration s | Prompt tokens | Completion tokens | Tool calls | Files inspected | Retries |
 |---|---|---|---|---|---|---|---|---|
 
+## Scenario outcomes
+
+This table counts primary attempts only, including invalid and unevaluable primary attempts. Other tables count all retained attempts. In the CSV and JSON ledgers, `retry_of` is `none` for a primary attempt and names the original attempt for a retry.
+
+Intervals use the Wilson score method at alpha 0.05. They describe execution variability on a fixed task, rather than sampling error over tasks. The fixture roster shown here lists 4 qualified scenarios; the planned pilot has fifteen attempts, five repeats on each of three fixed tasks. Only retained planned coordinates count as attempts. The repeats are not fifteen independently sampled tasks.
+
+| Scenario | Planned | Missing | No candidate | Operational yield | Primary task success | Conditional correctness | Invalid | Unevaluable |
+|---|---|---|---|---|---|---|---|---|
+| oakridge-dbos-context-defaults | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-dbos-dispatch-handler | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-dbos-pointer-root | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-dbos-stage-pass-through | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+
+## Terminal causes and measurement coverage
+
+| Scenario | Terminal causes | Duration measured | Tool use measured | Tokens measured | Cost priced |
+|---|---|---|---|---|---|
+| oakridge-dbos-context-defaults | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-dbos-dispatch-handler | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-dbos-pointer-root | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-dbos-stage-pass-through | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+
 ## Interpretation
 
-Describe code-shape effects separately from scenario difficulty, verification behavior, and operational failures. The fixture roster alone supplies no implementation effect.
+These scenario results do not isolate a code-shape effect. The fixture roster alone supplies no implementation effect.
