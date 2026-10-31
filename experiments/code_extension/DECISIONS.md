@@ -351,3 +351,10 @@ arm conditions, with `src/assay/planning.py` shuffling the complete grid.
 The shared workflow-edit schedule assertions and dry-run schedule check need
 review. This is an open operator decision. Until then the plan
 uses `subject-rotated-v1`; the launch summary names this unresolved blocker.
+
+## Offline reporting and replay
+
+- The runner accepts `report --archive DIR --output DIR` and `regrade --archive DIR --image DIGEST --output DIR`. Archive reading stays in `publish.py`; `report.py` renders from ledger rows and the ledger's counts, rates, states and terminal causes. The committed fixture and run locations remain command defaults. CSV, JSON and Markdown output names are fixed, and rendered bytes contain no generation time, host or absolute path.
+- An independent evaluator replay writes a separately versioned JSON record under a unique timestamp and UUID name. It records the replay image digest and grader revision, and cites the original manifest and grading references. The original grade is never edited. The diagnostic remains a stdout-only explanation of recorded failures.
+- Scenario intervals use the shared Wilson helper at alpha 0.05. They describe execution variability for a fixed task, not sampling error across tasks. Attempt rows include missing coordinates and unavailable observations.
+- Evidence closure uses the existing `assay export` and `assay verify` commands, rooted at the run manifest reference. The shared verifier permits an honestly incomplete run while rejecting corrupted or extra objects.

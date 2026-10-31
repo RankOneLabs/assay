@@ -80,6 +80,28 @@ Scope of diff and unnecessary changed paths come from offline `assay code-metric
 | Attempt | Changed paths | Unnecessary paths | Duration s | Prompt tokens | Completion tokens | Tool calls | Files inspected | Retries |
 |---|---|---|---|---|---|---|---|---|
 
+## Scenario outcomes
+
+Unavailable means no retained measurement. Invalid means a dispatched attempt with an infrastructure failure. Unevaluable means a dispatched attempt without an independent grade. Primary success means normal completion, an independent grade, all checks passing, and a clean edit scope. No candidate counts attempts without a retained patch.
+
+Intervals use the Wilson score method at alpha 0.05. They describe execution variability on a fixed task, rather than sampling error over tasks. The planned fifteen attempts are five repeats on each of three fixed tasks, not fifteen independently sampled tasks.
+
+| Scenario | Planned | Missing | No candidate | Operational yield | Primary task success | Conditional correctness | Invalid | Unevaluable |
+|---|---|---|---|---|---|---|---|---|
+| oakridge-dbos-context-defaults | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-dbos-dispatch-handler | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-dbos-pointer-root | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-dbos-stage-pass-through | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+
+## Terminal causes and measurement coverage
+
+| Scenario | Terminal causes | Duration measured | Tool use measured | Tokens measured | Cost priced |
+|---|---|---|---|---|---|
+| oakridge-dbos-context-defaults | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-dbos-dispatch-handler | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-dbos-pointer-root | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-dbos-stage-pass-through | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+
 ## Interpretation
 
-Describe code-shape effects separately from scenario difficulty, verification behavior, and operational failures. The fixture roster alone supplies no implementation effect.
+These scenario results do not isolate a code-shape effect. The fixture roster alone supplies no implementation effect.

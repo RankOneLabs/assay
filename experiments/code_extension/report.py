@@ -6,13 +6,104 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from verification_pilot.self_trust.wilson import wilson
+
 from code_extension.ledger import AttemptLedger, AttemptRow
 from code_extension.metrics import SecondaryMeasures
+
 
 @dataclass(frozen=True)
 class ScenarioArm:
     subject_id: str
     arm_id: str
+
+
+LEDGER_COLUMNS = (
+    "attempt",
+    "scenario",
+    "arm",
+    "planned",
+    "dispatched",
+    "agent_started",
+    "completed_normally",
+    "evaluated",
+    "missing",
+    "candidate_available",
+    "primary_success",
+    "external_verdict",
+    "self_report",
+    "terminal_cause",
+    "duration_seconds",
+    "tool_calls",
+    "prompt_tokens",
+    "completion_tokens",
+    "cost",
+    "cost_currency",
+    "cost_coverage",
+    "input_tokens",
+)
+
+
+def attempt_rows(
+    ledgers: Sequence[AttemptLedger],
+    secondary: Mapping[str, SecondaryMeasures] | None = None,
+) -> list[dict[str, str]]:
+    """One complete, serializable row per planned coordinate."""
+    measures = secondary or {}
+    result: list[dict[str, str]] = []
+    for row in sorted(
+        (row for ledger in ledgers for row in ledger.rows), key=lambda r: r.attempt_key
+    ):
+        measure = measures.get(row.attempt_key)
+        usage = row.accounting.usage or {}
+        result.append(
+            {
+                "attempt": row.attempt_key,
+                "scenario": row.subject_id,
+                "arm": row.arm_id,
+                "planned": "yes" if row.states.planned else "no",
+                "dispatched": "yes" if row.states.dispatched else "no",
+                "agent_started": "yes" if row.states.agent_started else "no",
+                "completed_normally": "yes" if row.states.completed_normally else "no",
+                "evaluated": "yes" if row.states.evaluated else "no",
+                "missing": "yes" if row.states.missing else "no",
+                "candidate_available": "yes" if row.reference.patch_ref else "no",
+                "primary_success": "yes"
+                if row.primary_success
+                else "no"
+                if row.states.evaluated
+                else "unavailable",
+                "external_verdict": row.verdict.value if row.verdict else "unavailable",
+                "self_report": measure.self_assessed_verdict
+                if measure and measure.self_assessed_verdict
+                else "unavailable",
+                "terminal_cause": row.terminal_cause if row.states.dispatched else "unavailable",
+                "duration_seconds": str(row.duration_seconds)
+                if row.duration_seconds is not None
+                else "unavailable",
+                "tool_calls": str(sum(value for _, value in measure.tool_usage))
+                if measure and measure.trace_available
+                else "unavailable",
+                "prompt_tokens": str(measure.prompt_tokens)
+                if measure and measure.prompt_tokens is not None
+                else "unavailable",
+                "completion_tokens": str(measure.completion_tokens)
+                if measure and measure.completion_tokens is not None
+                else "unavailable",
+                "cost": str(row.accounting.amount)
+                if row.accounting.amount is not None
+                else "unavailable",
+                "cost_currency": row.accounting.currency or "unavailable",
+                "cost_coverage": row.accounting.coverage,
+                "input_tokens": str(usage["input_tokens"])
+                if usage.get("input_tokens") is not None
+                else "unavailable",
+            }
+        )
+    if len({entry["attempt"] for entry in result}) != len(result):
+        raise ValueError("duplicate attempt across ledgers")
+    return result
+
 
 def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     lines = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
@@ -21,7 +112,8 @@ def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
 
 
 def render_from_ledgers(
-    ledgers: Sequence[AttemptLedger], *,
+    ledgers: Sequence[AttemptLedger],
+    *,
     secondary: Mapping[str, SecondaryMeasures] | None = None,
     index_policy: Mapping[str, bool | None] | None = None,
     scenario_arms: Sequence[ScenarioArm] = (),
@@ -31,31 +123,34 @@ def render_from_ledgers(
     ids = [(row.attempt_key, row.subject_id, row.arm_id) for row in rows]
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate attempt across ledgers")
-    scenario_arms = sorted(set(scenario_arms) | {
-        ScenarioArm(row.subject_id, row.arm_id) for row in rows
-    }, key=lambda item: (item.subject_id, item.arm_id))
+    scenario_arms = sorted(
+        set(scenario_arms) | {ScenarioArm(row.subject_id, row.arm_id) for row in rows},
+        key=lambda item: (item.subject_id, item.arm_id),
+    )
     subjects = {item.subject_id for item in scenario_arms}
     arms = {item.arm_id for item in scenario_arms}
     by_subject = {
-        subject: [row for row in rows if row.subject_id == subject]
-        for subject in subjects
+        subject: [row for row in rows if row.subject_id == subject] for subject in subjects
     }
     by_arm = {arm: [row for row in rows if row.arm_id == arm] for arm in arms}
     common: set[tuple[int, str]] = set()
     for index, ledger in enumerate(ledgers):
         run_arms = {row.arm_id for row in ledger.rows}
         if len(run_arms) >= 2:
-            subjects_in_every_arm = set.intersection(*(
-                {row.subject_id for row in ledger.rows if row.arm_id == arm}
-                for arm in sorted(run_arms)
-            ))
+            subjects_in_every_arm = set.intersection(
+                *(
+                    {row.subject_id for row in ledger.rows if row.arm_id == arm}
+                    for arm in sorted(run_arms)
+                )
+            )
             common.update((index, subject) for subject in subjects_in_every_arm)
     measures = secondary or {}
     policy = index_policy or {}
     if any(
         dict(measures[row.attempt_key].tool_usage).get("codeintel_query", 0) > 0
         and policy.get(row.arm_id) is None
-        for row in rows if row.attempt_key in measures
+        for row in rows
+        if row.attempt_key in measures
     ):
         raise ValueError("index use requires the run's declared index_agent_readable policy")
 
@@ -76,98 +171,143 @@ def render_from_ledgers(
         "## Implementation success",
         "",
         f"Common subjects with an attempt in every arm of a multi-arm run: {len(common)}. "
-        + ("Descriptive only; no inferential statistics are calculated."
-           if len(common) < 10 else "Paired inference is eligible but not calculated here."),
+        + (
+            "Descriptive only; no inferential statistics are calculated."
+            if len(common) < 10
+            else "Paired inference is eligible but not calculated here."
+        ),
         "",
-        _table(("Scope", "Attempted", "Completed", "Passed"), [
-            ("All attempts", *counts(rows)),
-        ]),
+        _table(
+            ("Scope", "Attempted", "Completed", "Passed"),
+            [
+                ("All attempts", *counts(rows)),
+            ],
+        ),
         "",
         "Per-scenario counts:",
         "",
-        _table(("Scenario", "Attempted", "Completed", "Passed"), [
-            (subject, *counts(by_subject[subject])) for subject in sorted(subjects)
-        ]),
+        _table(
+            ("Scenario", "Attempted", "Completed", "Passed"),
+            [(subject, *counts(by_subject[subject])) for subject in sorted(subjects)],
+        ),
         "",
         "Per-arm counts:",
         "",
-        _table(("Arm", "Attempted", "Completed", "Passed"), [
-            (arm, *counts(by_arm[arm])) for arm in sorted(arms)
-        ]),
+        _table(
+            ("Arm", "Attempted", "Completed", "Passed"),
+            [(arm, *counts(by_arm[arm])) for arm in sorted(arms)],
+        ),
         "",
         "Scenario/arm cells, including cells with no completed attempt:",
         "",
-        _table(("Scenario", "Arm", "Attempted", "Completed", "Passed"), [
-            (
-                item.subject_id, item.arm_id,
-                *counts([row for row in rows if row.subject_id == item.subject_id
-                         and row.arm_id == item.arm_id]),
-            ) for item in scenario_arms
-        ]),
+        _table(
+            ("Scenario", "Arm", "Attempted", "Completed", "Passed"),
+            [
+                (
+                    item.subject_id,
+                    item.arm_id,
+                    *counts(
+                        [
+                            row
+                            for row in rows
+                            if row.subject_id == item.subject_id and row.arm_id == item.arm_id
+                        ]
+                    ),
+                )
+                for item in scenario_arms
+            ],
+        ),
         "",
         "## Verification behavior",
         "",
         "Agent self-assessment is shown only beside the independent evaluator verdict. "
         "An unavailable verdict remains unavailable.",
         "",
-        _table(("Attempt", "Agent assessment", "External verdict", "Agreement"), [
-            (
-                row.attempt_key,
-                measures[row.attempt_key].self_assessed_verdict or "unavailable"
-                if row.attempt_key in measures else "unavailable",
-                row.verdict.value if row.verdict else "unavailable",
+        _table(
+            ("Attempt", "Agent assessment", "External verdict", "Agreement"),
+            [
                 (
-                    "yes" if measures[row.attempt_key].self_report_agrees else "no"
-                ) if (
-                    row.attempt_key in measures
-                    and measures[row.attempt_key].self_report_agrees is not None
+                    row.attempt_key,
+                    measures[row.attempt_key].self_assessed_verdict or "unavailable"
+                    if row.attempt_key in measures
+                    else "unavailable",
+                    row.verdict.value if row.verdict else "unavailable",
+                    ("yes" if measures[row.attempt_key].self_report_agrees else "no")
+                    if (
+                        row.attempt_key in measures
+                        and measures[row.attempt_key].self_report_agrees is not None
+                    )
+                    else "unavailable",
                 )
-                else "unavailable",
-            ) for row in rows
-        ]),
+                for row in rows
+            ],
+        ),
         "",
         "Declared `index_agent_readable` is operator policy, not an enforced access boundary. "
         "Index use is interpreted beside that declared policy:",
         "",
-        _table(("Arm", "index_agent_readable", "Index queries"), [
-            (
-                arm,
-                "true" if policy.get(arm) is True else "false" if policy.get(arm) is False
-                else "undeclared",
+        _table(
+            ("Arm", "index_agent_readable", "Index queries"),
+            [
                 (
-                    "unavailable" if any(
-                        row.attempt_key not in measures
-                        or not measures[row.attempt_key].trace_available
-                        for row in by_arm[arm]
-                    ) else str(sum(
-                        dict(measures[row.attempt_key].tool_usage).get("codeintel_query", 0)
-                        for row in by_arm[arm]
-                    ))
-                ),
-            ) for arm in sorted(arms)
-        ]),
+                    arm,
+                    "true"
+                    if policy.get(arm) is True
+                    else "false"
+                    if policy.get(arm) is False
+                    else "undeclared",
+                    (
+                        "unavailable"
+                        if any(
+                            row.attempt_key not in measures
+                            or not measures[row.attempt_key].trace_available
+                            for row in by_arm[arm]
+                        )
+                        else str(
+                            sum(
+                                dict(measures[row.attempt_key].tool_usage).get("codeintel_query", 0)
+                                for row in by_arm[arm]
+                            )
+                        )
+                    ),
+                )
+                for arm in sorted(arms)
+            ],
+        ),
         "",
         "## Operational failures",
         "",
-        _table(("Category", "Attempts"), [
-            (tag, str(count)) for tag, count in sorted(Counter(
-                row.category.tag for row in rows if row.category is not None
-            ).items())
-        ]),
+        _table(
+            ("Category", "Attempts"),
+            [
+                (tag, str(count))
+                for tag, count in sorted(
+                    Counter(row.category.tag for row in rows if row.category is not None).items()
+                )
+            ],
+        ),
         "",
         "Cost coverage is reported separately from implementation effects. "
         "Unpriced local usage is never treated as zero cost or ranked against priced usage.",
         "",
-        _table(("Arm", "Priced", "Unavailable", "Uncertain", "Observed cost"), [
-            (
-                arm,
-                str(sum(row.accounting.coverage in ("measured", "estimated", "mixed")
-                        for row in by_arm[arm])),
-                str(sum(row.accounting.coverage == "unavailable" for row in by_arm[arm])),
-                str(sum(row.accounting.coverage == "uncertain" for row in by_arm[arm])),
-                _observed_cost(by_arm[arm]),
-            ) for arm in sorted(arms)
-        ]),
+        _table(
+            ("Arm", "Priced", "Unavailable", "Uncertain", "Observed cost"),
+            [
+                (
+                    arm,
+                    str(
+                        sum(
+                            row.accounting.coverage in ("measured", "estimated", "mixed")
+                            for row in by_arm[arm]
+                        )
+                    ),
+                    str(sum(row.accounting.coverage == "unavailable" for row in by_arm[arm])),
+                    str(sum(row.accounting.coverage == "uncertain" for row in by_arm[arm])),
+                    _observed_cost(by_arm[arm]),
+                )
+                for arm in sorted(arms)
+            ],
+        ),
         "",
         "## Secondary measures",
         "",
@@ -175,20 +315,125 @@ def render_from_ledgers(
         "comparison of the committed fixture tree with the patched tree. "
         "The expected path set is declared per task; an unmeasured path count stays unavailable.",
         "",
-        _table((
-            "Attempt", "Changed paths", "Unnecessary paths", "Duration s", "Prompt tokens",
-            "Completion tokens", "Tool calls", "Files inspected", "Retries",
-        ), [
-            _secondary_row(row, measures.get(row.attempt_key)) for row in rows
-        ]),
-        "",
-        "## Interpretation",
-        "",
-        "Describe code-shape effects separately from scenario difficulty, verification behavior, "
-        "and operational failures. The fixture roster alone supplies no implementation effect.",
+        _table(
+            (
+                "Attempt",
+                "Changed paths",
+                "Unnecessary paths",
+                "Duration s",
+                "Prompt tokens",
+                "Completion tokens",
+                "Tool calls",
+                "Files inspected",
+                "Retries",
+            ),
+            [_secondary_row(row, measures.get(row.attempt_key)) for row in rows],
+        ),
         "",
     ]
+    lines.extend(
+        [
+            "## Scenario outcomes",
+            "",
+            "Unavailable means no retained measurement. Invalid means a dispatched attempt with an "
+            "infrastructure failure. Unevaluable means a dispatched attempt without an independent "
+            "grade. Primary success means normal completion, an independent grade, "
+            "all checks passing, "
+            "and a clean edit scope. No candidate counts attempts without a retained patch.",
+            "",
+            "Intervals use the Wilson score method at alpha 0.05. They describe execution "
+            "variability on a fixed task, rather than sampling error over tasks. The planned "
+            "fifteen attempts are five repeats on each of three fixed tasks, not fifteen "
+            "independently sampled tasks.",
+            "",
+            _table(
+                (
+                    "Scenario",
+                    "Planned",
+                    "Missing",
+                    "No candidate",
+                    "Operational yield",
+                    "Primary task success",
+                    "Conditional correctness",
+                    "Invalid",
+                    "Unevaluable",
+                ),
+                [_scenario_outcome(subject, by_subject[subject]) for subject in sorted(subjects)],
+            ),
+            "",
+            "## Terminal causes and measurement coverage",
+            "",
+            _table(
+                (
+                    "Scenario",
+                    "Terminal causes",
+                    "Duration measured",
+                    "Tool use measured",
+                    "Tokens measured",
+                    "Cost priced",
+                ),
+                [
+                    _scenario_coverage(subject, by_subject[subject], measures)
+                    for subject in sorted(subjects)
+                ],
+            ),
+            "",
+            "## Interpretation",
+            "",
+            "These scenario results do not isolate a code-shape effect. The fixture roster "
+            "alone supplies no implementation effect.",
+            "",
+        ]
+    )
     return "\n".join(lines)
+
+
+def _rate_cell(numerator: int, denominator: int) -> str:
+    interval = wilson(numerator, denominator) or "unavailable"
+    rate = f"{numerator / denominator:.2f}" if denominator else "unavailable"
+    return f"{numerator}/{denominator} ({rate}; 95% interval {interval})"
+
+
+def _scenario_outcome(subject: str, rows: Sequence[AttemptRow]) -> tuple[str, ...]:
+    rates = AttemptLedger(tuple(rows)).cohorts()["primary"].rates()
+    return (
+        subject,
+        str(sum(row.states.planned for row in rows)),
+        str(sum(row.states.missing for row in rows)),
+        str(sum(row.reference.patch_ref is None for row in rows)),
+        _rate_cell(rates.operational_yield.numerator, rates.operational_yield.denominator),
+        _rate_cell(rates.primary_task_success.numerator, rates.primary_task_success.denominator),
+        _rate_cell(
+            rates.conditional_correctness.numerator, rates.conditional_correctness.denominator
+        ),
+        str(rates.invalid),
+        str(rates.unevaluable),
+    )
+
+
+def _scenario_coverage(
+    subject: str, rows: Sequence[AttemptRow], measures: Mapping[str, SecondaryMeasures]
+) -> tuple[str, ...]:
+    count = len(rows)
+    causes = Counter(row.terminal_cause for row in rows if row.states.dispatched)
+    cause_text = ", ".join(f"{cause}: {value}/{count}" for cause, value in sorted(causes.items()))
+    tool_coverage = sum(
+        row.attempt_key in measures and measures[row.attempt_key].trace_available for row in rows
+    )
+    token_coverage = sum(
+        row.attempt_key in measures
+        and measures[row.attempt_key].prompt_tokens is not None
+        and measures[row.attempt_key].completion_tokens is not None
+        for row in rows
+    )
+    return (
+        subject,
+        cause_text or "unavailable",
+        f"{sum(row.duration_seconds is not None for row in rows)}/{count}",
+        f"{tool_coverage}/{count}",
+        f"{token_coverage}/{count}",
+        f"{sum(row.accounting.amount is not None for row in rows)}/{count}",
+    )
 
 
 def _observed_cost(rows: Sequence[AttemptRow]) -> str:
@@ -213,12 +458,12 @@ def _secondary_row(row: AttemptRow, measures: SecondaryMeasures | None) -> tuple
         str(len(diff.unnecessary_paths)) if diff else "unavailable",
         str(measures.duration_seconds) if measures.duration_seconds is not None else "unavailable",
         str(measures.prompt_tokens) if measures.prompt_tokens is not None else "unavailable",
-        str(measures.completion_tokens) if measures.completion_tokens is not None
+        str(measures.completion_tokens)
+        if measures.completion_tokens is not None
         else "unavailable",
         str(sum(count for _, count in measures.tool_usage))
-        if measures.trace_available else "unavailable",
+        if measures.trace_available
+        else "unavailable",
         str(len(measures.files_inspected)) if measures.trace_available else "unavailable",
         str(measures.retries) if measures.trace_available else "unavailable",
     )
-
-
