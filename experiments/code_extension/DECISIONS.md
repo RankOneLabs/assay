@@ -100,10 +100,45 @@
   The pilot, pointer-root and stage-pass-through fixtures were requalified;
   their baseline, reference and negative verdicts matched the old records.
 
-- The operator will decide whether the final committed set contains three or
-  four scenarios after reviewing the baseline pilot. The scenario-set cohort
-  targets three total, including the pilot, and will not add an unqualified
-  fourth merely to reach a count.
+- The committed qualified set currently contains pilot, pointer-root,
+  stage-pass-through and dispatch-handler: four subjects. The proposed WP6
+  three-subject pilot would have named pilot, cross-module-event and
+  config-plugin under the single baseline arm. The latter two did not pass
+  the pinned-slice feasibility check and have no qualification refs. No pilot
+  configuration is frozen; the operator must review replacements before a
+  three-subject manifest can be assembled. The operator still decides whether
+  surplus committed subjects remain or are retired after reviewing a baseline
+  pilot. The existing four-arm stage-pass-through subject cannot join a
+  single-baseline-arm pilot manifest.
+
+## WP6 feasibility stop before pilot freeze
+
+- In the pinned dispatch-handler slice, `RunEventRow` and `projectRunEvent`
+  occur only in `src/domain/run-event.ts`. The requested cross-module-event
+  producer and consumer are absent, as is a public package entry point.
+  Writing hidden end-to-end assertions would require inventing these
+  production modules, so the candidate is blocked. A workflow edge contract
+  using the existing validation and compilation paths is proposed for review,
+  with no claim that it is the same event feature.
+- The pinned slice has an optional injected `StageTypeCompilerRegistry` in
+  `compileWorkflowDefinition` and fixed built-in compilers. It has no
+  configuration-driven plugin loader. The stage-pass-through plugin arm's
+  configuration and loader were authored locally rather than extracted from
+  the pin, so they cannot establish a pre-existing loading path. The
+  config-plugin candidate is blocked. An injected-registry scenario is
+  proposed for review, with no claim that it tests configuration loading.
+- The candidate task files and their intended assertion tables document the
+  requested behavior. They are not frozen agent tasks or qualified fixtures.
+  The identical eight-control gate still applies to any approved replacement.
+  No qualification evidence, combined manifest, fifteen-attempt plan, offline
+  ledger or export from nonexistent pilot evidence is claimed. Calibration
+  remains a separate one-attempt authorization; after a future freeze, every
+  attempt must be retained. A route probe counts as live work. The pilot
+  requires a qualified common image and routing digest, current qualification
+  and scripted full-path evidence, exact endpoint/model/provider and envelope,
+  explicit pricing bound, approved per-attempt and total caps, and prompt,
+  tool, fixture and image drift rejection. The per-cell tool-call bound is
+  unavailable because extension mode does not enforce it.
 
 ## Study authorization and evaluation
 
