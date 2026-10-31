@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import re
 import shutil
@@ -10,11 +11,25 @@ import subprocess
 import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
+
+from workflow_edit.evaluation import WorkerCandidate, worker_candidate
 
 from assay.canonical import canonical_json
 from assay.fixture_manifest import FixtureManifestV3
+from assay.investigations.workflow_correctness import (
+    DockerWorkflowRunner,
+    WorkflowRunnerSettings,
+    workflow_tree_digest,
+)
+from assay.models import ExecutionOutcome, ExecutionPlanV3, RunManifest
+from assay.pier_protocol import CandidateSubmission
+from assay.store import ObjectStore
+from code_extension.evaluation import GRADER_REVISION, evaluate_scenario_candidate
 from code_extension.fixture import PILOT, PilotFixture, load_fixture, materialize, read_tree
+from code_extension.metrics import artifact_bytes
 from code_extension.qualify import require_image
 
 _FAIL = re.compile(r"^\(fail\) (.*?)(?: \[[\d.]+ms\])?$", re.MULTILINE)
@@ -184,9 +199,109 @@ def diagnose_candidate(
         shutil.rmtree(root, ignore_errors=True)
 
 
+def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]:
+    """Replay retained candidates with the independent evaluator, appending new records."""
+    runs = archive / "runs" if (archive / "runs").is_dir() else archive
+    destination = output / "regrades"
+    destination.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for index_path in sorted(runs.glob("*/run.json")):
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        store = ObjectStore(index_path.parent)
+        plan = ExecutionPlanV3.model_validate_json(store.read_bytes(index["plan_ref"]))
+        manifest = RunManifest.model_validate_json(store.read_bytes(index["manifest_ref"]))
+        fixture_root = archive / "fixtures" if (archive / "fixtures").is_dir() else PILOT.parent
+        fixtures = [
+            FixtureManifestV3.model_validate_json(path.read_bytes())
+            for path in sorted(fixture_root.glob("*/qualification/manifest.json"))
+        ]
+        by_subject = {
+            scenario.subject_id: fixture for fixture in fixtures for scenario in fixture.scenarios
+        }
+        runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=image, toolchain="bun"))
+        for cell in plan.cells:
+            execution_ref = manifest.execution_records.get(cell.id)
+            if execution_ref is None:
+                continue
+            outcome = ExecutionOutcome.model_validate_json(store.read_bytes(execution_ref))
+            realization = json.loads(store.read_bytes(cell.realization_ref))
+            baseline = realization["repository"]
+            if not isinstance(baseline, dict):
+                raise ValueError("archived realization has no repository")
+            if outcome.output_ref is not None:
+                payload = json.loads(store.read_bytes(outcome.output_ref))
+                candidate = worker_candidate(store, payload)
+            else:
+                trace_ref = outcome.trace_ref or manifest.interruption_ref
+                trace = json.loads(store.read_bytes(trace_ref)) if trace_ref else {}
+                refs = trace.get("artifact_refs", {})
+                patch_ref = refs.get("stopped/candidate.patch") or refs.get("candidate.patch")
+                if not isinstance(patch_ref, str):
+                    continue
+                patch = artifact_bytes(store, patch_ref)
+                baseline_digest = workflow_tree_digest(baseline)
+                with tempfile.TemporaryDirectory() as candidate_scratch:
+                    root = Path(candidate_scratch)
+                    try:
+                        materialize(root, baseline, patch.decode("utf-8"))
+                        candidate_digest = workflow_tree_digest(read_tree(root))
+                    except (subprocess.CalledProcessError, UnicodeError, ValueError):
+                        candidate_digest = baseline_digest
+                candidate = WorkerCandidate(patch, candidate_digest, baseline_digest)
+            fixture = by_subject[cell.subject_id]
+            replay_fixture = fixture.model_copy(update={"observed_runtime_image_digest": image})
+            with tempfile.TemporaryDirectory() as scratch:
+                replay_store = ObjectStore(Path(scratch))
+                scenario = fixture.scenario(cell.subject_id)
+                assert scenario is not None
+                for group in (*scenario.visible_tests, *scenario.hidden_tests):
+                    replay_store.publish_bytes(store.read_bytes(group.digest))
+                submission = CandidateSubmission(
+                    patch_ref=str(replay_store.publish_bytes(candidate.patch)),
+                    tree_digest=candidate.tree_digest,
+                    baseline_tree_digest=candidate.baseline_tree_digest,
+                )
+                result = asyncio.run(
+                    evaluate_scenario_candidate(
+                        store=replay_store,
+                        manifest=replay_fixture,
+                        subject_id=cell.subject_id,
+                        arm_id=cell.arm_id,
+                        baseline=baseline,
+                        submission=submission,
+                        runner=runner,
+                    )
+                )
+            record = {
+                "schema_version": "code-extension-regrade/1",
+                "image_digest": image,
+                "grader_revision": GRADER_REVISION,
+                "run_id": manifest.run_id,
+                "cell_id": cell.id,
+                "original_manifest_ref": index["manifest_ref"],
+                "original_grading_refs": {
+                    key: ref
+                    for key, ref in manifest.evaluation_records.items()
+                    if key.startswith(f"{cell.id}:")
+                },
+                "verdict": result.verdict,
+                "cause": result.cause,
+                "groups": [asdict(group) for group in result.groups],
+                "preflight": asdict(result.preflight) if result.preflight is not None else None,
+                "attribution": result.attribution,
+                "rejected_changes": [asdict(change) for change in result.rejected_changes],
+            }
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+            path = destination / f"{stamp}-{uuid.uuid4().hex}.json"
+            with path.open("x", encoding="utf-8") as stream:
+                stream.write(canonical_json(record).decode("utf-8") + "\n")
+            written.append(path)
+    return tuple(written)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", default="assay-code-extension:run-bfb5dd7d9189a983")
+    parser.add_argument("--image", default="assay-code-extension:ce-v1-bounds")
     parser.add_argument("--manifest", type=Path, default=PILOT / "qualification" / "manifest.json")
     parser.add_argument("--record", type=Path, required=True)
     parser.add_argument("--patch", type=Path, required=True)

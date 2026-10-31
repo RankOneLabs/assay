@@ -11,14 +11,20 @@ from pathlib import Path
 import pytest
 from code_extension import diagnose, qualify
 from code_extension.fixture import PILOT, SUBJECT_ID, load_fixture, materialize, read_tree
+from code_extension.fixtures import load_scenario
 from code_extension.settings import SMOKE_SUBJECT_IDS
 
 from assay.canonical import digest_bytes
 from assay.fixture_manifest import FixtureManifestV3
-from assay.investigations.workflow_correctness import workflow_tree_digest
+from assay.investigations.workflow_correctness import (
+    GroupResult,
+    WorkflowCorrectnessResult,
+    workflow_tree_digest,
+)
 
 MANIFEST = PILOT / "qualification" / "manifest.json"
 EVIDENCE = PILOT / "qualification" / "evidence"
+DISPATCH = PILOT.parent / "dispatch-handler"
 
 
 def _committed_manifest() -> FixtureManifestV3:
@@ -32,6 +38,16 @@ def _docker_ready() -> bool:
         subprocess.run(("docker", "info"), capture_output=True, check=False, timeout=30).returncode
         == 0
     )
+
+
+def _require_dispatch_image(image: str) -> None:
+    available = subprocess.run(
+        ("docker", "image", "inspect", image), capture_output=True, check=False, timeout=30
+    ).returncode == 0
+    if not available:
+        if os.environ.get("ASSAY_REQUIRE_EXTENSION_IMAGE"):
+            pytest.fail("pinned dispatch-handler Docker image is not provisioned")
+        pytest.skip("pinned dispatch-handler Docker image is not provisioned")
 
 
 def test_pilot_is_a_bounded_study_subject_and_private_assets_do_not_ship() -> None:
@@ -75,6 +91,121 @@ def test_committed_records_are_canonical_digest_bound_and_qualified() -> None:
         assert record["image_digest"] == manifest.observed_runtime_image_digest
     assert arm.qualification.feature_fails.outcome == "failed"
     assert arm.qualification.reference_passes.outcome == "passed"
+
+
+def test_dispatch_committed_gate_evidence_is_content_addressed() -> None:
+    fixture = load_scenario("dispatch-handler")
+    manifest = FixtureManifestV3.model_validate_json(
+        (DISPATCH / "qualification" / "manifest.json").read_bytes()
+    )
+    manifest.require_qualified()
+    assert manifest.scenario(fixture.subject_id) is not None
+    refs = fixture.sidecar.evidence.model_dump()
+    for field, filename in (
+        ("leak_scan", "leak-scan.json"),
+        ("access_probe", "access-probe.json"),
+        ("no_op", "no-op.json"),
+        ("scripted_submission", "scripted-submission.json"),
+        ("double_reproduction", "double-reproduction.json"),
+    ):
+        data = (DISPATCH / "qualification" / "gates" / filename).read_bytes()
+        assert digest_bytes(data) == refs[field]
+        assert data == qualify.canonical_json(json.loads(data)) + b"\n"
+    no_op = json.loads((DISPATCH / "qualification" / "gates" / "no-op.json").read_bytes())
+    assert {name: value["status"] for name, value in no_op["result"]["groups"].items()} == {
+        "visible_regression": "passed",
+        "hidden_regression": "passed",
+        "new_behavior": "failed",
+    }
+
+    repeated = json.loads(
+        (DISPATCH / "qualification" / "gates" / "double-reproduction.json").read_bytes()
+    )
+    missing_export = repeated["controls"]["missing-type-export.patch"]
+    assert missing_export[0] == missing_export[1]
+    assert {
+        name: value["status"] for name, value in missing_export[0]["groups"].items()
+    } == {
+        "visible_regression": "passed",
+        "hidden_regression": "passed",
+        "new_behavior": "failed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_dispatch_full_gate_reproduces_committed_bytes() -> None:
+    if not _docker_ready():
+        if os.environ.get("ASSAY_REQUIRE_DOCKER") or os.environ.get(
+            "ASSAY_REQUIRE_EXTENSION_IMAGE"
+        ):
+            pytest.fail("Docker is unavailable")
+        pytest.skip("Docker is unavailable")
+    image = "assay-code-extension:run-bfb5dd7d9189a983"
+    _require_dispatch_image(image)
+    manifest = FixtureManifestV3.model_validate_json(
+        (DISPATCH / "qualification" / "manifest.json").read_bytes()
+    )
+    fresh = await qualify.qualify(
+        image=image,
+        routing_config=None,
+        evidence_dir=DISPATCH / "qualification" / "evidence",
+        fixture=load_scenario("dispatch-handler"),
+        expected_manifest=manifest,
+        verify_committed=True,
+    )
+    assert fresh == manifest
+
+
+def test_dispatch_image_requirement_is_separate_from_docker_daemon_requirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 1),
+    )
+    monkeypatch.setenv("ASSAY_REQUIRE_DOCKER", "1")
+    monkeypatch.delenv("ASSAY_REQUIRE_EXTENSION_IMAGE", raising=False)
+    with pytest.raises(pytest.skip.Exception, match="not provisioned"):
+        _require_dispatch_image("missing-image")
+    monkeypatch.setenv("ASSAY_REQUIRE_EXTENSION_IMAGE", "1")
+    with pytest.raises(pytest.fail.Exception, match="not provisioned"):
+        _require_dispatch_image("missing-image")
+
+
+@pytest.mark.asyncio
+async def test_scenario_controls_use_loaded_patches_with_custom_evidence_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = load_scenario("dispatch-handler")
+    manifest = FixtureManifestV3.model_validate_json(
+        (DISPATCH / "qualification" / "manifest.json").read_bytes()
+    )
+
+    class StopAfterNoOp:
+        async def run(self, *, patch: str, **_kwargs: object) -> WorkflowCorrectnessResult:
+            if patch:
+                assert patch == fixture.arms[0].reference_patch
+                raise RuntimeError("reference control reached")
+            return WorkflowCorrectnessResult(
+                "incorrect",
+                (
+                    GroupResult("visible_regression", "passed"),
+                    GroupResult("hidden_regression", "passed"),
+                    GroupResult("new_behavior", "failed", "nonzero_exit"),
+                ),
+                "group_failure",
+            )
+
+    monkeypatch.setattr(qualify, "make_runner", lambda _image: StopAfterNoOp())
+    with pytest.raises(RuntimeError, match="reference control reached"):
+        await qualify.run_scenario_gates(
+            fixture,
+            manifest,
+            "image",
+            tmp_path / "different-output-dir",
+            verify=False,
+        )
 
 
 def test_assembly_refuses_a_dead_feature_group_and_image_mismatch(

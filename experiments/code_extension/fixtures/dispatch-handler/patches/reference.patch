@@ -1,0 +1,52 @@
+diff --git a/src/domain/run-event.ts b/src/domain/run-event.ts
+--- a/src/domain/run-event.ts
++++ b/src/domain/run-event.ts
+@@ -21,7 +21,8 @@
+ 
+ type GateRunEventOperation = "gate_opened" | "gate_decided";
+ type PullRequestRunEventOperation = "pull_request_observed" | "pull_request_merge_confirmed";
+-type OtherRunEventOperation = Exclude<RunTransitionOperation, GateRunEventOperation | PullRequestRunEventOperation>;
++type WorkStartedRunEventOperation = "work_started";
++type OtherRunEventOperation = Exclude<RunTransitionOperation, GateRunEventOperation | PullRequestRunEventOperation | WorkStartedRunEventOperation>;
+ 
+ export interface GateRunEventPayload extends RunEventPayload {
+   readonly run_unit_id: RunUnitId;
+@@ -33,6 +34,11 @@
+   readonly artifact_revision_id: ArtifactId;
+   readonly attention: OutputAttention;
+   readonly continuation: OutputContinuation;
++}
++
++export interface WorkStartedRunEventPayload extends RunEventPayload {
++  readonly run_unit_id: RunUnitId;
++  readonly work_order_id: WorkOrderId;
+ }
+ 
+ export type PullRequestRunEventDetail = {
+@@ -64,6 +70,7 @@
+ export type RunEvent =
+   | RunEventEnvelope<GateRunEventOperation, GateRunEventPayload>
+   | RunEventEnvelope<PullRequestRunEventOperation, PullRequestRunEventPayload>
++  | RunEventEnvelope<WorkStartedRunEventOperation, WorkStartedRunEventPayload>
+   | RunEventEnvelope<OtherRunEventOperation, RunEventPayload>;
+ 
+ export interface RunEventRow {
+@@ -94,7 +101,18 @@
+ const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
+   typeof value === "object" && value !== null && !Array.isArray(value);
+ 
++export const projectWorkStartedEvent = (row: RunEventRow): RunEventEnvelope<WorkStartedRunEventOperation, WorkStartedRunEventPayload> => {
++  if (row.operation !== "work_started" || !row.run_unit_id || !row.work_order_id) {
++    throw new Error(`run event '${row.sequence}' has an invalid ${row.operation} payload`);
++  }
++  const projected = projectRunEvent({ ...row, operation: "unit_admitted" });
++  return { ...projected, operation: "work_started", payload: { ...projected.payload,
++    run_unit_id: row.run_unit_id as RunUnitId, work_order_id: row.work_order_id as WorkOrderId } };
++};
++
+ export const projectRunEvent = (row: RunEventRow): RunEvent => {
++  if (row.operation === "work_started") return projectWorkStartedEvent(row);
++
+   const payload: RunEventPayload = {
+     run_id: row.run_id as WorkflowRunId,
+     run_unit_id: row.run_unit_id as RunUnitId | null,

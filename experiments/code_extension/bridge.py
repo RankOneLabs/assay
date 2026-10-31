@@ -12,10 +12,12 @@ from typing import Any
 
 from workflow_edit.bridge import (
     SmithersTurnCompletion,
+    TurnCompletion,
     WorkflowEditBridgeClient,
     WorkflowEditHandle,
     trial_limits,
 )
+from assay.canonical import canonical_json, digest_bytes
 
 from assay_pier_bridge import protocol as bridge_protocol
 from assay_pier_bridge.agent_loop import (
@@ -39,8 +41,11 @@ from assay.pier_protocol import PierExchange
 from code_extension.arms import require_declared_codeintel_arm
 from code_extension.codeintel import PreparedExtensionCodeIntel, prepare_extension_codeintel
 from code_extension.dispatch import cell_idempotency_key
+from code_extension.fixture import ADDED_SCENARIOS, SUBJECT_ID
+from code_extension.fixtures import ExtensionScenarioSidecar, sidecar_for_subject
 from code_extension.prompts import render_arm_prompts
 from code_extension.settings import ExtensionAgentSettings
+from code_extension.settings import TOOL_CALL_CEILING_REASON
 
 # The study's complete authorized model matrix. The underlying wire protocol
 # accepts more historical routes; these two local routes are this study's arms.
@@ -48,7 +53,10 @@ AUTHORIZED_MODEL_ROUTES = frozenset({
     ("http://willie:8900", "qwen-coder-32b", "smithers-local"),
     ("http://willie:8900", "qwen3.6-27b", "smithers-local"),
 })
-WRITABLE_PREFIXES = ("src/", "tests/visible/")
+LEGACY_WRITABLE_PREFIXES = ("src/", "tests/visible/")
+LEGACY_SUBJECT_IDS = frozenset(
+    {SUBJECT_ID, *(item.subject_id for item in ADDED_SCENARIOS.values())}
+)
 EXTENSION_SYSTEM_PROMPT = (
     "You are editing one repository copy in /workspace. Read instruction.md and use "
     "the repository tools to implement and check the feature. Call submit_output when "
@@ -64,6 +72,10 @@ class UnauthorizedModelRoute(ValueError):
 
 class CodeIntelLeakRejected(ValueError):
     """A pre-run scan found hidden source in deliverable index material."""
+
+
+class ExtensionIdentityRejected(ValueError):
+    """A frozen ce-v1 identity differs before model dispatch."""
 
 
 def require_authorized_route(route: bridge_protocol.ModelRoute) -> None:
@@ -105,6 +117,7 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
     """One arm's declared prompt, route, tool surface and provider delivery."""
 
     scenario: ExtensionScenario | None = None
+    scenario_sidecar: ExtensionScenarioSidecar | None = None
     arm_set: ExtensionArmSet | None = None
     arm_id: str = "baseline"
     route: bridge_protocol.ModelRoute = bridge_protocol.ModelRoute(
@@ -118,6 +131,8 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
     leak_terms: tuple[str, ...] = ()
     preflight_queries: tuple[tuple[str, str], ...] = ()
     prepared: PreparedExtensionCodeIntel | None = None
+    authorized_writable_scope: tuple[str, ...] | None = None
+    authorized_protected_assets: dict[str, tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -129,6 +144,59 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
         if self.scenario is None or self.arm_set is None:
             raise ValueError("extension scenario and arm set are required")
         return render_arm_prompts(self.arm_set, self.scenario)[self.arm_id]
+
+    def _writable_prefixes(self) -> tuple[str, ...]:
+        if self.scenario is None:
+            raise ValueError("extension scenario is required for writable scope")
+        sidecar = self.scenario_sidecar or sidecar_for_subject(self.scenario.subject_id)
+        if sidecar is not None:
+            if sidecar.subject_id != self.scenario.subject_id:
+                raise ValueError("extension sidecar subject differs from scenario")
+            prefixes = sidecar.writable_implementation_scope
+            if any(not prefix.endswith("/") for prefix in prefixes):
+                raise ValueError("extension writable scope must contain directory prefixes")
+            return prefixes
+        if self.scenario.subject_id in LEGACY_SUBJECT_IDS:
+            return LEGACY_WRITABLE_PREFIXES
+        raise ValueError("extension scenario has no writable-scope sidecar")
+
+    def _check_frozen_identity(
+        self, tools: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> None:
+        # Import locally: protocol reads the bridge's literal prompt and tool surface.
+        from code_extension.protocol import (
+            ORDERED_TOOL_SCHEMAS_SHA256, SYSTEM_PROMPT_SHA256,
+        )
+
+        if digest_bytes(EXTENSION_SYSTEM_PROMPT.encode()) != SYSTEM_PROMPT_SHA256:
+            raise ExtensionIdentityRejected("extension_system_prompt_drift")
+        if (digest_bytes(canonical_json(tools[:len(EXTENSION_TOOLS)]))
+                != ORDERED_TOOL_SCHEMAS_SHA256):
+            raise ExtensionIdentityRejected("extension_tool_surface_drift")
+        scope = self._writable_prefixes()
+        sidecar = (
+            sidecar_for_subject(self.scenario.subject_id)
+            if self.scenario is not None else None
+        )
+        expected_scope = self.authorized_writable_scope or (
+            sidecar.writable_implementation_scope if sidecar is not None else scope
+        )
+        if scope != expected_scope:
+            raise ExtensionIdentityRejected("extension_writable_scope_drift")
+        declared = self.scenario_sidecar or sidecar
+        if declared is not None:
+            expected_assets = self.authorized_protected_assets or (
+                sidecar.protected_assets.model_dump(mode="json") if sidecar is not None
+                else declared.protected_assets.model_dump(mode="json")
+            )
+            normalized_assets = {
+                key: tuple(value) for key, value in expected_assets.items()
+            }
+            if {
+                key: tuple(value) for key, value in
+                declared.protected_assets.model_dump(mode="json").items()
+            } != normalized_assets:
+                raise ExtensionIdentityRejected("extension_protected_assets_drift")
 
     def _bounds(self) -> LoopBounds:
         settings = self._settings()
@@ -185,12 +253,13 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
                 for path, source in self.repository_snapshot.items()
             })
         tools = self.prepared.tools if self.prepared is not None else EXTENSION_TOOLS
+        self._check_frozen_identity(tools)
         prefix: tuple[dict[str, Any], ...] = ()
         if self.prepared is not None and self.prepared.prompt_block is not None:
             prefix = ({"role": "user", "content": self.prepared.prompt_block},)
         return agent_configuration(
             bounds=self._bounds(), limits=self.limits,
-            writable_prefixes=WRITABLE_PREFIXES, model_route=self.route,
+            writable_prefixes=self._writable_prefixes(), model_route=self.route,
             tools=tools, system_prompt=EXTENSION_SYSTEM_PROMPT, message_prefix=prefix,
             extra={
                 "image": self.image, "image_digest": observed_image_digest(self.image),
@@ -205,6 +274,12 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
                     if self.codeintel_delivery is not None else None
                 ),
                 "served_context_tokens": settings.served_context_tokens,
+                "model_context_limit_tokens": settings.model_context_limit_tokens,
+                "request_timeout_s": settings.request_timeout_s,
+                "per_cell_tool_call_ceiling": "unavailable",
+                "per_cell_tool_call_ceiling_reason": TOOL_CALL_CEILING_REASON,
+                "requested_sampling": settings.requested_sampling,
+                "provider_reported_sampling": settings.provider_reported_sampling,
                 "turns": {"backend": "smithers", "smithers": self.factory.configuration()},
             },
         )
@@ -229,6 +304,9 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
             raise ValueError("extension repository differs from its authorized snapshot")
         expected_delivery = self.prepared
         self.prepared = self._prepare(package)
+        self._check_frozen_identity(
+            self.prepared.tools if self.prepared is not None else EXTENSION_TOOLS
+        )
         if expected_delivery is not None and self.prepared is not None and (
             expected_delivery.manifest.cache_key != self.prepared.manifest.cache_key
             or expected_delivery.tools != self.prepared.tools
@@ -240,16 +318,20 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
         prefix: tuple[dict[str, Any], ...] = ()
         if self.prepared is not None and self.prepared.prompt_block is not None:
             prefix = ({"role": "user", "content": self.prepared.prompt_block},)
-        completion = SmithersTurnCompletion(
-            self.factory, cell_idempotency_key(self.run_label, coordinate),
-            authorized=self.authorized_smithers,
+        cell_key = cell_idempotency_key(self.run_label, coordinate)
+        completion: TurnCompletion = (
+            self.completion_for(cell_key)
+            if self.completion_for is not None
+            else SmithersTurnCompletion(
+                self.factory, cell_key, authorized=self.authorized_smithers,
+            )
         )
         agent = RepositoryAgentClient(
             api_key=None, image=self.image, runs_root=self.runs_root,
             model_route=self.route, completion=completion, bounds=self._bounds(),
             tools=deepcopy(self.prepared.tools if self.prepared is not None else EXTENSION_TOOLS),
             extension_mode=True, system_prompt=EXTENSION_SYSTEM_PROMPT,
-            message_prefix=prefix, writable_prefixes=WRITABLE_PREFIXES,
+            message_prefix=prefix, writable_prefixes=self._writable_prefixes(),
             codeintel_query_script=(
                 QUERY_SCRIPT if self.prepared is not None and isinstance(
                     delivery.delivery, ToolDelivery
