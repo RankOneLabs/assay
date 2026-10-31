@@ -70,6 +70,125 @@ def test_empty_archive_reproduces_committed_report_and_fixed_ledger(
     assert [path.read_bytes() for path in render_archive(archive, tmp_path / "out")] == first
 
 
+def test_committed_qualification_and_scripted_archive_reproduce_and_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model-free bridge submission can be reported and exported offline."""
+    from code_extension.fixtures import load_scenario
+    from code_extension.probe import _run_script, _scripted_client
+    from code_extension.study import load_qualified_study_fixture, plan_study
+    from code_extension.tests.test_code_extension_study import PlanWorker
+    from workflow_edit.tests.test_workflow_edit_bridge import FakeSandbox
+
+    from assay.canonical import canonical_json
+    from assay.fixture_manifest import FixtureManifestV3
+    from assay.investigations.workflow_correctness import (
+        DockerWorkflowRunner,
+        WorkflowRunnerSettings,
+    )
+    from assay.models import (
+        ExecutionCeiling,
+        ExecutionOutcome,
+        RunManifest,
+        RuntimeProfile,
+        parse_execution_plan,
+    )
+    from assay.verify import export_bundle, verify_bundle
+
+    fixture = load_scenario("dispatch-handler")
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures" / "dispatch-handler" / "qualification" / "manifest.json"
+    )
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = FixtureManifestV3.model_validate_json(manifest_bytes)
+    image = manifest.observed_runtime_image_digest
+    source = ObjectStore(tmp_path / "source")
+    qualified = load_qualified_study_fixture(
+        source, {"dispatch-handler": digest_bytes(manifest_bytes)}, image=image
+    )
+    prepared = plan_study(
+        source, qualified, workers={"baseline": PlanWorker()},
+        runner=DockerWorkflowRunner(WorkflowRunnerSettings(image=image, toolchain="bun")),
+        runtime=RuntimeProfile(
+            id="pier", version="scripted", configuration_ref=str(source.publish_json({"v": 1}))
+        ),
+        image=image, routing_digest=manifest.routing_config_digest, repeats=1,
+        ceiling=ExecutionCeiling(max_cells=1, max_wall_time_seconds=600, max_fleet_occupancy=1),
+    )
+    plan = parse_execution_plan(json.loads(prepared.plan_bytes))
+    assert len(plan.cells) == 1
+
+    monkeypatch.setattr("code_extension.bridge.observed_image_digest", lambda _image: image)
+    monkeypatch.setattr("code_extension.probe.observed_image_digest", lambda _image: image)
+    path = "src/domain/run-event.ts"
+    client = _scripted_client(
+        fixture, manifest, "scripted-image", tmp_path / "trial",
+        [("write_file", {"path": path,
+                         "content": fixture.repository[path] + "\n// offline rehearsal\n"})],
+    )
+    client.sandbox_factory = FakeSandbox
+    result, trajectory, _, _ = _run_script(client, fixture, "scripted-image")
+    assert [call["name"] for turn in trajectory["turns"] for call in turn["tool_calls"]] == [
+        "write_file", "submit_output"
+    ]
+    def retain_artifact(name: str) -> str:
+        data = result.artifacts[name]
+        return str(source.publish_json({
+            "schema_version": "assay-pier-raw-artifact/0.1.0",
+            "path": name, "checksum": digest_bytes(data), "byte_length": len(data),
+            "content_base64": base64.b64encode(data).decode(),
+        }))
+
+    output_ref = str(source.publish_json({
+        "patch_ref": retain_artifact("candidate.patch"),
+        "result_ref": retain_artifact("result.json"),
+        "raw_trajectory_ref": retain_artifact("trajectory.json"),
+    }))
+    cell = plan.cells[0]
+    execution = ExecutionOutcome(
+        run_id="scripted-rehearsal", plan_ref=prepared.authorization,
+        started_at="2026-10-31T00:00:00Z", completed_at="2026-10-31T00:00:01Z",
+        coordinate=cell, status="succeeded", input_ref=cell.realization_ref,
+        output_ref=output_ref,
+        trace_ref=str(source.publish_bytes(canonical_json({"scripted": True}))),
+    )
+    execution_ref = str(source.publish_json(execution.model_dump(mode="json")))
+    run_manifest = RunManifest(
+        run_id="scripted-rehearsal", plan_ref=prepared.authorization, status="incomplete",
+        execution_records={cell.id: execution_ref}, evaluation_records={},
+        missing_coordinates=tuple(sorted((
+            f"worker:{cell.id}", *(item.id for item in plan.evaluations)
+        ))),
+    )
+    manifest_ref = str(source.publish_json(run_manifest.model_dump(mode="json")))
+    archive = tmp_path / "archive"
+    run_dir = archive / "runs" / "scripted-rehearsal"
+    shutil.copytree(source.root, run_dir)
+    (run_dir / "run.json").write_text(json.dumps({
+        "plan_ref": prepared.authorization, "manifest_ref": manifest_ref,
+        "judgments": {}, "expected_change_paths": {fixture.subject_id: [path]},
+    }), encoding="utf-8")
+
+    dependencies = install_toolchain(tmp_path / "dependencies", offline=True)
+    monkeypatch.setattr("workflow_edit.metrics.dependencies_directory", lambda _lock: dependencies)
+    _forbid_model_constructors(monkeypatch)
+    paths = render_archive(archive, tmp_path / "rendered")
+    first = tuple(item.read_bytes() for item in paths)
+    assert first == tuple(
+        item.read_bytes() for item in render_archive(archive, tmp_path / "rendered")
+    )
+    rows = json.loads(paths[2].read_text(encoding="utf-8"))
+    assert len(rows) == 1 and rows[0]["scenario"] == fixture.subject_id
+    assert "| All attempts | 1 |" in paths[0].read_text(encoding="utf-8")
+
+    bundle = export_bundle(ObjectStore(run_dir), manifest_ref, tmp_path / "bundle")
+    assert {failure.code for failure in verify_bundle(bundle, manifest_ref)} <= {"incomplete_run"}
+    object_path = bundle._path(manifest_ref)
+    object_path.write_bytes(b"tampered")
+    assert any(failure.code != "incomplete_run" for failure in verify_bundle(bundle, manifest_ref))
+
+
 def test_archive_ledger_keeps_undispatched_coordinate_as_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

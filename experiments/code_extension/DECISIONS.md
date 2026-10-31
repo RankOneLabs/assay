@@ -100,10 +100,53 @@
   The pilot, pointer-root and stage-pass-through fixtures were requalified;
   their baseline, reference and negative verdicts matched the old records.
 
-- The operator will decide whether the final committed set contains three or
-  four scenarios after reviewing the baseline pilot. The scenario-set cohort
-  targets three total, including the pilot, and will not add an unqualified
-  fourth merely to reach a count.
+- The committed qualified set currently contains pilot, pointer-root,
+  stage-pass-through and dispatch-handler: four subjects. The proposed WP6
+  three-subject pilot would have named pilot, cross-module-event and
+  config-plugin under the single baseline arm. Cross-module-event is feasible
+  at the upstream pin, while config-plugin lacks a loading path; neither has
+  a qualification ref. No pilot configuration is frozen; the operator must
+  review replacements before a three-subject manifest can be assembled. The
+  operator still decides whether
+  surplus committed subjects remain or are retired after reviewing a baseline
+  pilot. The existing four-arm stage-pass-through subject cannot join a
+  single-baseline-arm pilot manifest.
+
+## WP6 feasibility stop before pilot freeze
+
+- The earlier 62-file dispatch-handler slice omitted storage and HTTP; that
+  search cannot establish infeasibility at the pin. A fresh extraction of the
+  upstream source, package files and `invalidation-events.test.ts` contains
+  the four event integration points. `PostgresOperatorProjectionRepository`
+  takes an injected `SqlExecutor`, so its SQL-backed `list_run_events` can be
+  tested with fake query rows and without Postgres. The SSE consumer accepts
+  injected callbacks, and `src/http/app.ts` wires the two. Cross-module-event
+  is feasible at the pin; `hono` is needed in the fixture dependency lock.
+- The pin has an optional injected `StageTypeCompilerRegistry` in
+  `compileWorkflowDefinition` and fixed built-in compilers. It has no
+  configuration-driven plugin loader. Its runtime registry is imperative and
+  its HTTP configuration API reads values without loading plugins. The
+  stage-pass-through plugin arm's
+  configuration and loader were authored locally rather than extracted from
+  the pin, so they cannot establish a pre-existing loading path. The
+  config-plugin candidate is blocked. An injected-registry scenario is
+  proposed for review, with no claim that it tests configuration loading.
+- The candidate task files and their intended assertion tables document the
+  requested behavior. They are not frozen agent tasks or qualified fixtures.
+  The identical eight-control gate still applies to any approved replacement.
+  No qualification evidence, combined manifest or fifteen-attempt plan is
+  claimed for these candidates. Offline ledger, report and export checks can
+  run over existing committed qualification evidence and a model-free scripted
+  archive without a pilot freeze. The offline rehearsal renders ledger and
+  report bytes twice, exports the run object's closure, and rejects a tampered
+  exported object; its missing evaluator is explicitly `incomplete_run`.
+  Calibration remains a separate one-attempt authorization; after a future
+  freeze, every attempt must be retained. A route probe counts as live work. The pilot
+  requires a qualified common image and routing digest, current qualification
+  and scripted full-path evidence, exact endpoint/model/provider and envelope,
+  explicit pricing bound, approved per-attempt and total caps, and prompt,
+  tool, fixture and image drift rejection. The per-cell tool-call bound is
+  unavailable because extension mode does not enforce it.
 
 ## Study authorization and evaluation
 
@@ -335,12 +378,13 @@ configuration. A changed configuration is a new plan.
 Calibration is one attempt. The pilot specification is five fresh repeats on
 each of three qualified baseline scenarios, exactly fifteen attempts under a
 separate authorization and cap. Calibration is reviewed before the pilot and
-does not contribute to its fifteen attempts. Pilot launch requires pilot,
-pointer-root and dispatch-handler requalified together against one observed
-image, each with passing scripted full-path evidence. Smithers billed cost
-must also become available; the charged route probe currently halts with
-`billing_uncertain` under the required accounting rule. These are operator
-launch preconditions, not runner defects.
+does not contribute to its fifteen attempts. Pilot launch requires the three
+operator-reviewed baseline scenarios named by the frozen roster to be
+requalified together against one observed image, each with passing scripted
+full-path evidence. The roster remains unsettled pending replacement review.
+Smithers billed cost must also become available; the charged route probe
+currently halts with `billing_uncertain` under the required accounting rule.
+These are operator launch preconditions, not runner defects.
 
 The recorded randomization seed currently changes the configuration digest
 but not dispatch order. The shared planner accepts only absent,

@@ -67,12 +67,81 @@ Keep the store, runs root and archive root on durable project storage, away
 from the OS temp directory. Waking a GPU worker power-cycles it and wipes its
 temp directory, which would erase the run before evidence can be read.
 
-Pilot launch preconditions are still open. Requalify pilot, pointer-root and
-dispatch-handler together against one observed image, retaining passing
-scripted full-path records for each, before preparing the fifteen-attempt
-pilot. Resolve a Smithers billed-cost source before any live cell dispatch;
-until then the charged route probe halts with `billing_uncertain`. These are
-operator inputs to the launch gates, not code defects.
+Pilot launch preconditions are still open. Cross-module-event is feasible at
+the upstream pin, but config-plugin lacks a configuration-driven loading path,
+so there is **no frozen three-scenario pilot configuration or fifteen-attempt
+plan**. No calibration or pilot attempt has been dispatched. A reviewed
+scenario selection and passing qualification for all three selected subjects
+are required before a pilot freeze. The operator must then review a model-free
+scripted full path, a route probe counted as live work, the exact endpoint,
+model and provider with a qualified envelope entry, a pricing basis or an
+explicit conservative per-request bound, and an approved plan with per-attempt
+and total spend caps. Prompt, tool, fixture and image identity checks must
+reject drift. The charged route probe currently halts with
+`billing_uncertain` until a Smithers billed-cost source exists. The 120
+per-cell tool-call bound remains unavailable because extension mode cannot
+enforce it.
+
+## WP6 candidate feasibility review
+
+The checkpoint is `f3b3ffca43e43672ff2f58ab797d65c7532aaed8`. The
+earlier search covered only the dispatch-handler's deliberately extracted
+62-file start tree, not the upstream pin. A fresh feasibility extraction from
+the pin used:
+
+```sh
+git -C /home/steve/codes/rol/oakridge archive f3b3ffca43e43672ff2f58ab797d65c7532aaed8 tsconfig.json oakridge-dbos/src oakridge-dbos/tests/invalidation-events.test.ts oakridge-dbos/package.json oakridge-dbos/tsconfig.json
+```
+
+The extracted 125 files total 706,674 bytes before dependency installation,
+within both fixture package limits. This review extraction is under `/tmp`,
+not a frozen worker tree. It includes `src/domain/run-event.ts` (event schema,
+`RunEvent` export and `projectRunEvent`),
+`src/storage/postgres-operators.ts` (`PostgresOperatorProjectionRepository.list_run_events`),
+`src/http/invalidation-events.ts` (`createInvalidationEventApp`), and
+`src/http/app.ts` (the producer-to-consumer wiring). The upstream
+`tests/invalidation-events.test.ts` imports only `bun:test` besides source
+modules. The Postgres-backed producer accepts an injected `SqlExecutor` whose
+`query` method returns rows; the real query and projection can be exercised
+with a fake executor and without a live Postgres server. The SSE consumer also
+takes injected callbacks. The extracted upstream `package.json` already names
+`hono`; a runnable frozen fixture must carry it in its dependency lock. The
+upstream SSE test passed all eight checks, and an additional temporary test
+projected a SQL row through the injected producer without Postgres.
+Cross-module-event is feasible at the pin, pending a fully qualified fixture.
+With the pin's root `tsconfig.json` included and the upstream installed dependencies supplied, the
+review extraction also passed `tsc --noEmit -p tsconfig.json`.
+
+At the same upstream pin, `compileWorkflowDefinition(definition, registry?)`
+accepts an injected registry, `src/runtime/executor-registry.ts` registers
+executors imperatively, and `src/http/configuration.ts` reads configuration.
+None loads stage plugins from configuration. The plugin arm of the separately
+committed stage-pass-through subject contains `stage-plugin-config.json` and
+`stage-plugins.ts`, but its README identifies both as authored adaptations
+absent at the pin. Reusing that arm would invent the production loading path
+that config-plugin is meant to extend. The proposed replacement for review is
+an **injected stage compiler registry** scenario using the existing registry
+argument and visible compiler contract. It would not claim configuration
+loading and has not been substituted or qualified.
+
+The two candidate `task.md` files retain the requested behaviors and
+requirements-to-intended-tests tables. They remain review drafts: there are
+no committed start trees, sidecars, hidden groups, qualification patches or
+gate records for them. The committed qualification manifests remain
+unchanged, and the descriptive report still reflects only committed evidence.
+
+The independent offline evidence rehearsal is
+`code_extension/tests/test_code_extension_report.py::test_committed_qualification_and_scripted_archive_reproduce_and_export`.
+It binds the existing dispatch-handler qualification manifest and records,
+submits a model-free scripted `write_file` and `submit_output` through the
+production bridge with a fake sandbox, and keeps the resulting run archive
+under pytest's temporary directory. It renders `REPORT.md`, `ledger.csv` and
+`ledger.json` twice and compares exact bytes. It exports the run manifest's
+object closure, accepts only the expected `incomplete_run` observation because
+the scripted rehearsal has no evaluator record, and confirms that changing an
+exported object makes verification fail for integrity. The archive is test
+output, not committed run evidence; the committed report does not gain a live
+attempt row.
 
 ## ce-v1 contract and protocol
 
