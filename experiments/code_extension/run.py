@@ -1,4 +1,5 @@
 """Operator entry point for qualified extension launches."""
+# ruff: noqa: E402, I001
 
 from __future__ import annotations
 
@@ -11,6 +12,10 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
+
+_BRIDGE_SRC = Path(__file__).resolve().parents[2] / "integrations" / "pier" / "src"
+if str(_BRIDGE_SRC) not in sys.path:
+    sys.path.insert(0, str(_BRIDGE_SRC))
 
 from assay_pier_bridge import protocol as bridge_protocol
 from verification_pilot.budget import SpendGate
@@ -56,6 +61,7 @@ class ExtensionStudyWorker:
     journal: AttemptJournal | None = None
     gate: SpendGate | None = None
     request_bound: Decimal | None = None
+    allowed_coordinates: dict[str, str] | None = None
     supports_cell_coordinates: bool = True
 
     def configuration(self, arm_id: str) -> dict[str, Any]:
@@ -75,7 +81,12 @@ class ExtensionStudyWorker:
         }
 
     async def run_cell(self, *, input_value: Any, coordinate: CellCoordinate) -> WorkerResult:
-        if coordinate.subject_id not in self.adapters or coordinate.arm_id != self.arm_id:
+        if (
+            coordinate.subject_id not in self.adapters
+            or coordinate.arm_id != self.arm_id
+            or self.allowed_coordinates is None
+            or self.allowed_coordinates.get(coordinate.id) != coordinate.realization_ref
+        ):
             raise LaunchRefused("coordinate is not one of the plan's declared cells")
         if self.journal is None or self.gate is None or self.request_bound is None:
             raise LaunchRefused("attempt budget and durable journal are required")
@@ -218,7 +229,7 @@ def _build(
         )
     )
     count = sum(len(manifest.scenarios) for manifest in [fixture.manifest])
-    return plan_study(
+    prepared = plan_study(
         store,
         fixture,
         workers=workers,
@@ -233,6 +244,14 @@ def _build(
             max_fleet_occupancy=1,
         ),
     )
+    compiled = parse_execution_plan(json.loads(prepared.plan_bytes))
+    for worker in workers.values():
+        worker.allowed_coordinates = {
+            cell.id: cell.realization_ref
+            for cell in compiled.cells
+            if cell.arm_id == worker.arm_id
+        }
+    return prepared
 
 
 def prepare(config_path: Path, store_path: Path) -> dict[str, Any]:

@@ -335,16 +335,19 @@ configuration. A changed configuration is a new plan.
 Calibration is one attempt. The pilot specification is five fresh repeats on
 each of three qualified baseline scenarios, exactly fifteen attempts under a
 separate authorization and cap. Calibration is reviewed before the pilot and
-does not contribute to its fifteen attempts. The current committed records
-cannot launch that pilot: the pilot and pointer-root fixtures lack scripted
-full-path evidence, while dispatch-handler has a different image. Smithers
-also reports no billed cost, so the charged route probe halts with
-`billing_uncertain` under the required accounting rule.
+does not contribute to its fifteen attempts. Pilot launch requires pilot,
+pointer-root and dispatch-handler requalified together against one observed
+image, each with passing scripted full-path evidence. Smithers billed cost
+must also become available; the charged route probe currently halts with
+`billing_uncertain` under the required accounting rule. These are operator
+launch preconditions, not runner defects.
 
 The recorded randomization seed currently changes the configuration digest
 but not dispatch order. The shared planner accepts only absent,
 `subject-counterbalanced-v1`, and `subject-rotated-v1` schedules, and execute
 recompiles the plan from its snapshot. A seed-based permutation needs a new
-declared schedule in `src/assay/planning.py` and corresponding shared workflow
-and dry-run review. That is an open operator decision. Until then the plan
+declared `seeded-shuffle-v1` schedule and common `assay_execution_seed` in the
+arm conditions, with `src/assay/planning.py` shuffling the complete grid.
+The shared workflow-edit schedule assertions and dry-run schedule check need
+review. This is an open operator decision. Until then the plan
 uses `subject-rotated-v1`; the launch summary names this unresolved blocker.

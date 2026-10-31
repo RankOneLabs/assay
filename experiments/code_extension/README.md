@@ -67,10 +67,12 @@ Keep the store, runs root and archive root on durable project storage, away
 from the OS temp directory. Waking a GPU worker power-cycles it and wipes its
 temp directory, which would erase the run before evidence can be read.
 
-The committed pilot and pointer-root fixtures have no scripted full-path gate
-record, and dispatch-handler is qualified on a different image. A three-scenario,
-fifteen-attempt pilot therefore cannot pass the current launch gates; requalify
-the chosen fixtures together before preparing that cohort.
+Pilot launch preconditions are still open. Requalify pilot, pointer-root and
+dispatch-handler together against one observed image, retaining passing
+scripted full-path records for each, before preparing the fifteen-attempt
+pilot. Resolve a Smithers billed-cost source before any live cell dispatch;
+until then the charged route probe halts with `billing_uncertain`. These are
+operator inputs to the launch gates, not code defects.
 
 ## ce-v1 contract and protocol
 
