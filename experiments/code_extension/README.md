@@ -67,12 +67,53 @@ Keep the store, runs root and archive root on durable project storage, away
 from the OS temp directory. Waking a GPU worker power-cycles it and wipes its
 temp directory, which would erase the run before evidence can be read.
 
-Pilot launch preconditions are still open. Requalify pilot, pointer-root and
-dispatch-handler together against one observed image, retaining passing
-scripted full-path records for each, before preparing the fifteen-attempt
-pilot. Resolve a Smithers billed-cost source before any live cell dispatch;
-until then the charged route probe halts with `billing_uncertain`. These are
-operator inputs to the launch gates, not code defects.
+Pilot launch preconditions are still open. The proposed cross-module-event
+and config-plugin scenarios failed the pinned-slice feasibility check below,
+so there is **no frozen three-scenario pilot configuration or fifteen-attempt
+plan**. No calibration or pilot attempt has been dispatched. A reviewed
+scenario selection and passing qualification for all three selected subjects
+are required before a pilot freeze. The operator must then review a model-free
+scripted full path, a route probe counted as live work, the exact endpoint,
+model and provider with a qualified envelope entry, a pricing basis or an
+explicit conservative per-request bound, and an approved plan with per-attempt
+and total spend caps. Prompt, tool, fixture and image identity checks must
+reject drift. The charged route probe currently halts with
+`billing_uncertain` until a Smithers billed-cost source exists. The 120
+per-cell tool-call bound remains unavailable because extension mode cannot
+enforce it.
+
+## WP6 candidate feasibility review
+
+The checkpoint is `f3b3ffca43e43672ff2f58ab797d65c7532aaed8`. The
+dispatch-handler start tree is the pinned slice being reused. Its
+`src/domain/run-record.ts` defines `RunTransitionOperation`, and
+`src/domain/run-event.ts` defines `RunEventRow`, `RunEvent` and
+`projectRunEvent`. A search of the entire 62-file repository tree finds
+`projectRunEvent` and `RunEventRow` only in `run-event.ts`: the event producer,
+consumer and public package entry point required by cross-module-event are
+absent. Its requested four linked integration points cannot be tested in this
+slice. The proposed replacement for review is a **workflow edge contract**
+scenario using the existing producer output, consumer input, validation and
+compilation paths in `src/validation/workflow-definition.ts` and
+`src/compiler/compile-workflow.ts`. It would measure a different public task;
+it has not been substituted or qualified.
+
+The same start tree has `compileWorkflowDefinition(definition, registry?)` and
+two built-in stage compilers. It has no stage-plugin configuration file or
+configuration-driven loader. The plugin arm of the separately committed
+stage-pass-through subject contains `stage-plugin-config.json` and
+`stage-plugins.ts`, but its README identifies both as authored adaptations
+absent at the pin. Reusing that arm would invent the production loading path
+that config-plugin is meant to extend. The proposed replacement for review is
+an **injected stage compiler registry** scenario using the existing registry
+argument and visible compiler contract. It would not claim configuration
+loading and has not been substituted or qualified.
+
+The two candidate `task.md` files retain the exact requested behaviors and
+requirements-to-intended-tests tables. They are explicitly blocked drafts:
+there are no start trees, sidecars, hidden groups, qualification patches or
+gate records for them. The committed qualification manifests remain
+unchanged, and the descriptive report still reflects only committed evidence.
 
 ## ce-v1 contract and protocol
 
