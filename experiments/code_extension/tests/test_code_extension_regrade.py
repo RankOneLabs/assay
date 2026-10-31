@@ -6,7 +6,6 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from code_extension import config, diagnose, run
@@ -14,6 +13,12 @@ from code_extension.tests.test_code_extension_ledger import _manifest, _outcome,
 from workflow_edit.evaluation import WorkerCandidate
 
 from assay.adapters import smithers
+from assay.investigations.workflow_correctness import (
+    GroupResult,
+    PreflightResult,
+    RejectedChange,
+    WorkflowCorrectnessResult,
+)
 from assay.models import RunManifest
 from assay.store import ObjectStore
 from assay.verify import export_bundle, verify_bundle, verify_manifest
@@ -70,17 +75,63 @@ def test_regrade_appends_distinct_image_records_without_changing_original(
         ),
     )
 
-    async def fake_evaluate(**_: object) -> SimpleNamespace:
-        return SimpleNamespace(verdict="incorrect", cause="test_failure", groups=())
+    async def fake_evaluate(**_: object) -> WorkflowCorrectnessResult:
+        return WorkflowCorrectnessResult(
+            verdict="incorrect",
+            cause="group_failure",
+            groups=(
+                GroupResult(
+                    "visible_regression",
+                    "failed",
+                    "nonzero_exit",
+                    stdout="one assertion failed",
+                    stderr="test process exited",
+                    exit_status=1,
+                    timeout_s=120.0,
+                ),
+            ),
+            preflight=PreflightResult("passed"),
+            attribution="candidate_failure",
+            rejected_changes=(
+                RejectedChange(
+                    "tests/visible/example.test.ts",
+                    "restored",
+                    "sha256:" + "a" * 64,
+                    "sha256:" + "b" * 64,
+                ),
+            ),
+        )
 
     monkeypatch.setattr(diagnose, "evaluate_scenario_candidate", fake_evaluate)
     _forbid_model_constructors(monkeypatch)
     first = diagnose.regrade_archive(tmp_path / "archive", "sha256:" + "1" * 64, tmp_path / "out")
     second = diagnose.regrade_archive(tmp_path / "archive", "sha256:" + "2" * 64, tmp_path / "out")
     assert len(first) == len(second) == 1 and first != second
-    first_image = json.loads(first[0].read_text())["image_digest"]
+    first_record = json.loads(first[0].read_text())
+    first_image = first_record["image_digest"]
     second_image = json.loads(second[0].read_text())["image_digest"]
     assert first_image != second_image
+    assert first_record["groups"] == [
+        {
+            "name": "visible_regression",
+            "status": "failed",
+            "cause": "nonzero_exit",
+            "stdout": "one assertion failed",
+            "stderr": "test process exited",
+            "exit_status": 1,
+            "timeout_s": 120.0,
+        }
+    ]
+    assert first_record["preflight"] == {"status": "passed", "cause": None}
+    assert first_record["attribution"] == "candidate_failure"
+    assert first_record["rejected_changes"] == [
+        {
+            "path": "tests/visible/example.test.ts",
+            "disposition": "restored",
+            "baseline_digest": "sha256:" + "a" * 64,
+            "candidate_digest": "sha256:" + "b" * 64,
+        }
+    ]
     assert store.read_bytes(manifest_ref) == manifest_bytes
     assert _object_bytes(run_dir) == originals
 

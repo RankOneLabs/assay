@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -285,10 +286,10 @@ def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]
                 },
                 "verdict": result.verdict,
                 "cause": result.cause,
-                "groups": [
-                    {"name": group.name, "status": group.status, "cause": group.cause}
-                    for group in result.groups
-                ],
+                "groups": [asdict(group) for group in result.groups],
+                "preflight": asdict(result.preflight) if result.preflight is not None else None,
+                "attribution": result.attribution,
+                "rejected_changes": [asdict(change) for change in result.rejected_changes],
             }
             stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
             path = destination / f"{stamp}-{uuid.uuid4().hex}.json"
