@@ -203,6 +203,29 @@ def test_infrastructure_invalid_and_unevaluable_are_visible(tmp_path: Path) -> N
     assert rates.primary_task_success.denominator == 0
 
 
+@pytest.mark.parametrize(
+    ("reason", "invalid"),
+    [("bridge_exception", 1), ("exchange_mismatch", 1), ("unrecognized_reason", 0)],
+)
+def test_core_infrastructure_reason_is_counted_only_when_documented(
+    tmp_path: Path, reason: str, invalid: int
+) -> None:
+    store, plan, authorization = _plan(tmp_path)
+    execution_ref, _ = _outcome(
+        store, plan, authorization, success=False, trace={"rejection_reason": reason}
+    )
+    execution = json.loads(store.read_bytes(execution_ref))
+    execution["error_type"] = "RuntimeError"
+    execution_ref = str(store.publish_json(execution))
+    manifest_ref = _manifest(store, plan, authorization, execution_ref, passed=False)
+    ledger = build_ledger(plan=plan, manifest_ref=manifest_ref, store=store, judgments={})
+    row = ledger.rows[0]
+    assert row.terminal_cause == "unknown"
+    assert row.infrastructure_invalid is bool(invalid)
+    assert ledger.rates().invalid == invalid
+    assert ledger.rates().unevaluable == 1
+
+
 def test_judgment_cannot_override_mechanical_or_passed(tmp_path: Path) -> None:
     from code_extension.classification import operator_category
 

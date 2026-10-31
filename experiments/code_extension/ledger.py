@@ -59,6 +59,7 @@ class _BridgeOutcome(_Wire):
 class _Trace(_Wire):
     bridge_outcome: _BridgeOutcome | None = None
     artifact_refs: dict[str, str] = {}
+    rejection_reason: str | None = None
 
 
 class _VerdictValue(_Wire):
@@ -277,6 +278,7 @@ _ARTIFACT_REJECTIONS = frozenset(
     }
 )
 _SCOPE_CAUSES = frozenset({"out_of_scope_edit", "tampering", "traversal", "escaping_symlink"})
+_CORE_INFRASTRUCTURE_REASONS = frozenset({"bridge_exception", "exchange_mismatch"})
 
 
 def terminal_cause(kind: TerminalKind, cause: str, detail: str = "") -> TerminalCause:
@@ -329,6 +331,15 @@ def _stop(outcome: ExecutionOutcome | None, store: ObjectStore) -> StopCause:
         return InfrastructureStopped(TypeAdapter(InfrastructureCause).validate_python(bridge.cause))
     except ValidationError:
         return CoreStopped("unknown_bridge_cause")
+
+
+def _infrastructure_invalid(stop: StopCause, trace: _Trace | None) -> bool:
+    return isinstance(stop, InfrastructureStopped) or (
+        isinstance(stop, CoreStopped)
+        and trace is not None
+        and trace.bridge_outcome is None
+        and trace.rejection_reason in _CORE_INFRASTRUCTURE_REASONS
+    )
 
 
 def _verdict(cell_id: str, manifest: RunManifest, store: ObjectStore) -> EvaluatorVerdict | None:
@@ -592,7 +603,7 @@ def build_ledger(
                 axes,
                 annotations.get(cell.id, ()),
                 terminal,
-                isinstance(stop, InfrastructureStopped),
+                _infrastructure_invalid(stop, trace),
                 all_checks_passing,
             )
         )

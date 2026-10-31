@@ -264,7 +264,10 @@ qualified Part 1 and pilot headroom. No extension fixture was qualified.
   `storage_exhausted` and `memory_limit` remain candidate outcomes.
   Infrastructure `container_start`, `enforcement`, and `unexpected_exception`
   cover sandbox and provider failures; their shared cause alone does not
-  distinguish the two. Evaluator failure is evaluation-side unavailable evidence.
+  distinguish the two. Adapter traces with `bridge_exception` or
+  `exchange_mismatch` rejection reasons count as infrastructure-invalid even
+  without a typed bridge outcome. Evaluator failure is evaluation-side
+  unavailable evidence.
   An unrecognized cause or detail stays unknown. The ce-v1 tool-call limit cannot
   fire: its loop enforces tool ceilings only in pilot mode, which extension mode
   refuses; the 120-call bound is unavailable.
