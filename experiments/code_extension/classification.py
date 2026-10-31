@@ -66,14 +66,16 @@ class AmbiguousFixture(OperatorJudgment):
 
 
 type OperatorCategory = (
-    CouldNotDiscoverRelevantCode | WrongAbstractionOrPlan | MissedIntegrationPoint
-    | CodeGenerationDefect | InvalidVerificationClaim | AmbiguousFixture
+    CouldNotDiscoverRelevantCode
+    | WrongAbstractionOrPlan
+    | MissedIntegrationPoint
+    | CodeGenerationDefect
+    | InvalidVerificationClaim
+    | AmbiguousFixture
 )
 type MechanicalCategory = HarnessOrProviderFailure | Timeout
 type FailureCategory = Annotated[OperatorCategory | MechanicalCategory, Field(discriminator="tag")]
-_category_adapter: TypeAdapter[OperatorCategory | MechanicalCategory] = TypeAdapter(
-    FailureCategory
-)
+_category_adapter: TypeAdapter[OperatorCategory | MechanicalCategory] = TypeAdapter(FailureCategory)
 
 
 def parse_category(value: object) -> FailureCategory:
@@ -111,11 +113,110 @@ class NotStarted:
 
 type StopCause = Submitted | CandidateStopped | InfrastructureStopped | CoreStopped | NotStarted
 
+type TerminalKind = Literal[
+    "submitted", "candidate_failure", "infrastructure_failure", "evaluator_failure"
+]
+type TerminalCause = Literal[
+    "normal_submission",
+    "wall_limit",
+    "request_limit",
+    "conversation_limit",
+    "output_token_limit",
+    "turn_tool_call_limit",
+    "cell_tool_call_limit",
+    "no_tool_call",
+    "empty_reply",
+    "invalid_tool_call",
+    "invalid_submission",
+    "turn_limit",
+    "symlink_submission",
+    "hard_link_submission",
+    "binary_payload",
+    "oversized_artifact",
+    "aggregate_artifact_limit",
+    "entry_limit",
+    "non_utf8_path",
+    "patch_capture_conflict",
+    "workspace_capture_permission",
+    "invalid_tool_output_encoding",
+    "out_of_scope_edit",
+    "tampering",
+    "traversal",
+    "escaping_symlink",
+    "storage_exhausted",
+    "memory_limit",
+    "candidate_test_timeout",
+    "nonzero_exit",
+    "container_start",
+    "enforcement",
+    "unexpected_exception",
+    "harness_deadline",
+    "cancelled",
+    "mismatched_cell",
+    "evaluator_failure",
+    "unknown",
+]
+
 
 @dataclass(frozen=True)
 class GroupVerdict:
     status: Literal["passed", "failed", "unavailable"]
     cause: str | None = None
+    name: str = ""
+
+
+@dataclass(frozen=True)
+class AttemptStates:
+    planned: bool = True
+    dispatched: bool = False
+    agent_started: bool = False
+    completed_normally: bool = False
+    evaluated: bool = False
+    passed: bool = False
+    missing: bool = False
+
+
+@dataclass(frozen=True)
+class OutcomeAxes:
+    build: Literal["passed", "failed", "unavailable"] = "unavailable"
+    feature: Literal["passed", "failed", "unavailable"] = "unavailable"
+    regression: Literal["passed", "failed", "unavailable"] = "unavailable"
+    scope: Literal["clean", "violated", "unknown"] = "unknown"
+    completion: TerminalCause = "unknown"
+
+
+@dataclass(frozen=True)
+class RateRecord:
+    numerator: int
+    denominator: int
+    value: float | None
+
+
+type AnnotationLabel = Literal[
+    "could_not_discover_relevant_code",
+    "wrong_abstraction_or_plan",
+    "missed_integration_point",
+    "code_generation_defect",
+    "invalid_verification_claim",
+    "ambiguous_fixture",
+    "harness_or_provider_failure",
+    "uncertain",
+]
+
+
+@dataclass(frozen=True, kw_only=True)
+class DiagnosticAnnotation:
+    label: AnnotationLabel
+    assigned_by: str
+    evidence_ref: str
+
+    def __post_init__(self) -> None:
+        if (
+            not self.assigned_by.strip()
+            or not self.evidence_ref.startswith("sha256:")
+            or len(self.evidence_ref) != 71
+        ):
+            raise ValueError("annotation needs operator identity and trace or check digest")
 
 
 @dataclass(frozen=True)
@@ -150,8 +251,11 @@ def classify(stop: StopCause, verdict: EvaluatorVerdict | None) -> Classificatio
             case "harness_deadline":
                 return Timeout()
             case (
-                "cancelled" | "container_start" | "enforcement"
-                | "unexpected_exception" | "mismatched_cell"
+                "cancelled"
+                | "container_start"
+                | "enforcement"
+                | "unexpected_exception"
+                | "mismatched_cell"
             ):
                 return HarnessOrProviderFailure()
             case unknown_infrastructure:
@@ -161,12 +265,24 @@ def classify(stop: StopCause, verdict: EvaluatorVerdict | None) -> Classificatio
             case "candidate_test_timeout" | "agent_deadline":
                 return Timeout()
             case (
-                "no_submission" | "symlink_submission" | "traversal" | "escaping_symlink"
-                | "binary_payload" | "oversized_artifact" | "aggregate_artifact_limit"
-                | "entry_limit" | "out_of_scope_edit" | "tampering" | "nonzero_exit"
-                | "storage_exhausted" | "memory_limit" | "invalid_tool_output_encoding"
-                | "patch_capture_conflict" | "non_utf8_path"
-                | "workspace_capture_permission" | "hard_link_submission"
+                "no_submission"
+                | "symlink_submission"
+                | "traversal"
+                | "escaping_symlink"
+                | "binary_payload"
+                | "oversized_artifact"
+                | "aggregate_artifact_limit"
+                | "entry_limit"
+                | "out_of_scope_edit"
+                | "tampering"
+                | "nonzero_exit"
+                | "storage_exhausted"
+                | "memory_limit"
+                | "invalid_tool_output_encoding"
+                | "patch_capture_conflict"
+                | "non_utf8_path"
+                | "workspace_capture_permission"
+                | "hard_link_submission"
             ):
                 return NeedsOperatorJudgment("invalid_or_incomplete")
             case unknown_candidate:
@@ -179,23 +295,29 @@ def classify(stop: StopCause, verdict: EvaluatorVerdict | None) -> Classificatio
         if verdict.value == "incorrect":
             invalid = (
                 verdict.cause == "patch_rejected"
-                or verdict.preflight is not None and verdict.preflight.status != "passed"
-                or verdict.preflight is None and bool(verdict.groups)
+                or verdict.preflight is not None
+                and verdict.preflight.status != "passed"
+                or verdict.preflight is None
+                and bool(verdict.groups)
                 and all(group.status == "unavailable" for group in verdict.groups)
             )
-            return NeedsOperatorJudgment(
-                "invalid_or_incomplete" if invalid else "valid_but_wrong"
-            )
+            return NeedsOperatorJudgment("invalid_or_incomplete" if invalid else "valid_but_wrong")
         assert_never(verdict.value)
     assert_never(stop)
 
 
 def operator_category(
     tag: Literal[
-        "could_not_discover_relevant_code", "wrong_abstraction_or_plan",
-        "missed_integration_point", "code_generation_defect", "invalid_verification_claim",
+        "could_not_discover_relevant_code",
+        "wrong_abstraction_or_plan",
+        "missed_integration_point",
+        "code_generation_defect",
+        "invalid_verification_claim",
         "ambiguous_fixture",
-    ], *, assigned_by: str, trace_digest: str,
+    ],
+    *,
+    assigned_by: str,
+    trace_digest: str,
 ) -> OperatorCategory:
     """Record an attributed post-run judgment against the exact trace bytes."""
     match tag:

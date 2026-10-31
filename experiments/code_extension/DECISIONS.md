@@ -242,6 +242,52 @@ qualified Part 1 and pilot headroom. No extension fixture was qualified.
 
 ## Measurement and reporting
 
+### WP3 attempt accounting
+
+- Every planned coordinate has a row. `RunManifest.execution_records` establishes
+  dispatch; `missing_coordinates` marks an undispatched planned row. A retained
+  trajectory `model_request` event establishes agent start. A succeeded execution
+  establishes normal completion. A valid, available evaluation record establishes
+  evaluation. The deterministic `Passed` classification establishes the passed
+  state. Evaluation and normal completion are independent.
+- The terminal mapping is study-local. Succeeded execution means normal submission.
+  Candidate `agent_deadline` means wall limit. Candidate `no_submission` uses only
+  the exact `agent stopped without submitting: <cause>` detail, where `<cause>` is
+  `request_limit`, `conversation_limit`, `output_token_limit`,
+  `turn_tool_call_limit`, `cell_tool_call_limit`, `no_tool_call`, `empty_reply`,
+  `invalid_tool_call`, `invalid_submission`, or `turn_limit`. Candidate artifact
+  rejections are `symlink_submission`, `hard_link_submission`, `binary_payload`,
+  `oversized_artifact`, `aggregate_artifact_limit`, `entry_limit`, `non_utf8_path`,
+  `patch_capture_conflict`, `workspace_capture_permission`, and
+  `invalid_tool_output_encoding`. Scope causes are `out_of_scope_edit`,
+  `tampering`, `traversal`, and `escaping_symlink`. Candidate container causes
+  `storage_exhausted` and `memory_limit` remain candidate outcomes.
+  Infrastructure `container_start`, `enforcement`, and `unexpected_exception`
+  cover sandbox and provider failures; their shared cause alone does not
+  distinguish the two. Adapter traces with `bridge_exception` or
+  `exchange_mismatch` rejection reasons count as infrastructure-invalid even
+  without a typed bridge outcome. Evaluator failure is evaluation-side
+  unavailable evidence.
+  An unrecognized cause or detail stays unknown. The ce-v1 tool-call limit cannot
+  fire: its loop enforces tool ceilings only in pilot mode, which extension mode
+  refuses; the 120-call bound is unavailable.
+- Operational yield divides primary successes by dispatched rows, including
+  infrastructure failures. Primary task success divides primary successes by
+  agent-started rows with valid evaluation, excluding documented infrastructure
+  failures. Conditional correctness divides all-checks-passing
+  submissions by normally completed rows with valid evaluation. Each rate carries
+  numerator, denominator and value; dispatched infrastructure-invalid and
+  unevaluable counts are reported alongside. A limit-stopped graded workspace
+  enters operational and primary denominators as unsuccessful, and stays out of
+  the conditional denominator.
+- A retry has a distinct attempt id and `retry_of` naming its original. Rows are
+  retained, and primary and retry cohorts have separate counts and rates.
+- The required single operator judgment remains trace-bound and gates settled
+  candidate failures. Optional, attributed diagnostic annotations cite a trace
+  or check digest and may carry several labels or `uncertain`; they never alter
+  a grade, state, axis or rate. Build, feature, regression, scope and completion
+  remain separate axes sourced from evaluation detail and execution evidence.
+
 - The classification first pass is exhaustive over the typed Pier candidate
   and infrastructure causes. It distinguishes invalid or incomplete work from
   valid but wrong work, then requires an attributed, trace-bound operator
