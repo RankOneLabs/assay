@@ -33,6 +33,8 @@ from code_extension.classification import (
     RateRecord,
     StopCause,
     Submitted,
+    TerminalCause,
+    TerminalKind,
     Timeout,
     classify,
 )
@@ -145,7 +147,7 @@ class AttemptRow:
     retry_of: str | None = None
     axes: OutcomeAxes = OutcomeAxes()
     annotations: tuple[DiagnosticAnnotation, ...] = ()
-    terminal_cause: str = "unknown"
+    terminal_cause: TerminalCause = "unknown"
     infrastructure_invalid: bool = False
     all_checks_passing: bool = False
 
@@ -277,7 +279,7 @@ _ARTIFACT_REJECTIONS = frozenset(
 _SCOPE_CAUSES = frozenset({"out_of_scope_edit", "tampering", "traversal", "escaping_symlink"})
 
 
-def terminal_cause(kind: str, cause: str, detail: str = "") -> str:
+def terminal_cause(kind: TerminalKind, cause: str, detail: str = "") -> TerminalCause:
     """Preserve only distinctions supported by the shared cause or exact bridge detail."""
     if kind == "submitted":
         return "normal_submission"
@@ -290,14 +292,14 @@ def terminal_cause(kind: str, cause: str, detail: str = "") -> str:
             prefix = "agent stopped without submitting: "
             suffix = detail.removeprefix(prefix)
             return (
-                suffix
+                cast(TerminalCause, suffix)
                 if detail.startswith(prefix) and suffix in _NO_SUBMISSION_CAUSES
                 else "unknown"
             )
         if cause in _ARTIFACT_REJECTIONS or cause in _SCOPE_CAUSES:
-            return cause
+            return cast(TerminalCause, cause)
         if cause in {"storage_exhausted", "memory_limit", "candidate_test_timeout", "nonzero_exit"}:
-            return cause
+            return cast(TerminalCause, cause)
     if kind == "infrastructure_failure" and cause in {
         "container_start",
         "enforcement",
@@ -306,7 +308,7 @@ def terminal_cause(kind: str, cause: str, detail: str = "") -> str:
         "cancelled",
         "mismatched_cell",
     }:
-        return cause
+        return cast(TerminalCause, cause)
     return "unknown"
 
 
@@ -389,7 +391,7 @@ def _axes(
     verdict: EvaluatorVerdict | None,
     detail: _Detail | None,
     stop: StopCause,
-    terminal: str,
+    terminal: TerminalCause,
 ) -> OutcomeAxes:
     groups = {group.name: group for group in verdict.groups} if verdict else {}
 
@@ -535,7 +537,7 @@ def build_ledger(
             used_judgments.add(cell.id)
         else:
             category = classification
-        if isinstance(classification, HarnessOrProviderFailure | Timeout) and cell.id in judgments:
+        if isinstance(category, HarnessOrProviderFailure | Timeout) and cell.id in judgments:
             raise ValueError(f"mechanical category cannot be overridden: {cell.id}")
         if isinstance(classification, Passed) and cell.id in judgments:
             raise ValueError(f"passed attempt cannot have a failure judgment: {cell.id}")

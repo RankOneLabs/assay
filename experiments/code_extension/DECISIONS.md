@@ -271,7 +271,7 @@ qualified Part 1 and pilot headroom. No extension fixture was qualified.
 - Operational yield divides primary successes by dispatched rows, including
   infrastructure failures. Primary task success divides primary successes by
   agent-started rows with valid evaluation, excluding documented infrastructure
-  failures. Conditional correctness divides all-checks-passing, scope-clean
+  failures. Conditional correctness divides all-checks-passing
   submissions by normally completed rows with valid evaluation. Each rate carries
   numerator, denominator and value; dispatched infrastructure-invalid and
   unevaluable counts are reported alongside. A limit-stopped graded workspace

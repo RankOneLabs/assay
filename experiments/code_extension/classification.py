@@ -113,6 +113,50 @@ class NotStarted:
 
 type StopCause = Submitted | CandidateStopped | InfrastructureStopped | CoreStopped | NotStarted
 
+type TerminalKind = Literal[
+    "submitted", "candidate_failure", "infrastructure_failure", "evaluator_failure"
+]
+type TerminalCause = Literal[
+    "normal_submission",
+    "wall_limit",
+    "request_limit",
+    "conversation_limit",
+    "output_token_limit",
+    "turn_tool_call_limit",
+    "cell_tool_call_limit",
+    "no_tool_call",
+    "empty_reply",
+    "invalid_tool_call",
+    "invalid_submission",
+    "turn_limit",
+    "symlink_submission",
+    "hard_link_submission",
+    "binary_payload",
+    "oversized_artifact",
+    "aggregate_artifact_limit",
+    "entry_limit",
+    "non_utf8_path",
+    "patch_capture_conflict",
+    "workspace_capture_permission",
+    "invalid_tool_output_encoding",
+    "out_of_scope_edit",
+    "tampering",
+    "traversal",
+    "escaping_symlink",
+    "storage_exhausted",
+    "memory_limit",
+    "candidate_test_timeout",
+    "nonzero_exit",
+    "container_start",
+    "enforcement",
+    "unexpected_exception",
+    "harness_deadline",
+    "cancelled",
+    "mismatched_cell",
+    "evaluator_failure",
+    "unknown",
+]
+
 
 @dataclass(frozen=True)
 class GroupVerdict:
@@ -138,7 +182,7 @@ class OutcomeAxes:
     feature: Literal["passed", "failed", "unavailable"] = "unavailable"
     regression: Literal["passed", "failed", "unavailable"] = "unavailable"
     scope: Literal["clean", "violated", "unknown"] = "unknown"
-    completion: str = "unknown"
+    completion: TerminalCause = "unknown"
 
 
 @dataclass(frozen=True)

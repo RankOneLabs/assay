@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-from code_extension.classification import DiagnosticAnnotation
+from code_extension.classification import DiagnosticAnnotation, operator_category
 from code_extension.ledger import AttemptLedger, build_ledger, terminal_cause
 from code_extension.tests.test_code_extension_ledger import _manifest, _outcome, _plan
 
@@ -88,21 +88,11 @@ def test_planned_missing_and_grading_stopped_work(tmp_path: Path) -> None:
     assert rates.invalid == rates.unevaluable == 0
 
 
-def test_retry_cohorts_and_annotations_do_not_change_measurement(tmp_path: Path) -> None:
+def test_retry_cohorts_keep_original_and_rates_separate(tmp_path: Path) -> None:
     store, plan, authorization = _plan(tmp_path)
-    execution_ref, trace_ref = _outcome(store, plan, authorization, success=True, trace={})
+    execution_ref, _ = _outcome(store, plan, authorization, success=True, trace={})
     manifest_ref = _manifest(store, plan, authorization, execution_ref, passed=True)
     primary = build_ledger(plan=plan, manifest_ref=manifest_ref, store=store, judgments={})
-    annotation = DiagnosticAnnotation(
-        label="uncertain",
-        assigned_by="analyst",
-        evidence_ref=trace_ref,
-    )
-    second = DiagnosticAnnotation(
-        label="ambiguous_fixture",
-        assigned_by="analyst",
-        evidence_ref=trace_ref,
-    )
     manifest = RunManifest.model_validate_json(store.read_bytes(manifest_ref))
     retry_manifest_ref = str(
         store.publish_json(
@@ -114,13 +104,11 @@ def test_retry_cohorts_and_annotations_do_not_change_measurement(tmp_path: Path)
         manifest_ref=retry_manifest_ref,
         store=store,
         judgments={},
-        annotations={plan.cells[0].id: (annotation, second)},
         retry_of={plan.cells[0].id: primary.rows[0].attempt_id},
     )
     assert retry.rows[0].attempt_id != primary.rows[0].attempt_id
     assert retry.rows[0].axes == primary.rows[0].axes
     assert retry.rows[0].states == primary.rows[0].states
-    assert len(retry.rows[0].annotations) == 2
     assert retry.cohorts()[f"retry:{primary.rows[0].attempt_id}"].rates() == primary.rates()
     combined = AttemptLedger(primary.rows + (retry.rows[0],))
     with pytest.raises(ValueError, match="mixed retry cohorts"):
@@ -130,6 +118,70 @@ def test_retry_cohorts_and_annotations_do_not_change_measurement(tmp_path: Path)
     assert len(cohorts[f"retry:{primary.rows[0].attempt_id}"].rows) == 1
     assert cohorts["primary"].rates().operational_yield.denominator == 1
     assert cohorts[f"retry:{primary.rows[0].attempt_id}"].rates().operational_yield.denominator == 1
+
+
+def test_annotations_leave_deterministic_accounting_unchanged(tmp_path: Path) -> None:
+    store, plan, authorization = _plan(tmp_path)
+    execution_ref, trace_ref = _outcome(
+        store,
+        plan,
+        authorization,
+        success=False,
+        trace={
+            "bridge_outcome": {
+                "kind": "candidate_failure",
+                "cause": "no_submission",
+                "detail": "agent stopped without submitting: request_limit",
+            },
+        },
+    )
+    manifest_ref = _manifest(store, plan, authorization, execution_ref, passed=True)
+    judgment = operator_category(
+        "code_generation_defect", assigned_by="analyst", trace_digest=trace_ref
+    )
+    annotations = (
+        DiagnosticAnnotation(label="uncertain", assigned_by="analyst", evidence_ref=trace_ref),
+        DiagnosticAnnotation(
+            label="ambiguous_fixture", assigned_by="analyst", evidence_ref=trace_ref
+        ),
+    )
+    kwargs = dict(
+        plan=plan, manifest_ref=manifest_ref, store=store, judgments={plan.cells[0].id: judgment}
+    )
+    plain = build_ledger(**kwargs)
+    annotated = build_ledger(**kwargs, annotations={plan.cells[0].id: annotations})
+    assert plain.rows[0].annotations == ()
+    assert annotated.rows[0].annotations == annotations
+    for plain_row, annotated_row in zip(plain.rows, annotated.rows, strict=True):
+        for field in (
+            "verdict", "category", "distinction", "terminal_cause", "states", "axes",
+            "passed", "all_checks_passing", "infrastructure_invalid",
+        ):
+            assert getattr(plain_row, field) == getattr(annotated_row, field)
+    assert plain.counts() == annotated.counts()
+    assert plain.rates() == annotated.rates()
+
+
+def test_unknown_bridge_cause_leaves_judgment_unused(tmp_path: Path) -> None:
+    store, plan, authorization = _plan(tmp_path)
+    execution_ref, trace_ref = _outcome(
+        store,
+        plan,
+        authorization,
+        success=False,
+        trace={"bridge_outcome": {"kind": "candidate_failure", "cause": "alien"}},
+    )
+    manifest_ref = _manifest(store, plan, authorization, execution_ref, passed=False)
+    judgment = operator_category(
+        "code_generation_defect", assigned_by="analyst", trace_digest=trace_ref
+    )
+    with pytest.raises(ValueError, match="unused operator judgments"):
+        build_ledger(
+            plan=plan,
+            manifest_ref=manifest_ref,
+            store=store,
+            judgments={plan.cells[0].id: judgment},
+        )
 
 
 def test_infrastructure_invalid_and_unevaluable_are_visible(tmp_path: Path) -> None:
