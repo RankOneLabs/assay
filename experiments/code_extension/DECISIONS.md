@@ -378,12 +378,13 @@ configuration. A changed configuration is a new plan.
 Calibration is one attempt. The pilot specification is five fresh repeats on
 each of three qualified baseline scenarios, exactly fifteen attempts under a
 separate authorization and cap. Calibration is reviewed before the pilot and
-does not contribute to its fifteen attempts. Pilot launch requires pilot,
-pointer-root and dispatch-handler requalified together against one observed
-image, each with passing scripted full-path evidence. Smithers billed cost
-must also become available; the charged route probe currently halts with
-`billing_uncertain` under the required accounting rule. These are operator
-launch preconditions, not runner defects.
+does not contribute to its fifteen attempts. Pilot launch requires the three
+operator-reviewed baseline scenarios named by the frozen roster to be
+requalified together against one observed image, each with passing scripted
+full-path evidence. The roster remains unsettled pending replacement review.
+Smithers billed cost must also become available; the charged route probe
+currently halts with `billing_uncertain` under the required accounting rule.
+These are operator launch preconditions, not runner defects.
 
 The recorded randomization seed currently changes the configuration digest
 but not dispatch order. The shared planner accepts only absent,
