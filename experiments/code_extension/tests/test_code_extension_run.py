@@ -314,6 +314,7 @@ async def test_route_probe_charges_spend_and_refuses_model_drift(
 ) -> None:
     config = RunConfiguration.model_validate(configuration())
     plan_digest = "sha256:" + "d" * 64
+    observed_gates: list[SpendGate] = []
 
     async def joined_thread(function: Callable[..., Any], *args: object) -> Any:
         # This sandbox cannot wake asyncio.to_thread futures, so join the same work here.
@@ -324,6 +325,7 @@ async def test_route_probe_charges_spend_and_refuses_model_drift(
 
     async def probe(worker_model: str, root: Path) -> tuple[SpendGate, AttemptJournal]:
         gate = SpendGate(config.total_cap_usd)
+        observed_gates.append(gate)
         journal = AttemptJournal(root / "attempts.jsonl", plan_digest, config.digest())
 
         class Client:
@@ -363,6 +365,8 @@ async def test_route_probe_charges_spend_and_refuses_model_drift(
     )
     assert mismatch.records()[-1]["status"] == "billing_uncertain"
     assert mismatch.records()[-1]["cost_usd"] is None
+    assert observed_gates[-1].spent_usd == Decimal("0.01")
+    assert observed_gates[-1].halt == "billing_uncertain"
 
 
 @pytest.mark.asyncio
