@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 import base64
+import csv
 import json
 import shutil
 import socket
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from code_extension.classification import HarnessOrProviderFailure
-from code_extension.fixture import PILOT, load_fixture
+from code_extension.fixture import PILOT, load_fixture, materialize
 from code_extension.ledger import AttemptLedger, AttemptRow, EvidenceReference
 from code_extension.metrics import measure_attempt, measure_patch, trace_measures
 from code_extension.publish import REPORT_MD, render, render_archive, render_from_ledgers
-from code_extension.report import attempt_rows
+from code_extension.study import load_pilot_study_fixture
 from code_extension.tests.test_code_extension_ledger import _manifest, _outcome, _plan
+from code_extension.tests.test_code_extension_regrade import _forbid_model_constructors
+from code_extension.tests.test_code_extension_study import _two_arm_fixture
 from workflow_edit.metrics import install_toolchain
 
 from assay.canonical import digest_bytes
@@ -68,27 +70,50 @@ def test_empty_archive_reproduces_committed_report_and_fixed_ledger(
     assert [path.read_bytes() for path in render_archive(archive, tmp_path / "out")] == first
 
 
-def test_ledger_keeps_undispatched_coordinate_as_unavailable() -> None:
-    ledger = AttemptLedger(
-        (
-            replace(
-                _row(
-                    "planned-only",
-                    "oakridge-dbos-context-defaults",
-                    "baseline",
-                    completed=False,
-                    accounting=Accounting(),
-                ),
-                duration_seconds=None,
-            ),
-        )
+def test_archive_ledger_keeps_undispatched_coordinate_as_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, plan, authorization = _plan(tmp_path / "source")
+    fixture = _two_arm_fixture(store, load_pilot_study_fixture(store))
+    archive = tmp_path / "archive"
+    fixture_dir = archive / "fixtures" / "two-arm"
+    qualification_dir = fixture_dir / "qualification"
+    qualification_dir.mkdir(parents=True)
+    (qualification_dir / "manifest.json").write_text(
+        fixture.manifest.model_dump_json(), encoding="utf-8"
     )
-    entries = attempt_rows((ledger,))
-    assert len(entries) == len(ledger.rows) == 1
-    assert entries[0]["dispatched"] == "no"
-    assert entries[0]["external_verdict"] == "unavailable"
-    assert entries[0]["duration_seconds"] == "unavailable"
-    assert entries[0]["cost"] == "unavailable"
+    for arm_id, repository in fixture.scenarios[0].realizations.items():
+        materialize(fixture_dir / "repository" / arm_id, repository)
+
+    execution_ref, _ = _outcome(store, plan, authorization, success=False, trace={})
+    manifest_ref = _manifest(store, plan, authorization, execution_ref, passed=False)
+    run_dir = archive / "runs" / "sample"
+    shutil.copytree(store.root, run_dir)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "plan_ref": authorization,
+                "manifest_ref": manifest_ref,
+                "judgments": {},
+                "expected_change_paths": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _forbid_model_constructors(monkeypatch)
+    _, csv_path, json_path = render_archive(archive, tmp_path / "out")
+    entries = json.loads(json_path.read_text(encoding="utf-8"))
+    with csv_path.open(newline="", encoding="utf-8") as stream:
+        csv_entries = list(csv.DictReader(stream))
+    assert csv_entries == entries
+    assert len(entries) == len(plan.cells) == 2
+    missing = [entry for entry in entries if entry["dispatched"] == "no"]
+    assert len(missing) == 1
+    assert missing[0]["planned"] == "yes"
+    assert missing[0]["missing"] == "yes"
+    for name in ("external_verdict", "duration_seconds", "cost", "tool_calls"):
+        assert missing[0][name] == "unavailable"
 
 
 def test_run_index_recomputes_attempt_counts_from_retained_objects(

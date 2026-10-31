@@ -9,15 +9,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from code_extension import diagnose, run
+from code_extension import config, diagnose, run
 from code_extension.tests.test_code_extension_ledger import _manifest, _outcome, _plan
 from workflow_edit.evaluation import WorkerCandidate
 
+from assay.adapters import smithers
+from assay.models import RunManifest
 from assay.store import ObjectStore
-from assay.verify import export_bundle, verify_bundle
-
-LEGACY_REF = "sha256:7f60b6946084c4ef35c81fea380daa2c669a1f634e8edc85b11cf79cf97a3803"
-LEGACY_BUNDLE = Path(__file__).resolve().parents[3] / "tests/fixtures/legacy-0.1.0-bundle/bundle"
+from assay.verify import export_bundle, verify_bundle, verify_manifest
 
 
 def _object_bytes(root: Path) -> dict[str, bytes]:
@@ -26,6 +25,19 @@ def _object_bytes(root: Path) -> dict[str, bytes]:
         for path in (root / "objects").rglob("*")
         if path.is_file()
     }
+
+
+def _forbid_model_constructors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*_: object, **__: object) -> None:
+        raise AssertionError("offline command constructed a model route, client, or completion")
+
+    for route in (config.ModelRoute, run.bridge_protocol.ModelRoute):
+        monkeypatch.setattr(route, "__init__", forbidden)
+        monkeypatch.setattr(route, "model_validate", forbidden)
+    monkeypatch.setattr(run.SmithersFactory, "__init__", forbidden)
+    monkeypatch.setattr(run.SmithersFactory, "create", forbidden)
+    monkeypatch.setattr(smithers.SmithersClient, "__init__", forbidden)
+    monkeypatch.setattr(run.SmithersTurnCompletion, "__init__", forbidden)
 
 
 def test_regrade_appends_distinct_image_records_without_changing_original(
@@ -62,6 +74,7 @@ def test_regrade_appends_distinct_image_records_without_changing_original(
         return SimpleNamespace(verdict="incorrect", cause="test_failure", groups=())
 
     monkeypatch.setattr(diagnose, "evaluate_scenario_candidate", fake_evaluate)
+    _forbid_model_constructors(monkeypatch)
     first = diagnose.regrade_archive(tmp_path / "archive", "sha256:" + "1" * 64, tmp_path / "out")
     second = diagnose.regrade_archive(tmp_path / "archive", "sha256:" + "2" * 64, tmp_path / "out")
     assert len(first) == len(second) == 1 and first != second
@@ -72,16 +85,54 @@ def test_regrade_appends_distinct_image_records_without_changing_original(
     assert _object_bytes(run_dir) == originals
 
 
-def test_shared_export_detects_tamper_and_extra_object(tmp_path: Path) -> None:
-    exported = export_bundle(ObjectStore(LEGACY_BUNDLE), LEGACY_REF, tmp_path / "bundle")
-    assert verify_bundle(exported, LEGACY_REF) == ()
+def test_extension_manifest_exports_when_honestly_incomplete_and_rejects_corruption(
+    tmp_path: Path,
+) -> None:
+    store, plan, authorization = _plan(tmp_path / "source")
+    missing = tuple(sorted(
+        [*(cell.id for cell in plan.cells), *(item.id for item in plan.evaluations)]
+    ))
+    manifest = RunManifest(
+        run_id="run",
+        plan_ref=authorization,
+        status="incomplete",
+        execution_records={},
+        evaluation_records={},
+        missing_coordinates=missing,
+    )
+    manifest_ref = str(store.publish_json(manifest.model_dump(mode="json")))
+    run_dir = tmp_path / "archive" / "runs" / "sample"
+    shutil.copytree(store.root, run_dir)
+    (run_dir / "run.json").write_text(
+        json.dumps({"plan_ref": authorization, "manifest_ref": manifest_ref}),
+        encoding="utf-8",
+    )
+    archived = ObjectStore(run_dir)
+    assert [failure.code for failure in verify_manifest(archived, manifest_ref)] == [
+        "incomplete_run"
+    ]
+    exported = export_bundle(archived, manifest_ref, tmp_path / "bundle")
+    assert [failure.code for failure in verify_bundle(exported, manifest_ref)] == [
+        "incomplete_run"
+    ]
     target = next(exported.objects.iterdir())
     original = target.read_bytes()
     target.write_bytes(b"tampered")
-    assert verify_bundle(exported, LEGACY_REF)
+    assert any(
+        failure.code != "incomplete_run" for failure in verify_bundle(exported, manifest_ref)
+    )
     target.write_bytes(original)
     exported.publish_bytes(b"extra object")
-    assert any(f.code == "bundle_closure" for f in verify_bundle(exported, LEGACY_REF))
+    assert any(f.code == "bundle_closure" for f in verify_bundle(exported, manifest_ref))
+
+    inconsistent = manifest.model_copy(update={"missing_coordinates": missing[1:]})
+    inconsistent_ref = str(archived.publish_json(inconsistent.model_dump(mode="json")))
+    assert any(
+        failure.code == "missing_coordinates"
+        for failure in verify_manifest(archived, inconsistent_ref)
+    )
+    with pytest.raises(ValueError, match="cannot export invalid root"):
+        export_bundle(archived, inconsistent_ref, tmp_path / "invalid-bundle")
 
 
 def test_empty_offline_commands_never_prepare_a_model(
@@ -94,6 +145,7 @@ def test_empty_offline_commands_never_prepare_a_model(
 
     monkeypatch.setattr(run, "_build", forbidden)
     monkeypatch.setattr(run, "execute", forbidden)
+    _forbid_model_constructors(monkeypatch)
     archive = tmp_path / "empty"
     archive.mkdir()
     monkeypatch.setattr(
