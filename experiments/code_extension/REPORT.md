@@ -2,6 +2,8 @@
 
 Generated from committed fixture manifests and retained run evidence. The fixture roster is qualified; no extension run bundle is committed when the attempt counts below are empty.
 
+Unavailable means no retained measurement. Invalid means a dispatched attempt with an infrastructure failure. Unevaluable means a dispatched attempt without an independent grade. Primary success means normal completion, an independent grade, all checks passing, and a clean edit scope. No candidate counts attempts without a retained patch.
+
 ## Implementation success
 
 Common subjects with an attempt in every arm of a multi-arm run: 0. Descriptive only; no inferential statistics are calculated.
@@ -82,9 +84,7 @@ Scope of diff and unnecessary changed paths come from offline `assay code-metric
 
 ## Scenario outcomes
 
-Unavailable means no retained measurement. Invalid means a dispatched attempt with an infrastructure failure. Unevaluable means a dispatched attempt without an independent grade. Primary success means normal completion, an independent grade, all checks passing, and a clean edit scope. No candidate counts attempts without a retained patch.
-
-Intervals use the Wilson score method at alpha 0.05. They describe execution variability on a fixed task, rather than sampling error over tasks. The planned fifteen attempts are five repeats on each of three fixed tasks, not fifteen independently sampled tasks.
+Intervals use the Wilson score method at alpha 0.05. They describe execution variability on a fixed task, rather than sampling error over tasks. The fixture roster shown here lists 4 qualified scenarios; the planned pilot has fifteen attempts, five repeats on each of three fixed tasks. Only retained planned coordinates count as attempts. The repeats are not fifteen independently sampled tasks.
 
 | Scenario | Planned | Missing | No candidate | Operational yield | Primary task success | Conditional correctness | Invalid | Unevaluable |
 |---|---|---|---|---|---|---|---|---|

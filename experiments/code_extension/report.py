@@ -168,6 +168,12 @@ def render_from_ledgers(
         "The fixture roster is qualified; no extension run bundle is committed "
         "when the attempt counts below are empty.",
         "",
+        "Unavailable means no retained measurement. Invalid means a dispatched attempt with an "
+        "infrastructure failure. Unevaluable means a dispatched attempt without an independent "
+        "grade. Primary success means normal completion, an independent grade, "
+        "all checks passing, and a clean edit scope. No candidate counts attempts without a "
+        "retained patch.",
+        "",
         "## Implementation success",
         "",
         f"Common subjects with an attempt in every arm of a multi-arm run: {len(common)}. "
@@ -335,15 +341,11 @@ def render_from_ledgers(
         [
             "## Scenario outcomes",
             "",
-            "Unavailable means no retained measurement. Invalid means a dispatched attempt with an "
-            "infrastructure failure. Unevaluable means a dispatched attempt without an independent "
-            "grade. Primary success means normal completion, an independent grade, "
-            "all checks passing, "
-            "and a clean edit scope. No candidate counts attempts without a retained patch.",
-            "",
             "Intervals use the Wilson score method at alpha 0.05. They describe execution "
-            "variability on a fixed task, rather than sampling error over tasks. The planned "
-            "fifteen attempts are five repeats on each of three fixed tasks, not fifteen "
+            "variability on a fixed task, rather than sampling error over tasks. "
+            f"The fixture roster shown here lists {len(subjects)} qualified scenarios; "
+            "the planned pilot has fifteen attempts, five repeats on each of three fixed tasks. "
+            "Only retained planned coordinates count as attempts. The repeats are not fifteen "
             "independently sampled tasks.",
             "",
             _table(
