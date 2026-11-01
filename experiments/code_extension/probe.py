@@ -24,7 +24,7 @@ from code_extension.fixture import materialize, read_tree
 from code_extension.fixtures import ScenarioFixture
 from code_extension.qualify import make_runner, observed_image_digest
 
-IMAGE = "assay-code-extension:ce-v1-bounds"
+IMAGE = "assay-code-extension:ce-v1-cme"
 SUBMIT = {
     "summary": "Scripted qualification",
     "self_assessed_verdict": "complete",
@@ -155,15 +155,20 @@ async def reference_submission(
         patched = root / "patched"
         patched.mkdir()
         materialize(patched, fixture.repository, fixture.arms[0].reference_patch)
-        source = (patched / "src/domain/run-event.ts").read_text()
+        # A cross-module reference edits several files, so script one write per
+        # changed path instead of assuming the scenario has a single one.
+        written = read_tree(patched)
+        changed = sorted(
+            name for name, source in written.items() if fixture.repository.get(name) != source
+        )
+        if not changed:
+            raise ValueError("scenario reference patch changes no repository file")
         client = _scripted_client(
             fixture,
             manifest,
             image,
             root,
-            [
-                ("write_file", {"path": "src/domain/run-event.ts", "content": source}),
-            ],
+            [("write_file", {"path": name, "content": written[name]}) for name in changed],
         )
         result, trajectory, configuration, _ = _run_script(client, fixture, image)
         store = ObjectStore(root / "objects")

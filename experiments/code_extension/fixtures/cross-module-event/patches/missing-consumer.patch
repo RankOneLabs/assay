@@ -1,0 +1,91 @@
+diff --git a/src/domain/run-event.ts b/src/domain/run-event.ts
+--- a/src/domain/run-event.ts
++++ b/src/domain/run-event.ts
+@@ -21,7 +21,8 @@ export interface RunEventPayload {
+ 
+ type GateRunEventOperation = "gate_opened" | "gate_decided";
+ type PullRequestRunEventOperation = "pull_request_observed" | "pull_request_merge_confirmed";
+-type OtherRunEventOperation = Exclude<RunTransitionOperation, GateRunEventOperation | PullRequestRunEventOperation>;
++type SlotInvalidatedRunEventOperation = "slot_invalidated";
++type OtherRunEventOperation = Exclude<RunTransitionOperation, GateRunEventOperation | PullRequestRunEventOperation | SlotInvalidatedRunEventOperation>;
+ 
+ export interface GateRunEventPayload extends RunEventPayload {
+   readonly run_unit_id: RunUnitId;
+@@ -44,6 +45,19 @@ export type PullRequestRunEventDetail = {
+   readonly merged_at: string | null;
+ };
+ 
++export type SlotInvalidatedRunEventDetail = {
++  readonly [key: string]: JsonValue;
++  readonly invalidation_kind: string;
++};
++
++/** The slot a run unit invalidated, and the revision that superseded it. */
++export interface SlotInvalidatedRunEventPayload extends RunEventPayload {
++  readonly run_unit_id: RunUnitId;
++  readonly output_name: string;
++  readonly superseded_by: ArtifactId | null;
++  readonly detail: SlotInvalidatedRunEventDetail;
++}
++
+ export interface PullRequestRunEventPayload extends RunEventPayload {
+   readonly run_unit_id: RunUnitId;
+   readonly stage_instance_id: StageInstanceId;
+@@ -64,6 +78,7 @@ interface RunEventEnvelope<Operation extends RunTransitionOperation, Payload ext
+ export type RunEvent =
+   | RunEventEnvelope<GateRunEventOperation, GateRunEventPayload>
+   | RunEventEnvelope<PullRequestRunEventOperation, PullRequestRunEventPayload>
++  | RunEventEnvelope<SlotInvalidatedRunEventOperation, SlotInvalidatedRunEventPayload>
+   | RunEventEnvelope<OtherRunEventOperation, RunEventPayload>;
+ 
+ export interface RunEventRow {
+@@ -82,6 +97,7 @@ export interface RunEventRow {
+   readonly attention: OutputAttention | null;
+   readonly continuation: OutputContinuation | null;
+   readonly detail: JsonValue;
++  readonly superseded_by: string | null;
+   readonly created_at: string;
+ }
+ 
+@@ -91,6 +107,9 @@ const isGateOperation = (operation: RunTransitionOperation): operation is GateRu
+ const isPullRequestOperation = (operation: RunTransitionOperation): operation is PullRequestRunEventOperation =>
+   operation === "pull_request_observed" || operation === "pull_request_merge_confirmed";
+ 
++const isSlotInvalidatedOperation = (operation: RunTransitionOperation): operation is SlotInvalidatedRunEventOperation =>
++  operation === "slot_invalidated";
++
+ const isJsonObject = (value: JsonValue): value is { readonly [key: string]: JsonValue } =>
+   typeof value === "object" && value !== null && !Array.isArray(value);
+ 
+@@ -121,6 +140,17 @@ export const projectRunEvent = (row: RunEventRow): RunEvent => {
+       unit_id: payload.unit_id, wait_id: payload.wait_id, output_name: payload.output_name,
+       artifact_revision_id: payload.artifact_revision_id, attention: payload.attention, continuation: payload.continuation } };
+   }
++  if (isSlotInvalidatedOperation(row.operation)) {
++    const detail = payload.detail;
++    if (!payload.run_unit_id || !payload.output_name
++        || !isJsonObject(detail) || typeof detail.invalidation_kind !== "string") {
++      throw new Error(`run event '${row.sequence}' has an invalid ${row.operation} payload`);
++    }
++    return { ...envelope, operation: row.operation, payload: { ...payload,
++      run_unit_id: payload.run_unit_id, output_name: payload.output_name,
++      superseded_by: row.superseded_by as ArtifactId | null,
++      detail: { ...detail, invalidation_kind: detail.invalidation_kind } } };
++  }
+   if (isPullRequestOperation(row.operation)) {
+     const detail = payload.detail;
+     if (!payload.run_unit_id || !payload.stage_instance_id || !payload.stage_key || !payload.unit_id || !payload.artifact_revision_id
+diff --git a/src/storage/postgres-operators.ts b/src/storage/postgres-operators.ts
+--- a/src/storage/postgres-operators.ts
++++ b/src/storage/postgres-operators.ts
+@@ -341,7 +341,9 @@ export class PostgresOperatorProjectionRepository implements OperatorProjectionR
+               COALESCE(NULLIF(transition.detail->>'artifact_id','')::uuid,wait.artifact_revision_id)::text AS artifact_revision_id,
+               CASE WHEN transition.detail->>'attention' IN ('required','optional','none') THEN transition.detail->>'attention' ELSE NULL END AS attention,
+               CASE WHEN transition.detail->>'continuation' IN ('waiting','continuing') THEN transition.detail->>'continuation' ELSE NULL END AS continuation,
+-              transition.detail,transition.created_at::text
++              transition.detail,
++              NULLIF(transition.detail->>'superseded_by','')::text AS superseded_by,
++              transition.created_at::text
+        FROM oakridge.run_transition transition
+        LEFT JOIN oakridge.run_unit unit ON unit.id=transition.run_unit_id
+        LEFT JOIN oakridge.stage_instance stage ON stage.id=unit.stage_instance_id

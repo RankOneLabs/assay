@@ -14,8 +14,13 @@ FROM node:22.21.1-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754
 # fixtures additionally import hono, so they carry their own lock rather than
 # growing wf-13's and retroactively changing what its report describes.
 ARG NODE_DEPS=workflow_edit
-COPY ${NODE_DEPS}/package.json ${NODE_DEPS}/package-lock.json /opt/workflow_edit/
-RUN npm ci --prefix /opt/workflow_edit --ignore-scripts --no-audit --no-fund \
+# Both locks are copied with literal paths so the build context stays auditable;
+# the argument only selects which one this image installs.
+COPY workflow_edit/package.json workflow_edit/package-lock.json /opt/locks/workflow_edit/
+COPY code_extension/package.json code_extension/package-lock.json /opt/locks/code_extension/
+RUN mkdir -p /opt/workflow_edit \
+    && cp /opt/locks/${NODE_DEPS}/package.json /opt/locks/${NODE_DEPS}/package-lock.json /opt/workflow_edit/ \
+    && npm ci --prefix /opt/workflow_edit --ignore-scripts --no-audit --no-fund \
     && node --version \
     && node /opt/workflow_edit/node_modules/typescript/bin/tsc --version
 

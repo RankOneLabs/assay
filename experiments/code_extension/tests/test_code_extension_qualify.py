@@ -140,7 +140,7 @@ async def test_dispatch_full_gate_reproduces_committed_bytes() -> None:
         ):
             pytest.fail("Docker is unavailable")
         pytest.skip("Docker is unavailable")
-    image = "assay-code-extension:ce-v1-bounds"
+    image = "assay-code-extension:ce-v1-cme"
     _require_dispatch_image(image)
     manifest = FixtureManifestV3.model_validate_json(
         (DISPATCH / "qualification" / "manifest.json").read_bytes()
@@ -286,18 +286,20 @@ async def test_offline_image_reproduces_records_and_replay_keeps_verdicts(tmp_pa
         if os.environ.get("ASSAY_REQUIRE_DOCKER"):
             pytest.fail("Docker is unavailable")
         pytest.skip("Docker is unavailable")
+    fixture = load_fixture()
+    manifest = _committed_manifest()
+    # The pilot fixture is out of the ce-v1 roster and stays on the image it was
+    # qualified against; roster agreement is enforced by plan preparation.
     if (
         subprocess.run(
-            ("docker", "image", "inspect", qualify.IMAGE_TAG),
+            ("docker", "image", "inspect", manifest.observed_runtime_image_digest),
             capture_output=True,
             check=False,
             timeout=30,
         ).returncode
         != 0
     ):
-        pytest.skip("pinned Docker image is not provisioned")
-    fixture = load_fixture()
-    manifest = _committed_manifest()
+        pytest.skip("the image this fixture was qualified on is not provisioned")
     route = Path(
         os.environ.get(
             "ASSAY_EXTENSION_ROUTING_CONFIG",
@@ -308,7 +310,7 @@ async def test_offline_image_reproduces_records_and_replay_keeps_verdicts(tmp_pa
         pytest.skip("routing config for committed manifest is not provisioned")
     evidence = tmp_path / "evidence"
     fresh = await qualify.qualify(
-        image=qualify.IMAGE_TAG,
+        image=manifest.observed_runtime_image_digest,
         routing_config=route,
         evidence_dir=evidence,
         expected_manifest=manifest,

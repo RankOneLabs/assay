@@ -17,6 +17,7 @@ Per-scenario counts:
 | Scenario | Attempted | Completed | Passed |
 |---|---|---|---|
 | oakridge-dbos-context-defaults | 0 | 0 | 0 |
+| oakridge-dbos-cross-module-event | 0 | 0 | 0 |
 | oakridge-dbos-dispatch-handler | 0 | 0 | 0 |
 | oakridge-dbos-pointer-root | 0 | 0 | 0 |
 | oakridge-dbos-stage-pass-through | 0 | 0 | 0 |
@@ -36,6 +37,7 @@ Scenario/arm cells, including cells with no completed attempt:
 | Scenario | Arm | Attempted | Completed | Passed |
 |---|---|---|---|---|
 | oakridge-dbos-context-defaults | baseline | 0 | 0 | 0 |
+| oakridge-dbos-cross-module-event | baseline | 0 | 0 | 0 |
 | oakridge-dbos-dispatch-handler | baseline | 0 | 0 | 0 |
 | oakridge-dbos-pointer-root | baseline | 0 | 0 | 0 |
 | oakridge-dbos-stage-pass-through | central | 0 | 0 | 0 |
@@ -86,11 +88,12 @@ Scope of diff and unnecessary changed paths come from offline `assay code-metric
 
 This table counts primary attempts only, including invalid and unevaluable primary attempts. Other tables count all retained attempts. In the CSV and JSON ledgers, `retry_of` is `none` for a primary attempt and names the original attempt for a retry.
 
-Intervals use the Wilson score method at alpha 0.05. They describe execution variability on a fixed task, rather than sampling error over tasks. The fixture roster shown here lists 4 qualified scenarios; the planned pilot has fifteen attempts, five repeats on each of three fixed tasks. Only retained planned coordinates count as attempts. The repeats are not fifteen independently sampled tasks.
+Intervals use the Wilson score method at alpha 0.05. They describe execution variability on a fixed task, rather than sampling error over tasks. The fixture roster shown here lists 5 qualified scenarios; the planned pilot has fifteen attempts, five repeats on each of three fixed tasks. Only retained planned coordinates count as attempts. The repeats are not fifteen independently sampled tasks.
 
 | Scenario | Planned | Missing | No candidate | Operational yield | Primary task success | Conditional correctness | Invalid | Unevaluable |
 |---|---|---|---|---|---|---|---|---|
 | oakridge-dbos-context-defaults | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-dbos-cross-module-event | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-dispatch-handler | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-pointer-root | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-stage-pass-through | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
@@ -100,6 +103,7 @@ Intervals use the Wilson score method at alpha 0.05. They describe execution var
 | Scenario | Terminal causes | Duration measured | Tool use measured | Tokens measured | Cost priced |
 |---|---|---|---|---|---|
 | oakridge-dbos-context-defaults | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-dbos-cross-module-event | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-dispatch-handler | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-pointer-root | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-stage-pass-through | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |

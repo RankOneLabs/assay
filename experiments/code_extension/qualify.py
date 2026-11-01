@@ -43,7 +43,7 @@ from code_extension.fixture import (
 )
 from code_extension.fixtures import ScenarioFixture, load_scenario
 
-IMAGE_TAG = "assay-code-extension:ce-v1-bounds"
+IMAGE_TAG = "assay-code-extension:ce-v1-cme"
 CHECKS = ("baseline_passes", "feature_fails", "reference_passes")
 EXPECTED = {"baseline_passes": "passed", "feature_fails": "failed", "reference_passes": "passed"}
 ExpectedOutcome = Literal["passed", "failed"]

@@ -169,8 +169,8 @@ route requires it, with requested and provider-reported values held separately.
 
 The operator authorized the lockstep update to
 `integrations/pier/config/code_extension.yaml`. The rebuilt
-`assay-code-extension:ce-v1-bounds` image inspected as
-`sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee`.
+`assay-code-extension:ce-v1-cme` image inspected as
+`sha256:78fd510a5f9068e927d9ae3c133c1f46d8ca5eef975165e3f91ff0b871a5f55f`.
 The pilot, pointer-root and stage-pass-through fixtures were requalified against
 that observed digest; their baseline, reference and negative verdicts matched
 the previous qualified records.

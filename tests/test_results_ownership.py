@@ -13,6 +13,8 @@ ALLOWED_BUNDLES: set[PurePosixPath] = {
     PurePosixPath("experiments/code_extension/fixtures/pilot/qualification/evidence"),
     # The dispatch-handler manifest binds its deterministic qualification records too.
     PurePosixPath("experiments/code_extension/fixtures/dispatch-handler/qualification/evidence"),
+    # The cross-module-event manifest binds its records the same way.
+    PurePosixPath("experiments/code_extension/fixtures/cross-module-event/qualification/evidence"),
 }
 RUN_RECEIPTS_PROSE = {
     PurePosixPath("experiments/typesafe_relevance/run_packet.py"),

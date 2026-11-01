@@ -122,6 +122,7 @@
   tested with fake query rows and without Postgres. The SSE consumer accepts
   injected callbacks, and `src/http/app.ts` wires the two. Cross-module-event
   is feasible at the pin; `hono` is needed in the fixture dependency lock.
+  It is now extracted and qualified -- see the cross-module-event section below.
 - The pin has an optional injected `StageTypeCompilerRegistry` in
   `compileWorkflowDefinition` and fixed built-in compilers. It has no
   configuration-driven plugin loader. Its runtime registry is imperative and
@@ -147,6 +148,64 @@
   explicit pricing bound, approved per-attempt and total caps, and prompt,
   tool, fixture and image drift rejection. The per-cell tool-call bound is
   unavailable because extension mode does not enforce it.
+
+## Cross-module-event scenario
+
+- The candidate contract's slice -- all of `oakridge-dbos/src`, 125 files --
+  cannot typecheck: it reaches runtime and workflow modules importing
+  `@dbos-inc/dbos-sdk`, which no fixture lock declares. The committed tree is
+  instead the transitive import closure of the four scope files and the public
+  SSE test: 68 sources plus `tsconfig.json`, `package.json` and
+  `package-lock.json`, 71 files and 351,081 bytes. `@dbos-inc/dbos-sdk` leaves
+  the closure; `pg` survives only through `src/storage/sql-executor.ts`, which
+  the in-scope producer needs, so `pg` and `@types/pg` are locked at the
+  versions the extraction pin resolves alongside `hono`.
+- The task promotes the existing `slot_invalidated` run-transition operation to
+  the first-class treatment gate and pull-request operations already have. It is
+  cross-module by construction rather than by assertion: the payload requires a
+  `superseded_by` revision the producer's `list_run_events` does not currently
+  select, and the stream must announce an invalidated slot on its own frame, so
+  `src/domain/run-event.ts`, `src/storage/postgres-operators.ts` and
+  `src/http/invalidation-events.ts` must all change. `src/http/app.ts` is
+  writable but needs no edit; the scope is permission, not a required change.
+- Three incomplete patches each omit exactly one module's linked change --
+  the producer's column, the consumer's frame, and the projection's validation.
+  Every one typechecks and keeps the visible and hidden regression groups
+  passing while failing the feature group, which is what establishes that no
+  single-module answer satisfies the task. The gate matrix is baseline 10 feature
+  failures, reference 13 feature passes, and 1, 2 and 3 failures for the three
+  controls.
+- The payload and detail types are erased at runtime and hidden tests are copied
+  in after preflight, so the export requirement is asserted by spawning
+  `tsc --noEmit` inside the hidden contract test, as the dispatch-handler
+  scenario already does.
+- `probe.reference_submission` scripted a single `write_file` for
+  `src/domain/run-event.ts`, which silently applied a third of a cross-module
+  reference and graded it `group_failure`. It now derives the changed paths from
+  the patched tree and scripts one write per path in sorted order. The
+  dispatch-handler scenario requalified unchanged under that generalization.
+
+## Image dependency locks
+
+- The code-extension fixtures need `hono` and `pg`, which the image's single
+  `node_modules` tree did not carry. That tree is built from
+  `integrations/pier/workflow_edit/package-lock.json`, and the workflow-edit
+  study asserts that file is byte-identical to its own committed smoke fixture.
+  Growing it would have changed that fixture's tree, and `SMOKE.md` renders the
+  tree's size into a published wf-13 report pinned by a frozen digest, so a
+  published report would have described a tree its evidence never ran against.
+- The image's node dependency source is therefore a `NODE_DEPS` build argument.
+  `workflow_edit` remains the default, leaving the wf-13 image and its report
+  untouched, and the code-extension image builds from
+  `integrations/pier/code_extension/`, which is the workflow-edit lock plus
+  `hono`, `pg` and `@types/pg` with every shared entry identical. Each study's
+  image is governed by its own lock rather than one study's lock silently
+  governing another's fixture.
+- `assay-code-extension:ce-v1-cme` inspected as
+  `sha256:78fd510a5f9068e927d9ae3c133c1f46d8ca5eef975165e3f91ff0b871a5f55f`.
+  Dispatch-handler and cross-module-event are both qualified against it, so the
+  two share one observed image as a pilot grid requires.
+
 
 ## Study authorization and evaluation
 
@@ -235,8 +294,8 @@
   `sha256:a63b8377bf057a7d888f279c42b54ff904c6b1353af509a5016573ab7ac2cdf3`.
   Fixture qualification must bind this observed digest, never the mutable tag.
   Dispatch-handler was subsequently requalified against
-  `assay-code-extension:ce-v1-bounds`, inspected as
-  `sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee`,
+  `assay-code-extension:ce-v1-cme`, inspected as
+  `sha256:78fd510a5f9068e927d9ae3c133c1f46d8ca5eef975165e3f91ff0b871a5f55f`,
   so it shares one observed image with the pilot, pointer-root and
   stage-pass-through fixtures. Requalification changed only the image digest
   and the gate and baseline evidence digests that embed it; the tree, patch,
@@ -274,7 +333,7 @@ qualified Part 1 and pilot headroom. No extension fixture was qualified.
   requirement behavior.
 - `qualify.py` runs `baseline_passes`, `feature_fails`, and `reference_passes`
   separately through `DockerWorkflowRunner` in the image inspected as
-  `sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee`.
+  `sha256:78fd510a5f9068e927d9ae3c133c1f46d8ca5eef975165e3f91ff0b871a5f55f`.
   The runner restores visible tests before typecheck and bun build, then copies
   the private groups and runs all three with `--network=none` and `--pull=never`.
   The reference patch is used only for `reference_passes`; it is not an evaluator

@@ -1,18 +1,11 @@
-# Cross-module event candidate — upstream feasibility established
+# Carry an invalidated output slot through the run-event pipeline
 
-Status: **feasible at the upstream pin, not frozen or qualified**. This is a review draft and must not be offered to an agent or included in a pilot manifest.
+`slot_invalidated` is already a run-transition operation, but the run-event pipeline treats it as an ordinary operation with no invariants: nothing validates it, the projection drops the revision that superseded the slot, and the event stream announces it like any other. Give it the same first-class treatment the gate and pull-request operations already have, end to end.
 
-Extend the run-event pipeline with a new cross-module event. A real producer must emit it, a real consumer must handle it, and the public event type must include it. Serialization and validation must retain the row's sequence, occurrence time, and payload fields. Existing gate, pull-request, and work-started event behavior must remain compatible. The implementation must require linked schema, producer, consumer, and export changes. The new operation and payload contract still need to be fixed before this becomes a frozen task.
+Export a `SlotInvalidatedRunEventPayload` interface and a `SlotInvalidatedRunEventDetail` type from `src/domain/run-event.ts`, and include the operation in the exported `RunEvent` union with that payload. The payload must require a non-null `run_unit_id` and `output_name`, must require a `detail` carrying a string `invalidation_kind`, and must expose `superseded_by` — the artifact revision that replaced the invalidated slot, or `null` when nothing replaced it. `projectRunEvent` must reject a `slot_invalidated` row that is missing any required field with an Error naming the sequence and the operation, and must otherwise return an event preserving the row's sequence, occurrence time and existing payload fields.
 
-Requested implementation scope: `src/domain/run-event.ts`, `src/storage/postgres-operators.ts`, `src/http/invalidation-events.ts`, and `src/http/app.ts`. The pin exports `RunEvent` from `run-event.ts`; `PostgresOperatorProjectionRepository.list_run_events` produces projected rows through an injected `SqlExecutor`, `createInvalidationEventApp` consumes events through injected callbacks, and `app.ts` wires that consumer to the repository. Tests, dependency files, and configuration files would be protected. Public checks would be `bun test ./tests/visible` and `tsc --noEmit -p tsconfig.json`; submission would use `submit_output`. A fresh pin extraction of root `tsconfig.json`, all `oakridge-dbos/src`, `tests/invalidation-events.test.ts`, `package.json`, and package `tsconfig.json` contains these paths (125 files, 706,674 bytes before dependency installation); the existing upstream `hono` dependency must be locked for the HTTP tests. The injected SQL query seam permits producer tests without Postgres.
+The superseding revision has to reach consumers, so the producer must supply it: `PostgresOperatorProjectionRepository.list_run_events` in `src/storage/postgres-operators.ts` must select it alongside the row's other columns. And the stream must name it: `createInvalidationEventApp` in `src/http/invalidation-events.ts` must announce an invalidated slot on its own `slot_invalidated` server-sent event rather than the generic `run_event` frame, so a client can drop the affected output without inspecting every event's operation.
 
-## Requirements to intended hidden assertions
+Gate, pull-request and every other operation must keep their existing behavior, including their existing validation and their existing frame name.
 
-| Intended assertion | Public requirement or prior behavior | Status at upstream pin |
-| --- | --- | --- |
-| End-to-end event handling | Emit the new event from the real producer and handle it in the real consumer. | Producer, consumer, and app wiring exist. |
-| Serialization and validation | `projectRunEvent` validates and preserves the new event's fields. | Projector exists. |
-| Public export | `RunEvent` includes the new event and its payload type. | Export exists in `run-event.ts`. |
-| Existing event compatibility | Gate, pull-request, and work-started behavior remains unchanged. | Existing projection behavior is present. |
-
-No hidden tests or patches have been authored for this unfrozen candidate.
+`src/domain/`, `src/storage/` and `src/http/` are writable. Do not edit tests, package files or configuration. Public checks: `bun test ./tests/visible` and `tsc --noEmit -p tsconfig.json`. Submit the patch through the extension `submit_output` tool.

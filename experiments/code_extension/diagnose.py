@@ -301,7 +301,7 @@ def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", default="assay-code-extension:ce-v1-bounds")
+    parser.add_argument("--image", default="assay-code-extension:ce-v1-cme")
     parser.add_argument("--manifest", type=Path, default=PILOT / "qualification" / "manifest.json")
     parser.add_argument("--record", type=Path, required=True)
     parser.add_argument("--patch", type=Path, required=True)
