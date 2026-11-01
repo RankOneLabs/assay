@@ -234,6 +234,13 @@
   `assay-code-extension:run-bfb5dd7d9189a983` inspected as
   `sha256:a63b8377bf057a7d888f279c42b54ff904c6b1353af509a5016573ab7ac2cdf3`.
   Fixture qualification must bind this observed digest, never the mutable tag.
+  Dispatch-handler was subsequently requalified against
+  `assay-code-extension:ce-v1-bounds`, inspected as
+  `sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee`,
+  so it shares one observed image with the pilot, pointer-root and
+  stage-pass-through fixtures. Requalification changed only the image digest
+  and the gate and baseline evidence digests that embed it; the tree, patch,
+  requirement and assertion digests and the baseline verdict are unchanged.
 
 The extension requalification smoke ran one zero-paid repository-agent cell on
 each authorized route against that final image. Each read `src/math.py`, added
@@ -267,7 +274,7 @@ qualified Part 1 and pilot headroom. No extension fixture was qualified.
   requirement behavior.
 - `qualify.py` runs `baseline_passes`, `feature_fails`, and `reference_passes`
   separately through `DockerWorkflowRunner` in the image inspected as
-  `sha256:a63b8377bf057a7d888f279c42b54ff904c6b1353af509a5016573ab7ac2cdf3`.
+  `sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee`.
   The runner restores visible tests before typecheck and bun build, then copies
   the private groups and runs all three with `--network=none` and `--pull=never`.
   The reference patch is used only for `reference_passes`; it is not an evaluator

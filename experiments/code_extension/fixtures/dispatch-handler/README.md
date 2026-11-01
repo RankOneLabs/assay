@@ -64,11 +64,11 @@ the hidden type-contract check runs after the frozen preflight.
 Run from `experiments/`:
 
 ```sh
-uv run python -m code_extension.qualify --scenario dispatch-handler --image assay-code-extension:run-bfb5dd7d9189a983 --verify-committed
+uv run python -m code_extension.qualify --scenario dispatch-handler --image assay-code-extension:ce-v1-bounds --verify-committed
 ```
 
 The observed image digest is
-`sha256:a63b8377bf057a7d888f279c42b54ff904c6b1353af509a5016573ab7ac2cdf3`.
+`sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee`.
 The experiments CI job requires a working Docker daemon but does not provision
 this exact fixture image; its live replay test skips when the image is absent.
 Set `ASSAY_REQUIRE_EXTENSION_IMAGE=1` on a provisioned qualification machine

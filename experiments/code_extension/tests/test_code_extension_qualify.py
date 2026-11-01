@@ -140,7 +140,7 @@ async def test_dispatch_full_gate_reproduces_committed_bytes() -> None:
         ):
             pytest.fail("Docker is unavailable")
         pytest.skip("Docker is unavailable")
-    image = "assay-code-extension:run-bfb5dd7d9189a983"
+    image = "assay-code-extension:ce-v1-bounds"
     _require_dispatch_image(image)
     manifest = FixtureManifestV3.model_validate_json(
         (DISPATCH / "qualification" / "manifest.json").read_bytes()

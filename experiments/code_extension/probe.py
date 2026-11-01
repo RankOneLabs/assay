@@ -24,7 +24,7 @@ from code_extension.fixture import materialize, read_tree
 from code_extension.fixtures import ScenarioFixture
 from code_extension.qualify import make_runner, observed_image_digest
 
-IMAGE = "assay-code-extension:run-bfb5dd7d9189a983"
+IMAGE = "assay-code-extension:ce-v1-bounds"
 SUBMIT = {
     "summary": "Scripted qualification",
     "self_assessed_verdict": "complete",
