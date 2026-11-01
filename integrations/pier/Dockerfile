@@ -1,6 +1,6 @@
 # Locked bridge image: dependency resolution happens only at build time,
-# against the checked uv.lock and workflow_edit/package-lock.json. The
-# container's entrypoint never installs or resolves dependencies: it starts
+# against the checked uv.lock and the selected ${NODE_DEPS}/package-lock.json.
+# The container's entrypoint never installs or resolves dependencies: it starts
 # the bridge directly against the environment this image already froze.
 #
 # All four upstream images are pinned by digest, not just by tag: Node, bun,
@@ -8,7 +8,13 @@
 # different bytes on a later build. Re-pin deliberately; don't drop the digests.
 FROM node:22.21.1-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754fcd09536a3ae2c AS node_toolchain
 
-COPY workflow_edit/package.json workflow_edit/package-lock.json /opt/workflow_edit/
+# Which study's node dependency lock governs this image. wf-13's published
+# evidence describes a fixture tree built against workflow_edit's lock, so that
+# stays the default and its image stays reproducible. The code-extension
+# fixtures additionally import hono, so they carry their own lock rather than
+# growing wf-13's and retroactively changing what its report describes.
+ARG NODE_DEPS=workflow_edit
+COPY ${NODE_DEPS}/package.json ${NODE_DEPS}/package-lock.json /opt/workflow_edit/
 RUN npm ci --prefix /opt/workflow_edit --ignore-scripts --no-audit --no-fund \
     && node --version \
     && node /opt/workflow_edit/node_modules/typescript/bin/tsc --version

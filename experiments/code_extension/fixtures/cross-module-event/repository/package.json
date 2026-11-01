@@ -1,0 +1,22 @@
+{
+  "name": "oakridge-dbos-cross-module-event",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "hono": "4.12.16",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.13",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "@types/node": "25.6.0",
+    "undici-types": "7.19.2"
+  }
+}
