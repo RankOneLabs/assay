@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import subprocess
 import sys
@@ -35,7 +36,12 @@ from verification_pilot.budget import SpendGate
 
 from assay.canonical import digest_bytes
 from assay.fixture_manifest import FixtureManifestV3
-from assay.models import CellCoordinate
+from assay.canonical import canonical_json
+from assay.models import (
+    CellCoordinate,
+    ExecutionPlanV3,
+    parse_execution_plan,
+)
 from assay.store import ObjectStore
 
 
@@ -217,6 +223,60 @@ def test_prepare_is_deterministic_and_model_free(
         )
 
 
+def test_two_plans_share_a_store_without_blocking_each_other(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = PILOT.parent / "dispatch-handler" / "qualification" / "manifest.json"
+    data = json.loads(manifest.read_bytes())
+    routing = tmp_path / "routing.yaml"
+    routing.write_text(
+        "machines:\n  mcbain:\n    backend: ollama\n"
+        "models:\n  qwen-coder-32b:\n    machines: [mcbain]\n"
+        "    ollama_tag: qwen-coder-32b\n"
+    )
+    monkeypatch.setenv("CODE_EXTENSION_ROUTING_CONFIG", str(routing))
+    monkeypatch.setattr(
+        "code_extension.bridge.observed_image_digest",
+        lambda _image: data["observed_runtime_image_digest"],
+    )
+    forbid_model_dispatch(monkeypatch)
+
+    def configured(seed: int) -> RunConfiguration:
+        value = configuration()
+        value["scenario_qualifications"] = (
+            {
+                "scenario": "dispatch-handler",
+                "manifest_digest": digest_bytes(manifest.read_bytes()),
+            },
+        )
+        value["image_digest"] = data["observed_runtime_image_digest"]
+        value["randomization_seed"] = seed
+        return RunConfiguration.model_validate(value)
+
+    store_path = tmp_path / "store"
+    store = ObjectStore(store_path)
+    journals: list[AttemptJournal] = []
+    for index, seed in enumerate((43, 44)):
+        config = configured(seed)
+        config_path = tmp_path / f"config-{seed}.json"
+        config_path.write_bytes(config.canonical_bytes())
+        summary = prepare(config_path, store_path)
+        prepared = _build(config, store, live=True, plan_digest=summary["digest"])
+        worker = cast(ExtensionStudyWorker, next(iter(prepared.workers.values())))
+        assert worker.journal is not None
+        # The second plan must be able to claim an attempt even though the first
+        # already wrote one into the same store under a different configuration.
+        worker.journal.claim_attempt(f"cell-{index}", f"attempt-{index}")
+        journals.append(worker.journal)
+
+    first, second = journals
+    assert first.path != second.path
+    assert [record["attempt_id"] for record in first.records()] == ["attempt-0"]
+    assert [record["attempt_id"] for record in second.records()] == ["attempt-1"]
+    assert not (store_path / "attempts.jsonl").exists()
+
+
 def test_prepare_refuses_missing_scripted_gate_and_fixture_drift(tmp_path: Path) -> None:
     pilot = PILOT / "qualification" / "manifest.json"
     image = json.loads(pilot.read_bytes())["observed_runtime_image_digest"]
@@ -375,3 +435,114 @@ async def test_execute_refuses_wrong_digest_before_dispatch(tmp_path: Path) -> N
     plan.write_text(json.dumps({"fake": "plan"}))
     with pytest.raises(LaunchRefused, match="supplied .* actual"):
         await execute(plan, "sha256:" + "a" * 64, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_execute_retains_every_attempt_and_writes_the_run_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retention and the index both offline readers glob for.
+
+    `report` and `regrade` only find a run through `*/run.json`, so an execute
+    that returns without writing one leaves its evidence unreadable.
+    """
+    from assay.execution import RunSucceeded
+    from assay.models import ExecutionOutcome, RunManifest
+    from code_extension import run as run_module
+
+    manifest_path = PILOT.parent / "dispatch-handler" / "qualification" / "manifest.json"
+    data = json.loads(manifest_path.read_bytes())
+    value = configuration()
+    value["scenario_qualifications"] = (
+        {"scenario": "dispatch-handler", "manifest_digest": digest_bytes(
+            manifest_path.read_bytes()
+        )},
+    )
+    value["image_digest"] = data["observed_runtime_image_digest"]
+    config = RunConfiguration.model_validate(value)
+    config_path = tmp_path / "config.json"
+    config_path.write_bytes(config.canonical_bytes())
+    routing = tmp_path / "routing.yaml"
+    routing.write_text(
+        "machines:\n  mcbain:\n    backend: ollama\n"
+        "models:\n  qwen-coder-32b:\n    machines: [mcbain]\n"
+        "    ollama_tag: qwen-coder-32b\n"
+    )
+    monkeypatch.setenv("CODE_EXTENSION_ROUTING_CONFIG", str(routing))
+    monkeypatch.setattr(
+        "code_extension.bridge.observed_image_digest", lambda _image: config.image_digest
+    )
+    store_path = tmp_path / "store"
+    summary = prepare(config_path, store_path)
+
+    # Retention is the subject here, so neither the billed probe nor a container runs.
+    async def no_route_probe(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(run_module, "_route_probe", no_route_probe)
+
+    async def fake_run_study(prepared: PreparedStudy, store: ObjectStore) -> RunSucceeded:
+        worker = cast(ExtensionStudyWorker, next(iter(prepared.workers.values())))
+        compiled = parse_execution_plan(json.loads(prepared.plan_bytes))
+        assert isinstance(compiled, ExecutionPlanV3)
+        cell = compiled.cells[0]
+
+        async def fake_cell(**_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(status="succeeded")
+
+        # PierAdapter is frozen, so stand a stub in its place in the worker.
+        worker.adapters[cell.subject_id] = cast(Any, SimpleNamespace(run_cell=fake_cell))
+        await worker.run_cell(input_value={}, coordinate=cell)
+        def envelope(data: bytes) -> str:
+            return str(store.publish_json({
+                "content_base64": base64.b64encode(data).decode(),
+            }))
+
+        output_ref = str(store.publish_json({
+            "patch_ref": envelope(b"--- a/src/domain/run-event.ts\n"),
+            "result_ref": envelope(canonical_json({"tree_digest": "sha256:" + "d" * 64})),
+            "raw_trajectory_ref": envelope(canonical_json({"turns": [], "messages": []})),
+        }))
+        outcome = ExecutionOutcome(
+            run_id="retention", plan_ref=prepared.authorization, coordinate=cell,
+            started_at="2026-11-01T00:00:00Z", completed_at="2026-11-01T00:00:01Z",
+            status="succeeded", input_ref=cell.realization_ref, output_ref=output_ref,
+            trace_ref=str(store.publish_bytes(canonical_json({"scripted": True}))),
+        )
+        execution_ref = str(store.publish_json(outcome.model_dump(mode="json")))
+        manifest = RunManifest(
+            run_id="retention", plan_ref=prepared.authorization, status="incomplete",
+            execution_records={cell.id: execution_ref}, evaluation_records={},
+            missing_coordinates=tuple(sorted((
+                f"worker:{cell.id}", *(item.id for item in compiled.evaluations)
+            ))),
+        )
+        return RunSucceeded(
+            store.publish_json(manifest.model_dump(mode="json")), manifest
+        )
+
+    monkeypatch.setattr(run_module, "run_study", fake_run_study)
+    result = await execute(Path(summary["plan"]), summary["digest"], store_path)
+
+    archive_dir = Path(result["archive"])
+    assert archive_dir.is_dir()
+    retained = json.loads((archive_dir / "index.json").read_bytes())
+    assert len(retained) == summary["attempts"] == 1
+    record = json.loads(
+        ObjectStore(archive_dir).read_bytes(next(iter(retained.values())))
+    )
+    # Settled, not left at the status begin_attempt wrote before dispatch.
+    assert record["completion_status"] == "succeeded"
+    assert record["plan_ref"] and record["snapshot_ref"] and record["fixture_ref"]
+
+    index_path = archive_dir / "run.json"
+    assert result["run_index"] == str(index_path)
+    index = json.loads(index_path.read_bytes())
+    assert index["manifest_ref"].startswith("sha256:")
+    assert index["plan_ref"] == digest_bytes(Path(summary["plan"]).read_bytes())
+    assert index["expected_change_paths"]["oakridge-dbos-dispatch-handler"] == [
+        "src/domain/run-event.ts"
+    ]
+    # The readers glob the runs directory one level above each run.
+    assert list(archive_dir.parent.glob("*/run.json")) == [index_path]

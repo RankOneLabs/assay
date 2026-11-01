@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 
 from workflow_edit.evaluation import cell_arm, unavailable_result, worker_candidate
@@ -25,6 +25,29 @@ from code_extension.bridge import LEGACY_WRITABLE_PREFIXES
 STUDY_GROUPS = (("visible_regression", False), ("hidden_regression", True), ("new_behavior", True))
 CORRECTNESS_CATEGORIES = ("correct", "incorrect", "unavailable")
 GRADER_REVISION = "3"
+
+
+def evaluation_detail(
+    *,
+    groups: Mapping[str, Mapping[str, str | None]],
+    empty_patch: bool,
+    preflight: Mapping[str, str | None] | None,
+    rejected_changes: Sequence[Mapping[str, object]],
+    evaluator_record_ref: str,
+) -> dict[str, object]:
+    """Shape the per-cell detail object the ledger reads.
+
+    `preflight` and `rejected_changes` have to travel in the detail itself, not
+    only in the referenced evaluator record: the ledger derives its build and
+    scope axes from them, and it reads this object alone.
+    """
+    return {
+        "groups": {name: dict(group) for name, group in groups.items()},
+        "empty_patch": empty_patch,
+        "preflight": dict(preflight) if preflight is not None else None,
+        "rejected_changes": [dict(change) for change in rejected_changes],
+        "evaluator_record_ref": evaluator_record_ref,
+    }
 
 
 def grader_cache_key(
@@ -154,7 +177,7 @@ class CellEvaluator:
             submission=submission,
             runner=self.runner,
         )
-        groups = {
+        groups: dict[str, dict[str, str | None]] = {
             group.name: {"status": group.status, "cause": group.cause} for group in result.groups
         }
         retained_groups = {
@@ -177,16 +200,18 @@ class CellEvaluator:
             test_group_digests=refs,
             evaluator_configuration=self.configuration(),
         )
+        preflight: dict[str, str | None] | None = (
+            {"status": result.preflight.status, "cause": result.preflight.cause}
+            if result.preflight is not None else None
+        )
+        rejected_changes = [asdict(change) for change in result.rejected_changes]
         record: dict[str, object] = {
             "verdict": result.verdict,
             "cause": result.cause,
             "groups": retained_groups,
-            "preflight": (
-                {"status": result.preflight.status, "cause": result.preflight.cause}
-                if result.preflight is not None else None
-            ),
+            "preflight": preflight,
             "attribution": result.attribution,
-            "rejected_changes": [asdict(change) for change in result.rejected_changes],
+            "rejected_changes": rejected_changes,
             "grader_cache_key": key,
             "empty_patch": candidate.patch == b"",
             "seconds": round(time.monotonic() - started, 3),
@@ -198,9 +223,11 @@ class CellEvaluator:
         return EvaluationSuccess(
             result.verdict,
             (result.cause,) if result.cause else (),
-            {
-                "groups": groups,
-                "empty_patch": candidate.patch == b"",
-                "evaluator_record_ref": record_ref,
-            },
+            evaluation_detail(
+                groups=groups,
+                empty_patch=candidate.patch == b"",
+                preflight=preflight,
+                rejected_changes=rejected_changes,
+                evaluator_record_ref=record_ref,
+            ),
         )

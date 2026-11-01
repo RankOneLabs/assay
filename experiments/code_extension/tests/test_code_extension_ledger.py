@@ -17,9 +17,11 @@ from code_extension.classification import (
     operator_category,
     parse_category,
 )
-from code_extension.ledger import build_ledger
+from code_extension.evaluation import evaluation_detail
+from code_extension.ledger import _Detail, build_ledger
 from code_extension.study import plan_study
 from code_extension.tests.test_code_extension_study import PlanWorker, _pilot, _two_arm_fixture
+from pydantic import ValidationError
 
 from assay.execution import Accounting
 from assay.investigations.workflow_correctness import DockerWorkflowRunner, WorkflowRunnerSettings
@@ -83,11 +85,17 @@ def _manifest(
     cell = plan.cells[0]
     evaluation_records: dict[str, str] = {}
     if passed:
-        detail_ref = str(store.publish_json({"groups": {
-            "visible_regression": {"status": "passed", "cause": None},
-            "hidden_regression": {"status": "passed", "cause": None},
-            "new_behavior": {"status": "passed", "cause": None},
-        }}))
+        detail_ref = str(store.publish_json(evaluation_detail(
+            groups={
+                "visible_regression": {"status": "passed", "cause": None},
+                "hidden_regression": {"status": "passed", "cause": None},
+                "new_behavior": {"status": "passed", "cause": None},
+            },
+            empty_patch=False,
+            preflight={"status": "passed", "cause": None},
+            rejected_changes=(),
+            evaluator_record_ref=str(store.publish_json({"grader_cache_key": "k"})),
+        )))
         evaluation_records[plan.evaluations[0].id] = str(store.publish_json({
             "record_schema": "paa-evidence-record/0.3.0-draft",
             "verdict": {"value": "correct", "reason_codes": []},
@@ -172,3 +180,27 @@ def test_operator_judgment_is_required_and_bound_to_trace(tmp_path: Path) -> Non
     assert ledger.rows[0].reference.resolve(store)[1] is not None
     assert ledger.rows[0].reference.patch_ref == partial_patch_ref
     assert ledger.rows[0].reference.raw_trajectory_ref == trajectory_ref
+
+
+def test_evaluator_detail_is_exactly_what_the_ledger_reads() -> None:
+    """Producer and reader must not drift apart again.
+
+    The ledger silently lost the build and scope evidence once because the
+    evaluator kept it in a referenced record this object only pointed at.
+    """
+    rejected = ({"path": "tests/visible/smoke.test.ts", "reason": "not_writable"},)
+    produced = evaluation_detail(
+        groups={"new_behavior": {"status": "passed", "cause": None}},
+        empty_patch=False,
+        preflight={"status": "passed", "cause": None},
+        rejected_changes=rejected,
+        evaluator_record_ref="sha256:" + "a" * 64,
+    )
+    detail = _Detail.model_validate(produced)
+    assert detail.preflight == {"status": "passed", "cause": None}
+    assert detail.rejected_changes == rejected
+    assert detail.evaluator_record_ref == "sha256:" + "a" * 64
+    # A field the evaluator starts emitting without the ledger declaring it now
+    # fails loudly, rather than being dropped and changing an outcome axis.
+    with pytest.raises(ValidationError):
+        _Detail.model_validate({**produced, "attribution": "resolved"})

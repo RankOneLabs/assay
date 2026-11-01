@@ -86,6 +86,10 @@ class SmithersTurnCompletion:
     # re-reads the routing file, so without this a mid-run change would be
     # adopted as the new authority instead of failing the turn.
     authorized: Mapping[str, Any] | None = None
+    # Caps a single request. ``deadline`` below bounds the whole cell, so on its
+    # own it lets one stalled request spend the cell's entire remaining budget.
+    # ``None`` keeps the deadline as the only bound.
+    request_timeout_s: float | None = None
 
     def __call__(
         self,
@@ -117,10 +121,24 @@ class SmithersTurnCompletion:
             finally:
                 await client.aclose()
 
-        timeout = None if deadline is None else max(deadline - time.monotonic(), 0.0)
+        remaining = None if deadline is None else max(deadline - time.monotonic(), 0.0)
+        timeout = remaining
+        if self.request_timeout_s is not None:
+            timeout = (
+                self.request_timeout_s
+                if remaining is None
+                else min(remaining, self.request_timeout_s)
+            )
         try:
             completion = asyncio.run(asyncio.wait_for(dispatch(), timeout))
         except TimeoutError as error:
+            # A request that outlived its own bound is a dispatch failure. Only
+            # the cell actually running out of time is the candidate's outcome.
+            if timeout is not None and timeout != remaining:
+                raise ModelDispatchError(
+                    "RequestTimeout",
+                    f"model request exceeded its {self.request_timeout_s}s bound",
+                ) from error
             raise ValueError("agent_deadline") from error
         if isinstance(completion, WorkerFailure):
             raise ModelDispatchError(completion.error_type, completion.message)

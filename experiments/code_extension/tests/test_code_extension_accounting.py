@@ -266,6 +266,38 @@ def test_judgment_cannot_override_mechanical_or_passed(tmp_path: Path) -> None:
         )
 
 
+def test_rejected_out_of_scope_edits_violate_the_scope_axis(tmp_path: Path) -> None:
+    """A submitted cell whose out-of-scope edits were restored is not clean."""
+    store, plan, authorization = _plan(tmp_path)
+    execution_ref, trace_ref = _outcome(store, plan, authorization, success=True, trace={})
+    manifest_ref = _manifest(store, plan, authorization, execution_ref, passed=True)
+    manifest = RunManifest.model_validate_json(store.read_bytes(manifest_ref))
+    record_ref = next(iter(manifest.evaluation_records.values()))
+    record = json.loads(store.read_bytes(record_ref))
+    detail = json.loads(store.read_bytes(record["payload"]["detail_refs"][0]))
+
+    clean = build_ledger(plan=plan, manifest_ref=manifest_ref, store=store, judgments={}).rows[0]
+    assert clean.axes.scope == "clean"
+
+    detail["rejected_changes"] = [{"path": "tests/visible/smoke.test.ts", "reason": "not_writable"}]
+    record["payload"]["detail_refs"] = [str(store.publish_json(detail))]
+    violated_manifest = manifest.model_copy(
+        update={
+            "evaluation_records": {
+                next(iter(manifest.evaluation_records)): str(store.publish_json(record))
+            }
+        }
+    )
+    violated = build_ledger(
+        plan=plan,
+        manifest_ref=str(store.publish_json(violated_manifest.model_dump(mode="json"))),
+        store=store,
+        judgments={},
+    ).rows[0]
+    assert violated.axes.scope == "violated"
+    assert trace_ref
+
+
 def test_separate_feature_build_and_regression_axes(tmp_path: Path) -> None:
     store, plan, authorization = _plan(tmp_path)
     execution_ref, trace_ref = _outcome(store, plan, authorization, success=True, trace={})
@@ -293,7 +325,30 @@ def test_separate_feature_build_and_regression_axes(tmp_path: Path) -> None:
         plan=plan, manifest_ref=changed_ref, store=store, judgments={plan.cells[0].id: judgment}
     ).rows[0]
     assert row.axes.feature == "failed" and row.axes.regression == "passed"
-    assert row.axes.build == "unavailable"
+    # The build passed and only the new-behavior group failed. This asserted
+    # 'unavailable' while the detail object withheld the evaluator's preflight.
+    assert row.axes.build == "passed"
+
+    absent = json.loads(store.read_bytes(new_detail_ref))
+    absent["preflight"] = None
+    absent_record = {**record, "payload": {**record["payload"],
+                                           "detail_refs": [str(store.publish_json(absent))]}}
+    absent_manifest = manifest.model_copy(
+        update={
+            "evaluation_records": {
+                next(iter(manifest.evaluation_records)): str(store.publish_json(absent_record))
+            }
+        }
+    )
+    absent_row = build_ledger(
+        plan=plan,
+        manifest_ref=str(store.publish_json(absent_manifest.model_dump(mode="json"))),
+        store=store,
+        judgments={plan.cells[0].id: judgment},
+    ).rows[0]
+    # Only a genuinely absent preflight leaves the build axis unavailable.
+    assert absent_row.axes.build == "unavailable"
+
     build_detail = json.loads(store.read_bytes(detail_ref))
     build_detail["preflight"] = {"status": "failed", "cause": "typecheck_failure"}
     for group in build_detail["groups"].values():

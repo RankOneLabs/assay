@@ -239,6 +239,17 @@ class AttemptArchive:
     def _publish(self, data: bytes) -> str:
         return str(self.objects.publish_bytes(_safe_bytes(data, self.secrets)))
 
+    def _publish_verbatim(self, data: bytes) -> str:
+        """Retain an object another document names, without redacting it.
+
+        Redaction rewrites a digest, and these objects are referred to by digest
+        from the plan and the run manifest, so a redacted copy is unreachable.
+        They are committed operator artifacts and accounting records rather than
+        model-facing content: the snapshot, for one, carries the study's own
+        forbidden-substring list, whose keys include the word 'credential'.
+        """
+        return str(self.objects.publish_bytes(data))
+
     def _record(self, record: AttemptArchiveRecord) -> str:
         data = _safe_bytes(canonical_json(record.model_dump(mode="json")), self.secrets)
         ref = self._publish(data)
@@ -309,10 +320,8 @@ class AttemptArchive:
         )
         route = configuration.get("model_route") or {}
         for ref in (plan_ref, snapshot_ref, authorization_ref, fixture_ref):
-            if ref is not None:
-                copied = self._publish(source.read_bytes(ref))
-                if copied != ref:
-                    raise ValueError("redaction changed an authorization input")
+            if ref is not None and self._publish_verbatim(source.read_bytes(ref)) != ref:
+                raise ValueError("an authorization input does not match its digest")
         prompt = configuration.get("arm_prompt")
         record = AttemptArchiveRecord(
             schema_version=ARCHIVE_SCHEMA, study_id="code_extension", protocol_id=PROTOCOL_ID,
@@ -388,6 +397,18 @@ class AttemptArchive:
             ]
         return self._publish(canonical_json(evidence))
 
+    def _copy_operating(self, source: ObjectStore, ref: str) -> None:
+        """Retain the operating record and the accounting provenance it names.
+
+        The ledger reads both to fill an attempt's accounting, so an archive
+        that omits them cannot be reported on even though it holds the manifest
+        that names them.
+        """
+        raw = source.read_bytes(ref)
+        self._publish_verbatim(raw)
+        for provenance in json.loads(raw).get("source_references", []):
+            self._publish_verbatim(source.read_bytes(provenance))
+
     def settle_attempt(self, cell_id: str, *, source: ObjectStore,
                        manifest_ref: str | None = None,
                        interruption: str | None = None) -> AttemptArchiveRecord:
@@ -409,6 +430,9 @@ class AttemptArchive:
                 self._copy_evaluation(source, ref) for key, ref in
                 manifest.evaluation_records.items() if key.startswith(cell_id + ":")
             )
+            operating_ref = manifest.operating_records.get(f"worker:{cell_id}")
+            if operating_ref is not None:
+                self._copy_operating(source, operating_ref)
         trace_ref = outcome.trace_ref if outcome else (
             manifest.interruption_ref if manifest else None
         )

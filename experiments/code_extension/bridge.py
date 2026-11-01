@@ -324,6 +324,7 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
             if self.completion_for is not None
             else SmithersTurnCompletion(
                 self.factory, cell_key, authorized=self.authorized_smithers,
+                request_timeout_s=self._settings().request_timeout_s,
             )
         )
         agent = RepositoryAgentClient(

@@ -24,7 +24,7 @@ from workflow_edit.bridge import SmithersTurnCompletion, trial_limits, turn_idem
 from assay.adapters.pier import PierAdapter
 from assay.adapters.smithers import SmithersFactory
 from assay.canonical import canonical_json, digest_bytes
-from assay.execution import AdmissionHalt, WorkerFailure, WorkerResult
+from assay.execution import AdmissionHalt, RunFailed, RunResult, WorkerFailure, WorkerResult
 from assay.investigations.workflow_correctness import DockerWorkflowRunner, WorkflowRunnerSettings
 from assay.models import (
     CellCoordinate,
@@ -37,17 +37,38 @@ from assay.pier_protocol import RuntimeBinding
 from assay.planning import authorize
 from assay.store import ObjectStore
 from code_extension import qualify
+from code_extension.archive import AttemptArchive
 from code_extension.bridge import ExtensionBridgeClient
 from code_extension.budget import AttemptJournal, RequestBudget
 from code_extension.config import RunConfiguration
 from code_extension.dispatch import cell_idempotency_key
+from code_extension.evaluation import GRADER_REVISION
 from code_extension.fixture import PILOT
-from code_extension.fixtures import load_scenario
-from code_extension.study import PreparedStudy, load_qualified_study_fixture, plan_study, run_study
+from code_extension.fixtures import load_scenario, sidecar_for_subject
+from code_extension.study import (
+    PreparedStudy,
+    StudyFixture,
+    load_qualified_study_fixture,
+    plan_study,
+    run_study,
+)
 
 
 class LaunchRefused(ValueError):
     """A launch gate named an operator-repairable blocker."""
+
+
+@dataclass(frozen=True)
+class ArchiveBinding:
+    """Everything the archive needs to open an attempt, resolved once per plan."""
+
+    archive: AttemptArchive
+    source: ObjectStore
+    plan_ref: str
+    snapshot_ref: str | None
+    fixture_ref: str | None
+    routing_digest: str | None
+    grader_identity: str | None
 
 
 @dataclass
@@ -63,6 +84,7 @@ class ExtensionStudyWorker:
     request_bound: Decimal | None = None
     allowed_coordinates: dict[str, str] | None = None
     supports_cell_coordinates: bool = True
+    binding: ArchiveBinding | None = None
 
     def configuration(self, arm_id: str) -> dict[str, Any]:
         if arm_id != self.arm_id:
@@ -95,10 +117,30 @@ class ExtensionStudyWorker:
         bridge = self.bridges[coordinate.subject_id]
         attempt_id = cell_idempotency_key(bridge.run_label, coordinate)
         self.journal.claim_attempt(coordinate.id, attempt_id)
+        if self.binding is not None:
+            # Retention opens before dispatch, so an attempt that never returns
+            # still leaves a record naming what it was authorized to do.
+            self.binding.archive.begin_attempt(
+                coordinate=coordinate,
+                plan_ref=self.binding.plan_ref,
+                snapshot_ref=self.binding.snapshot_ref,
+                authorization_ref=self.binding.plan_ref,
+                configuration=bridge.configuration(),
+                sidecar=bridge.scenario_sidecar or sidecar_for_subject(coordinate.subject_id),
+                source=self.binding.source,
+                fixture_ref=self.binding.fixture_ref,
+                grader_identity=self.binding.grader_identity,
+                routing_digest=self.binding.routing_digest,
+            )
         return await self.adapters[coordinate.subject_id].run_cell(
             input_value=input_value,
             coordinate=coordinate,
         )
+
+
+def _plan_dir(store: ObjectStore, plan_digest: str) -> Path:
+    """Each frozen plan owns a directory, so one store can hold several plans."""
+    return store.root / "plans" / plan_digest.removeprefix("sha256:")
 
 
 def _build(
@@ -131,11 +173,15 @@ def _build(
     )
     route = bridge_protocol.ModelRoute.model_validate(config.route.model_dump(mode="json"))
     gate = SpendGate(config.total_cap_usd) if live else None
-    journal = (
-        AttemptJournal(store.root / "attempts.jsonl", plan_digest or "", config.digest())
-        if live
-        else None
-    )
+    journal: AttemptJournal | None = None
+    if live:
+        if plan_digest is None:
+            raise LaunchRefused("a live run requires the digest of its frozen plan")
+        # The journal lives beside its own plan. A store-wide journal would make
+        # every record a resume mismatch for the next plan prepared in the store.
+        journal = AttemptJournal(
+            _plan_dir(store, plan_digest) / "attempts.jsonl", plan_digest, config.digest()
+        )
     if journal is not None and gate is not None:
         journal.reconcile(gate)
         if gate.halt is not None:
@@ -149,7 +195,10 @@ def _build(
 
             def completion_for(cell_key: str, *, _factory: SmithersFactory = factory) -> Any:
                 base = SmithersTurnCompletion(
-                    _factory, cell_key, authorized=_factory.configuration()
+                    _factory,
+                    cell_key,
+                    authorized=_factory.configuration(),
+                    request_timeout_s=config.bounds.request_timeout_s,
                 )
                 if gate is None or journal is None:
                     raise AssertionError("prepare cannot construct a model completion")
@@ -245,11 +294,49 @@ def _build(
         ),
     )
     compiled = parse_execution_plan(json.loads(prepared.plan_bytes))
+    if not isinstance(compiled, ExecutionPlanV3):
+        raise LaunchRefused("extension runner requires a v3 plan")
     for worker in workers.values():
         worker.allowed_coordinates = {
             cell.id: cell.realization_ref for cell in compiled.cells if cell.arm_id == worker.arm_id
         }
+    if live:
+        archive_binding = _open_archive(store, fixture, prepared, compiled, run_label)
+        for worker in workers.values():
+            worker.binding = archive_binding
     return prepared
+
+
+def _open_archive(
+    store: ObjectStore,
+    fixture: StudyFixture,
+    prepared: PreparedStudy,
+    compiled: ExecutionPlanV3,
+    run_label: str,
+) -> ArchiveBinding:
+    """Open the run's retention archive and publish the inputs it attests to."""
+    root = _archive_root(store)
+    archive = (
+        AttemptArchive.open_existing(run_label, root)
+        if (root / run_label / "index.json").is_file()
+        else AttemptArchive(run_label, root)
+    )
+    return ArchiveBinding(
+        archive=archive,
+        source=store,
+        plan_ref=str(store.publish_bytes(prepared.plan_bytes)),
+        snapshot_ref=compiled.snapshot_ref,
+        fixture_ref=str(
+            store.publish_bytes(canonical_json(fixture.manifest.model_dump(mode="json")))
+        ),
+        routing_digest=fixture.manifest.routing_config_digest,
+        grader_identity=GRADER_REVISION,
+    )
+
+
+def _archive_root(store: ObjectStore) -> Path:
+    """`report --archive <store>/archive` reads the runs directory below this."""
+    return store.root / "archive" / "runs"
 
 
 def prepare(config_path: Path, store_path: Path) -> dict[str, Any]:
@@ -260,7 +347,7 @@ def prepare(config_path: Path, store_path: Path) -> dict[str, Any]:
     if not isinstance(plan, ExecutionPlanV3):
         raise LaunchRefused("extension runner requires a v3 plan")
     digest = prepared.authorization
-    launch_dir = store.root / "plans" / digest.removeprefix("sha256:")
+    launch_dir = _plan_dir(store, digest)
     launch_dir.mkdir(parents=True, exist_ok=True)
     plan_path = launch_dir / "plan.json"
     config_archive = launch_dir / "config.json"
@@ -310,7 +397,7 @@ async def execute(plan_path: Path, authorization: str, store_path: Path) -> dict
         )
     authorize(plan_bytes, authorization)
     store = ObjectStore(store_path)
-    launch_dir = store.root / "plans" / actual.removeprefix("sha256:")
+    launch_dir = _plan_dir(store, actual)
     if plan_path.resolve() != (launch_dir / "plan.json").resolve():
         raise LaunchRefused("original frozen plan artifact is required")
     config = RunConfiguration.load(launch_dir / "config.json")
@@ -321,11 +408,64 @@ async def execute(plan_path: Path, authorization: str, store_path: Path) -> dict
     result = await run_study(prepared, store)
     worker = cast(ExtensionStudyWorker, next(iter(prepared.workers.values())))
     assert worker.gate is not None
+    assert worker.binding is not None
+    manifest_ref = None if result.manifest_ref is None else str(result.manifest_ref)
+    index = _settle_archive(worker.binding, fixture=prepared, manifest_ref=manifest_ref,
+                            interruption=_interruption(result))
     return {
         "status": type(result).__name__,
         "authorization": authorization,
         "spend": worker.gate.record(),
+        "archive": str(worker.binding.archive.directory),
+        "run_index": None if index is None else str(index),
     }
+
+
+def _interruption(result: RunResult) -> str | None:
+    return f"{result.error_type}: {result.message}" if isinstance(result, RunFailed) else None
+
+
+def _settle_archive(
+    binding: ArchiveBinding,
+    *,
+    fixture: PreparedStudy,
+    manifest_ref: str | None,
+    interruption: str | None,
+) -> Path | None:
+    """Settle every dispatched attempt and write the index both readers glob for."""
+    archive = binding.archive
+    for cell_id in sorted(json.loads((archive.directory / "index.json").read_bytes())):
+        archive.settle_attempt(
+            cell_id, source=binding.source, manifest_ref=manifest_ref, interruption=interruption,
+        )
+    if manifest_ref is None:
+        # Without a manifest there is nothing for a reader to bind an attempt to.
+        # The per-attempt records above are still retained.
+        return None
+    expected: dict[str, list[str]] = {}
+    for scenario in fixture.manifest.scenarios:
+        sidecar = sidecar_for_subject(scenario.subject_id)
+        if sidecar is None:
+            continue
+        reference = next(
+            (item for item in sidecar.patch_inventory if item.kind == "reference"), None
+        )
+        if reference is not None:
+            expected[scenario.subject_id] = list(reference.touched_paths)
+    path = archive.directory / "run.json"
+    path.write_bytes(
+        canonical_json(
+            {
+                "plan_ref": binding.plan_ref,
+                "manifest_ref": manifest_ref,
+                "judgments": {},
+                "expected_change_paths": expected,
+                "retry_of": {},
+            }
+        )
+        + b"\n"
+    )
+    return path
 
 
 async def _route_probe(

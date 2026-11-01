@@ -86,7 +86,18 @@ class _Group(_Wire):
 
 
 class _Detail(_Wire):
+    """The evaluator's per-cell detail object, mirrored field for field.
+
+    Strict on purpose: `_Wire` ignores unknown keys, so when this model and the
+    evaluator drifted apart the parse still succeeded and silently dropped the
+    build and scope evidence instead of failing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     groups: dict[str, _Group]
+    empty_patch: bool
+    evaluator_record_ref: str
     preflight: dict[str, str | None] | None = None
     rejected_changes: tuple[dict[str, object], ...] = ()
 
