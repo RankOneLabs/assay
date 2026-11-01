@@ -20,6 +20,7 @@ from code_extension.fixture import (
     materialize,
     read_tree,
 )
+from code_extension.fixtures import ExtensionScenarioSidecar, load_scenario
 from code_extension.qualify import CHECKS, read_evidence
 from code_extension.settings import SMOKE_SUBJECT_IDS
 
@@ -29,6 +30,26 @@ from assay.investigations.workflow_correctness import workflow_tree_digest
 from assay.repository import DEFAULT_MAX_REPOSITORY_BYTES, DEFAULT_MAX_REPOSITORY_FILES
 
 
+def test_dispatch_sidecar_round_trip_and_loader_refuses_unwritable_reference(
+    tmp_path: Path,
+) -> None:
+    source = PILOT.parent / "dispatch-handler"
+    sidecar_bytes = (source / "qualification" / "sidecar.json").read_bytes()
+    model = ExtensionScenarioSidecar.model_validate_json(sidecar_bytes)
+    assert canonical_json(model.model_dump(mode="json")) + b"\n" == sidecar_bytes
+    fixture = load_scenario("dispatch-handler")
+    assert fixture.subject_id == "oakridge-dbos-dispatch-handler"
+    assert len(fixture.arms[0].negative_patches) == 3
+    copied = tmp_path / "dispatch-handler"
+    shutil.copytree(source, copied)
+    changed = model.model_copy(update={"writable_implementation_scope": ("src/compiler/",)})
+    (copied / "qualification" / "sidecar.json").write_bytes(
+        canonical_json(changed.model_dump(mode="json")) + b"\n"
+    )
+    with pytest.raises(ValueError, match="outside writable scope"):
+        load_scenario("dispatch-handler", copied)
+
+
 @pytest.mark.parametrize("name", ("pilot", *ADDED_SCENARIOS))
 def test_committed_scenario_has_private_checks_and_bounded_trees(name: str, tmp_path: Path) -> None:
     if name == "pilot":
@@ -36,8 +57,13 @@ def test_committed_scenario_has_private_checks_and_bounded_trees(name: str, tmp_
         subject_id = SUBJECT_ID
         task = fixture.task
         groups = fixture.groups
-        arms = ((fixture.repository, fixture.arms[0].reference_patch,
-                 fixture.arms[0].negative_patches[0]),)
+        arms = (
+            (
+                fixture.repository,
+                fixture.arms[0].reference_patch,
+                fixture.arms[0].negative_patches[0],
+            ),
+        )
         root = PILOT
     else:
         committed = load_committed_scenario(name)
@@ -62,14 +88,14 @@ def test_committed_scenario_has_private_checks_and_bounded_trees(name: str, tmp_
         total_bytes = sum(len(source.encode()) for source in repository.values())
         assert total_bytes <= DEFAULT_MAX_REPOSITORY_BYTES
         assert not any(
-            path.startswith(("tests/hidden/", "hidden/", "patches/"))
-            or path.endswith(".patch")
+            path.startswith(("tests/hidden/", "hidden/", "patches/")) or path.endswith(".patch")
             for path in repository
         )
         assert all(repository[path] == source for path, source in groups[0].files.items())
         assert all(not set(group.files) & set(repository) for group in groups[1:])
-        assert {path: source for path, source in repository.items()
-                if path.startswith("tests/visible/")} == groups[0].files
+        assert {
+            path: source for path, source in repository.items() if path.startswith("tests/visible/")
+        } == groups[0].files
         for label, patch in (("reference", reference), ("negative", negative)):
             assert patch
             candidate = tmp_path / f"{index}-{label}"
@@ -112,9 +138,9 @@ def test_added_scenario_qualification_records(name: str) -> None:
 
 def test_stage_arms_share_every_file_outside_the_compiler() -> None:
     scenario = load_committed_scenario("stage-pass-through")
-    assert tuple(arm.arm_id for arm in scenario.arms) == ADDED_SCENARIOS[
-        "stage-pass-through"
-    ].arm_ids
+    assert (
+        tuple(arm.arm_id for arm in scenario.arms) == ADDED_SCENARIOS["stage-pass-through"].arm_ids
+    )
     common = {
         path: source
         for path, source in scenario.arms[0].repository.items()
@@ -133,18 +159,25 @@ def test_stage_arms_share_every_file_outside_the_compiler() -> None:
 async def test_added_scenario_image_reproduces_qualification_records(
     name: str, tmp_path: Path
 ) -> None:
-    if shutil.which("docker") is None or subprocess.run(
-        ("docker", "info"), capture_output=True, check=False, timeout=30
-    ).returncode != 0:
+    if (
+        shutil.which("docker") is None
+        or subprocess.run(
+            ("docker", "info"), capture_output=True, check=False, timeout=30
+        ).returncode
+        != 0
+    ):
         if os.environ.get("ASSAY_REQUIRE_DOCKER"):
             pytest.fail("Docker is unavailable")
         pytest.skip("Docker is unavailable")
-    if subprocess.run(
-        ("docker", "image", "inspect", qualify.IMAGE_TAG),
-        capture_output=True,
-        check=False,
-        timeout=30,
-    ).returncode != 0:
+    if (
+        subprocess.run(
+            ("docker", "image", "inspect", qualify.IMAGE_TAG),
+            capture_output=True,
+            check=False,
+            timeout=30,
+        ).returncode
+        != 0
+    ):
         pytest.skip("pinned Docker image is not provisioned")
 
     scenario = load_committed_scenario(name)
@@ -205,9 +238,7 @@ async def test_added_scenario_image_reproduces_qualification_records(
                 group.name: {"status": group.status, "cause": group.cause}
                 for group in result.groups
             }
-            assert record["outcome"] == (
-                "failed" if check == "feature_fails" else "passed"
-            )
+            assert record["outcome"] == ("failed" if check == "feature_fails" else "passed")
         statuses = {group.name: group.status for group in baseline.groups}
         assert statuses == {
             "visible_regression": "passed",

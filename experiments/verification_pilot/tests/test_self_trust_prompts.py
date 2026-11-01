@@ -36,7 +36,11 @@ from verification_pilot.self_trust.ladder import (
     RUNGS,
     Rung,
 )
-from verification_pilot.self_trust.pins import SYSTEM_PROMPT_SHA256, TURN_PROMPTS_SHA256
+from verification_pilot.self_trust.pins import (
+    SYSTEM_PROMPT_SHA256,
+    TOOL_SURFACE_SHA256,
+    TURN_PROMPTS_SHA256,
+)
 from verification_pilot.self_trust.prompts import (
     T2_TEXT,
     T3_TEXT,
@@ -156,6 +160,9 @@ def test_baseline_arm_pairs_keep_existing_prompts_prefixes_and_dispatched_tools(
     """All 15 arm pairs retain their existing differences and identical tool bytes."""
     # The bridge source path is installed by verification_pilot.bridge.
     from assay_pier_bridge.agent_loop import PILOT_TOOL_SCHEMAS
+
+    for turn in ("T1", "T2_T3"):
+        assert digest_bytes(canonical_json(PILOT_TOOL_SCHEMAS[turn])) == TOOL_SURFACE_SHA256[turn]
 
     selected = select_code_intel(CodeIntelSettings(mode=BaselineMode()))
     assert isinstance(selected, Ok)

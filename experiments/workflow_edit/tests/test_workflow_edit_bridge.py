@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -129,6 +130,49 @@ def test_a_completion_at_the_cap_is_reported_cut_off(
         messages=[], tools=[], max_tokens=512, turn=1, deadline=None
     )
     assert turn.finish_reason == "length"
+
+
+def _stalling_smithers() -> httpx.MockTransport:
+    """A job Smithers accepts and never finishes."""
+    created = datetime(2026, 10, 14, 10, 0, tzinfo=UTC)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "mcbain":
+            return httpx.Response(200, json={"job_id": "job-1", "status": "running"})
+        if request.method == "POST":
+            return httpx.Response(200, json={"job_id": "job-1"})
+        return httpx.Response(200, json={
+            "job_id": "job-1", "status": "running", "model": "qwen-coder-32b",
+            "machine": "mcbain", "created_at": created.isoformat(),
+            "started_at": (created + timedelta(seconds=1)).isoformat(),
+        })
+
+    return httpx.MockTransport(respond)
+
+
+def test_a_stalled_request_stops_at_its_own_bound_not_the_cell_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install(monkeypatch, _stalling_smithers())
+    completion = SmithersTurnCompletion(_factory(tmp_path), "k", request_timeout_s=0.05)
+    started = time.monotonic()
+    with pytest.raises(ModelDispatchError) as failure:
+        # The cell has a long way to run; only the request bound should fire.
+        completion(messages=[], tools=[], max_tokens=8, turn=1,
+                   deadline=time.monotonic() + 900.0)
+    assert failure.value.cause == "RequestTimeout"
+    assert time.monotonic() - started < 5.0
+
+
+def test_the_cell_deadline_still_reports_the_candidate_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install(monkeypatch, _stalling_smithers())
+    completion = SmithersTurnCompletion(_factory(tmp_path), "k", request_timeout_s=900.0)
+    # The remaining cell budget is the tighter bound, so this is agent_deadline.
+    with pytest.raises(ValueError, match="agent_deadline"):
+        completion(messages=[], tools=[], max_tokens=8, turn=1,
+                   deadline=time.monotonic() + 0.05)
 
 
 def test_routing_changed_after_authorization_fails_the_turn(tmp_path: Path) -> None:

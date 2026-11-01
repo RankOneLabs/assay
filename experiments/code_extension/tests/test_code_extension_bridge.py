@@ -17,12 +17,15 @@ from code_extension.arms import (
 from code_extension.bridge import (
     EXTENSION_TOOLS,
     ExtensionBridgeClient,
+    ExtensionIdentityRejected,
     SandboxLimits,
     UnauthorizedModelRoute,
     index_sandbox_options,
     require_authorized_route,
 )
 from code_extension.codeintel import prepare_extension_codeintel
+from code_extension.fixtures import load_scenario
+from code_extension.probe import _package, _scripted_client
 from code_extension.prompts import render_arm_prompts
 from code_extension.settings import DERIVATION_SOURCE, ExtensionAgentSettings
 from workflow_edit.arms import MESS_00
@@ -37,7 +40,7 @@ from workflow_edit.tests.test_workflow_edit_study import (
 )
 
 from assay.adapters.pier import PierAdapter
-from assay.canonical import canonical_json
+from assay.canonical import canonical_json, digest_bytes
 from assay.code_intel.delivery import CodeIntelDeliveryConfig
 from assay.code_intel.errors import Ok
 from assay.code_intel.models import (
@@ -55,16 +58,67 @@ from assay.fixture_manifest import (
     CodeIntelligenceModeArmSet,
     ExtensionArmRealization,
     ExtensionScenario,
+    FixtureManifestV3,
     HandoffDetailArmSet,
     NamedTestGroup,
 )
 from assay.investigations.workflow_correctness import workflow_tree_digest
 from assay.models import CellCoordinate, EvaluationCoordinate
-from assay.pier_protocol import ModelRoute, RuntimeBinding
+from assay.pier_protocol import ModelRoute, RuntimeBinding, bind_exchange
 from assay.store import ObjectStore
 
 SHA = "sha256:" + "a" * 64
 TREE = "sha256:" + "b" * 64
+
+
+def test_frozen_ce_identities_refuse_drift_before_scripted_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from assay_pier_bridge.identity import package_digest
+
+    fixture = load_scenario("dispatch-handler")
+    qualified = FixtureManifestV3.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "dispatch-handler"
+         / "qualification" / "manifest.json").read_bytes()
+    )
+    monkeypatch.setattr("code_extension.bridge.observed_image_digest", lambda _image: SHA)
+    bridge = _scripted_client(fixture, qualified, "image", tmp_path, [])
+    tools = [dict(tool) for tool in EXTENSION_TOOLS]
+    tools[0] = {**tools[0], "description": "drifted"}
+    with pytest.raises(ExtensionIdentityRejected, match="tool_surface_drift"):
+        bridge._check_frozen_identity(tools)
+    bridge.scenario_sidecar = fixture.sidecar.model_copy(update={
+        "writable_implementation_scope": ("src/",),
+    })
+    with pytest.raises(ExtensionIdentityRejected, match="writable_scope_drift"):
+        bridge.configuration()
+    bridge.scenario_sidecar = fixture.sidecar.model_copy(update={
+        "protected_assets": fixture.sidecar.protected_assets.model_copy(update={
+            "configuration_files": ("different.json",),
+        }),
+    })
+    with pytest.raises(ExtensionIdentityRejected, match="protected_assets_drift"):
+        bridge.configuration()
+    bridge.scenario_sidecar = fixture.sidecar
+    configuration = bridge.configuration()
+    scenario = qualified.scenario(fixture.subject_id)
+    assert scenario is not None
+    coordinate = CellCoordinate(subject_id=fixture.subject_id, arm_id="baseline",
+                                worker_repeat=0, realization_ref=SHA)
+    package = _package(fixture)
+
+    def exchange(image_digest: str) -> Any:
+        return bind_exchange(coordinate=coordinate, binding=RuntimeBinding(
+            runtime_version="test/1", image_digest=image_digest,
+            configuration_ref=digest_bytes(canonical_json(configuration)),
+            package_digest=package_digest(package),
+        ))
+
+    with pytest.raises(ValueError, match="arm prompt differs"):
+        bridge.create(exchange=exchange(SHA), package={**package,
+                      "instruction.md": "different instruction"})
+    with pytest.raises(ValueError, match="image digest differs"):
+        bridge.create(exchange=exchange(TREE), package=package)
 
 
 def test_extension_settings_match_image_copy_and_qualified_route_envelopes() -> None:

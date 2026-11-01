@@ -1,5 +1,180 @@
 # Code extension experiment
 
+## Operator runner
+
+Run these commands from `experiments/`:
+
+```sh
+python -m code_extension.run qualify --scenario dispatch-handler --image sha256:<digest> --verify-committed
+python -m code_extension.run scripted --scenario dispatch-handler --image sha256:<digest> --store .assay-extension
+CODE_EXTENSION_ROUTING_CONFIG=/absolute/path/to/smithers-routing.yaml python -m code_extension.run prepare --config run-config.json --store .assay-extension
+CODE_EXTENSION_ROUTING_CONFIG=/absolute/path/to/smithers-routing.yaml python -m code_extension.run execute --plan .assay-extension/plans/<digest>/plan.json --authorize sha256:<digest> --store .assay-extension
+```
+
+`qualify` delegates to the existing scenario qualifier. `python -m
+code_extension.qualify` retains its full argument surface, including
+`--evidence-dir` and `--manifest`. `scripted` enters the existing model-free
+scripted worker and independent evaluator. `python -m code_extension.diagnose`
+remains the separate replay diagnostic and cannot write a verdict.
+
+`run-config.json` is a closed JSON object. Every field is required:
+
+| Field | Meaning and source |
+| --- | --- |
+| `scenario_qualifications` | Array of `{scenario, manifest_digest}` entries. The digest is the exact byte digest of that scenario's committed `qualification/manifest.json`. |
+| `cohort` | Operator's calibration or pilot cohort identity; each gets its own configuration and cap. |
+| `route` | Exact `{endpoint, model, provider}` from the authorized extension route matrix. |
+| `profile` | The qualified Smithers machine name used to resolve that model. |
+| `system_prompt_digest`, `tool_schemas_digest` | Literal ce-v1 pins in `protocol.py`. |
+| `image_digest` | Observed sha256 image digest in every chosen manifest. |
+| `bounds` | Complete `ExtensionAgentSettings.for_model(model)` envelope. |
+| `repeats`, `randomization_seed`, `concurrency` | Declared full-grid repeats, recorded seed, and concurrency 1. The current shared planner still uses `subject-rotated-v1`; see the open order decision below. |
+| `pricing` | `{basis, conservative_request_bound_usd}`. Local Smithers has no billed price, so a positive explicit request bound is required. |
+| `per_attempt_cap_usd`, `total_cap_usd` | Positive dollar caps chosen by the operator; neither has a default. |
+
+Money values in JSON are decimal strings. Secrets are supplied through the
+transport environment, never through this configuration or its archive.
+Credential-like keys or values in the configuration are refused.
+
+`prepare` verifies each manifest, qualification outcome and evidence digest,
+the scripted full-path record, fixture trees, hidden groups, image, route,
+envelope, prompt and tools. It compiles the shared full-grid plan, validates
+every coordinate, and writes canonical plan bytes, a configuration copy and a
+launch summary under `STORE/plans/<digest>/`. It dispatches nothing. A missing
+record produces `scripted full path qualification is absent`; drift names the
+fixture, image, route, prompt or tool identity. An unset cap raises
+`MissingSpendCap`; absent usable pricing raises `UnknownPricing` or
+`pricing_basis_unusable`. An absent routing file raises
+`routing_artifact_unavailable`. The summary lists concrete cells, model,
+maximum requests, attempts, effective limits, estimated and maximum spend,
+coverage, and the unresolved dispatch-order question.
+
+`execute` requires the original stored plan, its exact digest, and the frozen
+configuration. The shared authorizer rejects noncanonical bytes and the
+shared executor rechecks the snapshot and cell list. A digest mismatch names
+both digests. Each cell attempt identity is fsynced before dispatch; every
+turn has a separate fsynced reservation. On resume, unfinished reservations
+are charged at their bound and halt with `billing_uncertain`. A used attempt
+identity is never dispatched again. The route probe is a live, authorized
+request against the same cap; it confirms the worker model and requested
+output bound. The shared spend ledger reserves before each request and halts
+with `budget_exhausted` or `billing_uncertain` when the cap or billing
+certainty fails. Smithers currently reports no billed cost, so the probe
+halts at `billing_uncertain` after its bound is charged. It cannot authorize
+subsequent cell dispatch until a billed-cost source is available.
+
+Keep the store, runs root and archive root on durable project storage, away
+from the OS temp directory. Waking a GPU worker power-cycles it and wipes its
+temp directory, which would erase the run before evidence can be read.
+
+Pilot launch preconditions are still open. Cross-module-event is feasible at
+the upstream pin, but config-plugin lacks a configuration-driven loading path,
+so there is **no frozen three-scenario pilot configuration or fifteen-attempt
+plan**. No calibration or pilot attempt has been dispatched. A reviewed
+scenario selection and passing qualification for all three selected subjects
+are required before a pilot freeze. The operator must then review a model-free
+scripted full path, a route probe counted as live work, the exact endpoint,
+model and provider with a qualified envelope entry, a pricing basis or an
+explicit conservative per-request bound, and an approved plan with per-attempt
+and total spend caps. Prompt, tool, fixture and image identity checks must
+reject drift. The charged route probe currently halts with
+`billing_uncertain` until a Smithers billed-cost source exists. The 120
+per-cell tool-call bound remains unavailable because extension mode cannot
+enforce it.
+
+## WP6 candidate feasibility review
+
+The checkpoint is `f3b3ffca43e43672ff2f58ab797d65c7532aaed8`. The
+earlier search covered only the dispatch-handler's deliberately extracted
+62-file start tree, not the upstream pin. A fresh feasibility extraction from
+the pin used:
+
+```sh
+git -C /home/steve/codes/rol/oakridge archive f3b3ffca43e43672ff2f58ab797d65c7532aaed8 tsconfig.json oakridge-dbos/src oakridge-dbos/tests/invalidation-events.test.ts oakridge-dbos/package.json oakridge-dbos/tsconfig.json
+```
+
+The extracted 125 files total 706,674 bytes before dependency installation,
+within both fixture package limits. This review extraction is under `/tmp`,
+not a frozen worker tree. It includes `src/domain/run-event.ts` (event schema,
+`RunEvent` export and `projectRunEvent`),
+`src/storage/postgres-operators.ts` (`PostgresOperatorProjectionRepository.list_run_events`),
+`src/http/invalidation-events.ts` (`createInvalidationEventApp`), and
+`src/http/app.ts` (the producer-to-consumer wiring). The upstream
+`tests/invalidation-events.test.ts` imports only `bun:test` besides source
+modules. The Postgres-backed producer accepts an injected `SqlExecutor` whose
+`query` method returns rows; the real query and projection can be exercised
+with a fake executor and without a live Postgres server. The SSE consumer also
+takes injected callbacks. The extracted upstream `package.json` already names
+`hono`; a runnable frozen fixture must carry it in its dependency lock. The
+upstream SSE test passed all eight checks, and an additional temporary test
+projected a SQL row through the injected producer without Postgres.
+Cross-module-event is feasible at the pin, pending a fully qualified fixture.
+With the pin's root `tsconfig.json` included and the upstream installed dependencies supplied, the
+review extraction also passed `tsc --noEmit -p tsconfig.json`.
+
+At the same upstream pin, `compileWorkflowDefinition(definition, registry?)`
+accepts an injected registry, `src/runtime/executor-registry.ts` registers
+executors imperatively, and `src/http/configuration.ts` reads configuration.
+None loads stage plugins from configuration. The plugin arm of the separately
+committed stage-pass-through subject contains `stage-plugin-config.json` and
+`stage-plugins.ts`, but its README identifies both as authored adaptations
+absent at the pin. Reusing that arm would invent the production loading path
+that config-plugin is meant to extend. The proposed replacement for review is
+an **injected stage compiler registry** scenario using the existing registry
+argument and visible compiler contract. It would not claim configuration
+loading and has not been substituted or qualified.
+
+The two candidate `task.md` files retain the requested behaviors and
+requirements-to-intended-tests tables. They remain review drafts: there are
+no committed start trees, sidecars, hidden groups, qualification patches or
+gate records for them. The committed qualification manifests remain
+unchanged, and the descriptive report still reflects only committed evidence.
+
+The independent offline evidence rehearsal is
+`code_extension/tests/test_code_extension_report.py::test_committed_qualification_and_scripted_archive_reproduce_and_export`.
+It binds the existing dispatch-handler qualification manifest and records,
+submits a model-free scripted `write_file` and `submit_output` through the
+production bridge with a fake sandbox, and keeps the resulting run archive
+under pytest's temporary directory. It renders `REPORT.md`, `ledger.csv` and
+`ledger.json` twice and compares exact bytes. It exports the run manifest's
+object closure, accepts only the expected `incomplete_run` observation because
+the scripted rehearsal has no evaluator record, and confirms that changing an
+exported object makes verification fail for integrity. The archive is test
+output, not committed run evidence; the committed report does not gain a live
+attempt row.
+
+## ce-v1 contract and protocol
+
+`contract.py` defines `assay-extension-scenario-sidecar/0.1.0` alongside the
+unchanged fixture manifest. The sidecar declares six contracts per scenario:
+writable implementation scope; protected test, dependency and configuration
+files; a requirements-to-tests table; reference and incomplete patch inventory
+with intent; and content-addressed refs for leak scan, access probe, no-op,
+scripted submission and double reproduction evidence. The fixture cohort will
+load and bind these declarations to its committed scenarios.
+
+`protocol.py` identifies the one-turn extension protocol as `ce-v1` version
+`1.0.0`. Literal digests freeze the bridge's system prompt, a four-part rendered
+task witness, ordered tool schemas and `submit_output` submission schema.
+Individual trials must additionally record the digest of the rendered
+`instruction.md` they deliver. The worker cohort will wire the new renderer to
+the bridge; this cohort defines the renderer and pins before dispatch changes.
+
+Calibration defaults are 900 seconds per attempt, 60 model requests, 8,192
+output tokens per request and 32 KiB of tool output. The served model context
+and 120-second request timeout are explicit settings. The 120 per-cell tool-call
+ceiling is recorded as unavailable: extension mode does not enforce that limit,
+because the loop honors it only in pilot mode. Sampling remains unset unless a
+route requires it, with requested and provider-reported values held separately.
+
+The operator authorized the lockstep update to
+`integrations/pier/config/code_extension.yaml`. The rebuilt
+`assay-code-extension:ce-v1-bounds` image inspected as
+`sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee`.
+The pilot, pointer-root and stage-pass-through fixtures were requalified against
+that observed digest; their baseline, reference and negative verdicts matched
+the previous qualified records.
+
 This package fixes the Spec 3 domain shape before any study runs. The fixture
 manifest version `assay-fixture-manifest/0.3.0` declares one factor in `arm_set`
 and one or more scenarios. Each scenario pins its checkpoint slice, bounded
