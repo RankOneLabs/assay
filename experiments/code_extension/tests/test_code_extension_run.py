@@ -34,9 +34,8 @@ from code_extension.settings import ExtensionAgentSettings
 from code_extension.study import PreparedStudy, load_qualified_study_fixture
 from verification_pilot.budget import SpendGate
 
-from assay.canonical import digest_bytes
+from assay.canonical import canonical_json, digest_bytes
 from assay.fixture_manifest import FixtureManifestV3
-from assay.canonical import canonical_json
 from assay.models import (
     CellCoordinate,
     ExecutionPlanV3,
@@ -447,9 +446,10 @@ async def test_execute_retains_every_attempt_and_writes_the_run_index(
     `report` and `regrade` only find a run through `*/run.json`, so an execute
     that returns without writing one leaves its evidence unreadable.
     """
+    from code_extension import run as run_module
+
     from assay.execution import RunSucceeded
     from assay.models import ExecutionOutcome, RunManifest
-    from code_extension import run as run_module
 
     manifest_path = PILOT.parent / "dispatch-handler" / "qualification" / "manifest.json"
     data = json.loads(manifest_path.read_bytes())
