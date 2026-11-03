@@ -26,6 +26,8 @@ from assay.canonical import digest_bytes
 from assay.pier_protocol import ModelRoute
 from assay.store import ObjectStore
 
+pytestmark = pytest.mark.usefixtures("qualified_runner")
+
 
 def hosted_configuration() -> RunConfiguration:
     value = configuration()
@@ -64,6 +66,47 @@ def test_hosted_prepare_needs_neither_local_routing_nor_credentials(
     assert summary["coverage"]["pricing"] == "provider_price_ceiling"
     with pytest.raises(LaunchRefused, match="OPENROUTER_API_KEY"):
         _build(config, ObjectStore(tmp_path / "store"), live=True, plan_digest=summary["digest"])
+
+
+async def test_evaluator_runtime_failure_refuses_before_probe_or_paid_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from code_extension import run
+
+    from assay.investigations.sandbox_lifecycle import SandboxFailure
+
+    config = hosted_configuration()
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr("code_extension.bridge.observed_image_digest",
+                        lambda _: config.image_digest)
+    path = tmp_path / "config.json"
+    path.write_bytes(config.canonical_bytes())
+    store = tmp_path / "store"
+    summary = prepare(path, store)
+    factory = run.qualify.make_runner
+
+    def unavailable(image: str) -> Any:
+        runner = factory(image)
+
+        async def check() -> SandboxFailure:
+            return SandboxFailure("SandboxRuntimeMismatch", "Docker runtime changed")
+
+        monkeypatch.setattr(runner, "_check_runtime", check)
+        return runner
+
+    async def forbidden(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("runtime failure must refuse before any probe or study dispatch")
+
+    monkeypatch.setattr(run.qualify, "make_runner", unavailable)
+    monkeypatch.setattr(run, "_route_probe", forbidden)
+    monkeypatch.setattr(run, "run_study", forbidden)
+    with pytest.raises(
+        LaunchRefused, match="evaluator_runtime_unavailable.*SandboxRuntimeMismatch",
+    ):
+        await execute(Path(summary["plan"]), summary["digest"], store)
+    journal = AttemptJournal(Path(summary["plan"]).parent / "attempts.jsonl",
+                             summary["digest"], config.digest())
+    assert journal.records() == []
 
 
 def agent(

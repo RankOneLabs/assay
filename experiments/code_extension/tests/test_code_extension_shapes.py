@@ -21,6 +21,8 @@ from assay.fixture_manifest import FixtureManifestV3
 from assay.investigations.workflow_correctness import GroupResult, WorkflowCorrectnessResult
 from assay.store import ObjectStore
 
+pytestmark = pytest.mark.usefixtures("qualified_runner")
+
 ROOT = PILOT.parent / "stage-pass-through"
 ARMS = ("modular", "central", "cross_module", "plugin")
 

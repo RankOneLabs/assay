@@ -17,11 +17,10 @@ from pathlib import Path
 
 from workflow_edit.evaluation import WorkerCandidate, worker_candidate
 
-from assay.canonical import canonical_json
+from assay.canonical import canonical_json, digest_bytes
 from assay.fixture_manifest import FixtureManifestV3
 from assay.investigations.workflow_correctness import (
     DockerWorkflowRunner,
-    WorkflowRunnerSettings,
     workflow_tree_digest,
 )
 from assay.models import ExecutionOutcome, ExecutionPlanV3, RunManifest
@@ -30,7 +29,7 @@ from assay.store import ObjectStore
 from code_extension.evaluation import GRADER_REVISION, evaluate_scenario_candidate
 from code_extension.fixture import PILOT, PilotFixture, load_fixture, materialize, read_tree
 from code_extension.metrics import artifact_bytes
-from code_extension.qualify import require_image
+from code_extension.qualify import make_runner, require_image
 
 _FAIL = re.compile(r"^\(fail\) (.*?)(?: \[[\d.]+ms\])?$", re.MULTILINE)
 _TS_ERROR = re.compile(r"^(\S+\.ts)\(\d+,\d+\): error (TS\d+): (.*)$", re.MULTILINE)
@@ -218,7 +217,7 @@ def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]
         by_subject = {
             scenario.subject_id: fixture for fixture in fixtures for scenario in fixture.scenarios
         }
-        runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=image, toolchain="bun"))
+        runner: DockerWorkflowRunner = make_runner(image)
         for cell in plan.cells:
             execution_ref = manifest.execution_records.get(cell.id)
             if execution_ref is None:
@@ -275,10 +274,17 @@ def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]
             record = {
                 "schema_version": "code-extension-regrade/1",
                 "image_digest": image,
+                "runner": runner.configuration(),
                 "grader_revision": GRADER_REVISION,
                 "run_id": manifest.run_id,
                 "cell_id": cell.id,
                 "original_manifest_ref": index["manifest_ref"],
+                "original_execution_ref": execution_ref,
+                "original_execution_status": outcome.status,
+                "recovered_candidate": outcome.output_ref is None,
+                "candidate_patch_sha256": digest_bytes(candidate.patch),
+                "candidate_tree_digest": candidate.tree_digest,
+                "baseline_tree_digest": candidate.baseline_tree_digest,
                 "original_grading_refs": {
                     key: ref
                     for key, ref in manifest.evaluation_records.items()

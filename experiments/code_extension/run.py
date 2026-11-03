@@ -26,7 +26,7 @@ from assay.adapters.pier import PierAdapter
 from assay.adapters.smithers import SmithersFactory
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import AdmissionHalt, RunFailed, RunResult, WorkerFailure, WorkerResult
-from assay.investigations.workflow_correctness import DockerWorkflowRunner, WorkflowRunnerSettings
+from assay.investigations.workflow_correctness import DockerWorkflowRunner
 from assay.models import (
     CellCoordinate,
     ExecutionCeiling,
@@ -284,12 +284,7 @@ def _build(
     runtime = RuntimeProfile(
         id="pier", version="code-extension-ce-v1", configuration_ref=runtime_ref
     )
-    runner = DockerWorkflowRunner(
-        WorkflowRunnerSettings(
-            image=config.image_digest,
-            toolchain="bun",
-        )
-    )
+    runner: DockerWorkflowRunner = qualify.make_runner(config.image_digest)
     count = sum(len(manifest.scenarios) for manifest in [fixture.manifest])
     prepared = plan_study(
         store,
@@ -430,6 +425,9 @@ async def execute(plan_path: Path, authorization: str, store_path: Path) -> dict
     prepared = _build(config, store, live=True, plan_digest=actual)
     if prepared.plan_bytes != plan_bytes:
         raise LaunchRefused("plan differs from frozen configuration; prepare a new plan")
+    runtime_failure = await prepared.evaluator.runner._check_runtime()
+    if runtime_failure is not None:
+        raise LaunchRefused(f"evaluator_runtime_unavailable: {runtime_failure.error_type}")
     await _route_probe(config, store, actual, prepared)
     result = await run_study(prepared, store)
     worker = cast(ExtensionStudyWorker, next(iter(prepared.workers.values())))

@@ -23,6 +23,8 @@ from assay.models import RunManifest
 from assay.store import ObjectStore
 from assay.verify import export_bundle, verify_bundle, verify_manifest
 
+pytestmark = pytest.mark.usefixtures("qualified_runner")
+
 
 def _object_bytes(root: Path) -> dict[str, bytes]:
     return {

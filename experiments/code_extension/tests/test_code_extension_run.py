@@ -43,6 +43,8 @@ from assay.models import (
 )
 from assay.store import ObjectStore
 
+pytestmark = pytest.mark.usefixtures("qualified_runner")
+
 
 def configuration() -> dict[str, object]:
     return {
