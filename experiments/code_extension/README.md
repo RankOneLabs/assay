@@ -91,29 +91,14 @@ five repeats) without model requests. `execute` first makes one charged route
 probe, then retains every dispatched attempt and its independent grade. No paid
 calibration or study run is included in the qualification evidence.
 
-The first hosted shape pilot ran on 2026-11-03: twenty fresh attempts, five per
-shape, using the example's Sol route. All twenty retained candidates passed
-offline independent replay; nineteen completed the required submission protocol.
-One plugin attempt omitted `submit_output` despite producing a passing patch.
-The original launch grades were unavailable because of a Docker client-version
-mismatch and remain unchanged. Replay uses the qualification runner profile and
-retained, digest-verified test assets. The published receipts checkout contains
-the analysis at
-`$ASSAY_RUN_RECEIPTS/code-extension-2026-11-03/evidence/studies/shape-pilot-2026-11-03-scoped/ANALYSIS.md`.
-It separates those observations, documents the harness repairs, and retains all
-traces and charges. Generated run data belongs outside this source repository.
-Total API spend, including the retired scope-calibration
-launch and both probes, was $1.61269317. This single-task ceiling result does
-not establish an architecture ranking.
-
-From `experiments/`, reproduce the archived report and grades with:
+For a retained study archive, report and replay from `experiments/` with:
 
 ```sh
 python -m code_extension.run report \
-  --archive "$ASSAY_RUN_RECEIPTS/code-extension-2026-11-03/evidence" \
+  --archive /absolute/path/to/study/archive \
   --output ../.assay/extension-report
 python -m code_extension.run regrade \
-  --archive "$ASSAY_RUN_RECEIPTS/code-extension-2026-11-03/evidence" \
+  --archive /absolute/path/to/study/archive \
   --image sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee \
   --output ../.assay/extension-replay
 ```
@@ -122,6 +107,7 @@ Reporting requires the locked Node analyzers and fixture TypeScript dependencies
 to be installed before measurement. Replay reads the retained fixture identity
 and its original test groups; a changed checkout cannot substitute new tests.
 Only legacy archives without a retained fixture use checkout manifests.
+Generated study data belongs outside this source repository.
 
 The separate three-task baseline pilot's launch preconditions remain open.
 Cross-module-event is feasible at

@@ -59,19 +59,6 @@ def test_committed_report_is_exactly_recomputed_evidence() -> None:
     assert "p-value" not in body and "adjusted interval" not in body
 
 
-def test_published_pilot_report_reproduces_external_receipts(
-    extension_pilot_receipts: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A clean machine must not depend on an operator's preinstalled compiler cache.
-    dependencies = install_toolchain(tmp_path / "dependencies", offline=True)
-    monkeypatch.setattr("workflow_edit.metrics.dependencies_directory", lambda _: dependencies)
-    paths = render_archive(extension_pilot_receipts, tmp_path / "report")
-    expected = (
-        extension_pilot_receipts / "studies" / "shape-pilot-2026-11-03-scoped" / "original-report"
-    )
-    assert all(path.read_bytes() == (expected / path.name).read_bytes() for path in paths)
-
-
 def test_empty_archive_reproduces_committed_report_and_fixed_ledger(
     tmp_path: Path,
 ) -> None:
