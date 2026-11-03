@@ -18,7 +18,8 @@ if str(_BRIDGE_SRC) not in sys.path:
     sys.path.insert(0, str(_BRIDGE_SRC))
 
 from assay_pier_bridge import protocol as bridge_protocol
-from verification_pilot.budget import SpendGate
+from assay_pier_bridge.agent_loop import EXTENSION_TOOLS
+from verification_pilot.budget import SpendGate, request_cost_bound
 from workflow_edit.bridge import SmithersTurnCompletion, trial_limits, turn_idempotency_key
 
 from assay.adapters.pier import PierAdapter
@@ -39,7 +40,8 @@ from assay.store import ObjectStore
 from code_extension import qualify
 from code_extension.archive import AttemptArchive
 from code_extension.bridge import ExtensionBridgeClient
-from code_extension.budget import AttemptJournal, RequestBudget
+from code_extension.budget import AttemptJournal, JournaledAgentClient, RequestBudget
+from code_extension.bridge import EXTENSION_SYSTEM_PROMPT
 from code_extension.config import RunConfiguration
 from code_extension.dispatch import cell_idempotency_key
 from code_extension.evaluation import GRADER_REVISION
@@ -110,7 +112,7 @@ class ExtensionStudyWorker:
             or self.allowed_coordinates.get(coordinate.id) != coordinate.realization_ref
         ):
             raise LaunchRefused("coordinate is not one of the plan's declared cells")
-        if self.journal is None or self.gate is None or self.request_bound is None:
+        if self.journal is None or self.gate is None:
             raise LaunchRefused("attempt budget and durable journal are required")
         if self.gate.halt is not None:
             raise AdmissionHalt(self.gate.halt, "run spending gate halted")
@@ -150,28 +152,32 @@ def _build(
     live: bool,
     plan_digest: str | None = None,
 ) -> PreparedStudy:
-    if config.pricing.conservative_request_bound_usd is None:
+    route = bridge_protocol.ModelRoute.model_validate(config.route.model_dump(mode="json"))
+    if not route.paid_route_reachable and config.pricing.conservative_request_bound_usd is None:
         raise LaunchRefused("pricing_basis_unusable: local Smithers route has no billed price")
     routing_name = os.environ.get("CODE_EXTENSION_ROUTING_CONFIG")
-    if not routing_name:
+    if not route.paid_route_reachable and not routing_name:
         raise LaunchRefused("routing_artifact_unavailable: set CODE_EXTENSION_ROUTING_CONFIG")
-    routing_path = Path(routing_name)
-    if not routing_path.is_file():
+    routing_path = Path(routing_name) if routing_name else None
+    if not route.paid_route_reachable and (routing_path is None or not routing_path.is_file()):
         raise LaunchRefused("routing_artifact_unavailable: routing configuration is missing")
     refs = {ref.scenario: ref.manifest_digest for ref in config.scenario_qualifications}
     fixture = load_qualified_study_fixture(store, refs, image=config.image_digest)
     if fixture.manifest.routing_config_digest is not None and (
+        routing_path is None or
         digest_bytes(routing_path.read_bytes()) != fixture.manifest.routing_config_digest
     ):
         raise LaunchRefused("routing_identity_drift: qualified route file changed")
-    factory = SmithersFactory(
+    factory = None if route.paid_route_reachable else SmithersFactory(
         model=config.route.model,
         machine=config.profile,
-        routing_config=routing_path,
+        routing_config=cast(Path, routing_path),
         dispatch_url=config.route.endpoint,
         requester="assay-code-extension",
     )
-    route = bridge_protocol.ModelRoute.model_validate(config.route.model_dump(mode="json"))
+    api_key = os.environ.get("OPENROUTER_API_KEY") if route.paid_route_reachable else None
+    if live and route.paid_route_reachable and (not api_key or any(c.isspace() for c in api_key)):
+        raise LaunchRefused("hosted execution requires OPENROUTER_API_KEY")
     gate = SpendGate(config.total_cap_usd) if live else None
     journal: AttemptJournal | None = None
     if live:
@@ -193,7 +199,8 @@ def _build(
         adapters: dict[str, PierAdapter] = {}
         for scenario in fixture.manifest.scenarios:
 
-            def completion_for(cell_key: str, *, _factory: SmithersFactory = factory) -> Any:
+            def completion_for(cell_key: str, *, _factory: SmithersFactory | None = factory) -> Any:
+                assert _factory is not None
                 base = SmithersTurnCompletion(
                     _factory,
                     cell_key,
@@ -223,7 +230,11 @@ def _build(
                 arm_set=fixture.manifest.arm_set,
                 arm_id=arm_id,
                 settings=config.bounds,
-                completion_for=completion_for if live else None,
+                completion_for=completion_for if live and not route.paid_route_reachable else None,
+                api_key=api_key,
+                spend_gate=gate,
+                journal=journal,
+                per_attempt_cap_usd=config.per_attempt_cap_usd,
                 repository_snapshot=next(
                     item.realizations[arm_id]
                     for item in fixture.scenarios
@@ -359,6 +370,13 @@ def prepare(config_path: Path, store_path: Path) -> dict[str, Any]:
             raise LaunchRefused(f"immutable plan artifact changed: {path}")
         path.write_bytes(data)
     bound = config.pricing.conservative_request_bound_usd
+    if config.route.provider != "smithers-local":
+        worker = cast(ExtensionStudyWorker, next(iter(prepared.workers.values())))
+        bridge = next(iter(worker.bridges.values()))
+        bound = request_cost_bound(
+            bridge._hosted_route(), request_bytes=config.bounds.max_request_bytes,
+            max_output_tokens=config.bounds.max_output_tokens,
+        )
     calls = 1 + len(plan.cells) * config.bounds.max_turns  # one charged route probe
     estimate = str(bound * calls) if bound is not None else None
     summary: dict[str, Any] = {
@@ -379,7 +397,8 @@ def prepare(config_path: Path, store_path: Path) -> dict[str, Any]:
         "estimated_spend_usd": estimate,
         "maximum_spend_usd": str(config.total_cap_usd),
         "coverage": {
-            "pricing": "conservative_request_bound",
+            "pricing": "provider_price_ceiling" if config.route.provider != "smithers-local"
+            else "conservative_request_bound",
             "plan_catalogue": plan.cost_estimate.model_dump(mode="json"),
         },
         "unresolved_blockers": ["seeded dispatch order needs a shared planner schedule decision"],
@@ -477,7 +496,8 @@ async def _route_probe(
     """A billed, authorized request confirming the exact model and output bound."""
     worker = cast(ExtensionStudyWorker, next(iter(prepared.workers.values())))
     gate, journal, bound = worker.gate, worker.journal, worker.request_bound
-    if gate is None or journal is None or bound is None:
+    hosted = config.route.provider != "smithers-local"
+    if gate is None or journal is None or (bound is None and not hosted):
         raise LaunchRefused("route_probe_budget_unavailable")
     probe_id = f"{plan_digest}:route-probe"
     if any(
@@ -488,7 +508,23 @@ async def _route_probe(
     ):
         return
     journal.claim_attempt("__route_probe__", probe_id)
+    if hosted:
+        bridge = next(iter(worker.bridges.values()))
+        agent = JournaledAgentClient(
+            api_key=bridge.api_key, image=config.image_digest, runs_root=store.root / "runs",
+            model_route=bridge.route, bounds=bridge._bounds(),
+            tools=EXTENSION_TOOLS, extension_mode=True, system_prompt=EXTENSION_SYSTEM_PROMPT,
+            spend_gate=SpendGate(config.per_attempt_cap_usd), run_gate=gate, journal=journal,
+            cell_key=probe_id, coordinate="__route_probe__",
+        )
+        await asyncio.to_thread(
+            agent._openrouter_turn, [{"role": "user", "content": "Reply OK."}],
+            agent.paid_turn_route, EXTENSION_TOOLS,
+        )
+        return
+    assert bound is not None
     factory = next(iter(worker.bridges.values())).factory
+    assert factory is not None
     budget = RequestBudget(gate, bound, journal, SpendGate(config.per_attempt_cap_usd))
 
     def dispatch() -> Any:

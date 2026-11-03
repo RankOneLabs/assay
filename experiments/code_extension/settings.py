@@ -2,6 +2,7 @@
 
 from typing import Any, Literal, Self
 
+from assay_pier_bridge.agent_loop import PAID_TURN_ROUTES
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SMOKE_SUBJECT_IDS = frozenset(
@@ -45,8 +46,10 @@ TOOL_CALL_CEILING_REASON = (
 class ExtensionAgentSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    served_context_tokens: int = Field(default=32_768, ge=16_384, description=DERIVATION_SOURCE)
-    model_context_limit_tokens: int = Field(
+    served_context_tokens: int | None = Field(
+        default=32_768, ge=16_384, description=DERIVATION_SOURCE,
+    )
+    model_context_limit_tokens: int | None = Field(
         default=32_768, ge=16_384, description=DERIVATION_SOURCE,
     )
     request_timeout_s: float = Field(default=120.0, gt=0, description=DERIVATION_SOURCE)
@@ -103,6 +106,15 @@ class ExtensionAgentSettings(BaseModel):
                 max_request_bytes=3_932_160,
                 max_response_bytes=131_072,
                 max_output_tokens=8_192,
+            )
+        if model in {key[0] for key in PAID_TURN_ROUTES}:
+            # Reuse the verification pilot's request envelope. Hosted context
+            # capacity is not attested by the local fleet's served-context pins.
+            return cls(
+                served_context_tokens=None,
+                model_context_limit_tokens=None,
+                max_conversation_bytes=3_670_016,
+                max_request_bytes=3_932_160,
             )
         raise UnauthorizedExtensionRoute(
             f"unauthorized or unqualified extension model route: {model}"

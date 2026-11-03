@@ -4,14 +4,24 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-from verification_pilot.budget import SpendGate
+from assay_pier_bridge.agent_loop import (
+    HAIKU_TURN_ROUTE,
+    BilledResponseError,
+    ModelTurn,
+    OpenRouterTurnRoute,
+    _json_bytes,
+)
+from verification_pilot.budget import BudgetedAgentClient, SpendGate, request_cost_bound
 
 from assay.canonical import canonical_json
+
+T = TypeVar("T")
 
 
 class AttemptAlreadyUsed(ValueError):
@@ -121,6 +131,8 @@ class AttemptJournal:
                 raise AttemptAlreadyUsed(f"duplicate durable attempt identity: {attempt_id}")
             used.add(attempt_id)
             bound = Decimal(record["bound_usd"])
+            if finished.get(attempt_id, {}).get("status") == "not_sent":
+                continue
             gate.reserve(bound)
             if attempt_id not in finished:
                 gate.settle(bound, None)
@@ -140,7 +152,10 @@ class RequestBudget:
     journal: AttemptJournal
     attempt_gate: SpendGate | None = None
 
-    def call(self, coordinate: str, request_id: str, dispatch: Any) -> Any:
+    def call(
+        self, coordinate: str, request_id: str, dispatch: Callable[[], T],
+        *, was_dispatched: Callable[[], bool] | None = None,
+    ) -> T:
         if self.attempt_gate is not None:
             self.attempt_gate.reserve(self.bound)
         try:
@@ -158,11 +173,21 @@ class RequestBudget:
             raise
         try:
             result = dispatch()
-        except BaseException:
-            self.gate.settle(self.bound, None)
+        except BaseException as error:
+            if was_dispatched is not None and not was_dispatched():
+                self.gate.release(self.bound)
+                if self.attempt_gate is not None:
+                    self.attempt_gate.release(self.bound)
+                self.journal.finish(request_id, cost=Decimal(0), status="not_sent")
+                raise
+            cost = error.usage.get("cost_usd") if isinstance(error, BilledResponseError) else None
+            self.gate.settle(self.bound, cost)
             if self.attempt_gate is not None:
-                self.attempt_gate.settle(self.bound, None)
-            self.journal.finish(request_id, cost=None, status="billing_uncertain")
+                self.attempt_gate.settle(self.bound, cost)
+            self.journal.finish(
+                request_id, cost=Decimal(str(cost)) if cost is not None else None,
+                status=self.gate.halt or "provider_failure",
+            )
             raise
         cost = getattr(result, "cost_usd", None)
         self.gate.settle(self.bound, cost)
@@ -176,3 +201,47 @@ class RequestBudget:
         if self.gate.halt == "billing_uncertain":
             raise ValueError("billing_uncertain")
         return result
+
+
+@dataclass
+class JournaledAgentClient(BudgetedAgentClient):
+    """Reuse hosted execution and per-attempt caps, adding the run's durable ledger."""
+
+    run_gate: SpendGate | None = None
+    journal: AttemptJournal | None = None
+    cell_key: str = ""
+    coordinate: str = ""
+    _request_number: int = field(default=0, init=False)
+
+    def _openrouter_turn(
+        self, messages: list[dict[str, Any]], route: OpenRouterTurnRoute = HAIKU_TURN_ROUTE,
+        tools: list[dict[str, Any]] | None = None,
+        *, deadline: float | None = None, on_dispatch: Any = None,
+    ) -> ModelTurn:
+        if self.run_gate is None or self.journal is None or not self.cell_key:
+            raise ValueError("hosted extension requests require a run gate and durable identity")
+        request_bytes = len(_json_bytes({
+            "messages": messages, "tools": self.tools if tools is None else tools,
+        }))
+        output = self.bounds.max_output_tokens
+        if route.max_output_tokens is not None:
+            output = min(output, route.max_output_tokens)
+        bound = request_cost_bound(route, request_bytes=request_bytes, max_output_tokens=output)
+        self._request_number += 1
+        sent = False
+
+        def mark_sent() -> None:
+            nonlocal sent
+            sent = True
+            if on_dispatch is not None:
+                on_dispatch()
+
+        def dispatch() -> ModelTurn:
+            return super(JournaledAgentClient, self)._openrouter_turn(
+                messages, route, tools, deadline=deadline, on_dispatch=mark_sent,
+            )
+
+        return RequestBudget(self.run_gate, bound, self.journal).call(
+            self.coordinate, f"{self.cell_key}:request-{self._request_number}", dispatch,
+            was_dispatched=lambda: sent,
+        )

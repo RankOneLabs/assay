@@ -2,6 +2,20 @@
 
 ## Operator runner
 
+Hosted launches use the shared repository-agent OpenRouter backend and its
+existing pinned model/provider catalogue. Set `route` to that exact endpoint,
+model and provider, `profile` to `openrouter`, `bounds` to
+`ExtensionAgentSettings.for_model(model)`, and pricing to
+`{"basis":"openrouter-pinned-price-ceilings","conservative_request_bound_usd":null}`.
+`prepare` needs no credential or Smithers routing file. For `execute`, provide
+`OPENROUTER_API_KEY` through the environment. Both the route probe and every
+model turn use the shared worst-case request reservation and inline billed
+cost accounting, with separate per-attempt and run caps. The extension journal
+records each reservation before dispatch and preserves known charges on provider
+errors; unsent requests release their reservations. Unknown charges halt the run.
+Hosted byte and output limits reuse the verification pilot's envelope; hosted
+context capacity is recorded as unavailable until independently observed.
+
 Run these commands from `experiments/`:
 
 ```sh
@@ -24,7 +38,7 @@ remains the separate replay diagnostic and cannot write a verdict.
 | `scenario_qualifications` | Array of `{scenario, manifest_digest}` entries. The digest is the exact byte digest of that scenario's committed `qualification/manifest.json`. |
 | `cohort` | Operator's calibration or pilot cohort identity; each gets its own configuration and cap. |
 | `route` | Exact `{endpoint, model, provider}` from the authorized extension route matrix. |
-| `profile` | The qualified Smithers machine name used to resolve that model. |
+| `profile` | `openrouter` for hosted models; the qualified machine name for Smithers. |
 | `system_prompt_digest`, `tool_schemas_digest` | Literal ce-v1 pins in `protocol.py`. |
 | `image_digest` | Observed sha256 image digest in every chosen manifest. |
 | `bounds` | Complete `ExtensionAgentSettings.for_model(model)` envelope. |
