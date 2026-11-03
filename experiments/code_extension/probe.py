@@ -230,7 +230,7 @@ def access_probe(
 
     # Keep the original dispatch-handler evidence byte-identical. Other arms
     # exercise the same tools against their own private assets and writable scope.
-    if fixture.arms[0].arm_id != "baseline":
+    if fixture.subject_id != "oakridge-dbos-dispatch-handler":
         return _arm_access_probe(fixture, manifest, image)
     attempts: list[tuple[str, dict[str, Any]]] = [
         ("read_file", {"path": "tests/hidden/new-behavior/work-started.test.ts"}),
@@ -270,7 +270,10 @@ def _arm_access_probe(
     private = [
         sorted(fixture.groups[2].files)[0],
         *("../patches/" + item.patch_name for item in fixture.sidecar.negative_expectations),
-        "../patches/" + fixture.arms[0].arm_id + ".reference.patch",
+        "../patches/" + (
+            fixture.arms[0].arm_id + ".reference.patch"
+            if fixture.arms[0].arm_id != "baseline" else "reference.patch"
+        ),
         "/cache/operator/manifest.json", "/home/steve/.ssh/id_rsa",
     ]
     attempts: list[tuple[str, dict[str, Any]]] = [

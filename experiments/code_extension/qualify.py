@@ -538,7 +538,7 @@ async def qualify(
 async def qualify_shape_scenario(
     name: str, *, image: str, evidence_dir: Path, verify: bool,
 ) -> FixtureManifestV3:
-    """Replay existing shape contracts and add the same full-path gates per arm."""
+    """Replay a frozen manifest and add the same full-path gates per arm."""
     root = PILOT.parent / name
     manifest = FixtureManifestV3.model_validate_json(
         (root / "qualification" / "manifest.json").read_bytes()
@@ -568,8 +568,11 @@ async def qualify_shape_scenario(
             _, digest = read_evidence(evidence_dir, arm.arm_id, check)
             if digest != getattr(arm.qualification, check).evidence:
                 raise ValueError(f"{name}/{arm.arm_id}: frozen qualification differs: {check}")
+        qualification_dir = evidence_dir.parent
+        if manifest.arm_set.factor == "code_shape":
+            qualification_dir = qualification_dir / "arms" / arm.arm_id
         await run_scenario_gates(
-            fixture, manifest, image, evidence_dir.parent / "arms" / arm.arm_id, verify=verify,
+            fixture, manifest, image, qualification_dir, verify=verify,
         )
         print(f"qualified {name}/{arm.arm_id}", file=sys.stderr, flush=True)
     return manifest
@@ -596,10 +599,12 @@ def main() -> None:
         FixtureManifestV3.model_validate_json(declared_path.read_bytes())
         if declared_path.is_file() else None
     )
-    if declared is not None and declared.arm_set.factor == "code_shape":
+    if declared is not None and (
+        declared.arm_set.factor == "code_shape" or args.scenario in {"pilot", "pointer-root"}
+    ):
         if args.routing_config is not None:
             raise ValueError("shape qualification is offline and takes no routing configuration")
-        if args.evidence_dir is None:
+        if args.evidence_dir is None and (root / "qualification" / "checks").is_dir():
             evidence_dir = root / "qualification" / "checks"
         manifest = asyncio.run(qualify_shape_scenario(
             args.scenario, image=args.image, evidence_dir=evidence_dir,

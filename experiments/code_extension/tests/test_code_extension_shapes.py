@@ -27,15 +27,19 @@ ROOT = PILOT.parent / "stage-pass-through"
 ARMS = ("modular", "central", "cross_module", "plugin")
 
 
-@pytest.mark.parametrize("arm_id", ARMS)
+@pytest.mark.parametrize(
+    ("name", "arm_id", "scope"),
+    [*(('stage-pass-through', arm, 'src/compiler/') for arm in ARMS),
+     ("pilot", "baseline", "src/"), ("pointer-root", "baseline", "src/domain/")],
+)
 async def test_scripted_reference_uses_the_selected_arm_and_all_changed_files(
-    arm_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    name: str, arm_id: str, scope: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from code_extension import probe
 
-    fixture = load_scenario("stage-pass-through", arm_id=arm_id)
+    fixture = load_scenario(name, arm_id=arm_id)
     manifest = FixtureManifestV3.model_validate_json(
-        (ROOT / "qualification/manifest.json").read_bytes()
+        (PILOT.parent / name / "qualification/manifest.json").read_bytes()
     )
     image = manifest.observed_runtime_image_digest
     monkeypatch.setattr("code_extension.bridge.observed_image_digest", lambda _: image)
@@ -59,8 +63,50 @@ async def test_scripted_reference_uses_the_selected_arm_and_all_changed_files(
     monkeypatch.setattr(probe, "make_runner", lambda _: None)
     record = await reference_submission(fixture, manifest, image)
     assert record["reference_tree_matches"] is True
-    assert record["writable_prefixes"] == ["src/compiler/"]
+    assert record["writable_prefixes"] == [scope]
     assert sidecar_for_subject(fixture.subject_id, arm_id) == fixture.sidecar
+
+
+@pytest.mark.parametrize("model,provider", [
+    ("mistralai/ministral-14b-2512", "mistral/zdr"),
+    ("qwen/qwen3.8-27b", "deepinfra/bf16"),
+])
+def test_baseline_pilot_prepares_both_newly_launchable_subjects_with_full_path_gates(
+    model: str, provider: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from code_extension.config import RunConfiguration
+    from code_extension.run import prepare
+    from code_extension.settings import ExtensionAgentSettings
+
+    names = ("pilot", "pointer-root")
+    refs = [
+        {"scenario": name, "manifest_digest": digest_bytes(
+            (PILOT.parent / name / "qualification/manifest.json").read_bytes(),
+        )} for name in names
+    ]
+    original = hosted_configuration().model_dump(mode="json")
+    config = RunConfiguration.model_validate({
+        **original, "scenario_qualifications": refs, "repeats": 5,
+        "image_digest": json.loads(
+            (PILOT / "qualification/manifest.json").read_bytes(),
+        )["observed_runtime_image_digest"],
+        "route": {"endpoint": "https://openrouter.ai/api/v1", "model": model,
+                  "provider": provider},
+        "bounds": ExtensionAgentSettings.for_model(model).model_dump(mode="json"),
+    })
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("CODE_EXTENSION_ROUTING_CONFIG", raising=False)
+    monkeypatch.setattr("code_extension.bridge.observed_image_digest",
+                        lambda _: config.image_digest)
+    path = tmp_path / "config.json"
+    path.write_bytes(config.canonical_bytes())
+    summary = prepare(path, tmp_path / "store")
+    assert summary["attempts"] == 10
+    assert {cell["subject_id"] for cell in summary["tasks"]} == {
+        load_scenario(name).subject_id for name in names
+    }
+    assert {cell["arm_id"] for cell in summary["tasks"]} == {"baseline"}
+    assert summary["unresolved_blockers"] == []
 
 
 def test_committed_shape_gates_load_and_prepare_twenty_hosted_cells(
@@ -155,7 +201,7 @@ async def test_hosted_shape_grid_retains_each_arm_and_reproduces_reports(
     def http_client(agent: Any) -> httpx.Client:
         def respond(_request: httpx.Request) -> httpx.Response:
             if agent.coordinate == "__route_probe__":
-                message = {"role": "assistant", "content": "OK"}
+                message: dict[str, Any] = {"role": "assistant", "content": "OK"}
                 reason = "stop"
             else:
                 request = json.loads(_request.content)

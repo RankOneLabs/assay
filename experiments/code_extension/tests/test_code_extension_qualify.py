@@ -31,6 +31,32 @@ def _committed_manifest() -> FixtureManifestV3:
     return FixtureManifestV3.model_validate_json(MANIFEST.read_bytes())
 
 
+@pytest.mark.parametrize("name", ("pilot", "pointer-root", "stage-pass-through"))
+def test_frozen_scenario_cli_reuses_its_manifest_and_record_directory(
+    name: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = PILOT.parent / name
+    manifest = FixtureManifestV3.model_validate_json(
+        (root / "qualification/manifest.json").read_bytes(),
+    )
+    records = root / "qualification" / ("evidence" if name == "pilot" else "checks")
+    calls = []
+
+    async def frozen(
+        scenario: str, *, image: str, evidence_dir: Path, verify: bool,
+    ) -> FixtureManifestV3:
+        calls.append((scenario, image, evidence_dir, verify))
+        return manifest
+
+    monkeypatch.setattr(qualify, "qualify_shape_scenario", frozen)
+    monkeypatch.setattr("sys.argv", [
+        "qualify", "--scenario", name, "--image", manifest.observed_runtime_image_digest,
+        "--verify-committed",
+    ])
+    qualify.main()
+    assert calls == [(name, manifest.observed_runtime_image_digest, records, True)]
+
+
 def _docker_ready() -> bool:
     if shutil.which("docker") is None:
         return False
