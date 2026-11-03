@@ -225,3 +225,11 @@ async def test_hosted_shape_grid_retains_each_arm_and_reproduces_reports(
     bundle = export_bundle(ObjectStore(Path(result["archive"])), index["manifest_ref"],
                            tmp_path / "bundle")
     assert verify_bundle(bundle, index["manifest_ref"]) == ()
+    # A fake grade must not hide a missing dependency needed for real offline replay.
+    source = ObjectStore(store_path)
+    for scenario in manifest.scenarios:
+        for group in (*scenario.visible_tests, *scenario.hidden_tests):
+            assert bundle.read_bytes(group.digest) == source.read_bytes(group.digest)
+            assert ObjectStore(Path(result["archive"])).read_bytes(group.digest) == (
+                source.read_bytes(group.digest)
+            )

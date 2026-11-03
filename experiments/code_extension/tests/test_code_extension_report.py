@@ -7,10 +7,11 @@ import csv
 import json
 import shutil
 import socket
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from code_extension.classification import HarnessOrProviderFailure
+from code_extension.classification import EvaluatorVerdict, HarnessOrProviderFailure
 from code_extension.fixture import PILOT, load_fixture, materialize
 from code_extension.ledger import AttemptLedger, AttemptRow, EvidenceReference
 from code_extension.metrics import measure_attempt, measure_patch, trace_measures
@@ -52,9 +53,10 @@ def _row(
 
 
 def test_committed_report_is_exactly_recomputed_evidence() -> None:
-    assert REPORT_MD.read_text(encoding="utf-8") == render()
-    assert "Descriptive only" in render()
-    assert "p-value" not in render() and "adjusted interval" not in render()
+    body = render()
+    assert REPORT_MD.read_text(encoding="utf-8") == body
+    assert "Descriptive only" in body
+    assert "p-value" not in body and "adjusted interval" not in body
 
 
 def test_empty_archive_reproduces_committed_report_and_fixed_ledger(
@@ -64,7 +66,7 @@ def test_empty_archive_reproduces_committed_report_and_fixed_ledger(
     archive.mkdir()
     paths = render_archive(archive, tmp_path / "out")
     first = [path.read_bytes() for path in paths]
-    assert paths[0].read_bytes() == REPORT_MD.read_bytes()
+    assert paths[0].read_text() == render_from_ledgers(())
     assert paths[1].read_text().startswith("attempt,retry_of,scenario,arm,")
     assert paths[2].read_text() == "[]\n"
     assert [path.read_bytes() for path in render_archive(archive, tmp_path / "out")] == first
@@ -410,6 +412,39 @@ def test_invalid_partial_patch_keeps_attempt_and_unpriced_coverage(tmp_path: Pat
     measured = measure_attempt(row, store, fixture_tree=PILOT / "repository")
     assert measured.diff is None
     assert measured.cost_amount is None and measured.cost_coverage == "uncertain"
+
+
+def test_unavailable_grade_does_not_disagree_with_agent_assessment(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / "store")
+    trajectory = b'{"turns":[{"submission":{"self_assessed_verdict":"complete"}}]}'
+    ref = str(store.publish_json({
+        "schema_version": "assay-pier-raw-artifact/0.1.0",
+        "checksum": digest_bytes(trajectory), "byte_length": len(trajectory),
+        "content_base64": base64.b64encode(trajectory).decode("ascii"),
+    }))
+    row = _row("ungraded", "oakridge-dbos-context-defaults", "baseline",
+               completed=True, accounting=Accounting())
+    row = replace(row, verdict=EvaluatorVerdict("unavailable", ()),
+                  reference=replace(row.reference, raw_trajectory_ref=ref))
+    measured = measure_attempt(row, store, fixture_tree=PILOT / "repository")
+    assert measured.self_assessed_verdict == "complete"
+    assert measured.self_report_agrees is None
+
+
+def test_plugin_footprint_includes_json_registration(tmp_path: Path) -> None:
+    from code_extension.fixtures import load_scenario
+
+    fixture = load_scenario("stage-pass-through", arm_id="plugin")
+    expected = frozenset({"src/compiler/compile-workflow.ts",
+                          "src/compiler/stage-plugin-config.json"})
+    measured = measure_patch(
+        PILOT.parent / "stage-pass-through" / "repository" / "plugin",
+        fixture.arms[0].reference_patch.encode(),
+        dependencies=install_toolchain(tmp_path / "dependencies", offline=True),
+        expected_change_paths=expected,
+    )
+    assert set(measured.changed_paths) == expected
+    assert measured.unnecessary_paths == ()
 
 
 def test_measurement_of_committed_fixture_patch_has_no_network(
