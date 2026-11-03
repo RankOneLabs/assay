@@ -33,9 +33,17 @@ come from retained execution and trajectory evidence.
 
 `code_extension.publish.render` produces the committed
 [`REPORT.md`](../experiments/code_extension/REPORT.md) from committed fixture
-manifests and committed run evidence. At present, the fixture roster is
-qualified but there is no committed extension run bundle, so observed attempt
-counts are empty. A run bundle belongs under
+manifests and original committed run evidence. The first hosted four-shape
+pilot has twenty planned attempts and nineteen normal submissions. Its original
+grades are unavailable because the launch grader pinned a different Docker
+client version. Those observations remain unchanged in the generated report.
+All twenty retained candidates subsequently passed independent offline replay
+with the qualified runner profile, including the plugin candidate that omitted
+its submission call. See the
+[pilot analysis](../experiments/code_extension/evidence/studies/shape-pilot-2026-11-03-scoped/ANALYSIS.md)
+for the separate replay observations, spending, and interpretation. This is
+descriptive evidence from one task, not a broad architecture comparison.
+A run bundle belongs under
 `experiments/code_extension/evidence/runs/<run>/`: `run.json` names the
 content-addressed plan and run-manifest refs, trace-bound operator judgments,
 and the expected changed paths per subject; `objects/sha256/` contains those

@@ -1,0 +1,29 @@
+{
+  "mode": "prepare_and_runtime_check_only",
+  "model_requests": 0,
+  "plan_ref": "sha256:1343aff8b042515f826541c75513ecb24e9dc14abf6951e1693d37b775410be1",
+  "runner": {
+    "id": "docker-typescript-functional",
+    "version": "1",
+    "settings": {
+      "image": "sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee",
+      "toolchain": "bun",
+      "expected_versions": {
+        "tsc": "Version 5.9.3",
+        "node": "v22.21.1",
+        "bun": "1.3.13"
+      },
+      "docker_client_version": "29.9.0",
+      "docker_server_version": "29.1.2",
+      "command_timeout_s": 5.0,
+      "deadline_s": 300.0,
+      "candidate_timeout_s": 60.0,
+      "max_output_bytes": 131072
+    },
+    "harness_sha256": "sha256:402dd70f5c72bd5502714518e5e8d86de5579a899499560332f93ae8cd499d07",
+    "network": "none",
+    "dependencies": "locked-image-only",
+    "patch_applications": 1
+  },
+  "fixture_and_group_refs_in_plan_closure": true
+}

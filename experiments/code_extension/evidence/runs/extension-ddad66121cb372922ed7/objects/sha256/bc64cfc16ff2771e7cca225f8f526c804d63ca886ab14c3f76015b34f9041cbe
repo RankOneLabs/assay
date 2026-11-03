@@ -1,0 +1,42 @@
+diff --git a/src/compiler/compile-workflow.ts b/src/compiler/compile-workflow.ts
+index 925617cc18bf6cc7e7d078a7abf014263dd9d47b..bd8fb832414577a67640278f8176b8b222dcd1a9 100644
+--- a/src/compiler/compile-workflow.ts
++++ b/src/compiler/compile-workflow.ts
+@@ -1,3 +1,5 @@
++import { z } from "zod";
++
+ import type { CompiledEdge, CompiledGateStep, CompiledOutputContract, CompiledStageContract, CompiledWorkflowDefinition, MaterializationContract, OutputReleaseContract } from "../domain/compiled-workflow";
+ import type { DelegatedSessionDefinitionConfig } from "../domain/delegated-session";
+ import { err, ok, type JsonValue, type Result } from "../domain/primitives";
+@@ -103,6 +105,23 @@ const repositoryProvisioningStageTypeCompiler: StageTypeCompiler = {
+   },
+ };
+ 
++// No knobs or bindings: pass-through always represents one scalar unit.
++// Strictness matters here; silently stripping keys would accept configuration
++// that this executor cannot honor.
++const passThroughDefinitionSchema = z.strictObject({});
++
++const passThroughStageTypeCompiler: StageTypeCompiler = {
++  compile(stageKey, rawConfig) {
++    const parsed = passThroughDefinitionSchema.safeParse(rawConfig);
++    if (!parsed.success) return err({ operation: "compile_workflow", stage_key: stageKey, detail: parsed.error.message });
++    return ok({
++      definition_config: parsed.data,
++      materialization: { kind: "scalar" },
++      output_release: () => ({ kind: "immediate" }),
++    });
++  },
++};
++
+ export type StageTypeCompilerRegistry = Readonly<Record<string, StageTypeCompiler>>;
+ 
+ const builtInStageTypeCompilers: StageTypeCompilerRegistry = {};
+@@ -111,6 +130,7 @@ const selectBuiltInCompiler = (stageType: string): StageTypeCompiler | undefined
+   switch (stageType) {
+     case "delegated_session": return delegatedSessionStageTypeCompiler;
+     case PROVISION_REPOSITORY_REFS_STAGE_TYPE: return repositoryProvisioningStageTypeCompiler;
++    case "pass_through": return passThroughStageTypeCompiler;
+     default: return undefined;
+   }
+ };

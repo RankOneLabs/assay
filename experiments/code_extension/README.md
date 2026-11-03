@@ -91,11 +91,24 @@ five repeats) without model requests. `execute` first makes one charged route
 probe, then retains every dispatched attempt and its independent grade. No paid
 calibration or study run is included in the qualification evidence.
 
+The first hosted shape pilot ran on 2026-11-03: twenty fresh attempts, five per
+shape, using the example's Sol route. All twenty retained candidates passed
+offline independent replay; nineteen completed the required submission protocol.
+One plugin attempt omitted `submit_output` despite producing a passing patch.
+The original launch grades were unavailable because of a Docker client-version
+mismatch and remain unchanged. Replay uses the qualification runner profile and
+retained, digest-verified test assets. The
+[pilot analysis](evidence/studies/shape-pilot-2026-11-03-scoped/ANALYSIS.md)
+separates those observations, documents the harness repairs, and retains all
+traces and charges. Total API spend, including the retired scope-calibration
+launch and both probes, was $1.61269317. This single-task ceiling result does
+not establish an architecture ranking.
+
 The separate three-task baseline pilot's launch preconditions remain open.
 Cross-module-event is feasible at
 the upstream pin, but config-plugin lacks a configuration-driven loading path,
 so there is **no frozen three-scenario pilot configuration or fifteen-attempt
-plan**. No calibration or pilot attempt has been dispatched. A reviewed
+plan**. No attempt for that proposed three-task baseline has been dispatched. A reviewed
 scenario selection and passing qualification for all three selected subjects
 are required before a pilot freeze. The operator must then review a model-free
 scripted full path, a route probe counted as live work, the exact endpoint,

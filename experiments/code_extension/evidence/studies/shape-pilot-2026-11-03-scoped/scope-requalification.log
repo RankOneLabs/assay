@@ -1,0 +1,9 @@
+qualifying stage-pass-through/modular
+qualified stage-pass-through/modular
+qualifying stage-pass-through/central
+qualified stage-pass-through/central
+qualifying stage-pass-through/cross_module
+qualified stage-pass-through/cross_module
+qualifying stage-pass-through/plugin
+qualified stage-pass-through/plugin
+qualified modular, central, cross_module, plugin

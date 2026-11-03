@@ -1,0 +1,10 @@
+{
+  "root_ref": "sha256:5d23394c81c19c0201597a429774b8f877f308230f86e7b2f34d7bb3893a74b2",
+  "integrity": "passed",
+  "observations": [
+    {
+      "code": "incomplete_run",
+      "message": "run has missing planned coordinates"
+    }
+  ]
+}
