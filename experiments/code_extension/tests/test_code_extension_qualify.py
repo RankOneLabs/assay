@@ -324,14 +324,16 @@ async def test_offline_image_reproduces_records_and_replay_keeps_verdicts(tmp_pa
         pytest.skip("pinned Docker image is not provisioned")
     fixture = load_fixture()
     manifest = _committed_manifest()
-    route = Path(
-        os.environ.get(
-            "ASSAY_EXTENSION_ROUTING_CONFIG",
-            str(Path.home() / "codes/rol/smithers/routing_config.yaml"),
+    route = None
+    if manifest.routing_config_digest is not None:
+        route = Path(
+            os.environ.get(
+                "ASSAY_EXTENSION_ROUTING_CONFIG",
+                str(Path.home() / "codes/rol/smithers/routing_config.yaml"),
+            )
         )
-    )
-    if not route.is_file():
-        pytest.skip("routing config for committed manifest is not provisioned")
+        if not route.is_file():
+            pytest.skip("routing config for committed manifest is not provisioned")
     evidence = tmp_path / "evidence"
     fresh = await qualify.qualify(
         image=qualify.IMAGE_TAG,
