@@ -34,3 +34,11 @@ def run_receipts_checkout() -> Path:
 def relevance_catalogues(run_receipts_checkout: Path) -> Path:
     """The Scout relevance catalogues are private; they live in run-receipts."""
     return run_receipts_checkout / "scout-relevance-2026-09/catalogues"
+
+
+@pytest.fixture
+def extension_pilot_receipts(run_receipts_checkout: Path) -> Path:
+    """Published extension archives are owned by the external receipts checkout."""
+    root = run_receipts_checkout / "code-extension-2026-11-03" / "evidence"
+    assert (root / "runs").is_dir(), f"extension pilot receipts are absent: {root}"
+    return root

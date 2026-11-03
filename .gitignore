@@ -11,3 +11,4 @@ node_modules/
 /.env
 .trial-runs/
 experiments/oakridge_history/results/
+/experiments/code_extension/evidence/

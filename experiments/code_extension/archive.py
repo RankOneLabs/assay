@@ -35,7 +35,9 @@ from code_extension.protocol import (
     SYSTEM_PROMPT_SHA256,
 )
 
-DEFAULT_ARCHIVE_ROOT = Path(__file__).resolve().parent / "evidence" / "runs"
+DEFAULT_ARCHIVE_ROOT = (
+    Path(__file__).resolve().parents[2] / ".assay" / "code-extension" / "archive" / "runs"
+)
 ARCHIVE_SCHEMA: Literal["assay-ce-attempt-archive/0.1.0"] = (
     "assay-ce-attempt-archive/0.1.0"
 )

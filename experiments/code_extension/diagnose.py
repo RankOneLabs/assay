@@ -26,6 +26,7 @@ from assay.investigations.workflow_correctness import (
 from assay.models import ExecutionOutcome, ExecutionPlanV3, RunManifest
 from assay.pier_protocol import CandidateSubmission
 from assay.store import ObjectStore
+from code_extension.archive import AttemptArchiveRecord
 from code_extension.evaluation import GRADER_REVISION, evaluate_scenario_candidate
 from code_extension.fixture import PILOT, PilotFixture, load_fixture, materialize, read_tree
 from code_extension.metrics import artifact_bytes
@@ -198,6 +199,49 @@ def diagnose_candidate(
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _replay_fixtures(
+    archive: Path, run_directory: Path, store: ObjectStore,
+) -> dict[str, tuple[FixtureManifestV3, str | None]]:
+    """Use retained fixture identities; only unpinned legacy runs consult the checkout."""
+    refs: set[str] = set()
+    inventory = run_directory / "fixture-assets.json"
+    if inventory.exists():
+        value = json.loads(inventory.read_bytes())
+        if not isinstance(value, dict) or not isinstance(value.get("fixture_ref"), str):
+            raise ValueError("invalid retained fixture inventory")
+        refs.add(value["fixture_ref"])
+    attempt_index = run_directory / "index.json"
+    if attempt_index.exists():
+        records = json.loads(attempt_index.read_bytes())
+        if not isinstance(records, dict):
+            raise ValueError("invalid retained attempt index")
+        for ref in records.values():
+            record = AttemptArchiveRecord.model_validate_json(store.read_bytes(ref))
+            if record.fixture_ref is not None:
+                refs.add(record.fixture_ref)
+    fixtures: list[tuple[FixtureManifestV3, str | None]]
+    if refs:
+        # A missing or corrupt retained object is an integrity failure, never
+        # permission to substitute tests from the current checkout.
+        fixtures = [
+            (FixtureManifestV3.model_validate_json(store.read_bytes(ref)), ref)
+            for ref in sorted(refs)
+        ]
+    else:
+        root = archive / "fixtures" if (archive / "fixtures").is_dir() else PILOT.parent
+        fixtures = [
+            (FixtureManifestV3.model_validate_json(path.read_bytes()), None)
+            for path in sorted(root.glob("*/qualification/manifest.json"))
+        ]
+    by_subject: dict[str, tuple[FixtureManifestV3, str | None]] = {}
+    for fixture, fixture_ref in fixtures:
+        for scenario in fixture.scenarios:
+            if scenario.subject_id in by_subject and by_subject[scenario.subject_id][0] != fixture:
+                raise ValueError(f"conflicting retained fixtures for {scenario.subject_id}")
+            by_subject[scenario.subject_id] = (fixture, fixture_ref)
+    return by_subject
+
+
 def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]:
     """Replay retained candidates with the independent evaluator, appending new records."""
     runs = archive / "runs" if (archive / "runs").is_dir() else archive
@@ -209,14 +253,7 @@ def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]
         store = ObjectStore(index_path.parent)
         plan = ExecutionPlanV3.model_validate_json(store.read_bytes(index["plan_ref"]))
         manifest = RunManifest.model_validate_json(store.read_bytes(index["manifest_ref"]))
-        fixture_root = archive / "fixtures" if (archive / "fixtures").is_dir() else PILOT.parent
-        fixtures = [
-            FixtureManifestV3.model_validate_json(path.read_bytes())
-            for path in sorted(fixture_root.glob("*/qualification/manifest.json"))
-        ]
-        by_subject = {
-            scenario.subject_id: fixture for fixture in fixtures for scenario in fixture.scenarios
-        }
+        by_subject = _replay_fixtures(archive, index_path.parent, store)
         runner: DockerWorkflowRunner = make_runner(image)
         for cell in plan.cells:
             execution_ref = manifest.execution_records.get(cell.id)
@@ -247,7 +284,7 @@ def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]
                     except (subprocess.CalledProcessError, UnicodeError, ValueError):
                         candidate_digest = baseline_digest
                 candidate = WorkerCandidate(patch, candidate_digest, baseline_digest)
-            fixture = by_subject[cell.subject_id]
+            fixture, fixture_ref = by_subject[cell.subject_id]
             replay_fixture = fixture.model_copy(update={"observed_runtime_image_digest": image})
             with tempfile.TemporaryDirectory() as scratch:
                 replay_store = ObjectStore(Path(scratch))
@@ -275,6 +312,7 @@ def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]
                 "schema_version": "code-extension-regrade/1",
                 "image_digest": image,
                 "runner": runner.configuration(),
+                "fixture_ref": fixture_ref,
                 "grader_revision": GRADER_REVISION,
                 "run_id": manifest.run_id,
                 "cell_id": cell.id,
