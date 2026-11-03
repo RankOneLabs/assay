@@ -2,6 +2,20 @@
 
 ## Operator runner
 
+Hosted launches use the shared repository-agent OpenRouter backend and its
+existing pinned model/provider catalogue. Set `route` to that exact endpoint,
+model and provider, `profile` to `openrouter`, `bounds` to
+`ExtensionAgentSettings.for_model(model)`, and pricing to
+`{"basis":"openrouter-pinned-price-ceilings","conservative_request_bound_usd":null}`.
+`prepare` needs no credential or Smithers routing file. For `execute`, provide
+`OPENROUTER_API_KEY` through the environment. Both the route probe and every
+model turn use the shared worst-case request reservation and inline billed
+cost accounting, with separate per-attempt and run caps. The extension journal
+records each reservation before dispatch and preserves known charges on provider
+errors; unsent requests release their reservations. Unknown charges halt the run.
+Hosted byte and output limits reuse the verification pilot's envelope; hosted
+context capacity is recorded as unavailable until independently observed.
+
 Run these commands from `experiments/`:
 
 ```sh
@@ -24,12 +38,13 @@ remains the separate replay diagnostic and cannot write a verdict.
 | `scenario_qualifications` | Array of `{scenario, manifest_digest}` entries. The digest is the exact byte digest of that scenario's committed `qualification/manifest.json`. |
 | `cohort` | Operator's calibration or pilot cohort identity; each gets its own configuration and cap. |
 | `route` | Exact `{endpoint, model, provider}` from the authorized extension route matrix. |
-| `profile` | The qualified Smithers machine name used to resolve that model. |
+| `profile` | `openrouter` for hosted models; the qualified machine name for Smithers. |
 | `system_prompt_digest`, `tool_schemas_digest` | Literal ce-v1 pins in `protocol.py`. |
 | `image_digest` | Observed sha256 image digest in every chosen manifest. |
 | `bounds` | Complete `ExtensionAgentSettings.for_model(model)` envelope. |
-| `repeats`, `randomization_seed`, `concurrency` | Declared full-grid repeats, recorded seed, and concurrency 1. The current shared planner still uses `subject-rotated-v1`; see the open order decision below. |
-| `pricing` | `{basis, conservative_request_bound_usd}`. Local Smithers has no billed price, so a positive explicit request bound is required. |
+| `repeats`, `randomization_seed`, `concurrency` | Full-grid repeats, a recorded metadata seed, and concurrency 1. The seed does not randomize dispatch. |
+| `dispatch_schedule` | `subject-rotated-v1`, the existing shared planner schedule; also the default for older configurations. |
+| `pricing` | Hosted: pinned provider price ceilings and inline billed cost. Local Smithers: a positive explicit conservative request bound. |
 | `per_attempt_cap_usd`, `total_cap_usd` | Positive dollar caps chosen by the operator; neither has a default. |
 
 Money values in JSON are decimal strings. Secrets are supplied through the
@@ -47,7 +62,7 @@ fixture, image, route, prompt or tool identity. An unset cap raises
 `pricing_basis_unusable`. An absent routing file raises
 `routing_artifact_unavailable`. The summary lists concrete cells, model,
 maximum requests, attempts, effective limits, estimated and maximum spend,
-coverage, and the unresolved dispatch-order question.
+coverage, and the selected dispatch schedule.
 
 `execute` requires the original stored plan, its exact digest, and the frozen
 configuration. The shared authorizer rejects noncanonical bytes and the
@@ -67,7 +82,17 @@ Keep the store, runs root and archive root on durable project storage, away
 from the OS temp directory. Waking a GPU worker power-cycles it and wipes its
 temp directory, which would erase the run before evidence can be read.
 
-Pilot launch preconditions are still open. Cross-module-event is feasible at
+The existing four-shape comparison is independent of the proposed three-task
+baseline pilot. Its per-arm full-path qualification records live in
+`fixtures/stage-pass-through/qualification/arms/<arm>/`. An example hosted
+configuration is in `examples/hosted-shapes.json`; its dollar limits are
+illustrative operator inputs. `prepare` compiles its twenty cells (four shapes,
+five repeats) without model requests. `execute` first makes one charged route
+probe, then retains every dispatched attempt and its independent grade. No paid
+calibration or study run is included in the qualification evidence.
+
+The separate three-task baseline pilot's launch preconditions remain open.
+Cross-module-event is feasible at
 the upstream pin, but config-plugin lacks a configuration-driven loading path,
 so there is **no frozen three-scenario pilot configuration or fifteen-attempt
 plan**. No calibration or pilot attempt has been dispatched. A reviewed

@@ -212,7 +212,10 @@ def test_codeintel_arm_set_declares_mount_mode_and_delivery_together() -> None:
         )
 
 
-def test_unauthorized_route_is_typed_and_never_dispatches() -> None:
+def test_unauthorized_route_is_typed_and_never_dispatches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("code_extension.bridge.AUTHORIZED_MODEL_ROUTES", frozenset())
     model_calls = 0
 
     def dispatch() -> None:
@@ -230,7 +233,10 @@ def test_unauthorized_route_is_typed_and_never_dispatches() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_route_settles_at_cell_boundary(tmp_path: Path) -> None:
+async def test_unauthorized_route_settles_at_cell_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("code_extension.bridge.AUTHORIZED_MODEL_ROUTES", frozenset())
     class FakeFactory:
         model_calls = 0
 

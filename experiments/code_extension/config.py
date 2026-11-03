@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -76,6 +76,7 @@ class RunConfiguration(BaseModel):
     bounds: ExtensionAgentSettings
     repeats: int = Field(ge=1, strict=True)
     randomization_seed: int = Field(strict=True)
+    dispatch_schedule: Literal["subject-rotated-v1"] = "subject-rotated-v1"
     concurrency: int = Field(ge=1, strict=True)
     pricing: PricingAssumptions
     per_attempt_cap_usd: Decimal

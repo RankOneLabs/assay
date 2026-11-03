@@ -4,20 +4,22 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
+from decimal import Decimal
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 from workflow_edit.bridge import (
     SmithersTurnCompletion,
     TurnCompletion,
-    WorkflowEditBridgeClient,
     WorkflowEditHandle,
     trial_limits,
 )
 from assay.canonical import canonical_json, digest_bytes
+from assay.adapters.smithers import SmithersFactory
 
 from assay_pier_bridge import protocol as bridge_protocol
 from assay_pier_bridge.agent_loop import (
@@ -25,8 +27,11 @@ from assay_pier_bridge.agent_loop import (
     DockerTmpfsToolSandbox,
     EXTENSION_TOOLS,
     LoopBounds,
+    PAID_TURN_ROUTES,
+    OpenRouterTurnRoute,
     RepositoryAgentClient,
     SandboxLimits,
+    SandboxFactory,
 )
 from assay_pier_bridge.repository_trial import RepositoryAgentTrialClient, agent_configuration
 from assay_pier_bridge.runtime import BridgeRuntime
@@ -38,6 +43,7 @@ from assay.code_intel.snapshot import delivered_workspace
 from assay.fixture_manifest import CodeIntelligenceModeArmSet, ExtensionArmSet, ExtensionScenario
 from assay.models import CellCoordinate
 from assay.pier_protocol import PierExchange
+from assay.pier_packaging import render_instruction
 from code_extension.arms import require_declared_codeintel_arm
 from code_extension.codeintel import PreparedExtensionCodeIntel, prepare_extension_codeintel
 from code_extension.dispatch import cell_idempotency_key
@@ -46,12 +52,14 @@ from code_extension.fixtures import ExtensionScenarioSidecar, sidecar_for_subjec
 from code_extension.prompts import render_arm_prompts
 from code_extension.settings import ExtensionAgentSettings
 from code_extension.settings import TOOL_CALL_CEILING_REASON
+from code_extension.budget import AttemptJournal, JournaledAgentClient
+from verification_pilot.budget import SpendGate
 
-# The study's complete authorized model matrix. The underlying wire protocol
-# accepts more historical routes; these two local routes are this study's arms.
+# Reuse the shared hosted catalogue alongside the existing local routes.
 AUTHORIZED_MODEL_ROUTES = frozenset({
     ("http://willie:8900", "qwen-coder-32b", "smithers-local"),
     ("http://willie:8900", "qwen3.6-27b", "smithers-local"),
+    *((route.endpoint, route.model, route.provider) for route in PAID_TURN_ROUTES.values()),
 })
 LEGACY_WRITABLE_PREFIXES = ("src/", "tests/visible/")
 LEGACY_SUBJECT_IDS = frozenset(
@@ -113,8 +121,19 @@ def index_sandbox_options(
 
 
 @dataclass
-class ExtensionBridgeClient(WorkflowEditBridgeClient):
+class ExtensionBridgeClient:
     """One arm's declared prompt, route, tool surface and provider delivery."""
+
+    image: str
+    runs_root: Path
+    factory: SmithersFactory | None
+    run_label: str
+    bounds: LoopBounds = field(default_factory=LoopBounds)
+    limits: SandboxLimits = field(default_factory=SandboxLimits)
+    timeout_s: float = 900.0
+    completion_for: Callable[[str], TurnCompletion] | None = None
+    sandbox_factory: SandboxFactory | None = None
+    authorized_smithers: dict[str, Any] = field(default_factory=dict, init=False)
 
     scenario: ExtensionScenario | None = None
     scenario_sidecar: ExtensionScenarioSidecar | None = None
@@ -133,12 +152,22 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
     prepared: PreparedExtensionCodeIntel | None = None
     authorized_writable_scope: tuple[str, ...] | None = None
     authorized_protected_assets: dict[str, tuple[str, ...]] | None = None
+    api_key: str | None = field(default=None, repr=False)
+    spend_gate: SpendGate | None = None
+    journal: AttemptJournal | None = None
+    per_attempt_cap_usd: Decimal | None = None
 
     def __post_init__(self) -> None:
-        super().__post_init__()
+        if not self.route.paid_route_reachable:
+            self.authorized_smithers = self._local_factory().configuration()
         self.route = bridge_protocol.ModelRoute.model_validate(
             self.route.model_dump(mode="json")
         )
+
+    def _local_factory(self) -> SmithersFactory:
+        if self.factory is None:
+            raise ValueError("local extension route requires a Smithers factory")
+        return self.factory
 
     def _prompt(self) -> str:
         if self.scenario is None or self.arm_set is None:
@@ -148,7 +177,9 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
     def _writable_prefixes(self) -> tuple[str, ...]:
         if self.scenario is None:
             raise ValueError("extension scenario is required for writable scope")
-        sidecar = self.scenario_sidecar or sidecar_for_subject(self.scenario.subject_id)
+        sidecar = self.scenario_sidecar or sidecar_for_subject(
+            self.scenario.subject_id, self.arm_id,
+        )
         if sidecar is not None:
             if sidecar.subject_id != self.scenario.subject_id:
                 raise ValueError("extension sidecar subject differs from scenario")
@@ -175,7 +206,7 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
             raise ExtensionIdentityRejected("extension_tool_surface_drift")
         scope = self._writable_prefixes()
         sidecar = (
-            sidecar_for_subject(self.scenario.subject_id)
+            sidecar_for_subject(self.scenario.subject_id, self.arm_id)
             if self.scenario is not None else None
         )
         expected_scope = self.authorized_writable_scope or (
@@ -257,14 +288,22 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
         prefix: tuple[dict[str, Any], ...] = ()
         if self.prepared is not None and self.prepared.prompt_block is not None:
             prefix = ({"role": "user", "content": self.prepared.prompt_block},)
+        sidecar = self.scenario_sidecar or (
+            sidecar_for_subject(self.scenario.subject_id, self.arm_id)
+            if self.scenario is not None else None
+        )
         return agent_configuration(
             bounds=self._bounds(), limits=self.limits,
             writable_prefixes=self._writable_prefixes(), model_route=self.route,
             tools=tools, system_prompt=EXTENSION_SYSTEM_PROMPT, message_prefix=prefix,
             extra={
+                "scenario_contract_digest": (
+                    digest_bytes(canonical_json(sidecar.model_dump(mode="json")))
+                    if sidecar is not None else None
+                ),
                 "image": self.image, "image_digest": observed_image_digest(self.image),
                 "timeout_s": settings.timeout_s,
-                "arm_prompt": self._prompt(),
+                "arm_prompt": render_instruction(self._prompt(), "repository-agent"),
                 "code_intel_delivery": (
                     self.codeintel_delivery.model_dump(mode="json")
                     if self.codeintel_delivery is not None else None
@@ -280,7 +319,11 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
                 "per_cell_tool_call_ceiling_reason": TOOL_CALL_CEILING_REASON,
                 "requested_sampling": settings.requested_sampling,
                 "provider_reported_sampling": settings.provider_reported_sampling,
-                "turns": {"backend": "smithers", "smithers": self.factory.configuration()},
+                "turns": (
+                    {"backend": "openrouter", "route": asdict(self._hosted_route())}
+                    if self.route.paid_route_reachable
+                    else {"backend": "smithers", "smithers": self._local_factory().configuration()}
+                ),
             },
         )
 
@@ -290,10 +333,12 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
             self.arm_set if isinstance(self.arm_set, CodeIntelligenceModeArmSet) else None,
             self.arm_id, self.codeintel_delivery,
         )
-        if self.factory.model != self.route.model:
+        if not self.route.paid_route_reachable and self._local_factory().model != self.route.model:
             raise UnauthorizedModelRoute("Smithers factory model differs from the extension route")
         coordinate = CellCoordinate.model_validate(exchange.coordinate.model_dump(mode="json"))
-        if coordinate.arm_id != self.arm_id or package.get("instruction.md") != self._prompt():
+        if coordinate.arm_id != self.arm_id or package.get("instruction.md") != render_instruction(
+            self._prompt(), "repository-agent",
+        ):
             raise ValueError("extension arm prompt differs from its declared realization")
         image_digest = observed_image_digest(self.image)
         if exchange.binding.image_digest != image_digest:
@@ -319,19 +364,31 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
         if self.prepared is not None and self.prepared.prompt_block is not None:
             prefix = ({"role": "user", "content": self.prepared.prompt_block},)
         cell_key = cell_idempotency_key(self.run_label, coordinate)
-        completion: TurnCompletion = (
+        completion: TurnCompletion | None = None if self.route.paid_route_reachable else (
             self.completion_for(cell_key)
             if self.completion_for is not None
             else SmithersTurnCompletion(
-                self.factory, cell_key, authorized=self.authorized_smithers,
+                self._local_factory(), cell_key, authorized=self.authorized_smithers,
                 request_timeout_s=self._settings().request_timeout_s,
             )
         )
-        agent = RepositoryAgentClient(
-            api_key=None, image=self.image, runs_root=self.runs_root,
+        agent_class = (
+            JournaledAgentClient if self.route.paid_route_reachable else RepositoryAgentClient
+        )
+        hosted: dict[str, Any] = {}
+        if self.route.paid_route_reachable:
+            if self.spend_gate is None or self.journal is None or self.per_attempt_cap_usd is None:
+                raise ValueError("hosted extension requires spend caps and a durable journal")
+            hosted = {
+                "spend_gate": SpendGate(self.per_attempt_cap_usd), "run_gate": self.spend_gate,
+                "journal": self.journal, "cell_key": cell_key, "coordinate": coordinate.id,
+            }
+        agent = agent_class(
+            api_key=self.api_key, image=self.image, runs_root=self.runs_root,
             model_route=self.route, completion=completion, bounds=self._bounds(),
             tools=deepcopy(self.prepared.tools if self.prepared is not None else EXTENSION_TOOLS),
             extension_mode=True, system_prompt=EXTENSION_SYSTEM_PROMPT,
+            **hosted,
             message_prefix=prefix, writable_prefixes=self._writable_prefixes(),
             codeintel_query_script=(
                 QUERY_SCRIPT if self.prepared is not None and isinstance(
@@ -364,3 +421,6 @@ class ExtensionBridgeClient(WorkflowEditBridgeClient):
             network_policy="toolchain-only",
         )
         return WorkflowEditHandle(exchange, BridgeRuntime(trial), request)
+
+    def _hosted_route(self) -> OpenRouterTurnRoute:
+        return PAID_TURN_ROUTES[(self.route.model, self.route.provider)]

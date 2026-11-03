@@ -7,6 +7,7 @@ durable dispatch and settles it from the core run manifest when available.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import re
@@ -21,6 +22,7 @@ from pydantic import BaseModel, ConfigDict
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.models import CellCoordinate, ExecutionOutcome, RunManifest
+from assay.references import reference_closure
 from assay.store import ObjectStore
 from code_extension.dispatch import cell_idempotency_key
 from code_extension.fixtures import ExtensionScenarioSidecar
@@ -408,6 +410,56 @@ class AttemptArchive:
         self._publish_verbatim(raw)
         for provenance in json.loads(raw).get("source_references", []):
             self._publish_verbatim(source.read_bytes(provenance))
+
+    def retain_manifest_closure(self, source: ObjectStore, manifest_ref: str) -> None:
+        """Keep the immutable closure required by reports and offline verification.
+
+        Plans and their fixture inputs are operator-held artifacts, as in
+        begin_attempt. Execution objects must also be safe without rewriting
+        their addresses. Refuse a complete index if that would bypass redaction;
+        the already sanitized per-attempt records remain available for review.
+        """
+        manifest = RunManifest.model_validate_json(source.read_bytes(manifest_ref))
+        trusted = reference_closure(source, (manifest.plan_ref,))
+        closure = reference_closure(source, (manifest_ref,))
+
+        def declaration_digests(value: Any) -> set[str]:
+            if isinstance(value, dict):
+                return {digest_bytes(canonical_json(value))}.union(*(
+                    declaration_digests(child) for child in value.values()
+                ))
+            if isinstance(value, list):
+                return set().union(*(declaration_digests(child) for child in value))
+            return set()
+
+        # Worker and adapter descriptions also appear as separate objects in
+        # execution records. Trust only exact copies of those operator-authored
+        # declarations, including their deliberate forbidden-substring keys.
+        declared: set[str] = set()
+        for ref in trusted:
+            with contextlib.suppress(ValueError, UnicodeError):
+                declared.update(declaration_digests(json.loads(source.read_bytes(ref))))
+        trusted.update(declared)
+        for ref in sorted(closure - trusted):
+            raw = source.read_bytes(ref)
+            try:
+                parsed = json.loads(raw)
+            except (ValueError, UnicodeError):
+                parsed = None
+            payload = raw
+            if isinstance(parsed, dict) and parsed.get("schema_version") == (
+                "assay-pier-raw-artifact/0.1.0"
+            ):
+                payload = base64.b64decode(parsed["content_base64"], validate=True)
+            try:
+                canonical = canonical_json(json.loads(payload))
+            except (ValueError, UnicodeError):
+                canonical = payload
+            if _safe_bytes(payload, self.secrets) != canonical:
+                raise ValueError(f"archive closure requires redaction: {ref}")
+        for ref in sorted(closure):
+            if self._publish_verbatim(source.read_bytes(ref)) != ref:
+                raise ValueError("archive closure object differs from its digest")
 
     def settle_attempt(self, cell_id: str, *, source: ObjectStore,
                        manifest_ref: str | None = None,

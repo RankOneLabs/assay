@@ -177,5 +177,13 @@ class BudgetedAgentClient(RepositoryAgentClient):
         if gate.halt == "billing_uncertain":
             # A billed cost the reservation did not cover breaks the cap's
             # guarantee; the charge is kept and the cell stops here.
-            raise ValueError("billing_uncertain")
+            raise BilledResponseError("billing_uncertain", {
+                "cost_usd": turn.cost_usd,
+                "prompt_tokens": turn.prompt_tokens,
+                "completion_tokens": turn.completion_tokens,
+            }, {
+                "started_at": turn.started_at, "ended_at": turn.ended_at,
+                "generation_id": turn.generation_id, "http_status": turn.http_status,
+                "finish_reason": turn.finish_reason,
+            })
         return turn
