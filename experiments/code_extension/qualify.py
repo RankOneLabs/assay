@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import subprocess
+import sys
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -534,6 +535,46 @@ async def qualify(
     return manifest
 
 
+async def qualify_shape_scenario(
+    name: str, *, image: str, evidence_dir: Path, verify: bool,
+) -> FixtureManifestV3:
+    """Replay existing shape contracts and add the same full-path gates per arm."""
+    root = PILOT.parent / name
+    manifest = FixtureManifestV3.model_validate_json(
+        (root / "qualification" / "manifest.json").read_bytes()
+    )
+    manifest.require_qualified()
+    image_digest = require_image(manifest, image)
+    scenario = manifest.scenarios[0]
+    for arm in scenario.arms:
+        print(f"qualifying {name}/{arm.arm_id}", file=sys.stderr, flush=True)
+        fixture = load_scenario(name, arm_id=arm.arm_id)
+        if (
+            fixture.tree_digest != arm.tree_digest
+            or fixture.task != arm.task_prompt
+            or digest_bytes(fixture.arms[0].reference_patch.encode()) != arm.reference_patch
+            or not set(arm.negative_patches).issubset({
+                digest_bytes(p.encode()) for p in fixture.arms[0].negative_patches
+            })
+        ):
+            raise ValueError(f"{name}/{arm.arm_id}: frozen fixture differs")
+        for group, pin in zip(
+            fixture.groups, (*scenario.visible_tests, *scenario.hidden_tests), strict=True,
+        ):
+            if digest_bytes(canonical_json(group.model_dump(mode="json"))) != pin.digest:
+                raise ValueError(f"{name}/{arm.arm_id}: frozen test group differs")
+        await run_checks(fixture, make_runner(image_digest), image_digest, evidence_dir)
+        for check in CHECKS:
+            _, digest = read_evidence(evidence_dir, arm.arm_id, check)
+            if digest != getattr(arm.qualification, check).evidence:
+                raise ValueError(f"{name}/{arm.arm_id}: frozen qualification differs: {check}")
+        await run_scenario_gates(
+            fixture, manifest, image, evidence_dir.parent / "arms" / arm.arm_id, verify=verify,
+        )
+        print(f"qualified {name}/{arm.arm_id}", file=sys.stderr, flush=True)
+    return manifest
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", required=True)
@@ -550,6 +591,28 @@ def main() -> None:
     root = PILOT.parent / args.scenario
     evidence_dir = args.evidence_dir or root / "qualification" / "evidence"
     manifest_path = args.manifest or root / "qualification" / "manifest.json"
+    declared_path = root / "qualification" / "manifest.json"
+    declared = (
+        FixtureManifestV3.model_validate_json(declared_path.read_bytes())
+        if declared_path.is_file() else None
+    )
+    if declared is not None and declared.arm_set.factor == "code_shape":
+        if args.routing_config is not None:
+            raise ValueError("shape qualification is offline and takes no routing configuration")
+        if args.evidence_dir is None:
+            evidence_dir = root / "qualification" / "checks"
+        manifest = asyncio.run(qualify_shape_scenario(
+            args.scenario, image=args.image, evidence_dir=evidence_dir,
+            verify=args.verify_committed,
+        ))
+        if args.verify_committed:
+            if FixtureManifestV3.model_validate_json(manifest_path.read_bytes()) != manifest:
+                raise ValueError("requalified shape manifest differs from requested manifest")
+        else:
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_bytes(canonical_json(manifest.model_dump(mode="json")) + b"\n")
+        print("qualified", ", ".join(manifest.arm_set.arm_ids))
+        return
     loaded = load_fixture() if args.scenario == "pilot" else load_scenario(args.scenario)
     expected = (
         FixtureManifestV3.model_validate_json(manifest_path.read_bytes())

@@ -84,26 +84,45 @@ def touched_paths(patch: str) -> tuple[str, ...]:
     return tuple(sorted(paths))
 
 
-def sidecar_for_subject(subject_id: str) -> ExtensionScenarioSidecar | None:
+def qualification_directory(root: Path, arm_id: str) -> Path:
+    """Shape arms have independent trees, contracts and gate evidence."""
+    if (root / "repository" / arm_id).is_dir():
+        return root / "qualification" / "arms" / arm_id
+    return root / "qualification"
+
+
+def sidecar_for_subject(
+    subject_id: str, arm_id: str = "baseline",
+) -> ExtensionScenarioSidecar | None:
     """Resolve a committed scenario's scope by subject, refusing duplicate records."""
     matches = []
-    for path in sorted(PILOT.parent.glob("*/qualification/sidecar.json")):
+    paths = [*PILOT.parent.glob("*/qualification/sidecar.json"),
+             *PILOT.parent.glob("*/qualification/arms/*/sidecar.json")]
+    for path in sorted(paths):
         sidecar = ExtensionScenarioSidecar.model_validate_json(path.read_bytes())
-        if sidecar.subject_id == subject_id:
+        if sidecar.subject_id == subject_id and any(
+            item.arm_id == arm_id for item in sidecar.patch_inventory
+        ):
             matches.append(sidecar)
     if len(matches) > 1:
         raise ValueError(f"duplicate sidecars for extension subject {subject_id}")
     return matches[0] if matches else None
 
 
-def load_scenario(name: str, root: Path | None = None) -> ScenarioFixture:
+def load_scenario(
+    name: str, root: Path | None = None, *, arm_id: str = "baseline",
+) -> ScenarioFixture:
     if not name or name in {".", ".."} or "/" in name or "\\" in name:
         raise ValueError("invalid scenario key")
     directory = root or PILOT.parent / name
+    if not arm_id or "/" in arm_id or "\\" in arm_id or arm_id in {".", ".."}:
+        raise ValueError("invalid scenario arm")
+    qualification = qualification_directory(directory, arm_id)
     sidecar = ExtensionScenarioSidecar.model_validate_json(
-        (directory / "qualification" / "sidecar.json").read_bytes()
+        (qualification / "sidecar.json").read_bytes()
     )
-    repository = read_tree(directory / "repository")
+    arm_root = directory / "repository" / arm_id
+    repository = read_tree(arm_root if arm_root.is_dir() else directory / "repository")
     groups = frozen_groups(repository, directory)
     task = (directory / "task.md").read_text(encoding="utf-8")
     if sidecar.provenance.start_tree_digest != workflow_tree_digest(repository):
@@ -117,11 +136,14 @@ def load_scenario(name: str, root: Path | None = None) -> ScenarioFixture:
     for lock, digest in sidecar.provenance.dependency_lock_digests.items():
         if lock not in repository or digest_bytes(repository[lock].encode()) != digest:
             raise ValueError("sidecar dependency lock digest differs")
+    prefix = f"{arm_id}." if arm_root.is_dir() else ""
     patches = {
         path.name: path.read_text(encoding="utf-8")
-        for path in sorted((directory / "patches").glob("*.patch"))
+        for path in sorted((directory / "patches").glob(f"{prefix}*.patch"))
     }
     inventory = {item.digest: item for item in sidecar.patch_inventory}
+    if any(item.arm_id != arm_id for item in sidecar.patch_inventory):
+        raise ValueError("sidecar patch inventory belongs to another arm")
     for patch in patches.values():
         digest = digest_bytes(patch.encode())
         declared = inventory.get(digest)
@@ -136,7 +158,7 @@ def load_scenario(name: str, root: Path | None = None) -> ScenarioFixture:
             for path in touched_paths(patch)
         ):
             raise ValueError("patch touches path outside writable prefixes or protected file")
-    if len(patches) != len(inventory) or "reference.patch" not in patches:
+    if len(patches) != len(inventory) or f"{prefix}reference.patch" not in patches:
         raise ValueError("patch inventory is incomplete")
     negatives = tuple(patches[item.patch_name] for item in sidecar.negative_expectations)
     if len(set(negatives)) != len(negatives):
@@ -146,6 +168,6 @@ def load_scenario(name: str, root: Path | None = None) -> ScenarioFixture:
         repository=repository,
         task=task,
         groups=groups,
-        arms=(ScenarioArm("baseline", patches["reference.patch"], negatives),),
+        arms=(ScenarioArm(arm_id, patches[f"{prefix}reference.patch"], negatives),),
         sidecar=sidecar,
     )

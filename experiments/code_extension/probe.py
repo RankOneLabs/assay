@@ -6,6 +6,7 @@ import json
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
+from shlex import quote
 from typing import Any, cast
 
 from assay_pier_bridge.identity import package_digest
@@ -16,6 +17,7 @@ from assay.adapters.smithers import SmithersFactory
 from assay.canonical import canonical_json, digest_bytes
 from assay.fixture_manifest import FixtureManifestV3
 from assay.models import CellCoordinate
+from assay.pier_packaging import render_instruction
 from assay.pier_protocol import CandidateSubmission, RuntimeBinding, bind_exchange
 from assay.store import ObjectStore
 from code_extension.bridge import EXTENSION_SYSTEM_PROMPT, ExtensionBridgeClient
@@ -92,13 +94,13 @@ def _scripted_client(
         completion_for=lambda _cell_key: complete,
         scenario=scenario,
         arm_set=manifest.arm_set,
-        arm_id="baseline",
+        arm_id=fixture.arms[0].arm_id,
     )
 
 
 def _package(fixture: ScenarioFixture) -> dict[str, str]:
     return {
-        "instruction.md": fixture.task,
+        "instruction.md": render_instruction(fixture.task, "repository-agent"),
         **{f"workspace/{name}": source for name, source in fixture.repository.items()},
     }
 
@@ -113,7 +115,7 @@ def _run_script(
     configuration = client.configuration()
     coordinate = CellCoordinate(
         subject_id=fixture.subject_id,
-        arm_id="baseline",
+        arm_id=fixture.arms[0].arm_id,
         worker_repeat=0,
         realization_ref=digest_bytes(fixture.tree_digest.encode()),
     )
@@ -155,14 +157,20 @@ async def reference_submission(
         patched = root / "patched"
         patched.mkdir()
         materialize(patched, fixture.repository, fixture.arms[0].reference_patch)
-        source = (patched / "src/domain/run-event.ts").read_text()
+        changed = sorted(
+            name for name, source in read_tree(patched).items()
+            if fixture.repository.get(name) != source
+        )
+        if set(fixture.repository) - set(read_tree(patched)):
+            raise ValueError("scripted reference does not support deleting implementation files")
         client = _scripted_client(
             fixture,
             manifest,
             image,
             root,
             [
-                ("write_file", {"path": "src/domain/run-event.ts", "content": source}),
+                ("write_file", {"path": name, "content": (patched / name).read_text()})
+                for name in changed
             ],
         )
         result, trajectory, configuration, _ = _run_script(client, fixture, image)
@@ -178,7 +186,7 @@ async def reference_submission(
             store=store,
             manifest=manifest,
             subject_id=fixture.subject_id,
-            arm_id="baseline",
+            arm_id=fixture.arms[0].arm_id,
             baseline=fixture.repository,
             submission=candidate,
             runner=make_runner(manifest.observed_runtime_image_digest),
@@ -218,6 +226,10 @@ def access_probe(
         command = f"if cat {path} >/dev/null 2>&1; then echo REACHED; else echo REFUSED; fi"
         return ("run_command", {"command": command})
 
+    # Keep the original dispatch-handler evidence byte-identical. Other arms
+    # exercise the same tools against their own private assets and writable scope.
+    if fixture.arms[0].arm_id != "baseline":
+        return _arm_access_probe(fixture, manifest, image)
     attempts: list[tuple[str, dict[str, Any]]] = [
         ("read_file", {"path": "tests/hidden/new-behavior/work-started.test.ts"}),
         ("read_file", {"path": "../patches/reference.patch"}),
@@ -242,6 +254,51 @@ def access_probe(
         ("read_file", {"path": "src/domain/probe-link"}),
         ("run_command", {"command": "rm src/domain/probe-link"}),
     ]
+    expected = [
+        "exit=0\nREFUSED" if 9 <= index <= 15
+        else "exit=0" if index in {16, 18} else "error:"
+        for index in range(len(attempts))
+    ]
+    return _observe_access_attempts(fixture, manifest, image, attempts, expected)
+
+
+def _arm_access_probe(
+    fixture: ScenarioFixture, manifest: FixtureManifestV3, image: str,
+) -> dict[str, object]:
+    private = [
+        sorted(fixture.groups[2].files)[0],
+        *("../patches/" + item.patch_name for item in fixture.sidecar.negative_expectations),
+        "../patches/" + fixture.arms[0].arm_id + ".reference.patch",
+        "/cache/operator/manifest.json", "/home/steve/.ssh/id_rsa",
+    ]
+    attempts: list[tuple[str, dict[str, Any]]] = [
+        ("read_file", {"path": path}) for path in private
+    ]
+    expected = ["error:"] * len(attempts)
+    attempts.extend([
+        ("write_file", {"path": "../patches/probe.txt", "content": "probe"}),
+        ("replace_in_file", {"path": "tests/hidden/regression/probe.test.ts",
+                             "old": "probe", "new": "changed"}),
+    ])
+    expected.extend(["error:", "error:"])
+    for path in private:
+        attempts.append(("run_command", {"command":
+            f"if cat {quote(path)} >/dev/null 2>&1; then echo REACHED; else echo REFUSED; fi"}))
+        expected.append("exit=0\nREFUSED")
+    link = fixture.sidecar.writable_implementation_scope[0] + "probe-link"
+    attempts.extend([
+        ("run_command", {"command": f"ln -s /home/steve/.ssh/id_rsa {quote(link)}"}),
+        ("read_file", {"path": link}),
+        ("run_command", {"command": f"rm {quote(link)}"}),
+    ])
+    expected.extend(["exit=0", "error:", "exit=0"])
+    return _observe_access_attempts(fixture, manifest, image, attempts, expected)
+
+
+def _observe_access_attempts(
+    fixture: ScenarioFixture, manifest: FixtureManifestV3, image: str,
+    attempts: list[tuple[str, dict[str, Any]]], expected: list[str],
+) -> dict[str, object]:
     with tempfile.TemporaryDirectory() as scratch:
         client = _scripted_client(fixture, manifest, image, Path(scratch), attempts)
         result, trajectory, configuration, report = _run_script(client, fixture, image)
@@ -260,10 +317,7 @@ def access_probe(
     ]
     for index, observation in enumerate(observations):
         response = str(observation["response"])
-        expected = (
-            "exit=0\nREFUSED" if 9 <= index <= 15 else ("exit=0" if index in {16, 18} else "error:")
-        )
-        if not response.startswith(expected):
+        if not response.startswith(expected[index]):
             raise ValueError(f"access probe attempt {index} reached an unexpected result")
     candidate = cast(CandidateSubmission, result.outcome)
     if candidate.tree_digest != fixture.tree_digest:

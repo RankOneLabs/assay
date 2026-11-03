@@ -74,3 +74,27 @@ so their results provide weaker evidence about naturally occurring code shapes.
 The central arm distinguishes the built-in registry from an injected one by
 object identity (`registry === builtInStageTypeCompilers`), an additional
 constraint when interpreting that arm's outcome.
+
+## Operator qualification and hosted preparation
+
+Every arm also has a scope/provenance sidecar and five full-path gate records
+under `qualification/arms/<arm>/`. The writable implementation scope is
+`src/compiler/`, including the plugin arm's source-level configuration file.
+Visible tests and the root dependency and TypeScript configuration files stay
+protected. Each arm retains a no-op check, twice-reproduced start/reference/
+incomplete controls, a scripted reference submission through the production
+bridge with independent grading, access probes through all five tools, and a
+leak scan. These records contain no model-generated observations.
+
+From `experiments/`, replay all arms with:
+
+```sh
+uv run python -m code_extension.qualify --scenario stage-pass-through --image sha256:d0da319d2e141415c1c41ccea44983e8986944e5ae45b53652a9c104c462c4ee --verify-committed
+uv run python -m code_extension.run prepare --config code_extension/examples/hosted-shapes.json --store .assay-extension
+```
+
+The sample selects the existing hosted Sol route with five repeats per shape.
+Its caps are illustrative. Preparation dispatches nothing and needs no API key.
+The launch summary records the exact twenty cells, the existing
+`subject-rotated-v1` schedule, and the full four-arm wall-time allowance.
+The configured seed is metadata; this schedule does not randomize execution.

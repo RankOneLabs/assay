@@ -1,5 +1,29 @@
 # Code extension model decisions
 
+## Hosted shape launch integration
+
+- Hosted extension execution reuses the shared repository agent, pinned
+  OpenRouter catalogue, and verification pilot's request pricing and spend
+  gates. The extension journal surrounds that request path; it adds durable
+  request identities and run-cap reconciliation to the existing per-attempt
+  accounting. A local routing file is required only for local execution.
+- The existing stage-pass-through scenario retains its four trees, task,
+  hidden groups, patches, core manifest and original qualification digests.
+  Each arm now has its own sidecar and the same five additional gate records
+  used by dispatch-handler. The scripted bridge writes every changed reference
+  file and grades against the selected arm, rather than assuming one event
+  file and the baseline arm. Each shape arm retains both missing-registration
+  and missing-validation controls; dispatch-handler retains its three distinct
+  incomplete patches.
+- The launch configuration explicitly selects `subject-rotated-v1`. Its seed
+  is retained as metadata, with no claim of randomized dispatch. Wall-time
+  limits cover every arm and repeat. Expected changed paths are retained per
+  subject and arm so that one architecture's integration files do not widen
+  another architecture's unnecessary-change allowance. Older single-arm run
+  indices remain readable.
+- These changes do not freeze the separate three-task baseline pilot, expand
+  the matched task sample, or provide a paid model calibration result.
+
 ## WP2 worker and WP3 per-attempt archive
 
 - The ce-v1 bridge keeps the shared baseline tool definitions in their frozen

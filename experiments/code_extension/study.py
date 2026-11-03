@@ -29,7 +29,7 @@ from assay.models import (
 from assay.store import ObjectIntegrityError, ObjectStore
 from code_extension.evaluation import CellEvaluator
 from code_extension.fixture import PILOT, VISIBLE_PREFIX, frozen_groups, load_fixture, read_tree
-from code_extension.fixtures import sidecar_for_subject
+from code_extension.fixtures import qualification_directory, sidecar_for_subject
 from code_extension.protocol import SYSTEM_PROMPT_SHA256
 from code_extension.shape import validate_worker_grid
 
@@ -189,34 +189,56 @@ def load_qualified_study_fixture(
         if len(manifest.scenarios) != 1:
             raise ValueError(f"{name}: expected one committed scenario")
         scenario = manifest.scenarios[0]
-        sidecar = sidecar_for_subject(scenario.subject_id)
-        if sidecar is None:
-            raise ValueError(f"{name}: scripted full path qualification is absent")
-        gate_path = root / "qualification" / "gates" / "scripted-submission.json"
-        gate_data = gate_path.read_bytes()
-        if digest_bytes(gate_data) != sidecar.evidence.scripted_submission:
-            raise ValueError(f"{name}: scripted full path artifact differs")
-        gate = json.loads(gate_data)
-        if (
-            gate.get("independent_evaluator_verdict") != "correct"
-            or gate.get("image_digest") != image
-            or gate.get("system_prompt_sha256") != SYSTEM_PROMPT_SHA256
-            or gate.get("reference_tree_matches") is not True
-            or gate.get("groups") != {key: "passed" for key, _ in STUDY_GROUPS}
-        ):
-            raise ValueError(f"{name}: scripted full path is not passing")
-        store.publish_bytes(gate_data)
         trees: dict[str, Mapping[str, str]] = {}
         for arm in scenario.arms:
+            sidecar = sidecar_for_subject(scenario.subject_id, arm.arm_id)
+            if sidecar is None:
+                raise ValueError(f"{name}: scripted full path qualification is absent")
+            if sidecar.provenance.start_tree_digest != arm.tree_digest or not any(
+                item.arm_id == arm.arm_id and item.kind == "reference"
+                and item.digest == arm.reference_patch for item in sidecar.patch_inventory
+            ):
+                raise ValueError(f"{name}: arm tree differs from scope qualification")
+            qualification = qualification_directory(root, arm.arm_id)
+            for gate_name, evidence_name in (
+                ("scripted-submission", "scripted_submission"), ("no-op", "no_op"),
+                ("access-probe", "access_probe"), ("leak-scan", "leak_scan"),
+                ("double-reproduction", "double_reproduction"),
+            ):
+                gate_data = (qualification / "gates" / f"{gate_name}.json").read_bytes()
+                if digest_bytes(gate_data) != getattr(sidecar.evidence, evidence_name):
+                    raise ValueError(f"{name}: {gate_name} full path artifact differs")
+                store.publish_bytes(gate_data)
+            reproduction = json.loads(
+                (qualification / "gates" / "double-reproduction.json").read_bytes()
+            )
+            if set(reproduction.get("controls", {})) != {
+                "start", "reference", *(item.patch_name for item in sidecar.negative_expectations),
+            }:
+                raise ValueError(f"{name}: incomplete qualification controls")
+            gate = json.loads((qualification / "gates" / "scripted-submission.json").read_bytes())
+            if (
+                gate.get("independent_evaluator_verdict") != "correct"
+                or gate.get("image_digest") != image
+                or gate.get("system_prompt_sha256") != SYSTEM_PROMPT_SHA256
+                or gate.get("reference_tree_matches") is not True
+                or gate.get("groups") != {key: "passed" for key, _ in STUDY_GROUPS}
+            ):
+                raise ValueError(f"{name}: scripted full path is not passing")
             repository_root = root / "repository" / arm.arm_id
             if not repository_root.is_dir():
                 repository_root = root / "repository"
             tree = read_tree(repository_root)
+            if workflow_tree_digest(tree) != sidecar.provenance.start_tree_digest:
+                raise ValueError(f"{name}: arm tree differs from scope qualification")
             trees[arm.arm_id] = tree
             for group in frozen_groups(tree, root):
                 store.publish_bytes(canonical_json(group.model_dump(mode="json")))
             for check in ("baseline_passes", "feature_fails", "reference_passes"):
-                path = root / "qualification" / "evidence" / arm.arm_id / f"{check}.json"
+                records = root / "qualification" / "checks"
+                if not records.is_dir():
+                    records = root / "qualification" / "evidence"
+                path = records / arm.arm_id / f"{check}.json"
                 record = path.read_bytes()
                 if digest_bytes(record) != getattr(arm.qualification, check).evidence:
                     raise ValueError(
