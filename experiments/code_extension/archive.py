@@ -21,6 +21,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from assay.canonical import canonical_json, digest_bytes
+from assay.fixture_manifest import FixtureManifestV3
 from assay.models import CellCoordinate, ExecutionOutcome, RunManifest
 from assay.references import reference_closure
 from assay.store import ObjectStore
@@ -34,7 +35,9 @@ from code_extension.protocol import (
     SYSTEM_PROMPT_SHA256,
 )
 
-DEFAULT_ARCHIVE_ROOT = Path(__file__).resolve().parent / "evidence" / "runs"
+DEFAULT_ARCHIVE_ROOT = (
+    Path(__file__).resolve().parents[2] / ".assay" / "code-extension" / "archive" / "runs"
+)
 ARCHIVE_SCHEMA: Literal["assay-ce-attempt-archive/0.1.0"] = (
     "assay-ce-attempt-archive/0.1.0"
 )
@@ -376,6 +379,23 @@ class AttemptArchive:
         )
         self._record(record)
         return record
+
+    def retain_fixture(self, source: ObjectStore, fixture_ref: str) -> None:
+        """Retain the exact qualification manifest and all groups needed for replay."""
+        manifest = FixtureManifestV3.model_validate_json(source.read_bytes(fixture_ref))
+        groups = sorted({group.digest for scenario in manifest.scenarios
+                         for group in (*scenario.visible_tests, *scenario.hidden_tests)})
+        for ref in (fixture_ref, *groups):
+            if self._publish_verbatim(source.read_bytes(ref)) != ref:
+                raise ValueError("fixture asset differs from its qualified digest")
+        data = canonical_json({
+            "schema_version": "assay-extension-fixture-assets/0.1.0",
+            "fixture_ref": fixture_ref, "group_refs": groups,
+        }) + b"\n"
+        path = self.directory / "fixture-assets.json"
+        if path.exists() and path.read_bytes() != data:
+            raise ValueError("immutable fixture asset inventory changed")
+        _atomic(path, data)
 
     def _copy_evaluation(self, source: ObjectStore, ref: str) -> str:
         """Retain the evaluator record and the detail and grader output it names."""

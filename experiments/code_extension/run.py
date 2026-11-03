@@ -26,7 +26,7 @@ from assay.adapters.pier import PierAdapter
 from assay.adapters.smithers import SmithersFactory
 from assay.canonical import canonical_json, digest_bytes
 from assay.execution import AdmissionHalt, RunFailed, RunResult, WorkerFailure, WorkerResult
-from assay.investigations.workflow_correctness import DockerWorkflowRunner, WorkflowRunnerSettings
+from assay.investigations.workflow_correctness import DockerWorkflowRunner
 from assay.models import (
     CellCoordinate,
     ExecutionCeiling,
@@ -170,6 +170,7 @@ def _build(
         digest_bytes(routing_path.read_bytes()) != fixture.manifest.routing_config_digest
     ):
         raise LaunchRefused("routing_identity_drift: qualified route file changed")
+    fixture_ref = str(store.publish_bytes(canonical_json(fixture.manifest.model_dump(mode="json"))))
     factory = None if route.paid_route_reachable else SmithersFactory(
         model=config.route.model,
         machine=config.profile,
@@ -278,18 +279,18 @@ def _build(
             {
                 "config_digest": config.digest(),
                 "workers": {arm: worker.configuration(arm) for arm, worker in workers.items()},
+                "assay_object_refs": sorted({
+                    fixture_ref,
+                    *(group.digest for scenario in fixture.manifest.scenarios
+                      for group in (*scenario.visible_tests, *scenario.hidden_tests)),
+                }),
             }
         )
     )
     runtime = RuntimeProfile(
         id="pier", version="code-extension-ce-v1", configuration_ref=runtime_ref
     )
-    runner = DockerWorkflowRunner(
-        WorkflowRunnerSettings(
-            image=config.image_digest,
-            toolchain="bun",
-        )
-    )
+    runner: DockerWorkflowRunner = qualify.make_runner(config.image_digest)
     count = sum(len(manifest.scenarios) for manifest in [fixture.manifest])
     prepared = plan_study(
         store,
@@ -334,14 +335,14 @@ def _open_archive(
         if (root / run_label / "index.json").is_file()
         else AttemptArchive(run_label, root)
     )
+    fixture_ref = str(store.publish_bytes(canonical_json(fixture.manifest.model_dump(mode="json"))))
+    archive.retain_fixture(store, fixture_ref)
     return ArchiveBinding(
         archive=archive,
         source=store,
         plan_ref=str(store.publish_bytes(prepared.plan_bytes)),
         snapshot_ref=compiled.snapshot_ref,
-        fixture_ref=str(
-            store.publish_bytes(canonical_json(fixture.manifest.model_dump(mode="json")))
-        ),
+        fixture_ref=fixture_ref,
         routing_digest=fixture.manifest.routing_config_digest,
         grader_identity=GRADER_REVISION,
     )
@@ -430,6 +431,9 @@ async def execute(plan_path: Path, authorization: str, store_path: Path) -> dict
     prepared = _build(config, store, live=True, plan_digest=actual)
     if prepared.plan_bytes != plan_bytes:
         raise LaunchRefused("plan differs from frozen configuration; prepare a new plan")
+    runtime_failure = await prepared.evaluator.runner._check_runtime()
+    if runtime_failure is not None:
+        raise LaunchRefused(f"evaluator_runtime_unavailable: {runtime_failure.error_type}")
     await _route_probe(config, store, actual, prepared)
     result = await run_study(prepared, store)
     worker = cast(ExtensionStudyWorker, next(iter(prepared.workers.values())))

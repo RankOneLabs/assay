@@ -6,22 +6,31 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from code_extension import config, diagnose, run
+from code_extension.archive import AttemptArchive
+from code_extension.study import load_pilot_study_fixture
+from code_extension.tests.test_code_extension_archive import _configuration
 from code_extension.tests.test_code_extension_ledger import _manifest, _outcome, _plan
+from code_extension.tests.test_code_extension_study import _two_arm_fixture
 from workflow_edit.evaluation import WorkerCandidate
 
 from assay.adapters import smithers
+from assay.canonical import canonical_json, digest_bytes
 from assay.investigations.workflow_correctness import (
     GroupResult,
     PreflightResult,
     RejectedChange,
     WorkflowCorrectnessResult,
+    workflow_tree_digest,
 )
 from assay.models import RunManifest
 from assay.store import ObjectStore
 from assay.verify import export_bundle, verify_bundle, verify_manifest
+
+pytestmark = pytest.mark.usefixtures("qualified_runner")
 
 
 def _object_bytes(root: Path) -> dict[str, bytes]:
@@ -134,6 +143,83 @@ def test_regrade_appends_distinct_image_records_without_changing_original(
     ]
     assert store.read_bytes(manifest_ref) == manifest_bytes
     assert _object_bytes(run_dir) == originals
+
+
+@pytest.mark.parametrize("retention", ["fixture-assets", "attempt-record"])
+@pytest.mark.parametrize("checkout", ["changed", "absent"])
+def test_regrade_uses_retained_tests_despite_checkout_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retention: str, checkout: str,
+) -> None:
+    store, plan, authorization = _plan(tmp_path / "source")
+    frozen = _two_arm_fixture(store, load_pilot_study_fixture(store)).manifest
+    fixture_ref = str(store.publish_json(frozen.model_dump(mode="json")))
+    store.publish_json(plan.model_dump(mode="json"))
+    execution_ref, _ = _outcome(store, plan, authorization, success=True, trace={})
+    manifest_ref = _manifest(store, plan, authorization, execution_ref, passed=True)
+    archive_root = tmp_path / "archive"
+    retained = AttemptArchive("sample", archive_root / "runs")
+    retained.begin_attempt(
+        coordinate=plan.cells[0], plan_ref=authorization, snapshot_ref=plan.snapshot_ref,
+        authorization_ref=authorization, configuration=_configuration(), sidecar=None,
+        source=store, fixture_ref=fixture_ref,
+    )
+    if retention == "fixture-assets":
+        retained.retain_fixture(store, fixture_ref)
+        (retained.directory / "index.json").unlink()
+    shutil.copytree(store.root, retained.directory, dirs_exist_ok=True)
+    (retained.directory / "run.json").write_text(json.dumps({
+        "plan_ref": authorization, "manifest_ref": manifest_ref,
+    }))
+    originals = _object_bytes(retained.directory)
+    checkout_root = tmp_path / "checkout"
+    monkeypatch.setattr(diagnose, "PILOT", checkout_root / "pilot")
+    if checkout == "changed":
+        path = checkout_root / "pilot" / "qualification" / "manifest.json"
+        path.parent.mkdir(parents=True)
+        changed = frozen.model_dump(mode="json")
+        changed["scenarios"][0]["hidden_tests"][0]["digest"] = "sha256:" + "f" * 64
+        path.write_text(json.dumps(changed))
+    baseline = json.loads(store.read_bytes(plan.cells[0].realization_ref))["repository"]
+    tree_digest = workflow_tree_digest(baseline)
+    monkeypatch.setattr(diagnose, "worker_candidate", lambda *_: WorkerCandidate(
+        patch=b"", tree_digest=tree_digest, baseline_tree_digest=tree_digest,
+    ))
+    expected = {g.name: g.digest for g in (
+        *frozen.scenarios[0].visible_tests, *frozen.scenarios[0].hidden_tests,
+    )}
+    graded: list[str] = []
+
+    async def grade(_self: Any, **kwargs: Any) -> WorkflowCorrectnessResult:
+        assert kwargs["baseline"] == baseline
+        for group in kwargs["groups"]:
+            assert digest_bytes(canonical_json(group.model_dump(mode="json"))) == (
+                expected[group.name]
+            )
+            graded.append(group.name)
+        return WorkflowCorrectnessResult(
+            "correct", tuple(GroupResult(group.name, "passed") for group in kwargs["groups"]),
+            preflight=PreflightResult("passed"),
+        )
+
+    monkeypatch.setattr(diagnose.DockerWorkflowRunner, "run", grade)
+    _forbid_model_constructors(monkeypatch)
+    written = diagnose.regrade_archive(
+        archive_root, frozen.observed_runtime_image_digest, tmp_path / "out",
+    )
+    assert len(written) == 1 and set(graded) == set(expected)
+    record = json.loads(written[0].read_bytes())
+    assert record["fixture_ref"] == fixture_ref and record["verdict"] == "correct"
+    assert _object_bytes(retained.directory) == originals
+
+
+def test_missing_retained_fixture_refuses_checkout_substitution(tmp_path: Path) -> None:
+    store = ObjectStore(tmp_path / "run")
+    store.root.mkdir()
+    (store.root / "fixture-assets.json").write_text(json.dumps({
+        "fixture_ref": "sha256:" + "f" * 64,
+    }))
+    with pytest.raises(FileNotFoundError):
+        diagnose._replay_fixtures(tmp_path, store.root, store)
 
 
 def test_extension_manifest_exports_when_honestly_incomplete_and_rejects_corruption(

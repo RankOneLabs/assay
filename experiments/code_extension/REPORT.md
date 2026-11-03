@@ -1,6 +1,6 @@
 # Code extension study report
 
-Generated from committed fixture manifests and retained run evidence. The fixture roster is qualified; no extension run bundle is committed when the attempt counts below are empty.
+Generated from committed fixture manifests and original retained run evidence. Append-only offline regrades are separate observations; consult the run-specific analyses under evidence/studies for recovered grading results. The fixture roster is qualified; no extension run bundle is committed when the attempt counts below are empty.
 
 Unavailable means no retained measurement. Invalid means a dispatched attempt with an infrastructure failure. Unevaluable means a dispatched attempt without an independent grade. Primary success means normal completion, an independent grade, all checks passing, and a clean edit scope. No candidate counts attempts without a retained patch.
 

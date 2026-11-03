@@ -21,6 +21,8 @@ from assay.fixture_manifest import FixtureManifestV3
 from assay.investigations.workflow_correctness import GroupResult, WorkflowCorrectnessResult
 from assay.store import ObjectStore
 
+pytestmark = pytest.mark.usefixtures("qualified_runner")
+
 ROOT = PILOT.parent / "stage-pass-through"
 ARMS = ("modular", "central", "cross_module", "plugin")
 
@@ -156,6 +158,15 @@ async def test_hosted_shape_grid_retains_each_arm_and_reproduces_reports(
                 message = {"role": "assistant", "content": "OK"}
                 reason = "stop"
             else:
+                request = json.loads(_request.content)
+                constraints = request["messages"][2]
+                assert constraints["role"] == "user"
+                assert "only under these directory prefixes:\n- src/compiler/" in (
+                    constraints["content"]
+                )
+                assert "All other paths are read-only" in constraints["content"]
+                assert "900 seconds; at most 60 model requests" in constraints["content"]
+                assert agent.message_prefix[0] == constraints
                 arm_id = agent.coordinate.split(":")[1]
                 name, arguments = commands[arm_id].pop(0)
                 message = {"role": "assistant", "content": None, "tool_calls": [{
@@ -214,3 +225,11 @@ async def test_hosted_shape_grid_retains_each_arm_and_reproduces_reports(
     bundle = export_bundle(ObjectStore(Path(result["archive"])), index["manifest_ref"],
                            tmp_path / "bundle")
     assert verify_bundle(bundle, index["manifest_ref"]) == ()
+    # A fake grade must not hide a missing dependency needed for real offline replay.
+    source = ObjectStore(store_path)
+    for scenario in manifest.scenarios:
+        for group in (*scenario.visible_tests, *scenario.hidden_tests):
+            assert bundle.read_bytes(group.digest) == source.read_bytes(group.digest)
+            assert ObjectStore(Path(result["archive"])).read_bytes(group.digest) == (
+                source.read_bytes(group.digest)
+            )

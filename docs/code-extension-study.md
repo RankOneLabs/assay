@@ -33,16 +33,30 @@ come from retained execution and trajectory evidence.
 
 `code_extension.publish.render` produces the committed
 [`REPORT.md`](../experiments/code_extension/REPORT.md) from committed fixture
-manifests and committed run evidence. At present, the fixture roster is
-qualified but there is no committed extension run bundle, so observed attempt
-counts are empty. A run bundle belongs under
-`experiments/code_extension/evidence/runs/<run>/`: `run.json` names the
+manifests and source-local run evidence, when supplied. Generated runs are
+published outside this source repository; the default source report contains
+the qualified fixture roster without external observations. The first hosted four-shape
+pilot has twenty planned attempts and nineteen normal submissions. Its original
+grades are unavailable because the launch grader pinned a different Docker
+client version. Those observations remain unchanged in its archived report.
+All twenty retained candidates subsequently passed independent offline replay
+with the qualified runner profile, including the plugin candidate that omitted
+its submission call. The separate replay observations, spending, and interpretation
+are published at
+`$ASSAY_RUN_RECEIPTS/code-extension-2026-11-03/evidence/studies/shape-pilot-2026-11-03-scoped/ANALYSIS.md`.
+This is
+descriptive evidence from one task, not a broad architecture comparison.
+A run bundle lives under `STORE/archive/runs/<run>/` during execution and is
+published in the external receipts checkout. Its `run.json` names the
 content-addressed plan and run-manifest refs, trace-bound operator judgments,
 and the expected changed paths per subject; `objects/sha256/` contains those
 records and their closure. The publisher reads each bundle, builds its ledger,
-measures retained patches and trajectories, then regenerates the report. Run
-`uv run python -m code_extension.publish --write` from `experiments` to update
-the committed text. The report equality test catches stale text. The report
+measures retained patches and trajectories, then regenerates the report. Use
+`code_extension.run report --archive <archive> --output <directory>` to report
+external observations. Run `uv run python -m code_extension.publish --write`
+from `experiments` to update the source roster report. The report equality test
+catches stale text. Tests for published observations use `ASSAY_RUN_RECEIPTS`
+and prepare their locked reporting dependencies explicitly. The report
 separates implementation success,
 verification behavior, and operational failures. An unpriced local route has
 coverage `unavailable` or `uncertain` and no amount, currency, or pricing

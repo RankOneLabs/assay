@@ -122,9 +122,21 @@ def measure_pair(
     comparison = compare(
         before_snapshot, after_snapshot, config=metrics_config(dependencies)
     )
+    # Code snapshots omit data files such as the plugin's JSON registration.
+    # Count the complete edit footprint separately from language-level metrics.
+    def files(root: Path) -> dict[str, bytes]:
+        return {
+            path.relative_to(root).as_posix(): (
+                b"link\0" + path.readlink().as_posix().encode("utf-8", "surrogateescape")
+                if path.is_symlink() else b"file\0" + path.read_bytes()
+            )
+            for path in root.rglob("*") if path.is_symlink() or path.is_file()
+        }
+
+    before_files, after_files = files(before), files(after)
     changed = tuple(sorted(
-        path for path in before_snapshot.keys() | after_snapshot.keys()
-        if before_snapshot.get(path) != after_snapshot.get(path)
+        path for path in before_files.keys() | after_files.keys()
+        if before_files.get(path) != after_files.get(path)
     ))
     return DiffMeasures(
         comparison, changed,
@@ -203,7 +215,8 @@ def measure_attempt(
     if row.reference.raw_trajectory_ref is not None:
         trace = trace_measures(
             artifact_bytes(store, row.reference.raw_trajectory_ref),
-            passed=row.passed if row.verdict is not None else None,
+            passed=row.passed if row.verdict is not None
+            and row.verdict.value in {"correct", "incorrect"} else None,
         )
     usage: Mapping[str, float | None] = row.accounting.usage or {}
     return SecondaryMeasures(

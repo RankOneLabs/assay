@@ -140,6 +140,8 @@ def _run_script(
         or configuration["system_prompt_sha256"]
         != digest_bytes(EXTENSION_SYSTEM_PROMPT.encode())
         or trajectory["messages"][0] != {"role": "system", "content": EXTENSION_SYSTEM_PROMPT}
+        or trajectory["messages"][2:2 + len(client._message_prefix())]
+        != list(client._message_prefix())
         or configuration["bounds"] != asdict(client._bounds())
     ):
         raise ValueError("scripted bridge configuration differs from the live extension arm")

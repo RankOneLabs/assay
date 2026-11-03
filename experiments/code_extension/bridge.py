@@ -269,6 +269,28 @@ class ExtensionBridgeClient:
                 raise CodeIntelLeakRejected(str(error)) from error
             raise
 
+    def _message_prefix(self) -> tuple[dict[str, Any], ...]:
+        """Tell the agent the same edit scope and limits enforced at submission."""
+        settings = self._settings()
+        scope = "\n".join(f"- {prefix}" for prefix in self._writable_prefixes())
+        prefix: tuple[dict[str, Any], ...] = ({
+            "role": "user",
+            "content": (
+                "# Writable scope\n\n"
+                "Create, modify, or delete files only under these directory prefixes:\n"
+                f"{scope}\n\n"
+                "All other paths are read-only, including visible tests and dependency "
+                "and configuration files outside the allowed prefixes. An edit outside "
+                "this scope rejects the submission.\n\n"
+                "# Budget\n\n"
+                f"{settings.timeout_s:g} seconds; at most {settings.max_turns} model "
+                f"requests; at most {settings.max_output_tokens} output tokens per request."
+            ),
+        },)
+        if self.prepared is not None and self.prepared.prompt_block is not None:
+            prefix += ({"role": "user", "content": self.prepared.prompt_block},)
+        return prefix
+
     def configuration(self) -> dict[str, Any]:
         require_authorized_route(self.route)
         require_declared_codeintel_arm(
@@ -285,9 +307,7 @@ class ExtensionBridgeClient:
             })
         tools = self.prepared.tools if self.prepared is not None else EXTENSION_TOOLS
         self._check_frozen_identity(tools)
-        prefix: tuple[dict[str, Any], ...] = ()
-        if self.prepared is not None and self.prepared.prompt_block is not None:
-            prefix = ({"role": "user", "content": self.prepared.prompt_block},)
+        prefix = self._message_prefix()
         sidecar = self.scenario_sidecar or (
             sidecar_for_subject(self.scenario.subject_id, self.arm_id)
             if self.scenario is not None else None
@@ -360,9 +380,7 @@ class ExtensionBridgeClient:
             raise ValueError("codeintel delivery differs from authorized configuration")
         delivery = self.codeintel_delivery
         sandbox_options = index_sandbox_options(self.prepared, delivery, self.limits)
-        prefix: tuple[dict[str, Any], ...] = ()
-        if self.prepared is not None and self.prepared.prompt_block is not None:
-            prefix = ({"role": "user", "content": self.prepared.prompt_block},)
+        prefix = self._message_prefix()
         cell_key = cell_idempotency_key(self.run_label, coordinate)
         completion: TurnCompletion | None = None if self.route.paid_route_reachable else (
             self.completion_for(cell_key)

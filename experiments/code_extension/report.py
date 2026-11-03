@@ -166,7 +166,9 @@ def render_from_ledgers(
     lines = [
         "# Code extension study report",
         "",
-        "Generated from committed fixture manifests and retained run evidence. "
+        "Generated from committed fixture manifests and original retained run evidence. "
+        "Append-only offline regrades are separate observations; consult the run-specific "
+        "analyses under evidence/studies for recovered grading results. "
         "The fixture roster is qualified; no extension run bundle is committed "
         "when the attempt counts below are empty.",
         "",
