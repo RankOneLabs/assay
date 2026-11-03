@@ -140,6 +140,20 @@ def test_attempt_cap_refuses_before_http_and_releases_run_reservation(tmp_path: 
     assert restored.spent_usd == restored.requests == 0
 
 
+def test_hosted_over_bound_response_keeps_the_full_billed_cost(tmp_path: Path) -> None:
+    client = agent(tmp_path, lambda _: billed(cost=1.0))
+    with pytest.raises(BilledResponseError, match="billing_uncertain"):
+        client._openrouter_turn([], client.paid_turn_route)
+    assert client.run_gate is not None and client.journal is not None
+    assert client.run_gate.spent_usd == Decimal("1.0")
+    assert client.run_gate.halt == "billing_uncertain"
+    record = client.journal.records()[-1]
+    assert record["cost_usd"] == "1.0" and record["status"] == "billing_uncertain"
+    restored = SpendGate(Decimal("2"))
+    client.journal.reconcile(restored)
+    assert restored.spent_usd == Decimal("1.0") and restored.halt == "billing_uncertain"
+
+
 def test_hosted_bridge_edits_and_seals_candidate_with_the_shared_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
