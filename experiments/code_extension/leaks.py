@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 from assay.code_intel.leak_scan import scan_text
+from assay.pier_packaging import render_instruction
 from code_extension.bridge import EXTENSION_SYSTEM_PROMPT
 from code_extension.fixtures import ScenarioFixture
 
@@ -25,7 +26,8 @@ def scan_delivery(
 ) -> dict[str, object]:
     """Keep only bounded hit metadata; successful scans carry no private source."""
     sources = {f"repository/{name}": source for name, source in fixture.repository.items()}
-    sources.update({"rendered_task": fixture.task, "system_prompt": EXTENSION_SYSTEM_PROMPT})
+    sources.update({"rendered_task": render_instruction(fixture.task, "repository-agent"),
+                    "system_prompt": EXTENSION_SYSTEM_PROMPT})
     sources.update({f"tool_output/{index}": value for index, value in enumerate(tool_outputs)})
     if extra_text:
         sources.update(extra_text)

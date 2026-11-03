@@ -49,6 +49,9 @@ class _RunIndex(_Wire):
     manifest_ref: str
     judgments: dict[str, _Judgment]
     expected_change_paths: dict[str, tuple[str, ...]]
+    expected_change_paths_by_arm: dict[str, dict[str, tuple[str, ...]]] = Field(
+        default_factory=dict,
+    )
     retry_of: dict[str, str] = Field(default_factory=dict)
 
 
@@ -127,18 +130,16 @@ def _committed_runs(
             tree = trees.get(ScenarioArm(row.subject_id, row.arm_id))
             if tree is None:
                 raise ValueError(f"no committed fixture tree for {row.subject_id}/{row.arm_id}")
-            if (
-                row.reference.patch_ref is not None
-                and row.subject_id not in index.expected_change_paths
-            ):
+            expected = index.expected_change_paths_by_arm.get(row.subject_id, {}).get(row.arm_id)
+            if expected is None:
+                expected = index.expected_change_paths.get(row.subject_id)
+            if row.reference.patch_ref is not None and expected is None:
                 raise ValueError(f"missing declared expected paths for {row.subject_id}")
             secondary[row.attempt_key] = measure_attempt(
                 row,
                 store,
                 fixture_tree=tree,
-                expected_change_paths=frozenset(
-                    index.expected_change_paths.get(row.subject_id, ())
-                ),
+                expected_change_paths=frozenset(expected or ()),
             )
     return tuple(ledgers), secondary, policy
 

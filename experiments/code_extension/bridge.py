@@ -43,6 +43,7 @@ from assay.code_intel.snapshot import delivered_workspace
 from assay.fixture_manifest import CodeIntelligenceModeArmSet, ExtensionArmSet, ExtensionScenario
 from assay.models import CellCoordinate
 from assay.pier_protocol import PierExchange
+from assay.pier_packaging import render_instruction
 from code_extension.arms import require_declared_codeintel_arm
 from code_extension.codeintel import PreparedExtensionCodeIntel, prepare_extension_codeintel
 from code_extension.dispatch import cell_idempotency_key
@@ -176,7 +177,9 @@ class ExtensionBridgeClient:
     def _writable_prefixes(self) -> tuple[str, ...]:
         if self.scenario is None:
             raise ValueError("extension scenario is required for writable scope")
-        sidecar = self.scenario_sidecar or sidecar_for_subject(self.scenario.subject_id)
+        sidecar = self.scenario_sidecar or sidecar_for_subject(
+            self.scenario.subject_id, self.arm_id,
+        )
         if sidecar is not None:
             if sidecar.subject_id != self.scenario.subject_id:
                 raise ValueError("extension sidecar subject differs from scenario")
@@ -203,7 +206,7 @@ class ExtensionBridgeClient:
             raise ExtensionIdentityRejected("extension_tool_surface_drift")
         scope = self._writable_prefixes()
         sidecar = (
-            sidecar_for_subject(self.scenario.subject_id)
+            sidecar_for_subject(self.scenario.subject_id, self.arm_id)
             if self.scenario is not None else None
         )
         expected_scope = self.authorized_writable_scope or (
@@ -285,14 +288,22 @@ class ExtensionBridgeClient:
         prefix: tuple[dict[str, Any], ...] = ()
         if self.prepared is not None and self.prepared.prompt_block is not None:
             prefix = ({"role": "user", "content": self.prepared.prompt_block},)
+        sidecar = self.scenario_sidecar or (
+            sidecar_for_subject(self.scenario.subject_id, self.arm_id)
+            if self.scenario is not None else None
+        )
         return agent_configuration(
             bounds=self._bounds(), limits=self.limits,
             writable_prefixes=self._writable_prefixes(), model_route=self.route,
             tools=tools, system_prompt=EXTENSION_SYSTEM_PROMPT, message_prefix=prefix,
             extra={
+                "scenario_contract_digest": (
+                    digest_bytes(canonical_json(sidecar.model_dump(mode="json")))
+                    if sidecar is not None else None
+                ),
                 "image": self.image, "image_digest": observed_image_digest(self.image),
                 "timeout_s": settings.timeout_s,
-                "arm_prompt": self._prompt(),
+                "arm_prompt": render_instruction(self._prompt(), "repository-agent"),
                 "code_intel_delivery": (
                     self.codeintel_delivery.model_dump(mode="json")
                     if self.codeintel_delivery is not None else None
@@ -325,7 +336,9 @@ class ExtensionBridgeClient:
         if not self.route.paid_route_reachable and self._local_factory().model != self.route.model:
             raise UnauthorizedModelRoute("Smithers factory model differs from the extension route")
         coordinate = CellCoordinate.model_validate(exchange.coordinate.model_dump(mode="json"))
-        if coordinate.arm_id != self.arm_id or package.get("instruction.md") != self._prompt():
+        if coordinate.arm_id != self.arm_id or package.get("instruction.md") != render_instruction(
+            self._prompt(), "repository-agent",
+        ):
             raise ValueError("extension arm prompt differs from its declared realization")
         image_digest = observed_image_digest(self.image)
         if exchange.binding.image_digest != image_digest:

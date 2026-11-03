@@ -128,7 +128,9 @@ class ExtensionStudyWorker:
                 snapshot_ref=self.binding.snapshot_ref,
                 authorization_ref=self.binding.plan_ref,
                 configuration=bridge.configuration(),
-                sidecar=bridge.scenario_sidecar or sidecar_for_subject(coordinate.subject_id),
+                sidecar=bridge.scenario_sidecar or sidecar_for_subject(
+                    coordinate.subject_id, coordinate.arm_id,
+                ),
                 source=self.binding.source,
                 fixture_ref=self.binding.fixture_ref,
                 grader_identity=self.binding.grader_identity,
@@ -300,7 +302,7 @@ def _build(
         repeats=config.repeats,
         ceiling=ExecutionCeiling(
             max_cells=count * len(workers) * config.repeats,
-            max_wall_time_seconds=config.bounds.timeout_s * count * config.repeats,
+            max_wall_time_seconds=config.bounds.timeout_s * count * len(workers) * config.repeats,
             max_fleet_occupancy=1,
         ),
     )
@@ -401,7 +403,12 @@ def prepare(config_path: Path, store_path: Path) -> dict[str, Any]:
             else "conservative_request_bound",
             "plan_catalogue": plan.cost_estimate.model_dump(mode="json"),
         },
-        "unresolved_blockers": ["seeded dispatch order needs a shared planner schedule decision"],
+        "schedule": {
+            "kind": config.dispatch_schedule,
+            "randomized": False,
+            "seed_usage": "recorded metadata; subject-rotated-v1 does not consume a seed",
+        },
+        "unresolved_blockers": [],
     }
     (launch_dir / "launch-summary.json").write_bytes(canonical_json(summary) + b"\n")
     return summary
@@ -461,16 +468,23 @@ def _settle_archive(
         # Without a manifest there is nothing for a reader to bind an attempt to.
         # The per-attempt records above are still retained.
         return None
+    archive.retain_manifest_closure(binding.source, manifest_ref)
     expected: dict[str, list[str]] = {}
+    expected_by_arm: dict[str, dict[str, list[str]]] = {}
     for scenario in fixture.manifest.scenarios:
-        sidecar = sidecar_for_subject(scenario.subject_id)
-        if sidecar is None:
-            continue
-        reference = next(
-            (item for item in sidecar.patch_inventory if item.kind == "reference"), None
-        )
-        if reference is not None:
-            expected[scenario.subject_id] = list(reference.touched_paths)
+        for arm in scenario.arms:
+            sidecar = sidecar_for_subject(scenario.subject_id, arm.arm_id)
+            if sidecar is None:
+                continue
+            reference = next(
+                (item for item in sidecar.patch_inventory if item.kind == "reference"), None
+            )
+            if reference is not None:
+                expected_by_arm.setdefault(scenario.subject_id, {})[arm.arm_id] = list(
+                    reference.touched_paths
+                )
+                if len(scenario.arms) == 1:
+                    expected[scenario.subject_id] = list(reference.touched_paths)
     path = archive.directory / "run.json"
     path.write_bytes(
         canonical_json(
@@ -479,6 +493,7 @@ def _settle_archive(
                 "manifest_ref": manifest_ref,
                 "judgments": {},
                 "expected_change_paths": expected,
+                "expected_change_paths_by_arm": expected_by_arm,
                 "retry_of": {},
             }
         )
@@ -568,6 +583,7 @@ def main() -> None:
     scripted.add_argument("--scenario", required=True)
     scripted.add_argument("--image", required=True)
     scripted.add_argument("--store", type=Path, required=True)
+    scripted.add_argument("--arm")
     p = commands.add_parser("prepare")
     p.add_argument("--config", type=Path, required=True)
     p.add_argument("--store", type=Path, required=True)
@@ -593,11 +609,13 @@ def main() -> None:
     elif args.command == "scripted":
         from code_extension.probe import reference_submission
 
-        fixture = load_scenario(args.scenario)
         manifest_path = PILOT.parent / args.scenario / "qualification" / "manifest.json"
         from assay.fixture_manifest import FixtureManifestV3
 
         manifest = FixtureManifestV3.model_validate_json(manifest_path.read_bytes())
+        if args.arm is None and len(manifest.arm_set.arm_ids) > 1:
+            raise LaunchRefused("scripted submission requires --arm for a multi-arm scenario")
+        fixture = load_scenario(args.scenario, arm_id=args.arm or "baseline")
         if manifest.observed_runtime_image_digest != args.image:
             raise LaunchRefused("scripted image differs from qualification")
         record = asyncio.run(reference_submission(fixture, manifest, args.image))

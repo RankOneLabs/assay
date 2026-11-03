@@ -151,6 +151,33 @@ def test_unlisted_credentials_are_redacted_before_persistence(tmp_path: Path) ->
             assert b"x-api-key" not in data
 
 
+@pytest.mark.parametrize("encoded", [False, True])
+def test_complete_closure_does_not_bypass_redaction(tmp_path: Path, encoded: bool) -> None:
+    from code_extension.tests.test_code_extension_ledger import _manifest, _outcome, _plan
+
+    source, plan, authorization = _plan(tmp_path / "source")
+    secret = "unlisted-sensitive-value"
+    payload = canonical_json({"api_key": secret})
+    if encoded:
+        unsafe_ref = str(source.publish_json({
+            "schema_version": "assay-pier-raw-artifact/0.1.0",
+            "path": "trajectory.json", "content_base64": base64.b64encode(payload).decode(),
+            "byte_length": len(payload), "checksum": digest_bytes(payload),
+        }))
+    else:
+        unsafe_ref = str(source.publish_bytes(payload))
+    execution_ref, _ = _outcome(
+        source, plan, authorization, success=False, trace={"assay_object_refs": [unsafe_ref]},
+    )
+    manifest_ref = _manifest(source, plan, authorization, execution_ref, passed=False)
+    archive = AttemptArchive("closure", tmp_path / "archive")
+    with pytest.raises(ValueError, match="archive closure requires redaction"):
+        archive.retain_manifest_closure(source, manifest_ref)
+    assert not archive.objects._path(unsafe_ref).exists()
+    assert all(secret.encode() not in p.read_bytes() for p in archive.directory.rglob("*")
+               if p.is_file())
+
+
 def test_failed_attempt_rejects_redacted_recovery_patch(tmp_path: Path) -> None:
     archive, coordinate = _open(tmp_path)
     failure = archive.fail_attempt(
