@@ -112,6 +112,18 @@ class AttemptJournal:
             }
         )
 
+    def record_probe_success(self, attempt_id: str) -> None:
+        """Keep probe validation separate from settlement of its billed request."""
+        self.validate_resume()
+        self._append(
+            {
+                "event": "route_probe_passed",
+                "attempt_id": attempt_id,
+                "plan_digest": self.plan_digest,
+                "config_digest": self.config_digest,
+            }
+        )
+
     def reconcile(self, gate: SpendGate) -> set[str]:
         """Charge unresolved dispatched reservations at their full bound."""
         self.validate_resume()

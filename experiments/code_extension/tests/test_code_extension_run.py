@@ -413,9 +413,9 @@ async def test_route_probe_charges_spend_and_refuses_model_drift(
     assert gate.requests == 1
     assert gate.spent_usd == Decimal("0.005")
     assert [record["event"] for record in journal.records()] == [
-        "attempt_started", "reserved", "finished"
+        "attempt_started", "reserved", "finished", "route_probe_passed"
     ]
-    assert journal.records()[-1]["status"] == "settled"
+    assert journal.records()[-2]["status"] == "settled"
 
     with pytest.raises(LaunchRefused, match="route_probe_model_mismatch"):
         await probe("another-model", tmp_path / "mismatch")

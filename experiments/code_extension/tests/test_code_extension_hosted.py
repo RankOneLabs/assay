@@ -17,7 +17,7 @@ from code_extension.budget import (
 )
 from code_extension.config import RunConfiguration
 from code_extension.fixture import PILOT
-from code_extension.run import LaunchRefused, _build, prepare
+from code_extension.run import LaunchRefused, _build, _route_probe, execute, prepare
 from code_extension.settings import ExtensionAgentSettings
 from code_extension.tests.test_code_extension_run import configuration
 from verification_pilot.budget import SpendGate
@@ -87,6 +87,125 @@ def billed(*, cost: float | None = 0.001, provider: str = "Azure") -> httpx.Resp
         "choices": [{"message": {"role": "assistant", "content": "OK"},
                      "finish_reason": "stop"}],
     })
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("finish_reason", "prompt_tokens", "completion_tokens", "provider_error", "cause"),
+    [
+        ("error", 10, 2, None, "provider_error"),
+        ("stop", 10, 2, "provider failed", "provider_error"),
+        ("stop", 0, 0, None, "provider_error"),
+        ("length", 10, 2, None, "output_token_limit"),
+        ("stop", 10, "over_limit", None, "output_token_limit"),
+    ],
+)
+async def test_failed_hosted_probe_blocks_execution_and_resume_without_losing_bill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finish_reason: str,
+    prompt_tokens: int, completion_tokens: int | str, provider_error: str | None, cause: str,
+) -> None:
+    config = hosted_configuration()
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "code_extension.bridge.observed_image_digest", lambda _: config.image_digest,
+    )
+    requests = 0
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        body = billed().json()
+        body["choices"][0]["finish_reason"] = finish_reason
+        body["usage"].update(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=(config.bounds.max_output_tokens + 1
+                               if completion_tokens == "over_limit" else completion_tokens),
+        )
+        if provider_error is not None:
+            body["error"] = provider_error
+        return httpx.Response(200, json=body)
+
+    monkeypatch.setattr(
+        "assay_pier_bridge.agent_loop.RepositoryAgentClient._http_client",
+        lambda _: httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+
+    async def forbidden(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("a failed route probe must block all study attempts")
+
+    monkeypatch.setattr("code_extension.run.run_study", forbidden)
+    path = tmp_path / "config.json"
+    path.write_bytes(config.canonical_bytes())
+    store = tmp_path / "store"
+    summary = prepare(path, store)
+    plan = Path(summary["plan"])
+    with pytest.raises(LaunchRefused, match=f"route_probe_failed: {cause}"):
+        await execute(plan, summary["digest"], store)
+    journal = AttemptJournal(plan.parent / "attempts.jsonl", summary["digest"], config.digest())
+    record = journal.records()[-1]
+    assert record["event"] == "finished" and record["status"] == "settled"
+    assert record["cost_usd"] == "0.001"
+    restored = SpendGate(config.total_cap_usd)
+    journal.reconcile(restored)
+    assert restored.spent_usd == Decimal("0.001")
+    with pytest.raises(LaunchRefused, match="route_probe_not_validated"):
+        await execute(plan, summary["digest"], store)
+    assert requests == 1
+
+
+@pytest.mark.asyncio
+async def test_valid_hosted_probe_resumes_without_another_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = hosted_configuration()
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "code_extension.bridge.observed_image_digest", lambda _: config.image_digest,
+    )
+    requests = 0
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return billed()
+
+    monkeypatch.setattr(
+        "assay_pier_bridge.agent_loop.RepositoryAgentClient._http_client",
+        lambda _: httpx.Client(transport=httpx.MockTransport(respond)),
+    )
+    store = ObjectStore(tmp_path / "store")
+    prepared = _build(config, store, live=True, plan_digest="plan")
+    await _route_probe(config, store, "plan", prepared)
+    journal = prepared.workers["baseline"].journal
+    assert journal is not None
+    assert journal.records()[-1]["event"] == "route_probe_passed"
+    resumed = _build(config, store, live=True, plan_digest="plan")
+    await _route_probe(config, store, "plan", resumed)
+    gate = resumed.workers["baseline"].gate
+    assert gate is not None and gate.spent_usd == Decimal("0.001")
+    assert gate.requests == requests == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_settled_probe_is_not_assumed_valid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = hosted_configuration()
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "code_extension.bridge.observed_image_digest", lambda _: config.image_digest,
+    )
+    store = ObjectStore(tmp_path / "store")
+    prepared = _build(config, store, live=True, plan_digest="plan")
+    journal = prepared.workers["baseline"].journal
+    assert journal is not None
+    probe_id = "plan:route-probe"
+    journal.claim_attempt("__route_probe__", probe_id)
+    journal.begin("__route_probe__", probe_id + ":request-1", Decimal("0.01"))
+    journal.finish(probe_id + ":request-1", cost=Decimal("0.001"), status="settled")
+    resumed = _build(config, store, live=True, plan_digest="plan")
+    with pytest.raises(LaunchRefused, match="route_probe_not_validated"):
+        await _route_probe(config, store, "plan", resumed)
 
 
 def test_hosted_request_is_journaled_before_dispatch_and_reconciles(tmp_path: Path) -> None:

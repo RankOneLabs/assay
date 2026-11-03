@@ -515,13 +515,18 @@ async def _route_probe(
     if gate is None or journal is None or (bound is None and not hosted):
         raise LaunchRefused("route_probe_budget_unavailable")
     probe_id = f"{plan_digest}:route-probe"
+    records = journal.records()
     if any(
-        record.get("attempt_id") == probe_id + ":request-1"
-        and record.get("event") == "finished"
-        and record.get("status") == "settled"
-        for record in journal.records()
+        record.get("attempt_id") == probe_id
+        and record.get("event") == "route_probe_passed"
+        for record in records
     ):
         return
+    if any(
+        record.get("attempt_id") in {probe_id, probe_id + ":request-1"}
+        for record in records
+    ):
+        raise LaunchRefused("route_probe_not_validated: prepare a new plan")
     journal.claim_attempt("__route_probe__", probe_id)
     if hosted:
         bridge = next(iter(worker.bridges.values()))
@@ -532,10 +537,21 @@ async def _route_probe(
             spend_gate=SpendGate(config.per_attempt_cap_usd), run_gate=gate, journal=journal,
             cell_key=probe_id, coordinate="__route_probe__",
         )
-        await asyncio.to_thread(
+        turn = await asyncio.to_thread(
             agent._openrouter_turn, [{"role": "user", "content": "Reply OK."}],
             agent.paid_turn_route, EXTENSION_TOOLS,
         )
+        if (
+            turn.finish_reason == "error" or turn.error_body is not None
+            or turn.prompt_tokens == turn.completion_tokens == 0
+        ):
+            raise LaunchRefused("route_probe_failed: provider_error")
+        output_limit = agent.bounds.max_output_tokens
+        if agent.paid_turn_route.max_output_tokens is not None:
+            output_limit = min(output_limit, agent.paid_turn_route.max_output_tokens)
+        if turn.finish_reason == "length" or turn.completion_tokens > output_limit:
+            raise LaunchRefused("route_probe_failed: output_token_limit")
+        journal.record_probe_success(probe_id)
         return
     assert bound is not None
     factory = next(iter(worker.bridges.values())).factory
@@ -569,6 +585,7 @@ async def _route_probe(
     await asyncio.to_thread(budget.call, "__route_probe__", probe_id + ":request-1", dispatch)
     if gate.halt is not None:
         raise LaunchRefused(f"route_probe_halted: {gate.halt}")
+    journal.record_probe_success(probe_id)
 
 
 def main() -> None:
