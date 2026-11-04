@@ -80,3 +80,48 @@ def test_reserved_unfinished_attempt_charged_on_resume(tmp_path: Path) -> None:
     assert resumed.spent_usd == Decimal("0.6")
     with pytest.raises(AttemptAlreadyUsed):
         journal.claim_attempt("cell", "attempt-1")
+
+
+def test_operator_can_charge_unknown_at_reservation_without_inventing_a_bill(
+    tmp_path: Path,
+) -> None:
+    request, journal = budget(tmp_path, "2")
+    with pytest.raises(ValueError, match="billing_uncertain"):
+        request.call("cell", "request-1", lambda: Turn(None))
+    original = journal.records()[-1]
+    journal.accept_uncertain_charge("request-1", reason="Operator authorized bounded recovery")
+    journal.accept_uncertain_charge("request-1", reason="Operator authorized bounded recovery")
+    assert len([r for r in journal.records() if r["event"] == "uncertain_charge_accepted"]) == 1
+    assert [r for r in journal.records() if r["event"] == "finished"] == [original]
+    assert original["cost_usd"] is None
+    gate = SpendGate(Decimal("2"))
+    journal.reconcile(gate)
+    assert gate.halt is None and gate.spent_usd == Decimal("0.6")
+    continued = RequestBudget(gate, Decimal("0.6"), journal)
+    continued.call("next-cell", "request-2", lambda: Turn(0.4))
+    assert gate.spent_usd == Decimal("1.0")
+    with pytest.raises(AttemptAlreadyUsed):
+        continued.call("cell", "request-1", lambda: Turn(0.1))
+
+
+def test_acceptance_cannot_clear_an_over_bound_bill_or_increase_the_cap(tmp_path: Path) -> None:
+    request, journal = budget(tmp_path, "2")
+    with pytest.raises(ValueError, match="billing_uncertain"):
+        request.call("cell", "request-1", lambda: Turn(0.7))
+    with pytest.raises(ValueError, match="only an unknown"):
+        journal.accept_uncertain_charge("request-1", reason="Operator authorized recovery")
+    gate = SpendGate(Decimal("2"))
+    journal.reconcile(gate)
+    assert gate.halt == "billing_uncertain" and gate.spent_usd == Decimal("0.7")
+
+
+def test_accepted_unknown_still_consumes_the_spend_cap(tmp_path: Path) -> None:
+    request, journal = budget(tmp_path, "2")
+    with pytest.raises(ValueError, match="billing_uncertain"):
+        request.call("cell", "request-1", lambda: Turn(None))
+    journal.accept_uncertain_charge("request-1", reason="Operator authorized recovery")
+    gate = SpendGate(Decimal("0.8"))
+    journal.reconcile(gate)
+    continued = RequestBudget(gate, Decimal("0.6"), journal)
+    with pytest.raises(ValueError, match="budget_exhausted"):
+        continued.call("next", "request-2", lambda: pytest.fail("cap was bypassed"))

@@ -32,6 +32,7 @@ from assay.models import (
     ExecutionCeiling,
     ExecutionPlanV3,
     RuntimeProfile,
+    RunManifest,
     parse_execution_plan,
 )
 from assay.pier_protocol import RuntimeBinding
@@ -461,10 +462,23 @@ def _settle_archive(
     fixture: PreparedStudy,
     manifest_ref: str | None,
     interruption: str | None,
+    preserve_settled: bool = False,
 ) -> Path | None:
     """Settle every dispatched attempt and write the index both readers glob for."""
     archive = binding.archive
+    manifest = RunManifest.model_validate_json(binding.source.read_bytes(manifest_ref)) \
+        if manifest_ref is not None else None
     for cell_id in sorted(json.loads((archive.directory / "index.json").read_bytes())):
+        if preserve_settled and manifest is not None:
+            existing = archive.read(cell_id)
+            evaluations = {
+                ref for key, ref in manifest.evaluation_records.items()
+                if key.startswith(cell_id + ":")
+            }
+            if existing.completed_at is not None \
+                    and existing.execution_ref == manifest.execution_records.get(cell_id) \
+                    and set(existing.evaluator_output_refs) == evaluations:
+                continue
         archive.settle_attempt(
             cell_id, source=binding.source, manifest_ref=manifest_ref, interruption=interruption,
         )

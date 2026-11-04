@@ -30,7 +30,7 @@ from assay.models import (
 from assay.planning import authorize, require_runtime_closure, validate_plan_snapshot
 from assay.schema_validation import schema_validators
 from assay.store import ObjectRef, ObjectStore
-from assay.verify import verify_snapshot
+from assay.verify import verify_manifest, verify_snapshot
 
 type CoverageState = Literal["measured", "estimated", "unavailable", "mixed", "uncertain"]
 
@@ -334,13 +334,21 @@ async def execute_plan(
     workers: dict[str, Worker | CoordinateAwareWorker],
     evaluators: dict[str, Evaluator],
     concurrency: int | None = None,
+    resume_from: str | None = None,
 ) -> RunResult:
     """Reject drift before work, and return a recoverable partial manifest on storage failure.
 
     The adapter configuration methods are a trusted extension boundary: they must
     describe the live settings used by the next call. They are checked both before
     the run and immediately before each attempt.
+
+    A verified resume manifest preserves its run identity and terminal records.
+    Only missing coordinates are called, and the original V3 wall deadline and
+    cell allowance still apply. Request-admission workers need a separately
+    resumable request ledger and are refused here.
     """
+    prior: RunManifest | None = None
+    prior_outcomes: dict[str, ExecutionOutcome] = {}
     try:
         # Wire models contain nested JSON dictionaries; take an owned copy so a
         # caller cannot mutate an authorized declaration while a call is awaiting.
@@ -391,6 +399,19 @@ async def execute_plan(
         store.read_bytes(snapshot.pricing_catalog_ref)
         task = json.loads(store.read_bytes(snapshot.paa_task_ref))
         validators = schema_validators(store, snapshot)
+        if resume_from is not None:
+            prior = RunManifest.model_validate_json(store.read_bytes(resume_from))
+            if prior.plan_ref != authorization:
+                raise ValueError("resume manifest belongs to another authorized plan")
+            failures = verify_manifest(store, resume_from)
+            if any(item.code != "incomplete_run" for item in failures):
+                raise ValueError(f"invalid resume manifest: {failures}")
+            if any(getattr(worker, "supports_run_admission", False) for worker in workers.values()):
+                raise ValueError("resume of admission-bound request workers is unsupported")
+            prior_outcomes = {
+                key: ExecutionOutcome.model_validate_json(store.read_bytes(ref))
+                for key, ref in prior.execution_records.items()
+            }
         # A plan and configuration used as record references must themselves be durable.
         store.publish_bytes(plan_bytes)
         for arm in snapshot.arms:
@@ -403,6 +424,12 @@ async def execute_plan(
         admission = AdmissionLedger(
             ceiling=plan.ceiling if isinstance(plan, ExecutionPlanV3) else None
         )
+        if prior_outcomes:
+            admission.cells = len(prior_outcomes)
+            first_started = min(
+                datetime.fromisoformat(item.started_at) for item in prior_outcomes.values()
+            )
+            admission.started_at -= max(0.0, (datetime.now(UTC) - first_started).total_seconds())
         for arm in snapshot.arms:
             worker = workers[arm.id]
             if getattr(worker, "supports_run_admission", False) is True:
@@ -413,16 +440,25 @@ async def execute_plan(
     except Exception as error:
         return RunFailed(type(error).__name__, str(error))
 
-    run_id = str(uuid.uuid4())
-    execution_records: dict[str, str] = {}
-    evaluation_records: dict[str, str] = {}
-    operating_records: dict[str, str] = {}
-    expected_operating: set[str] = set()
-    outputs: dict[str, str] = {}
+    run_id = prior.run_id if prior else str(uuid.uuid4())
+    execution_records: dict[str, str] = dict(prior.execution_records) if prior else {}
+    evaluation_records: dict[str, str] = dict(prior.evaluation_records) if prior else {}
+    operating_records: dict[str, str] = dict(prior.operating_records) if prior else {}
+    expected_operating = {f"worker:{cell}" for cell in execution_records}
+    outputs = {
+        cell: outcome.output_ref for cell, outcome in prior_outcomes.items()
+        if outcome.status == "succeeded" and outcome.output_ref is not None
+    }
     fatal: Exception | None = None
     halt: AdmissionHalt | None = None
     unavailable_evaluations: set[str] = set()
     interruption: dict[str, Any] | None = None
+    for coordinate in plan.evaluations:
+        if coordinate.id in evaluation_records:
+            if coordinate.cell_id in outputs:
+                expected_operating.add(f"evaluator:{coordinate.id}")
+            else:
+                unavailable_evaluations.add(coordinate.id)
 
     def record_operating(
         *,
@@ -867,7 +903,7 @@ async def execute_plan(
 
     try:
         await bounded(
-            plan.cells,
+            (cell for cell in plan.cells if cell.id not in execution_records),
             run_cell,
             should_stop=lambda: fatal is not None or halt is not None,
             slots=min(plan.concurrency, plan.ceiling.max_fleet_occupancy)
@@ -876,7 +912,8 @@ async def execute_plan(
         )
         if fatal is None:
             await bounded(
-                (item for item in plan.evaluations if item.cell_id in execution_records),
+                (item for item in plan.evaluations if item.cell_id in execution_records
+                 and item.id not in evaluation_records),
                 run_evaluation,
                 should_stop=lambda: fatal is not None or wall_expired(),
                 slots=min(plan.concurrency, plan.ceiling.max_fleet_occupancy)
