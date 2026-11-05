@@ -179,13 +179,24 @@ def _safe_bytes(data: bytes, secrets: tuple[bytes, ...]) -> bytes:
     return _safe_text(data, secrets)
 
 
+def _basic_replacement(match: re.Match[bytes]) -> bytes:
+    # Basic credentials encode user:password. Prose such as "basic validation"
+    # is not an authentication value, even though its letters match token68.
+    token = match.group().split(None, 1)[1]
+    try:
+        credentials = base64.b64decode(token, validate=True)
+    except ValueError:
+        return match.group()
+    return b"[REDACTED-BASIC]" if b":" in credentials else match.group()
+
+
 def _safe_text(data: bytes, secrets: tuple[bytes, ...]) -> bytes:
     for secret in secrets:
         if secret:
             data = data.replace(secret, b"[REDACTED]")
     data = _SECRET_HEADER.sub(b"[REDACTED-HEADER]", data)
     data = _BEARER.sub(b"[REDACTED-BEARER]", data)
-    data = _BASIC.sub(b"[REDACTED-BASIC]", data)
+    data = _BASIC.sub(_basic_replacement, data)
     return _API_KEY.sub(b"[REDACTED-API-KEY]", data)
 
 

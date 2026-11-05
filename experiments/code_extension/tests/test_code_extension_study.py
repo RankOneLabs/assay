@@ -71,7 +71,7 @@ def test_refuses_routing_drift(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="another routing"):
         check_fixture(
             fixture, store=store, image=fixture.manifest.observed_runtime_image_digest,
-            routing_digest=None,
+            routing_digest="sha256:" + "f" * 64,
         )
 
 

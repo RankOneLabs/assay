@@ -91,6 +91,24 @@ five repeats) without model requests. `execute` first makes one charged route
 probe, then retains every dispatched attempt and its independent grade. No paid
 calibration or study run is included in the qualification evidence.
 
+The existing `pilot` (context defaults) and `pointer-root` scenarios also have
+full-path sidecars and gates. Together with `dispatch-handler`, these are three
+baseline tasks: five repeats produce fifteen attempts. Context defaults and
+pointer-root share an image and can use one plan; dispatch-handler retains
+its earlier qualified image and needs its own plan. Keep those plans separate
+from the four-arm pass-through cohort because the planner also requires a
+common arm set within each plan. Across the three plans,
+five repeats cover all four existing scenarios in thirty-five attempts per
+model. This is a descriptive difficulty pilot; only pass-through compares
+matched shapes, and the pointer task is an easy control.
+Context defaults is now qualified offline without the old local routing-file
+pin; its task, tree, tests, original patches and check records are unchanged.
+
+The supported inexpensive hosted routes include `mistralai/ministral-14b-2512`
+on `mistral/zdr` and `qwen/qwen3.8-27b` on `deepinfra/bf16`. Select each exact
+route with its `ExtensionAgentSettings.for_model(model)` envelope and freeze
+separate configurations and spend caps for the baseline and shape cohorts.
+
 For a retained study archive, report and replay from `experiments/` with:
 
 ```sh

@@ -152,6 +152,31 @@ def test_unlisted_credentials_are_redacted_before_persistence(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("encoded", [False, True])
+def test_complete_closure_preserves_basic_validation_prose(
+    tmp_path: Path, encoded: bool,
+) -> None:
+    from code_extension.tests.test_code_extension_ledger import _manifest, _outcome, _plan
+
+    source, plan, authorization = _plan(tmp_path / "source")
+    payload = canonical_json({"summary": "Finished basic validation of the implementation."})
+    if encoded:
+        artifact_ref = str(source.publish_json({
+            "schema_version": "assay-pier-raw-artifact/0.1.0",
+            "path": "result.json", "content_base64": base64.b64encode(payload).decode(),
+            "byte_length": len(payload), "checksum": digest_bytes(payload),
+        }))
+    else:
+        artifact_ref = str(source.publish_bytes(payload))
+    execution_ref, _ = _outcome(
+        source, plan, authorization, success=False, trace={"assay_object_refs": [artifact_ref]},
+    )
+    manifest_ref = _manifest(source, plan, authorization, execution_ref, passed=False)
+    archive = AttemptArchive("prose", tmp_path / "archive")
+    archive.retain_manifest_closure(source, manifest_ref)
+    assert archive.objects.read_bytes(artifact_ref) == source.read_bytes(artifact_ref)
+
+
+@pytest.mark.parametrize("encoded", [False, True])
 def test_complete_closure_does_not_bypass_redaction(tmp_path: Path, encoded: bool) -> None:
     from code_extension.tests.test_code_extension_ledger import _manifest, _outcome, _plan
 

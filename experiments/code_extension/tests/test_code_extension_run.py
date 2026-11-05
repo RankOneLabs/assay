@@ -278,15 +278,19 @@ def test_two_plans_share_a_store_without_blocking_each_other(
     assert not (store_path / "attempts.jsonl").exists()
 
 
-def test_prepare_refuses_missing_scripted_gate_and_fixture_drift(tmp_path: Path) -> None:
+def test_prepare_refuses_missing_scripted_gate_and_fixture_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pilot = PILOT / "qualification" / "manifest.json"
     image = json.loads(pilot.read_bytes())["observed_runtime_image_digest"]
-    with pytest.raises(ValueError, match="scripted full path qualification is absent"):
-        load_qualified_study_fixture(
-            ObjectStore(tmp_path / "store"),
-            {"pilot": digest_bytes(pilot.read_bytes())},
-            image=image,
-        )
+    with monkeypatch.context() as missing:
+        missing.setattr("code_extension.study.sidecar_for_subject", lambda *_: None)
+        with pytest.raises(ValueError, match="scripted full path qualification is absent"):
+            load_qualified_study_fixture(
+                ObjectStore(tmp_path / "store"),
+                {"pilot": digest_bytes(pilot.read_bytes())},
+                image=image,
+            )
     with pytest.raises(ValueError, match="fixture identity differs"):
         load_qualified_study_fixture(
             ObjectStore(tmp_path / "store"),
