@@ -139,7 +139,9 @@ Resume cross-checks the durable attempt journal, retains terminal attempt and
 evaluation identities, and dispatches only coordinates never claimed. A spending
 refusal recorded before dispatch can be replaced by that coordinate's first
 attempt. The original manifest and recovery checkpoint remain retained, and
-the original runtime, grid, deadline, per-attempt cap and total cap still apply.
+the original runtime, grid, wall allowance, per-attempt cap and total cap still
+apply. The wall allowance counts retained attempt and grading time, so a pause
+before resuming does not consume it.
 By default, an unknown bill continues to block dispatch. An operator can supply
 `--accept-unknown "reason for accepting full reserved charges"` to charge each
 unknown request at its entire reservation for admission while keeping its actual
@@ -148,8 +150,8 @@ increase a cap, or redispatch an already claimed attempt.
 
 Resume refuses a manifest with a cleanup interruption, because that work may
 still be running. It also refuses a checkpoint with no retained attempt, because
-the original deadline cannot be restored from it; no attempt has run, so start
-that plan again with `execute`.
+the original wall allowance cannot be restored from it; no attempt has run, so
+start that plan again with `execute`.
 
 The separate three-task baseline pilot's launch preconditions remain open.
 Cross-module-event is feasible at

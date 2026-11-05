@@ -322,6 +322,27 @@ def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _active_seconds(
+    store: ObjectStore, manifest: RunManifest, outcomes: Iterable[ExecutionOutcome]
+) -> float:
+    """Time covered by retained attempts and grading, excluding pauses between runs."""
+    spans = [(item.started_at, item.completed_at) for item in outcomes]
+    for key, ref in manifest.operating_records.items():
+        if key.startswith("evaluator:"):
+            times = json.loads(store.read_bytes(ref))["timestamps"]
+            spans.append((times["started_at"], times["completed_at"]))
+    active = 0.0
+    covered: datetime | None = None
+    for start, end in sorted(
+        (datetime.fromisoformat(first), datetime.fromisoformat(last)) for first, last in spans
+    ):
+        start = start if covered is None else max(start, covered)
+        if end > start:
+            active += (end - start).total_seconds()
+            covered = end
+    return active
+
+
 CANCELLATION_CLEANUP_TIMEOUT = 5.0
 
 
@@ -343,11 +364,13 @@ async def execute_plan(
     the run and immediately before each attempt.
 
     A verified resume manifest preserves its run identity and terminal records.
-    Only missing coordinates are called, and the original V3 wall deadline and
-    cell allowance still apply. Request-admission workers need a separately
-    resumable request ledger and are refused here. A checkpoint with a cleanup
-    interruption may have work still running, and a V3 checkpoint with no terminal
-    outcome cannot restore those limits; both are refused.
+    Only missing coordinates are called, and the original V3 wall allowance and
+    cell allowance still apply. The wall allowance counts retained attempt and
+    grading time, so a pause between runs does not consume it. Request-admission
+    workers need a separately resumable request ledger and are refused here. A
+    checkpoint with a cleanup interruption may have work still running, and a V3
+    checkpoint with no terminal outcome cannot restore those limits; both are
+    refused.
     """
     prior: RunManifest | None = None
     prior_outcomes: dict[str, ExecutionOutcome] = {}
@@ -430,12 +453,9 @@ async def execute_plan(
         admission = AdmissionLedger(
             ceiling=plan.ceiling if isinstance(plan, ExecutionPlanV3) else None
         )
-        if prior_outcomes:
+        if prior is not None and prior_outcomes:
             admission.cells = len(prior_outcomes)
-            first_started = min(
-                datetime.fromisoformat(item.started_at) for item in prior_outcomes.values()
-            )
-            admission.started_at -= max(0.0, (datetime.now(UTC) - first_started).total_seconds())
+            admission.started_at -= _active_seconds(store, prior, prior_outcomes.values())
         for arm in snapshot.arms:
             worker = workers[arm.id]
             if getattr(worker, "supports_run_admission", False) is True:

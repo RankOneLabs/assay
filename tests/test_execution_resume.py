@@ -6,6 +6,7 @@ import asyncio
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -119,6 +120,15 @@ async def test_resume_refuses_invalid_checkpoints_before_dispatch(
     assert result.manifest_ref is None
 
 
+def clock_ahead(seconds: int) -> type[datetime]:
+    class AheadClock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            return datetime.now(tz) + timedelta(seconds=seconds)
+
+    return AheadClock
+
+
 @pytest.mark.parametrize("limit", ["cells", "wall"])
 async def test_resume_does_not_reset_authorized_v3_limits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit: str,
@@ -144,6 +154,8 @@ async def test_resume_does_not_reset_authorized_v3_limits(
         async def run(self, **kwargs: Any) -> Any:
             calls.append(kwargs)
             if limit == "wall":
+                # The attempt itself consumes the allowance: it finishes 120s after it began.
+                monkeypatch.setattr("assay.execution.datetime", clock_ahead(120))
                 raise AdmissionHalt("billing_uncertain", "pause before the next cell")
             return await super().run(**kwargs)
 
@@ -152,13 +164,6 @@ async def test_resume_does_not_reset_authorized_v3_limits(
     first = await execute_plan(**arguments)
     assert isinstance(first, RunFailed) and first.manifest_ref is not None
     assert len(calls) == 1
-    if limit == "wall":
-        class ExpiredClock(datetime):
-            @classmethod
-            def now(cls, tz: Any = None) -> datetime:
-                return datetime.now(tz) + timedelta(seconds=120)
-
-        monkeypatch.setattr("assay.execution.datetime", ExpiredClock)
     resumed = await execute_plan(**arguments, resume_from=str(first.manifest_ref))
     assert isinstance(resumed, RunFailed)
     assert "ceiling" in resumed.message or "wall time" in resumed.message
@@ -198,6 +203,41 @@ def published_manifests(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     monkeypatch.setattr(ObjectStore, "publish_json", recording)
     return refs
+
+
+async def test_resume_pause_does_not_consume_the_wall_allowance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = v3_fixture(tmp_path)
+    calls: list[str] = []
+
+    class HaltOnceWorker(FakeWorker):
+        async def run(self, *, input_value: Any, arm_id: str) -> Any:
+            calls.append(arm_id)
+            if len(calls) == 1:
+                raise AdmissionHalt("billing_uncertain", "pause before the next cell")
+            return await super().run(input_value=input_value, arm_id=arm_id)
+
+    arguments = fixture.arguments
+    arguments["workers"] = {arm.id: HaltOnceWorker() for arm in fixture.snapshot.arms}
+    first = await execute_plan(**arguments)
+    assert isinstance(first, RunFailed) and first.manifest_ref is not None
+    assert len(calls) == 1
+    monkeypatch.setattr("assay.execution.datetime", clock_ahead(7200))  # allowance is 600s
+    resumed = await execute_plan(**arguments, resume_from=str(first.manifest_ref))
+    assert isinstance(resumed, RunSucceeded), resumed
+    assert len(calls) == 2
+
+
+def test_active_seconds_counts_overlapping_work_once() -> None:
+    def span(start: str, end: str) -> Any:
+        return SimpleNamespace(started_at=f"2026-11-04T{start}Z", completed_at=f"2026-11-04T{end}Z")
+
+    manifest: Any = SimpleNamespace(operating_records={})
+    outcomes = [span("00:00:00", "00:00:10"), span("00:00:05", "00:00:20"),
+                span("00:00:06", "00:00:07"), span("01:00:00", "01:00:30")]
+    store: Any = None
+    assert execution._active_seconds(store, manifest, outcomes) == 50
 
 
 async def cancel_when(run: asyncio.Task[Any], entered: asyncio.Event) -> None:
