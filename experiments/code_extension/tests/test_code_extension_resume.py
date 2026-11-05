@@ -157,6 +157,23 @@ async def test_resume_unknown_bill_retains_prior_attempts_and_dispatches_only_un
     assert len(audit["remaining_coordinates"]) == 6
 
 
+def test_checkpoint_refuses_an_interrupted_run_before_accepting_charges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    digest = "sha256:" + "a" * 64
+    store = ObjectStore(tmp_path / "store")
+    ref = str(store.publish_json(RunManifest(
+        run_id="run", plan_ref=digest, status="incomplete", execution_records={},
+        evaluation_records={}, missing_coordinates=("cell",),
+        interruption_ref="sha256:" + "c" * 64,
+    ).model_dump(mode="json")))
+    journal = AttemptJournal(tmp_path / "attempts.jsonl", digest, "sha256:" + "b" * 64)
+    monkeypatch.setattr("code_extension.resume.verify_manifest", lambda *_: ())
+    plan = cast(ExecutionPlanV3, SimpleNamespace(cells=(), evaluations=()))
+    with pytest.raises(run.LaunchRefused, match="interrupted run cannot resume"):
+        checkpoint(store, plan, ref, journal)
+
+
 def test_checkpoint_refuses_a_claimed_attempt_without_a_terminal_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

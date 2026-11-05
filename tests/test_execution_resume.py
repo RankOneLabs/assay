@@ -277,7 +277,7 @@ async def test_resume_refuses_a_cleanup_timeout_while_its_worker_is_still_runnin
         assert [f.code for f in verify_manifest(fixture.store, refs[-1])] == ["incomplete_run"]
         resumed = await execute_plan(**arguments, resume_from=refs[-1])
         assert isinstance(resumed, RunFailed)
-        assert "may still be running" in resumed.message
+        assert "interrupted run" in resumed.message
         assert len(calls) == 1
     finally:
         release.set()
@@ -285,7 +285,7 @@ async def test_resume_refuses_a_cleanup_timeout_while_its_worker_is_still_runnin
     assert len(calls) == 1, "an abandoned dispatch loop started another cell"
 
 
-async def test_resume_refuses_an_empty_v3_checkpoint(
+async def test_resume_refuses_a_cancelled_run_whose_lost_time_cannot_be_restored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     refs = published_manifests(monkeypatch)
@@ -293,21 +293,47 @@ async def test_resume_refuses_an_empty_v3_checkpoint(
     entered = asyncio.Event()
     calls: list[str] = []
 
-    class BlockedWorker(FakeWorker):
+    class BlockSecondWorker(FakeWorker):
         async def run(self, *, input_value: Any, arm_id: str) -> Any:
             calls.append(arm_id)
-            if len(calls) == 1:
+            if len(calls) == 2:
                 entered.set()
                 await asyncio.Event().wait()
             return await super().run(input_value=input_value, arm_id=arm_id)
 
     arguments = fixture.arguments
-    arguments["workers"] = {arm.id: BlockedWorker() for arm in fixture.snapshot.arms}
+    arguments["workers"] = {arm.id: BlockSecondWorker() for arm in fixture.snapshot.arms}
     await cancel_when(asyncio.create_task(execute_plan(**arguments)), entered)
     manifest = RunManifest.model_validate_json(fixture.store.read_bytes(refs[-1]))
-    assert manifest.execution_records == {} and manifest.interruption_ref is None
-    assert [f.code for f in verify_manifest(fixture.store, refs[-1])] == ["incomplete_run"]
+    assert len(manifest.execution_records) == 1  # The cancelled call saved no timestamps.
     resumed = await execute_plan(**arguments, resume_from=refs[-1])
     assert isinstance(resumed, RunFailed)
+    assert "interrupted run" in resumed.message
+    assert len(calls) == 2
+
+
+async def test_resume_refuses_an_empty_v3_checkpoint(tmp_path: Path) -> None:
+    fixture = v3_fixture(tmp_path)
+    full = await execute_plan(**fixture.arguments)
+    assert isinstance(full, RunSucceeded)
+    plan = parse_execution_plan(json.loads(fixture.plan_bytes))
+    missing = {cell.id for cell in plan.cells} | {item.id for item in plan.evaluations}
+    empty = full.manifest.model_copy(update={
+        "status": "incomplete", "missing_coordinates": tuple(sorted(missing)),
+        "execution_records": {}, "evaluation_records": {}, "operating_records": {},
+    })
+    ref = str(fixture.store.publish_json(empty.model_dump(mode="json")))
+    assert [f.code for f in verify_manifest(fixture.store, ref)] == ["incomplete_run"]
+    calls: list[str] = []
+
+    class RecordingWorker(FakeWorker):
+        async def run(self, *, input_value: Any, arm_id: str) -> Any:
+            calls.append(arm_id)
+            return await super().run(input_value=input_value, arm_id=arm_id)
+
+    arguments = fixture.arguments
+    arguments["workers"] = {arm.id: RecordingWorker() for arm in fixture.snapshot.arms}
+    resumed = await execute_plan(**arguments, resume_from=ref)
+    assert isinstance(resumed, RunFailed)
     assert "cannot restore the authorized run limits" in resumed.message
-    assert len(calls) == 1
+    assert calls == []

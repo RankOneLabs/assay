@@ -367,10 +367,10 @@ async def execute_plan(
     Only missing coordinates are called, and the original V3 wall allowance and
     cell allowance still apply. The wall allowance counts retained attempt and
     grading time, so a pause between runs does not consume it. Request-admission
-    workers need a separately resumable request ledger and are refused here. A
-    checkpoint with a cleanup interruption may have work still running, and a V3
-    checkpoint with no terminal outcome cannot restore those limits; both are
-    refused.
+    workers need a separately resumable request ledger and are refused here. An
+    interrupted run may have work still running or used time it never recorded,
+    and a V3 checkpoint with no terminal outcome cannot restore those limits; both
+    are refused.
     """
     prior: RunManifest | None = None
     prior_outcomes: dict[str, ExecutionOutcome] = {}
@@ -432,7 +432,7 @@ async def execute_plan(
             if any(item.code != "incomplete_run" for item in failures):
                 raise ValueError(f"invalid resume manifest: {failures}")
             if prior.interruption_ref is not None:
-                raise ValueError("resume manifest records work that may still be running")
+                raise ValueError("resume manifest records an interrupted run")
             if any(getattr(worker, "supports_run_admission", False) for worker in workers.values()):
                 raise ValueError("resume of admission-bound request workers is unsupported")
             prior_outcomes = {
@@ -956,7 +956,15 @@ async def execute_plan(
         # evidence exists (including cleanup's own typed interruption record,
         # if the bounded shield above did not finish in time) gets a bounded,
         # best-effort chance to become durable incomplete-manifest evidence
-        # before cancellation is re-raised.
+        # before cancellation is re-raised. A cancelled call saves no timestamps, so
+        # the record also stops a resume from handing that used time back.
+        if interruption is None:
+            interruption = {
+                "schema_version": "assay-cleanup-interruption/0.1.0",
+                "run_id": run_id,
+                "reason": "cancelled",
+                "occurred_at": _now(),
+            }
         with contextlib.suppress(Exception):
             store.publish_json(_build_manifest().model_dump(mode="json"))
         raise

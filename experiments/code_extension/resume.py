@@ -37,6 +37,8 @@ def checkpoint(
     failures = verify_manifest(store, manifest_ref)
     if any(f.code != "incomplete_run" for f in failures):
         raise LaunchRefused(f"invalid resume manifest: {failures}")
+    if manifest.interruption_ref is not None:
+        raise LaunchRefused("an interrupted run cannot resume")
     claimed = {
         r["coordinate"] for r in journal.records()
         if r["event"] == "attempt_started" and r["coordinate"] != "__route_probe__"

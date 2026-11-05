@@ -148,8 +148,10 @@ unknown request at its entire reservation for admission while keeping its actual
 cost explicitly unknown. This cannot acknowledge a known over-reservation bill,
 increase a cap, or redispatch an already claimed attempt.
 
-Resume refuses a manifest with a cleanup interruption, because that work may
-still be running. It also refuses a checkpoint with no retained attempt, because
+Resume refuses a cancelled or interrupted run, because its work may still be
+running and a cancelled call records no used time. This includes a run cancelled
+during grading; its remaining coordinates need a separately authorized plan. It
+also refuses a checkpoint with no retained attempt, because
 the original wall allowance cannot be restored from it; no attempt has run, so
 start that plan again with `execute`.
 
