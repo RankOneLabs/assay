@@ -30,7 +30,7 @@ from assay.models import (
 from assay.planning import authorize, require_runtime_closure, validate_plan_snapshot
 from assay.schema_validation import schema_validators
 from assay.store import ObjectRef, ObjectStore
-from assay.verify import verify_snapshot
+from assay.verify import verify_manifest, verify_snapshot
 
 type CoverageState = Literal["measured", "estimated", "unavailable", "mixed", "uncertain"]
 
@@ -322,6 +322,27 @@ def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _active_seconds(
+    store: ObjectStore, manifest: RunManifest, outcomes: Iterable[ExecutionOutcome]
+) -> float:
+    """Time covered by retained attempts and grading, excluding pauses between runs."""
+    spans = [(item.started_at, item.completed_at) for item in outcomes]
+    for key, ref in manifest.operating_records.items():
+        if key.startswith("evaluator:"):
+            times = json.loads(store.read_bytes(ref))["timestamps"]
+            spans.append((times["started_at"], times["completed_at"]))
+    active = 0.0
+    covered: datetime | None = None
+    for start, end in sorted(
+        (datetime.fromisoformat(first), datetime.fromisoformat(last)) for first, last in spans
+    ):
+        start = start if covered is None else max(start, covered)
+        if end > start:
+            active += (end - start).total_seconds()
+            covered = end
+    return active
+
+
 CANCELLATION_CLEANUP_TIMEOUT = 5.0
 
 
@@ -334,13 +355,25 @@ async def execute_plan(
     workers: dict[str, Worker | CoordinateAwareWorker],
     evaluators: dict[str, Evaluator],
     concurrency: int | None = None,
+    resume_from: str | None = None,
 ) -> RunResult:
     """Reject drift before work, and return a recoverable partial manifest on storage failure.
 
     The adapter configuration methods are a trusted extension boundary: they must
     describe the live settings used by the next call. They are checked both before
     the run and immediately before each attempt.
+
+    A verified resume manifest preserves its run identity and terminal records.
+    Only missing coordinates are called, and the original V3 wall allowance and
+    cell allowance still apply. The wall allowance counts retained attempt and
+    grading time, so a pause between runs does not consume it. Request-admission
+    workers need a separately resumable request ledger and are refused here. An
+    interrupted run may have work still running or used time it never recorded,
+    and a V3 checkpoint with no terminal outcome cannot restore those limits; both
+    are refused.
     """
+    prior: RunManifest | None = None
+    prior_outcomes: dict[str, ExecutionOutcome] = {}
     try:
         # Wire models contain nested JSON dictionaries; take an owned copy so a
         # caller cannot mutate an authorized declaration while a call is awaiting.
@@ -391,6 +424,23 @@ async def execute_plan(
         store.read_bytes(snapshot.pricing_catalog_ref)
         task = json.loads(store.read_bytes(snapshot.paa_task_ref))
         validators = schema_validators(store, snapshot)
+        if resume_from is not None:
+            prior = RunManifest.model_validate_json(store.read_bytes(resume_from))
+            if prior.plan_ref != authorization:
+                raise ValueError("resume manifest belongs to another authorized plan")
+            failures = verify_manifest(store, resume_from)
+            if any(item.code != "incomplete_run" for item in failures):
+                raise ValueError(f"invalid resume manifest: {failures}")
+            if prior.interruption_ref is not None:
+                raise ValueError("resume manifest records an interrupted run")
+            if any(getattr(worker, "supports_run_admission", False) for worker in workers.values()):
+                raise ValueError("resume of admission-bound request workers is unsupported")
+            prior_outcomes = {
+                key: ExecutionOutcome.model_validate_json(store.read_bytes(ref))
+                for key, ref in prior.execution_records.items()
+            }
+            if not prior_outcomes and isinstance(plan, ExecutionPlanV3):
+                raise ValueError("resume checkpoint cannot restore the authorized run limits")
         # A plan and configuration used as record references must themselves be durable.
         store.publish_bytes(plan_bytes)
         for arm in snapshot.arms:
@@ -403,6 +453,9 @@ async def execute_plan(
         admission = AdmissionLedger(
             ceiling=plan.ceiling if isinstance(plan, ExecutionPlanV3) else None
         )
+        if prior is not None and prior_outcomes:
+            admission.cells = len(prior_outcomes)
+            admission.started_at -= _active_seconds(store, prior, prior_outcomes.values())
         for arm in snapshot.arms:
             worker = workers[arm.id]
             if getattr(worker, "supports_run_admission", False) is True:
@@ -413,16 +466,25 @@ async def execute_plan(
     except Exception as error:
         return RunFailed(type(error).__name__, str(error))
 
-    run_id = str(uuid.uuid4())
-    execution_records: dict[str, str] = {}
-    evaluation_records: dict[str, str] = {}
-    operating_records: dict[str, str] = {}
-    expected_operating: set[str] = set()
-    outputs: dict[str, str] = {}
+    run_id = prior.run_id if prior else str(uuid.uuid4())
+    execution_records: dict[str, str] = dict(prior.execution_records) if prior else {}
+    evaluation_records: dict[str, str] = dict(prior.evaluation_records) if prior else {}
+    operating_records: dict[str, str] = dict(prior.operating_records) if prior else {}
+    expected_operating = {f"worker:{cell}" for cell in execution_records}
+    outputs = {
+        cell: outcome.output_ref for cell, outcome in prior_outcomes.items()
+        if outcome.status == "succeeded" and outcome.output_ref is not None
+    }
     fatal: Exception | None = None
     halt: AdmissionHalt | None = None
     unavailable_evaluations: set[str] = set()
     interruption: dict[str, Any] | None = None
+    for coordinate in plan.evaluations:
+        if coordinate.id in evaluation_records:
+            if coordinate.cell_id in outputs:
+                expected_operating.add(f"evaluator:{coordinate.id}")
+            else:
+                unavailable_evaluations.add(coordinate.id)
 
     def record_operating(
         *,
@@ -793,10 +855,11 @@ async def execute_plan(
         """Only active slots start; a stop signal halts new dispatch, active calls still drain."""
         nonlocal interruption
         iterator = iter(items)
+        abandoned = False
 
         async def consume() -> None:
             nonlocal fatal
-            while not should_stop():
+            while not abandoned and not should_stop():
                 try:
                     item = next(iterator)
                 except StopIteration:
@@ -837,6 +900,8 @@ async def execute_plan(
                 if first_error is not None:
                     raise first_error
         except BaseException:
+            # A worker can swallow cancellation and return; its loop must not start another.
+            abandoned = True
             record = await _drain(tasks)
             if record is not None and interruption is None:
                 interruption = record
@@ -867,7 +932,7 @@ async def execute_plan(
 
     try:
         await bounded(
-            plan.cells,
+            (cell for cell in plan.cells if cell.id not in execution_records),
             run_cell,
             should_stop=lambda: fatal is not None or halt is not None,
             slots=min(plan.concurrency, plan.ceiling.max_fleet_occupancy)
@@ -876,7 +941,8 @@ async def execute_plan(
         )
         if fatal is None:
             await bounded(
-                (item for item in plan.evaluations if item.cell_id in execution_records),
+                (item for item in plan.evaluations if item.cell_id in execution_records
+                 and item.id not in evaluation_records),
                 run_evaluation,
                 should_stop=lambda: fatal is not None or wall_expired(),
                 slots=min(plan.concurrency, plan.ceiling.max_fleet_occupancy)
@@ -890,7 +956,15 @@ async def execute_plan(
         # evidence exists (including cleanup's own typed interruption record,
         # if the bounded shield above did not finish in time) gets a bounded,
         # best-effort chance to become durable incomplete-manifest evidence
-        # before cancellation is re-raised.
+        # before cancellation is re-raised. A cancelled call saves no timestamps, so
+        # the record also stops a resume from handing that used time back.
+        if interruption is None:
+            interruption = {
+                "schema_version": "assay-cleanup-interruption/0.1.0",
+                "run_id": run_id,
+                "reason": "cancelled",
+                "occurred_at": _now(),
+            }
         with contextlib.suppress(Exception):
             store.publish_json(_build_manifest().model_dump(mode="json"))
         raise

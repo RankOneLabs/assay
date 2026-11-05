@@ -124,12 +124,37 @@ class AttemptJournal:
             }
         )
 
+    def accept_uncertain_charge(self, attempt_id: str, *, reason: str) -> None:
+        """Record operator acceptance of a full reservation, retaining unknown actual cost."""
+        self.validate_resume()
+        records = self.records()
+        reserved = next((r for r in records if r["event"] == "reserved"
+                         and r["attempt_id"] == attempt_id), None)
+        finished = next((r for r in reversed(records) if r["event"] == "finished"
+                         and r["attempt_id"] == attempt_id), None)
+        if not reason.strip() or reserved is None or finished is None \
+                or finished["cost_usd"] is not None \
+                or finished["status"] != "billing_uncertain":
+            raise ValueError("only an unknown settled charge can be accepted at its reservation")
+        if any(r["event"] == "uncertain_charge_accepted" and r["attempt_id"] == attempt_id
+               for r in records):
+            return
+        self._append({
+            "event": "uncertain_charge_accepted", "attempt_id": attempt_id,
+            "bound_usd": reserved["bound_usd"], "actual_cost_usd": None, "reason": reason,
+            "plan_digest": self.plan_digest, "config_digest": self.config_digest,
+        })
+
     def reconcile(self, gate: SpendGate) -> set[str]:
         """Charge unresolved dispatched reservations at their full bound."""
         self.validate_resume()
         records = self.records()
         finished = {
             record["attempt_id"]: record for record in records if record["event"] == "finished"
+        }
+        accepted = {
+            record["attempt_id"]: record for record in records
+            if record["event"] == "uncertain_charge_accepted"
         }
         used: set[str] = set()
         for record in records:
@@ -151,6 +176,17 @@ class AttemptJournal:
                 self.finish(attempt_id, cost=None, status="billing_uncertain")
             else:
                 cost = finished[attempt_id]["cost_usd"]
+                if cost is None and attempt_id in accepted:
+                    acknowledgement = accepted[attempt_id]
+                    if Decimal(acknowledgement["bound_usd"]) != bound \
+                            or acknowledgement.get("actual_cost_usd") is not None \
+                            or not acknowledgement.get("reason", "").strip():
+                        raise ValueError(
+                            "uncertain-charge acknowledgement differs from reservation"
+                        )
+                    # This charges a conservative bound to the spend ledger.
+                    # The original finished event continues to say cost_usd=None.
+                    cost = str(bound)
                 gate.settle(bound, float(cost) if cost is not None else None)
         return used
 

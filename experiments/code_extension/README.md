@@ -127,6 +127,34 @@ and its original test groups; a changed checkout cannot substitute new tests.
 Only legacy archives without a retained fixture use checkout manifests.
 Generated study data belongs outside this source repository.
 
+An interrupted grid can continue with its original plan and partial manifest:
+
+```sh
+python -m code_extension.resume \
+  --plan STORE/plans/<digest>/plan.json --authorize sha256:<digest> \
+  --store STORE --manifest sha256:<partial-manifest>
+```
+
+Resume cross-checks the durable attempt journal, retains terminal attempt and
+evaluation identities, and dispatches only coordinates never claimed. A spending
+refusal recorded before dispatch can be replaced by that coordinate's first
+attempt. The original manifest and recovery checkpoint remain retained, and
+the original runtime, grid, wall allowance, per-attempt cap and total cap still
+apply. The wall allowance counts retained attempt and grading time, so a pause
+before resuming does not consume it.
+By default, an unknown bill continues to block dispatch. An operator can supply
+`--accept-unknown "reason for accepting full reserved charges"` to charge each
+unknown request at its entire reservation for admission while keeping its actual
+cost explicitly unknown. This cannot acknowledge a known over-reservation bill,
+increase a cap, or redispatch an already claimed attempt.
+
+Resume refuses a cancelled or interrupted run, because its work may still be
+running and a cancelled call records no used time. This includes a run cancelled
+during grading; its remaining coordinates need a separately authorized plan. It
+also refuses a checkpoint with no retained attempt, because
+the original wall allowance cannot be restored from it; no attempt has run, so
+start that plan again with `execute`.
+
 The separate three-task baseline pilot's launch preconditions remain open.
 Cross-module-event is feasible at
 the upstream pin, but config-plugin lacks a configuration-driven loading path,
