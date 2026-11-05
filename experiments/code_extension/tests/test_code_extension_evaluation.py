@@ -22,6 +22,7 @@ from code_extension.evaluation import (
     evaluate_scenario_candidate,
     grader_cache_key,
 )
+from code_extension.fixtures import sidecar_for_subject
 from code_extension.study import load_pilot_study_fixture
 from workflow_edit.bridge import turn_idempotency_key
 
@@ -150,6 +151,91 @@ async def test_candidate_visible_test_edit_and_addition_use_frozen_group(tmp_pat
     assert [group.name for group in groups] == [
         "visible_regression", "hidden_regression", "new_behavior"
     ]
+
+
+def _submission(store: ObjectStore, baseline: dict[str, str]) -> CandidateSubmission:
+    return CandidateSubmission(
+        patch_ref=str(store.publish_bytes(b"")),
+        tree_digest=workflow_tree_digest(baseline),
+        baseline_tree_digest=workflow_tree_digest(baseline),
+    )
+
+
+@pytest.mark.asyncio
+async def test_grading_uses_the_scope_the_worker_enforces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ObjectStore(tmp_path / "store")
+    fixture = load_pilot_study_fixture(store)
+    scenario = fixture.scenarios[0]
+    baseline = scenario.realizations["baseline"]
+    runner = RecordingRunner(fixture.manifest.observed_runtime_image_digest)
+
+    async def grade() -> dict[str, Any]:
+        await evaluate_scenario_candidate(
+            store=store, manifest=fixture.manifest, subject_id=scenario.subject_id,
+            arm_id="baseline", baseline=baseline, submission=_submission(store, baseline),
+            runner=runner,  # type: ignore[arg-type]
+        )
+        return runner.calls[-1]
+
+    received = await grade()
+    assert received["writable_scope"] == ("src/",)
+    assert received["diagnostic_scope"] == ()
+    declared = sidecar_for_subject(scenario.subject_id, "baseline")
+    assert declared is not None
+    widened = declared.model_copy(
+        update={"writable_implementation_scope": ("src/", "tests/agent/")},
+    )
+    before = CellEvaluator(store, fixture.manifest, runner).configuration()  # type: ignore[arg-type]
+    monkeypatch.setattr("code_extension.bridge.sidecar_for_subject", lambda *_: widened)
+    received = await grade()
+    assert received["writable_scope"] == ("src/", "tests/agent/")
+    assert received["diagnostic_scope"] == ("tests/agent/",)
+    after = CellEvaluator(store, fixture.manifest, runner).configuration()  # type: ignore[arg-type]
+    assert after["writable_scopes"] != before["writable_scopes"]
+
+
+@pytest.mark.asyncio
+async def test_a_retained_scope_is_used_without_reading_the_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ObjectStore(tmp_path / "store")
+    fixture = load_pilot_study_fixture(store)
+    scenario = fixture.scenarios[0]
+    baseline = scenario.realizations["baseline"]
+    runner = RecordingRunner(fixture.manifest.observed_runtime_image_digest)
+
+    def absent(*_: object) -> None:
+        raise AssertionError("a replay read the current checkout")
+
+    monkeypatch.setattr("code_extension.bridge.sidecar_for_subject", absent)
+    await evaluate_scenario_candidate(
+        store=store, manifest=fixture.manifest, subject_id=scenario.subject_id,
+        arm_id="baseline", baseline=baseline, submission=_submission(store, baseline),
+        runner=runner,  # type: ignore[arg-type]
+        writable_scope=("src/retained/",),
+    )
+    assert runner.calls[0]["writable_scope"] == ("src/retained/",)
+
+
+@pytest.mark.asyncio
+async def test_a_subject_without_a_declared_scope_is_not_graded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ObjectStore(tmp_path / "store")
+    fixture = load_pilot_study_fixture(store)
+    scenario = fixture.scenarios[0]
+    baseline = scenario.realizations["baseline"]
+    runner = RecordingRunner(fixture.manifest.observed_runtime_image_digest)
+    monkeypatch.setattr("code_extension.bridge.sidecar_for_subject", lambda *_: None)
+    monkeypatch.setattr("code_extension.bridge.LEGACY_SUBJECT_IDS", frozenset())
+    result = await evaluate_scenario_candidate(
+        store=store, manifest=fixture.manifest, subject_id=scenario.subject_id,
+        arm_id="baseline", baseline=baseline, submission=_submission(store, baseline),
+        runner=runner,  # type: ignore[arg-type]
+    )
+    assert result.cause == "missing_writable_scope" and runner.calls == []
 
 
 def test_dispatch_key_reuses_a_job_per_run_cell_and_turn(tmp_path: Path) -> None:

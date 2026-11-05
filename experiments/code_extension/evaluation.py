@@ -20,11 +20,12 @@ from assay.investigations.workflow_correctness import (
 from assay.models import EvaluationCoordinate
 from assay.pier_protocol import CandidateSubmission
 from assay.store import ObjectIntegrityError, ObjectStore
-from code_extension.bridge import LEGACY_WRITABLE_PREFIXES
+from code_extension.bridge import declared_writable_scope
+from code_extension.fixture import AGENT_TEST_PREFIX
 
 STUDY_GROUPS = (("visible_regression", False), ("hidden_regression", True), ("new_behavior", True))
 CORRECTNESS_CATEGORIES = ("correct", "incorrect", "unavailable")
-GRADER_REVISION = "3"
+GRADER_REVISION = "4"
 
 
 def evaluation_detail(
@@ -78,8 +79,13 @@ async def evaluate_scenario_candidate(
     baseline: Mapping[str, str],
     submission: CandidateSubmission,
     runner: DockerWorkflowRunner,
+    writable_scope: tuple[str, ...] | None = None,
 ) -> WorkflowCorrectnessResult:
-    """Use the coordinate's arm, realization tree, and worker-reported baseline digest."""
+    """Use the coordinate's arm, realization tree, and worker-reported baseline digest.
+
+    A replay passes the scope retained with the attempt, so grading an archive
+    does not depend on the sidecars in the current checkout.
+    """
     scenario = manifest.scenario(subject_id)
     if scenario is None:
         return unavailable_result("unknown_subject")
@@ -114,13 +120,21 @@ async def evaluate_scenario_candidate(
         group.restores for group in groups
     ] != [not hidden for _, hidden in STUDY_GROUPS]:
         return unavailable_result("invalid_test_groups")
+    try:
+        scope = (
+            writable_scope if writable_scope is not None
+            else declared_writable_scope(subject_id, arm_id)
+        )
+    except ValueError:
+        return unavailable_result("missing_writable_scope")
     return await runner.run(
         baseline=baseline,
         baseline_tree_digest=arm.tree_digest,
         expected_tree_digest=submission.tree_digest,
         patch=patch,
         groups=groups,
-        enforce_extension_scope=True,
+        writable_scope=scope,
+        diagnostic_scope=(AGENT_TEST_PREFIX,) if AGENT_TEST_PREFIX in scope else (),
     )
 
 
@@ -136,9 +150,14 @@ class CellEvaluator:
             "id": "code-extension-correctness",
             "version": "1",
             "grader_revision": GRADER_REVISION,
-            # The evaluator's broad capture policy is separate from the worker's
-            # scenario sidecar scope; the runner restores visible tests itself.
-            "writable_prefixes": list(LEGACY_WRITABLE_PREFIXES),
+            # The runner restores visible tests itself, whatever a scope says.
+            "writable_scopes": {
+                scenario.subject_id: {
+                    arm.arm_id: list(declared_writable_scope(scenario.subject_id, arm.arm_id))
+                    for arm in scenario.arms
+                }
+                for scenario in self.manifest.scenarios
+            },
             "categories": list(CORRECTNESS_CATEGORIES),
             "runner": self.runner.configuration(),
             "fixture": fixture_identity(self.manifest),

@@ -12,7 +12,7 @@ import pytest
 from code_extension import config, diagnose, run
 from code_extension.archive import AttemptArchive
 from code_extension.study import load_pilot_study_fixture
-from code_extension.tests.test_code_extension_archive import _configuration
+from code_extension.tests.test_code_extension_archive import _configuration, _open
 from code_extension.tests.test_code_extension_ledger import _manifest, _outcome, _plan
 from code_extension.tests.test_code_extension_study import _two_arm_fixture
 from workflow_edit.evaluation import WorkerCandidate
@@ -52,6 +52,41 @@ def _forbid_model_constructors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run.SmithersFactory, "create", forbidden)
     monkeypatch.setattr(smithers.SmithersClient, "__init__", forbidden)
     monkeypatch.setattr(run.SmithersTurnCompletion, "__init__", forbidden)
+
+
+@pytest.mark.parametrize("retained", [True, False])
+def test_regrade_uses_the_scope_retained_with_each_attempt(
+    retained: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, plan, authorization = _plan(tmp_path / "source")
+    execution_ref, _ = _outcome(store, plan, authorization, success=True, trace={})
+    manifest_ref = _manifest(store, plan, authorization, execution_ref, passed=True)
+    run_dir = tmp_path / "archive" / "runs" / "sample"
+    shutil.copytree(store.root, run_dir)
+    (run_dir / "run.json").write_text(json.dumps({
+        "plan_ref": authorization, "manifest_ref": manifest_ref,
+    }), encoding="utf-8")
+    if retained:
+        archive, coordinate = _open(tmp_path / "attempt")
+        record = archive.read(coordinate.id).model_copy(
+            update={"writable_scope": ("src/retained/",)},
+        )
+        ref = ObjectStore(run_dir).publish_bytes(
+            canonical_json(record.model_dump(mode="json")),
+        )
+        (run_dir / "index.json").write_bytes(canonical_json({plan.cells[0].id: str(ref)}))
+    monkeypatch.setattr(diagnose, "worker_candidate", lambda *_: WorkerCandidate(
+        patch=b"", tree_digest="sha256:" + "a" * 64, baseline_tree_digest="sha256:" + "b" * 64,
+    ))
+    received: list[object] = []
+
+    async def fake_evaluate(**kwargs: object) -> WorkflowCorrectnessResult:
+        received.append(kwargs["writable_scope"])
+        return WorkflowCorrectnessResult("correct", (), preflight=PreflightResult("passed"))
+
+    monkeypatch.setattr(diagnose, "evaluate_scenario_candidate", fake_evaluate)
+    diagnose.regrade_archive(tmp_path / "archive", "sha256:" + "1" * 64, tmp_path / "out")
+    assert received == [("src/retained/",) if retained else None]
 
 
 def test_regrade_appends_distinct_image_records_without_changing_original(

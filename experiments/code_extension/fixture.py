@@ -16,6 +16,9 @@ CHECKPOINT_SHA = "f3b3ffca43e43672ff2f58ab797d65c7532aaed8"
 MAX_REPOSITORY_FILES = 200
 MAX_REPOSITORY_BYTES = 1_000_000
 VISIBLE_PREFIX = "tests/visible/"
+# A scenario opts in by declaring this prefix in its writable scope. Tests here
+# are the agent's own: the evaluator removes them before it checks anything.
+AGENT_TEST_PREFIX = "tests/agent/"
 
 
 def read_tree(root: Path) -> dict[str, str]:

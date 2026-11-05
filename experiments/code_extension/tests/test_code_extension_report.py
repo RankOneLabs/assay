@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from code_extension.classification import EvaluatorVerdict, HarnessOrProviderFailure
 from code_extension.fixture import PILOT, load_fixture, materialize
+from code_extension.fixtures import load_scenario, touched_paths
 from code_extension.ledger import AttemptLedger, AttemptRow, EvidenceReference
 from code_extension.metrics import measure_attempt, measure_patch, trace_measures
 from code_extension.publish import REPORT_MD, render, render_archive, render_from_ledgers
@@ -458,6 +459,24 @@ def test_plugin_footprint_includes_json_registration(tmp_path: Path) -> None:
         expected_change_paths=expected,
     )
     assert set(measured.changed_paths) == expected
+    assert measured.unnecessary_paths == ()
+
+
+def test_agent_tests_are_not_unnecessary_changed_paths(tmp_path: Path) -> None:
+    fixture = load_scenario("stage-pass-through", arm_id="plugin")
+    expected = frozenset(touched_paths(fixture.arms[0].reference_patch))
+    agent_test = (
+        "diff --git a/tests/agent/own.test.ts b/tests/agent/own.test.ts\n"
+        "new file mode 100644\n--- /dev/null\n+++ b/tests/agent/own.test.ts\n"
+        "@@ -0,0 +1 @@\n+export {};\n"
+    )
+    measured = measure_patch(
+        PILOT.parent / "stage-pass-through" / "repository" / "plugin",
+        (fixture.arms[0].reference_patch + agent_test).encode(),
+        dependencies=install_toolchain(tmp_path / "dependencies", offline=True),
+        expected_change_paths=expected,
+    )
+    assert "tests/agent/own.test.ts" in measured.changed_paths
     assert measured.unnecessary_paths == ()
 
 
