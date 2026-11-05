@@ -19,6 +19,7 @@ from typing import Literal, cast
 from assay.canonical import canonical_json, digest_bytes
 from assay.fixture_manifest import (
     BaselineArmSet,
+    CodeShapeArmSet,
     ExtensionArmQualification,
     ExtensionArmRealization,
     ExtensionScenario,
@@ -34,19 +35,29 @@ from assay.investigations.workflow_correctness import (
     workflow_tree_digest,
 )
 from code_extension.fixture import (
+    ADDED_SCENARIOS,
     CHECKPOINT_SHA,
     PILOT,
     SUBJECT_ID,
+    PilotArm,
     PilotFixture,
     load_fixture,
     materialize,
     read_tree,
 )
-from code_extension.fixtures import ScenarioFixture, load_scenario
+from code_extension.fixtures import ScenarioArm, ScenarioFixture, load_scenario
 
 IMAGE_TAG = "assay-code-extension:ce-v1-bounds"
 CHECKS = ("baseline_passes", "feature_fails", "reference_passes")
 EXPECTED = {"baseline_passes": "passed", "feature_fails": "failed", "reference_passes": "passed"}
+EXCLUDED_PATHS = (
+    "oakridge-dbos/src/storage",
+    "oakridge-dbos/src/http",
+    "oakridge-dbos/src/runtime",
+    "oakridge-dbos/src/workflows",
+    "oakridge-dbos/src/adapters",
+    "oakridge-dbos/tests/support",
+)
 ExpectedOutcome = Literal["passed", "failed"]
 
 
@@ -260,6 +271,61 @@ def _group_status(groups: Mapping[str, object], name: str) -> object:
     return group.get("status") if isinstance(group, dict) else None
 
 
+def _arm_realization(
+    fixture: PilotFixture | ScenarioFixture,
+    arm: PilotArm | ScenarioArm,
+    evidence_dir: Path,
+    image_digest: str,
+) -> ExtensionArmRealization:
+    """Bind one arm to its retained checks, refusing stale or failed evidence."""
+    qualifications: dict[str, QualificationResult] = {}
+    for check in CHECKS:
+        record, digest = read_evidence(evidence_dir, arm.arm_id, check)
+        if (
+            record.get("schema_version") != "assay-extension-qualification-record/0.1.0"
+            or record.get("subject_id")
+            != (fixture.subject_id if isinstance(fixture, ScenarioFixture) else SUBJECT_ID)
+            or record.get("arm_id") != arm.arm_id
+            or record.get("check") != check
+            or record.get("image_digest") != image_digest
+            or record.get("tree_digest") != fixture.tree_digest
+            or record.get("patch_digest")
+            != digest_bytes(
+                (arm.reference_patch if check == "reference_passes" else "").encode()
+            )
+        ):
+            raise ValueError(f"stale qualification record: {arm.arm_id}/{check}")
+        outcome = record.get("outcome")
+        if outcome != EXPECTED[check]:
+            raise ValueError(f"unqualified arm {arm.arm_id}: {check} was {outcome}")
+        groups = record.get("groups")
+        if not isinstance(groups, dict):
+            raise ValueError(f"invalid qualification groups: {arm.arm_id}/{check}")
+
+        if (
+            _group_status(groups, "visible_regression") != "passed"
+            or _group_status(groups, "hidden_regression") != "passed"
+            or _group_status(groups, "new_behavior")
+            != ("passed" if check == "reference_passes" else "failed")
+            or (check == "feature_fails" and record.get("cause") != "group_failure")
+        ):
+            raise ValueError(f"invalid qualification verdicts: {arm.arm_id}/{check}")
+        qualified_outcome: ExpectedOutcome = "failed" if check == "feature_fails" else "passed"
+        qualifications[check] = QualificationResult(outcome=qualified_outcome, evidence=digest)
+    return ExtensionArmRealization(
+        arm_id=arm.arm_id,
+        tree_digest=fixture.tree_digest,
+        task_prompt=fixture.task,
+        reference_patch=digest_bytes(arm.reference_patch.encode()),
+        negative_patches=tuple(digest_bytes(patch.encode()) for patch in arm.negative_patches),
+        qualification=ExtensionArmQualification(
+            baseline_passes=qualifications["baseline_passes"],
+            feature_fails=qualifications["feature_fails"],
+            reference_passes=qualifications["reference_passes"],
+        ),
+    )
+
+
 def assemble_manifest(
     fixture: PilotFixture | ScenarioFixture,
     evidence_dir: Path,
@@ -268,58 +334,7 @@ def assemble_manifest(
     routing_config: Path | None,
 ) -> FixtureManifestV3:
     image_digest = observed_image_digest(image)
-    arms: list[ExtensionArmRealization] = []
-    for arm in fixture.arms:
-        qualifications: dict[str, QualificationResult] = {}
-        for check in CHECKS:
-            record, digest = read_evidence(evidence_dir, arm.arm_id, check)
-            if (
-                record.get("schema_version") != "assay-extension-qualification-record/0.1.0"
-                or record.get("subject_id")
-                != (fixture.subject_id if isinstance(fixture, ScenarioFixture) else SUBJECT_ID)
-                or record.get("arm_id") != arm.arm_id
-                or record.get("check") != check
-                or record.get("image_digest") != image_digest
-                or record.get("tree_digest") != fixture.tree_digest
-                or record.get("patch_digest")
-                != digest_bytes(
-                    (arm.reference_patch if check == "reference_passes" else "").encode()
-                )
-            ):
-                raise ValueError(f"stale qualification record: {arm.arm_id}/{check}")
-            outcome = record.get("outcome")
-            if outcome != EXPECTED[check]:
-                raise ValueError(f"unqualified arm {arm.arm_id}: {check} was {outcome}")
-            groups = record.get("groups")
-            if not isinstance(groups, dict):
-                raise ValueError(f"invalid qualification groups: {arm.arm_id}/{check}")
-
-            if (
-                _group_status(groups, "visible_regression") != "passed"
-                or _group_status(groups, "hidden_regression") != "passed"
-                or _group_status(groups, "new_behavior")
-                != ("passed" if check == "reference_passes" else "failed")
-                or (check == "feature_fails" and record.get("cause") != "group_failure")
-            ):
-                raise ValueError(f"invalid qualification verdicts: {arm.arm_id}/{check}")
-            qualified_outcome: ExpectedOutcome = "failed" if check == "feature_fails" else "passed"
-            qualifications[check] = QualificationResult(outcome=qualified_outcome, evidence=digest)
-        arms.append(
-            ExtensionArmRealization(
-                arm_id=arm.arm_id,
-                tree_digest=fixture.tree_digest,
-                task_prompt=fixture.task,
-                reference_patch=digest_bytes(arm.reference_patch.encode()),
-                negative_patches=tuple(
-                    digest_bytes(patch.encode()) for patch in arm.negative_patches
-                ),
-                qualification=ExtensionArmQualification(
-                    baseline_passes=qualifications["baseline_passes"],
-                    feature_fails=qualifications["feature_fails"],
-                    reference_passes=qualifications["reference_passes"],
-                ),
-            )
-        )
+    arms = [_arm_realization(fixture, arm, evidence_dir, image_digest) for arm in fixture.arms]
     visible, hidden_regression, new_behavior = fixture.groups
 
     def named_group(group: WorkflowTestGroup) -> NamedTestGroup:
@@ -340,14 +355,7 @@ def assemble_manifest(
                 else SUBJECT_ID,
                 checkpoint_sha=CHECKPOINT_SHA,
                 included_paths=included,
-                excluded_paths=(
-                    "oakridge-dbos/src/storage",
-                    "oakridge-dbos/src/http",
-                    "oakridge-dbos/src/runtime",
-                    "oakridge-dbos/src/workflows",
-                    "oakridge-dbos/src/adapters",
-                    "oakridge-dbos/tests/support",
-                ),
+                excluded_paths=EXCLUDED_PATHS,
                 dependency_lock_digests={
                     "package-lock.json": digest_bytes(
                         fixture.repository["package-lock.json"].encode()
@@ -369,6 +377,97 @@ def assemble_manifest(
                 hidden_tests=tuple(
                     named_group(group) for group in (hidden_regression, new_behavior)
                 ),
+                arms=tuple(arms),
+            ),
+        ),
+    )
+    manifest.require_qualified()
+    return manifest
+
+
+async def _summarize_arm(
+    fixture: ScenarioFixture, image_digest: str, directory: Path,
+) -> None:
+    """Retain the start, reference and missing-integration verdicts for one arm."""
+    arm = fixture.arms[0]
+    runner = make_runner(image_digest)
+    patches = {
+        "baseline": "", "reference": arm.reference_patch, "negative": arm.negative_patches[0],
+    }
+    summary: dict[str, object] = {}
+    for label, patch in patches.items():
+        result = await runner.run(
+            baseline=fixture.repository,
+            baseline_tree_digest=fixture.tree_digest,
+            expected_tree_digest=_patched_digest(fixture, patch) if patch else fixture.tree_digest,
+            patch=patch,
+            groups=fixture.groups,
+        )
+        summary[label] = {
+            "cause": result.cause,
+            "groups": {group.name: group.status for group in result.groups},
+            "verdict": result.verdict,
+        }
+    summary.update({
+        "schema_version": "assay-extension-scenario-qualification/0.1.0",
+        "subject_id": fixture.subject_id,
+        "arm_id": arm.arm_id,
+        "image_digest": image_digest,
+        "tree_digest": fixture.tree_digest,
+        "group_digests": {
+            group.name: digest_bytes(canonical_json(group.model_dump(mode="json")))
+            for group in fixture.groups
+        },
+        "patch_digests": {
+            label: digest_bytes(patch.encode()) for label, patch in patches.items()
+        },
+    })
+    (directory / f"{arm.arm_id}.json").write_bytes(canonical_json(summary) + b"\n")
+
+
+async def build_shape_manifest(name: str, *, image: str) -> FixtureManifestV3:
+    """Qualify a new four-shape scenario's arms and bind them in one manifest."""
+    root = PILOT.parent / name
+    spec = ADDED_SCENARIOS[name]
+    image_digest = observed_image_digest(image)
+    evidence_dir = root / "qualification" / "checks"
+    runner = make_runner(image_digest)
+    fixtures = [load_scenario(name, arm_id=arm_id) for arm_id in spec.arm_ids]
+    arms: list[ExtensionArmRealization] = []
+    for fixture in fixtures:
+        await run_checks(fixture, runner, image_digest, evidence_dir)
+        await _summarize_arm(fixture, image_digest, root / "qualification")
+        arms.append(_arm_realization(fixture, fixture.arms[0], evidence_dir, image_digest))
+    first = fixtures[0]
+    if len({digest_bytes(item.task.encode()) for item in fixtures}) != 1:
+        raise ValueError(f"{name}: shape arms must share one task")
+    pins = [
+        tuple(digest_bytes(canonical_json(group.model_dump(mode="json"))) for group in item.groups)
+        for item in fixtures
+    ]
+    if len(set(pins)) != 1:
+        raise ValueError(f"{name}: shape arms must share frozen test groups")
+    visible, hidden_regression, new_behavior = zip(
+        (group.name for group in first.groups), pins[0], strict=True,
+    )
+    manifest = FixtureManifestV3(
+        schema_version="assay-fixture-manifest/0.3.0",
+        arm_set=CodeShapeArmSet(factor="code_shape", arm_ids=spec.arm_ids),
+        observed_runtime_image_digest=image_digest,
+        routing_config_digest=None,
+        scenarios=(
+            ExtensionScenario(
+                subject_id=spec.subject_id,
+                checkpoint_sha=CHECKPOINT_SHA,
+                included_paths=tuple(sorted(
+                    path for file in first.repository if (path := _pin_path(file)) is not None
+                )),
+                excluded_paths=EXCLUDED_PATHS,
+                dependency_lock_digests=dict(first.sidecar.provenance.dependency_lock_digests),
+                feature_request=first.task.splitlines()[0].removeprefix("# "),
+                visible_requirements=first.sidecar.public_requirements,
+                visible_tests=(_group(*visible),),
+                hidden_tests=(_group(*hidden_regression), _group(*new_behavior)),
                 arms=tuple(arms),
             ),
         ),
@@ -599,6 +698,9 @@ def main() -> None:
         FixtureManifestV3.model_validate_json(declared_path.read_bytes())
         if declared_path.is_file() else None
     )
+    if declared is None and len(getattr(ADDED_SCENARIOS.get(args.scenario), "arm_ids", ())) > 1:
+        declared = asyncio.run(build_shape_manifest(args.scenario, image=args.image))
+        declared_path.write_bytes(canonical_json(declared.model_dump(mode="json")) + b"\n")
     if declared is not None and (
         declared.arm_set.factor == "code_shape" or args.scenario in {"pilot", "pointer-root"}
     ):

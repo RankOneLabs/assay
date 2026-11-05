@@ -167,6 +167,14 @@ ADDED_SCENARIOS: dict[str, CommittedScenarioSpec] = {
         "oakridge-dbos-stage-pass-through",
         ("modular", "central", "cross_module", "plugin"),
     ),
+    "stage-status-report": CommittedScenarioSpec(
+        "oakridge-dbos-stage-status-report",
+        ("modular", "central", "cross_module", "plugin"),
+    ),
+    "stage-collect-artifacts": CommittedScenarioSpec(
+        "oakridge-dbos-stage-collect-artifacts",
+        ("modular", "central", "cross_module", "plugin"),
+    ),
 }
 
 

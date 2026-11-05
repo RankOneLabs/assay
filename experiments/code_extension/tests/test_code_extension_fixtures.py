@@ -261,7 +261,7 @@ def test_added_manifest_binds_every_arm_and_check(name: str) -> None:
     scenario = manifest.scenario(fixture.subject_id)
     assert scenario is not None
     assert scenario.checkpoint_sha == CHECKPOINT_SHA
-    assert manifest.arm_set.factor == ("code_shape" if name == "stage-pass-through" else "baseline")
+    assert manifest.arm_set.factor == ("code_shape" if len(fixture.arms) > 1 else "baseline")
     frozen_groups = {
         group.name: group.digest for group in (*scenario.visible_tests, *scenario.hidden_tests)
     }
@@ -273,7 +273,7 @@ def test_added_manifest_binds_every_arm_and_check(name: str) -> None:
         realization = next(item for item in scenario.arms if item.arm_id == arm.arm_id)
         assert realization.tree_digest == workflow_tree_digest(arm.repository)
         assert realization.reference_patch == digest_bytes(arm.reference_patch.encode())
-        assert realization.negative_patches == (digest_bytes(arm.negative_patch.encode()),)
+        assert digest_bytes(arm.negative_patch.encode()) in realization.negative_patches
         for check in CHECKS:
             record, digest = read_evidence(root / "qualification" / "checks", arm.arm_id, check)
             result = getattr(realization.qualification, check)

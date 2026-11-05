@@ -40,7 +40,7 @@ from assay.planning import authorize
 from assay.store import ObjectStore
 from code_extension import qualify
 from code_extension.archive import AttemptArchive
-from code_extension.bridge import ExtensionBridgeClient
+from code_extension.bridge import ExtensionBridgeClient, declared_writable_scope
 from code_extension.budget import AttemptJournal, JournaledAgentClient, RequestBudget
 from code_extension.bridge import EXTENSION_SYSTEM_PROMPT
 from code_extension.config import RunConfiguration
@@ -409,6 +409,39 @@ def prepare(config_path: Path, store_path: Path) -> dict[str, Any]:
             "kind": config.dispatch_schedule,
             "randomized": False,
             "seed_usage": "recorded metadata; subject-rotated-v1 does not consume a seed",
+        },
+        "identity": {
+            "image_digest": config.image_digest,
+            "system_prompt_digest": config.system_prompt_digest,
+            "tool_schemas_digest": config.tool_schemas_digest,
+            "scenario_qualifications": [
+                item.model_dump(mode="json") for item in config.scenario_qualifications
+            ],
+            "arms": {
+                scenario.subject_id: {
+                    arm.arm_id: {
+                        "tree_digest": arm.tree_digest,
+                        "task_prompt_digest": digest_bytes(arm.task_prompt.encode()),
+                        "writable_scope": list(
+                            declared_writable_scope(scenario.subject_id, arm.arm_id)
+                        ),
+                    }
+                    for arm in scenario.arms
+                }
+                for scenario in prepared.manifest.scenarios
+            },
+        },
+        "caps": {
+            "per_attempt_usd": str(config.per_attempt_cap_usd),
+            "per_plan_usd": str(config.total_cap_usd),
+        },
+        "expected_serial_duration": {
+            "maximum_seconds": len(plan.cells) * config.bounds.timeout_s,
+            "basis": "every attempt reaches its timeout at concurrency one, before grading",
+        },
+        "billing_recovery": {
+            "default": "halt_on_unknown_charge",
+            "resume": "requires an explicit operator acknowledgement within unchanged caps",
         },
         "unresolved_blockers": [],
     }

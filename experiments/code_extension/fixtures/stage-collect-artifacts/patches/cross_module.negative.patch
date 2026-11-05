@@ -1,0 +1,45 @@
+diff --git a/src/compiler/compile-workflow.ts b/src/compiler/compile-workflow.ts
+--- a/src/compiler/compile-workflow.ts
++++ b/src/compiler/compile-workflow.ts
+@@ -9,6 +9,7 @@
+ import { readOwn } from "../domain/records";
+ import { RUN_CONTEXT_REPOSITORY_KEY_POINTER, type RepositoryProvisioningDefinitionConfig } from "../domain/repository-refs";
+ import { selectOutputReleasePolicy } from "../domain/output-release-policy";
++import { collectArtifactsDefinitionSchema } from "../validation/collect-artifacts";
+ 
+ export interface CompileWorkflowError {
+   readonly operation: "compile_workflow";
+@@ -104,6 +105,18 @@
+   },
+ };
+ 
++export const collectArtifactsStageTypeCompiler: StageTypeCompiler = {
++  compile(stageKey, rawConfig) {
++    const parsed = collectArtifactsDefinitionSchema.safeParse(rawConfig);
++    if (!parsed.success) return err({ operation: "compile_workflow", stage_key: stageKey, detail: parsed.error.message });
++    return ok({
++      definition_config: parsed.data,
++      materialization: { kind: "artifact_collection", over: parsed.data.over, id_path: parsed.data.id_path },
++      output_release: () => ({ kind: "immediate" }),
++    });
++  },
++};
++
+ export type StageTypeCompilerRegistry = Readonly<Record<string, StageTypeCompiler>>;
+ 
+ export const delegatedCompiler = delegatedSessionStageTypeCompiler;
+diff --git a/src/validation/collect-artifacts.ts b/src/validation/collect-artifacts.ts
+new file mode 100644
+--- /dev/null
++++ b/src/validation/collect-artifacts.ts
+@@ -0,0 +1,10 @@
++import { z } from "zod";
++import { slotBindingSchema } from "./slot-binding";
++
++export const collectArtifactsDefinitionSchema = z.strictObject({
++  over: slotBindingSchema.refine(
++    (binding) => binding.from !== "literal" && binding.from !== "item",
++    "over must be able to resolve to a collection",
++  ),
++  id_path: z.string().regex(/^\/.+/, "id_path must be an absolute JSON pointer to a field"),
++});

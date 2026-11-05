@@ -22,7 +22,7 @@ from assay.pier_protocol import CandidateSubmission, RuntimeBinding, bind_exchan
 from assay.store import ObjectStore
 from code_extension.bridge import EXTENSION_SYSTEM_PROMPT, ExtensionBridgeClient
 from code_extension.evaluation import evaluate_scenario_candidate
-from code_extension.fixture import materialize, read_tree
+from code_extension.fixture import AGENT_TEST_PREFIX, materialize, read_tree
 from code_extension.fixtures import ScenarioFixture
 from code_extension.qualify import make_runner, observed_image_digest
 
@@ -33,6 +33,15 @@ SUBMIT = {
     "checks_performed": "model-free",
     "remaining_work": None,
 }
+
+
+AGENT_PROBE = 'import { expect, test } from "bun:test";\ntest("probe", () => expect(1).toBe(1));\n'
+
+
+# Test output carries timings, and gate records must reproduce byte for byte.
+AGENT_PROBE_COMMAND = (
+    f"bun test ./{AGENT_TEST_PREFIX.rstrip('/')} >/dev/null 2>&1 && echo PASSED || echo FAILED"
+)
 
 
 class _NoModelFactory:
@@ -297,6 +306,17 @@ def _arm_access_probe(
         ("run_command", {"command": f"rm {quote(link)}"}),
     ])
     expected.extend(["exit=0", "error:", "exit=0"])
+    if AGENT_TEST_PREFIX in fixture.sidecar.writable_implementation_scope:
+        # The documented command works, and the namespace is no way out of the workspace.
+        agent_link = AGENT_TEST_PREFIX + "probe-link"
+        attempts.extend([
+            ("write_file", {"path": AGENT_TEST_PREFIX + "probe.test.ts", "content": AGENT_PROBE}),
+            ("run_command", {"command": AGENT_PROBE_COMMAND}),
+            ("run_command", {"command": f"ln -s /home/steve/.ssh/id_rsa {quote(agent_link)}"}),
+            ("read_file", {"path": agent_link}),
+            ("run_command", {"command": "rm -r " + AGENT_TEST_PREFIX.rstrip("/")}),
+        ])
+        expected.extend(["", "exit=0\nPASSED", "exit=0", "error:", "exit=0"])
     return _observe_access_attempts(fixture, manifest, image, attempts, expected)
 
 
