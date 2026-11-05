@@ -50,6 +50,28 @@ test("semantics: omitted fields take their documented defaults", async () => {
   });
 });
 
+test.each([
+  ["info"],
+  ["warning"],
+  ["error"],
+])("semantics: accepts severity %s and defaults max_items alone", async (severity) => {
+  const compiled = await compile({ channel: "ops", severity });
+  expect(compiled.ok).toBe(true);
+  if (!compiled.ok) return;
+  expect(compiled.value.stages.report?.executor.definition_config).toEqual({
+    channel: "ops", severity, max_items: 20,
+  });
+});
+
+test("semantics: defaults severity alone", async () => {
+  const compiled = await compile({ channel: "ops", max_items: 5 });
+  expect(compiled.ok).toBe(true);
+  if (!compiled.ok) return;
+  expect(compiled.value.stages.report?.executor.definition_config).toEqual({
+    channel: "ops", severity: "info", max_items: 5,
+  });
+});
+
 test("semantics: one scalar unit releases outputs immediately", async () => {
   const compiled = await compile({ channel: "ops" });
   expect(compiled.ok).toBe(true);

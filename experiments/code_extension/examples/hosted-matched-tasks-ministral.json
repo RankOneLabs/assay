@@ -6,7 +6,7 @@
     },
     {
       "scenario": "stage-status-report",
-      "manifest_digest": "sha256:5e95b361736ab081f6974ee0a9d209734f1d506ccaf123cca206a3b8dd08fed4"
+      "manifest_digest": "sha256:5cda08bd43381ce276628ea7f687c7a72db5d12c1dfc5fc07db259ccfb280f83"
     }
   ],
   "cohort": "matched-tasks-example-ministral",
