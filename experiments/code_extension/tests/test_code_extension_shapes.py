@@ -233,7 +233,7 @@ async def test_hosted_shape_grid_retains_each_arm_and_reproduces_reports(
             return executor.submit(function, *args, **kwargs).result()
 
     async def grade(_self: Any, **kwargs: Any) -> WorkflowCorrectnessResult:
-        assert kwargs["patch"] and kwargs["enforce_extension_scope"]
+        assert kwargs["patch"] and kwargs["writable_scope"] == ("src/compiler/",)
         return WorkflowCorrectnessResult(
             "correct", tuple(GroupResult(group.name, "passed") for group in kwargs["groups"]),
             preflight=PreflightResult("passed"),

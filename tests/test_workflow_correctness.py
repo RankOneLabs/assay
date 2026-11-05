@@ -66,6 +66,8 @@ def prepare_fake_toolchain(
         "args = sys.argv[1:]\n"
         "if '--noEmit' in args and 'FAIL' in Path('src.ts').read_text():\n"
         "    sys.exit(1)\n"
+        "if '--noEmit' in args and Path('tests/agent').exists():\n"
+        "    sys.exit(1)\n"
         "with open(os.environ['ASSAY_TSC_LOG'], 'a', encoding='utf-8') as log:\n"
         "    log.write(' '.join(args) + '\\n')\n"
         "if args == ['--version']:\n"
@@ -127,7 +129,8 @@ async def run_fake_docker(
     expected_tree_digest: str | None = None,
     patch: str = PATCH,
     baseline: dict[str, str] | None = None,
-    enforce_extension_scope: bool = False,
+    writable_scope: tuple[str, ...] | None = None,
+    diagnostic_scope: tuple[str, ...] = (),
 ) -> correctness.WorkflowCorrectnessResult:
     source_tree = baseline if baseline is not None else BASELINE
     async def check_runtime() -> None:
@@ -165,7 +168,8 @@ async def run_fake_docker(
         or workflow_tree_digest({**source_tree, "src.ts": FINAL_TREE["src.ts"]}),
         patch=patch,
         groups=groups_to_run,
-        enforce_extension_scope=enforce_extension_scope,
+        writable_scope=writable_scope,
+        diagnostic_scope=diagnostic_scope,
     )
 
 
@@ -379,7 +383,7 @@ async def test_extension_scope_refuses_other_paths_and_records_evidence(
     result = await run_fake_docker(
         monkeypatch, runner, tmp_path / "work", groups_to_run=groups(), patch=patch,
         expected_tree_digest=workflow_tree_digest(source_tree),
-        enforce_extension_scope=True,
+        writable_scope=("src/",),
     )
     assert result.verdict == "incorrect" and result.cause == "patch_rejected"
     assert result.preflight == correctness.PreflightResult("failed", "patch_rejected")
@@ -387,6 +391,89 @@ async def test_extension_scope_refuses_other_paths_and_records_evidence(
     assert result.rejected_changes == (correctness.RejectedChange(
         "README.md", "refused", None, correctness.digest_bytes(b"candidate\n"),
     ),)
+
+
+def added_file(path: str, source: str) -> str:
+    return (
+        f"diff --git a/{path} b/{path}\nnew file mode 100644\n"
+        f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+{source}\n"
+    )
+
+
+AGENT_TEST = "tests/agent/own.test.ts"
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_tests_are_removed_before_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The fake tsc fails while tests/agent exists, as a type error there would.
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups(),
+        patch=PATCH + added_file(AGENT_TEST, "const broken: number = 'text';"),
+        expected_tree_digest=workflow_tree_digest({
+            **FINAL_TREE, AGENT_TEST: "const broken: number = 'text';\n",
+        }),
+        writable_scope=("src.ts", "tests/agent/"), diagnostic_scope=("tests/agent/",),
+    )
+    assert result.verdict == "correct"
+    assert result.rejected_changes == ()
+    assert not (tmp_path / "work" / "tests" / "agent").exists()
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_test_cannot_replace_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups(),
+        patch=added_file(AGENT_TEST, "// passes"),
+        expected_tree_digest=workflow_tree_digest({**BASELINE, AGENT_TEST: "// passes\n"}),
+        writable_scope=("src.ts", "tests/agent/"), diagnostic_scope=("tests/agent/",),
+    )
+    assert result.verdict == "incorrect"
+    assert all(group.status == "failed" for group in result.groups)
+
+
+@pytest.mark.asyncio
+async def test_a_path_outside_the_declared_scope_is_refused_even_under_src(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups(),
+        patch=added_file("src/other.ts", "export {};"),
+        expected_tree_digest=workflow_tree_digest({**BASELINE, "src/other.ts": "export {};\n"}),
+        writable_scope=("src/compiler/",),
+    )
+    assert result.cause == "patch_rejected"
+    assert [item.path for item in result.rejected_changes] == ["src/other.ts"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("writable", "baseline"), [
+    (("src/",), BASELINE),
+    (None, BASELINE),
+    (("src/", "tests/agent/"), {**BASELINE, AGENT_TEST: "// shipped\n"}),
+])
+async def test_diagnostic_scope_must_be_writable_and_start_empty(
+    writable: tuple[str, ...] | None, baseline: dict[str, str],
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups(), baseline=baseline,
+        writable_scope=writable, diagnostic_scope=("tests/agent/",),
+    )
+    assert result.cause == "invalid_diagnostic_scope"
+    assert result.attribution == "evaluator_infrastructure"
+    assert not (tmp_path / "tsc.log").exists()
 
 
 @pytest.mark.asyncio
@@ -404,7 +491,7 @@ async def test_digest_mismatch_precedes_protected_restoration(
     result = await run_fake_docker(
         monkeypatch, runner, tmp_path / "work", baseline=baseline, patch=patch,
         expected_tree_digest="sha256:" + "0" * 64, groups_to_run=groups(),
-        enforce_extension_scope=True,
+        writable_scope=("src/",),
     )
     assert result.verdict == "unavailable"
     assert result.cause == "candidate_tree_digest_mismatch"

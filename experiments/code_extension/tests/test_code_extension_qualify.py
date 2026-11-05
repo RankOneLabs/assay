@@ -6,12 +6,14 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from code_extension import diagnose, qualify
+from code_extension import diagnose, probe, qualify
 from code_extension.fixture import PILOT, SUBJECT_ID, load_fixture, materialize, read_tree
-from code_extension.fixtures import load_scenario
+from code_extension.fixtures import ScenarioFixture, load_scenario
 from code_extension.settings import SMOKE_SUBJECT_IDS
 
 from assay.canonical import digest_bytes
@@ -182,6 +184,81 @@ async def test_dispatch_full_gate_reproduces_committed_bytes() -> None:
     assert fresh == manifest
 
 
+def _agent_test(source: str) -> str:
+    path = "tests/agent/own.test.ts"
+    return (
+        f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
+        f"@@ -0,0 +1 @@\n+{source}\n"
+    )
+
+
+def _with_agent_tests(monkeypatch: pytest.MonkeyPatch, patch_for: Callable[..., str]) -> tuple[
+    ScenarioFixture, FixtureManifestV3,
+]:
+    """A shape arm with the agent-test namespace, as a new matched task declares it."""
+    fixture = load_scenario("stage-pass-through", arm_id="modular")
+    sidecar = fixture.sidecar.model_copy(update={
+        "writable_implementation_scope": ("src/compiler/", "tests/agent/"),
+    })
+    monkeypatch.setattr("code_extension.bridge.sidecar_for_subject", lambda *_: sidecar)
+    arm = replace(fixture.arms[0], reference_patch=patch_for(fixture.arms[0]))
+    manifest = FixtureManifestV3.model_validate_json(
+        (PILOT.parent / "stage-pass-through/qualification/manifest.json").read_bytes()
+    )
+    return replace(fixture, arms=(arm,), sidecar=sidecar), manifest
+
+
+def _require_extension_image() -> None:
+    if not _docker_ready():
+        if os.environ.get("ASSAY_REQUIRE_DOCKER"):
+            pytest.fail("Docker is unavailable")
+        pytest.skip("Docker is unavailable")
+    _require_dispatch_image(qualify.IMAGE_TAG)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", [
+    'import { expect, test } from "bun:test"; test("own", () => expect(1).toBe(1));',
+    'const broken: number = "text"; export {};',
+])
+async def test_agent_test_submission_passes_production_path(
+    source: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_extension_image()
+    fixture, manifest = _with_agent_tests(
+        monkeypatch, lambda arm: arm.reference_patch + _agent_test(source),
+    )
+    record = await probe.reference_submission(fixture, manifest, qualify.IMAGE_TAG)
+    assert record["independent_evaluator_verdict"] == "correct"
+    assert record["reference_tree_matches"] is True
+    assert record["writable_prefixes"] == ["src/compiler/", "tests/agent/"]
+
+
+@pytest.mark.asyncio
+async def test_passing_agent_test_cannot_rescue_failing_feature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_extension_image()
+    fixture, manifest = _with_agent_tests(
+        monkeypatch, lambda arm: arm.negative_patches[0] + _agent_test(
+            'import { expect, test } from "bun:test"; test("own", () => expect(1).toBe(1));',
+        ),
+    )
+    with pytest.raises(ValueError, match="submission was incorrect"):
+        await probe.reference_submission(fixture, manifest, qualify.IMAGE_TAG)
+
+
+def test_submission_scope_keeps_shipped_tests_protected_beside_agent_tests() -> None:
+    from assay_pier_bridge.paths import ArtifactCollectionRejected, check_submission_scope
+
+    scope = ("src/compiler/", "tests/agent/")
+    check_submission_scope({}, {"tests/agent/own.test.ts": b"x"}, writable_prefixes=scope)
+    for path in ("tests/visible/wait.test.ts", "tests/agent/tsconfig.json"):
+        with pytest.raises(ArtifactCollectionRejected) as rejected:
+            check_submission_scope({}, {path: b"x"}, writable_prefixes=scope)
+        assert rejected.value.cause == "tampering"
+
+
 def test_dispatch_image_requirement_is_separate_from_docker_daemon_requirement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -269,9 +346,12 @@ def test_visible_reset_removes_candidate_edits_before_preflight(tmp_path: Path) 
     (tmp_path / changed).write_text("candidate edit")
     addition = tmp_path / "tests/visible/added.test.ts"
     addition.write_text("invalid TypeScript")
+    agent_test = tmp_path / "tests/agent/own.test.ts"
+    agent_test.parent.mkdir()
+    agent_test.write_text("invalid TypeScript")
     diagnose._reset_visible_tests(tmp_path, fixture)
     assert (tmp_path / changed).read_text() == fixture.repository[changed]
-    assert not addition.exists()
+    assert not addition.exists() and not agent_test.exists()
 
 
 def test_typecheck_replay_reports_first_errors_without_changing_record(

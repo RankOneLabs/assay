@@ -420,6 +420,17 @@ The shared workflow-edit schedule assertions and dry-run schedule check need
 review. This is an open operator decision. Until then the plan
 uses `subject-rotated-v1`; the launch summary names this unresolved blocker.
 
+## Agent-test namespace
+
+Grader revision 4 replaces the evaluator's hard-coded `src/` and `tests/visible/`
+acceptance with the scope each sidecar declares, so worker and evaluator read one
+value. Scope is now per subject and arm in the evaluator configuration. Scenarios
+with a narrower scope such as `src/compiler/` are graded against it; the worker
+already refused those paths at submission, but a regrade of a recovered candidate
+that wrote elsewhere under `src/` now reports `patch_rejected`. Committed sidecars
+do not change here: `tests/agent/` applies to scenarios that declare it. Revision
+3 grades and archives stay as recorded.
+
 ## Offline reporting and replay
 
 - The runner accepts `report --archive DIR --output DIR` and `regrade --archive DIR --image DIGEST --output DIR`. Archive reading stays in `publish.py`; `report.py` renders from ledger rows and the ledger's counts, rates, states and terminal causes. The committed fixture and run locations remain command defaults. CSV, JSON and Markdown output names are fixed, and rendered bytes contain no generation time, host or absolute path.

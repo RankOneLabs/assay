@@ -242,6 +242,12 @@ with intent; and content-addressed refs for leak scan, access probe, no-op,
 scripted submission and double reproduction evidence. The fixture cohort will
 load and bind these declarations to its committed scenarios.
 
+A scenario opts into agent-written tests by adding `tests/agent/` to its writable
+scope. The bridge then tells the agent how to run them and that they are not
+graded. The evaluator grades against the same declared scope the worker enforces,
+removes `tests/agent/` before preflight, and the changed-path measure ignores it.
+Shipped tests, dependency files and root configuration stay protected.
+
 `protocol.py` identifies the one-turn extension protocol as `ce-v1` version
 `1.0.0`. Literal digests freeze the bridge's system prompt, a four-part rendered
 task witness, ordered tool schemas and `submit_output` submission schema.

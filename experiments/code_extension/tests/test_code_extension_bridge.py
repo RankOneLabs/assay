@@ -100,6 +100,14 @@ def test_frozen_ce_identities_refuse_drift_before_scripted_turn(
     with pytest.raises(ExtensionIdentityRejected, match="protected_assets_drift"):
         bridge.configuration()
     bridge.scenario_sidecar = fixture.sidecar
+    assert "tests/agent" not in bridge._message_prefix()[0]["content"]
+    bridge.scenario_sidecar = fixture.sidecar.model_copy(update={
+        "writable_implementation_scope": ("src/domain/", "tests/agent/"),
+    })
+    guidance = bridge._message_prefix()[0]["content"]
+    assert "- tests/agent/" in guidance and "`bun test ./tests/agent`" in guidance
+    assert "not graded" in guidance and guidance.index("not graded") < guidance.index("# Budget")
+    bridge.scenario_sidecar = fixture.sidecar
     configuration = bridge.configuration()
     scenario = qualified.scenario(fixture.subject_id)
     assert scenario is not None

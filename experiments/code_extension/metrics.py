@@ -21,6 +21,7 @@ from assay.code_metrics import compare
 from assay.code_metrics.cli_snapshot import snapshot_directory
 from assay.code_metrics.models import CodeMetricsComparisonV7
 from assay.store import ObjectStore
+from code_extension.fixture import AGENT_TEST_PREFIX
 from code_extension.ledger import AttemptRow
 
 
@@ -140,7 +141,10 @@ def measure_pair(
     ))
     return DiffMeasures(
         comparison, changed,
-        tuple(path for path in changed if path not in expected_change_paths),
+        tuple(
+            path for path in changed
+            if path not in expected_change_paths and not path.startswith(AGENT_TEST_PREFIX)
+        ),
         comparison.patch.added_lines, comparison.patch.removed_lines,
     )
 

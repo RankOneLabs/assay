@@ -47,7 +47,7 @@ from assay.pier_packaging import render_instruction
 from code_extension.arms import require_declared_codeintel_arm
 from code_extension.codeintel import PreparedExtensionCodeIntel, prepare_extension_codeintel
 from code_extension.dispatch import cell_idempotency_key
-from code_extension.fixture import ADDED_SCENARIOS, SUBJECT_ID
+from code_extension.fixture import ADDED_SCENARIOS, AGENT_TEST_PREFIX, SUBJECT_ID
 from code_extension.fixtures import ExtensionScenarioSidecar, sidecar_for_subject
 from code_extension.prompts import render_arm_prompts
 from code_extension.settings import ExtensionAgentSettings
@@ -72,6 +72,13 @@ EXTENSION_SYSTEM_PROMPT = (
     "of completion, checks performed, and remaining work. Hidden checks and reference "
     "answers are unavailable. Do not use network access or install packages."
 )
+AGENT_TEST_GUIDANCE = (
+    "# Your own tests\n\n"
+    f"You may add new test files under {AGENT_TEST_PREFIX} and run them with "
+    f"`bun test ./{AGENT_TEST_PREFIX.rstrip('/')}`. They are not graded and cannot "
+    "change the result: the evaluator removes them before its own checks. The public "
+    "`tsc --noEmit -p tsconfig.json` check includes them; the evaluator's does not.\n\n"
+)
 
 
 class UnauthorizedModelRoute(ValueError):
@@ -84,6 +91,23 @@ class CodeIntelLeakRejected(ValueError):
 
 class ExtensionIdentityRejected(ValueError):
     """A frozen ce-v1 identity differs before model dispatch."""
+
+
+def declared_writable_scope(
+    subject_id: str, arm_id: str, sidecar: ExtensionScenarioSidecar | None = None,
+) -> tuple[str, ...]:
+    """The one scope the worker enforces and the evaluator grades against."""
+    declared = sidecar or sidecar_for_subject(subject_id, arm_id)
+    if declared is not None:
+        if declared.subject_id != subject_id:
+            raise ValueError("extension sidecar subject differs from scenario")
+        prefixes = declared.writable_implementation_scope
+        if any(not prefix.endswith("/") for prefix in prefixes):
+            raise ValueError("extension writable scope must contain directory prefixes")
+        return prefixes
+    if subject_id in LEGACY_SUBJECT_IDS:
+        return LEGACY_WRITABLE_PREFIXES
+    raise ValueError("extension scenario has no writable-scope sidecar")
 
 
 def require_authorized_route(route: bridge_protocol.ModelRoute) -> None:
@@ -177,19 +201,9 @@ class ExtensionBridgeClient:
     def _writable_prefixes(self) -> tuple[str, ...]:
         if self.scenario is None:
             raise ValueError("extension scenario is required for writable scope")
-        sidecar = self.scenario_sidecar or sidecar_for_subject(
-            self.scenario.subject_id, self.arm_id,
+        return declared_writable_scope(
+            self.scenario.subject_id, self.arm_id, self.scenario_sidecar,
         )
-        if sidecar is not None:
-            if sidecar.subject_id != self.scenario.subject_id:
-                raise ValueError("extension sidecar subject differs from scenario")
-            prefixes = sidecar.writable_implementation_scope
-            if any(not prefix.endswith("/") for prefix in prefixes):
-                raise ValueError("extension writable scope must contain directory prefixes")
-            return prefixes
-        if self.scenario.subject_id in LEGACY_SUBJECT_IDS:
-            return LEGACY_WRITABLE_PREFIXES
-        raise ValueError("extension scenario has no writable-scope sidecar")
 
     def _check_frozen_identity(
         self, tools: list[dict[str, Any]] | tuple[dict[str, Any], ...],
@@ -272,7 +286,9 @@ class ExtensionBridgeClient:
     def _message_prefix(self) -> tuple[dict[str, Any], ...]:
         """Tell the agent the same edit scope and limits enforced at submission."""
         settings = self._settings()
-        scope = "\n".join(f"- {prefix}" for prefix in self._writable_prefixes())
+        prefixes = self._writable_prefixes()
+        scope = "\n".join(f"- {prefix}" for prefix in prefixes)
+        agent_tests = AGENT_TEST_GUIDANCE if AGENT_TEST_PREFIX in prefixes else ""
         prefix: tuple[dict[str, Any], ...] = ({
             "role": "user",
             "content": (
@@ -282,6 +298,7 @@ class ExtensionBridgeClient:
                 "All other paths are read-only, including visible tests and dependency "
                 "and configuration files outside the allowed prefixes. An edit outside "
                 "this scope rejects the submission.\n\n"
+                f"{agent_tests}"
                 "# Budget\n\n"
                 f"{settings.timeout_s:g} seconds; at most {settings.max_turns} model "
                 f"requests; at most {settings.max_output_tokens} output tokens per request."

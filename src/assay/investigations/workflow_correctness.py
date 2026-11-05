@@ -108,7 +108,7 @@ _INFRASTRUCTURE_CAUSES = frozenset({
     "infrastructure_deadline", "toolchain_unavailable", "fixture_asset_unavailable",
     "image_digest_mismatch", "baseline_digest_mismatch", "realization_digest_mismatch",
     "restored_test_mismatch", "invalid_test_groups", "invalid_test_command",
-    "missing_test_group", "invalid_patch", "invalid_input",
+    "missing_test_group", "invalid_patch", "invalid_input", "invalid_diagnostic_scope",
 })
 
 
@@ -217,14 +217,14 @@ baseline_files = {name: source.encode('utf-8') for name, source in payload['base
 restored_paths = {name for group in payload['groups'] if group['restores']
                   for name in group['files']}
 protected = {'package.json', 'package-lock.json', 'tsconfig.json'}
+writable_scope = payload['writable_scope']
 rejections = []
 for name in sorted(candidate_files.keys() | baseline_files.keys()):
     original, changed = baseline_files.get(name), candidate_files.get(name)
     if original == changed:
         continue
     restore = name in protected or name.startswith('tests/visible/') or name in restored_paths
-    if not restore and (not payload['enforce_extension_scope']
-                        or name.startswith('src/') or name.startswith('tests/visible/')):
+    if not restore and (writable_scope is None or name.startswith(tuple(writable_scope))):
         continue
     rejections.append({'path': name, 'disposition': 'restored' if restore else 'refused',
                        'baseline_digest': 'sha256:' + hashlib.sha256(original).hexdigest()
@@ -268,7 +268,7 @@ else:
         for name in candidate_files:
             if name.startswith('tests/visible/') and name not in baseline_files:
                 (root / name).unlink()
-        if payload['enforce_extension_scope'] or any(
+        if writable_scope is not None or any(
             group['restores'] for group in payload['groups']
         ):
             visible = root / 'tests' / 'visible'
@@ -281,6 +281,10 @@ else:
                     target.write_bytes(source)
             copy_tests(True)
 
+    # Diagnostic tests are the candidate's own: nothing below may read them.
+    for prefix in payload['diagnostic_scope']:
+        if (root / prefix).is_dir():
+            shutil.rmtree(root / prefix)
     reset_visible_tests()
     test_paths = [root / name for group in payload['groups']
                   if not group['restores'] for name in group['files']]
@@ -380,8 +384,16 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
         expected_tree_digest: str,
         patch: str,
         groups: tuple[WorkflowTestGroup, ...],
-        enforce_extension_scope: bool = False,
+        writable_scope: tuple[str, ...] | None = None,
+        diagnostic_scope: tuple[str, ...] = (),
     ) -> WorkflowCorrectnessResult:
+        """Grade one candidate.
+
+        A declared `writable_scope` refuses changes outside it. `diagnostic_scope`
+        names the part of that scope holding the candidate's own tests, which are
+        removed before preflight so they cannot affect the grade.
+        """
+
         def unavailable(
             cause: str, attribution: Attribution | None = None
         ) -> WorkflowCorrectnessResult:
@@ -397,6 +409,10 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
             tree = validate_repository(baseline)
             if workflow_tree_digest(tree) != baseline_tree_digest:
                 return unavailable("baseline_digest_mismatch")
+            if not set(diagnostic_scope) <= set(writable_scope or ()) or any(
+                path.startswith(diagnostic_scope) for path in tree
+            ):
+                return unavailable("invalid_diagnostic_scope")
             if tuple(group.name for group in groups) != GROUP_NAMES:
                 return unavailable("invalid_test_groups")
             for group in groups:
@@ -430,7 +446,8 @@ class DockerWorkflowRunner(SandboxLifecycle[WorkflowRunnerSettings]):
                 "max_output_bytes": self.settings.max_output_bytes,
                 "toolchain": self.settings.toolchain,
                 "expected_versions": self.settings.expected_versions,
-                "enforce_extension_scope": enforce_extension_scope,
+                "writable_scope": None if writable_scope is None else list(writable_scope),
+                "diagnostic_scope": list(diagnostic_scope),
             }
         )
         name = "assay-workflow-correctness-" + uuid.uuid4().hex

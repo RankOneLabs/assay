@@ -28,7 +28,14 @@ from assay.pier_protocol import CandidateSubmission
 from assay.store import ObjectStore
 from code_extension.archive import AttemptArchiveRecord
 from code_extension.evaluation import GRADER_REVISION, evaluate_scenario_candidate
-from code_extension.fixture import PILOT, PilotFixture, load_fixture, materialize, read_tree
+from code_extension.fixture import (
+    AGENT_TEST_PREFIX,
+    PILOT,
+    PilotFixture,
+    load_fixture,
+    materialize,
+    read_tree,
+)
 from code_extension.metrics import artifact_bytes
 from code_extension.qualify import make_runner, require_image
 
@@ -54,9 +61,9 @@ sys.stdout.buffer.write(result.stdout + result.stderr)
 
 
 def _reset_visible_tests(root: Path, fixture: PilotFixture) -> None:
-    visible = root / "tests" / "visible"
-    if visible.exists():
-        shutil.rmtree(visible)
+    for directory in (root / "tests" / "visible", root / AGENT_TEST_PREFIX):
+        if directory.exists():
+            shutil.rmtree(directory)
     for group in fixture.groups:
         if group.restores:
             for name, source in group.files.items():
