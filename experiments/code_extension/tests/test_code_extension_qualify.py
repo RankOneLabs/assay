@@ -34,7 +34,10 @@ def _committed_manifest() -> FixtureManifestV3:
     return FixtureManifestV3.model_validate_json(MANIFEST.read_bytes())
 
 
-@pytest.mark.parametrize("name", ("pilot", "pointer-root", "stage-pass-through"))
+@pytest.mark.parametrize("name", (
+    "pilot", "pointer-root", "stage-pass-through", "stage-status-report",
+    "stage-collect-artifacts",
+))
 def test_frozen_scenario_cli_reuses_its_manifest_and_record_directory(
     name: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

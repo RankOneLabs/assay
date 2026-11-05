@@ -232,6 +232,23 @@ exported object makes verification fail for integrity. The archive is test
 output, not committed run evidence; the committed report does not gain a live
 attempt row.
 
+## Matched-task example configs
+
+`examples/hosted-matched-tasks-ministral.json` and `-qwen.json` prepare the two
+new tasks across all four shapes at five repeats: 40 attempts per route, as two
+separate plans. They differ only in route, cohort label and recorded seed. Their
+caps are illustrative and authorize nothing, and revalidate route availability and
+pricing before any live launch.
+
+```sh
+uv run python -m code_extension.run prepare --config code_extension/examples/hosted-matched-tasks-ministral.json --store .assay-extension
+```
+
+`prepare` dispatches nothing and needs no API key. The launch summary under
+`STORE/plans/<digest>/` names every coordinate, the route, the image, the prompt,
+tool and scope identities, the caps, the worst-case serial duration and the billing
+recovery default. The combined cap across plans belongs to the multi-plan launcher.
+
 ## ce-v1 contract and protocol
 
 `contract.py` defines `assay-extension-scenario-sidecar/0.1.0` alongside the
@@ -299,6 +316,8 @@ distinct from every refused qualification-smoke id (`oakridge-dbos-smoke-wf12`,
 | --- | --- | --- | --- | --- |
 | `oakridge-dbos-context-defaults` | Cross-module extension in the qualified baseline pilot | Optional context binding defaults | No | `f3b3ffca43e43672ff2f58ab797d65c7532aaed8` |
 | `oakridge-dbos-stage-pass-through` | Modular dispatch, central switch or registry, cross-module extension, and configuration-driven plugin as matched arms | Compile a `pass_through` stage whose outputs release immediately and whose materialization is scalar | No | `f3b3ffca43e43672ff2f58ab797d65c7532aaed8` |
+| `oakridge-dbos-stage-status-report` | The same four matched shapes | Compile a `status_report` stage with a typed configuration, documented defaults and a normalized executor contract | No | `f3b3ffca43e43672ff2f58ab797d65c7532aaed8` |
+| `oakridge-dbos-stage-collect-artifacts` | The same four matched shapes | Compile a `collect_artifacts` stage using the existing `artifact_collection` contract | No | `f3b3ffca43e43672ff2f58ab797d65c7532aaed8` |
 | `oakridge-dbos-pointer-root` | Local utility edit | Accept `#` as the root JSON pointer in the shared pointer reader | Yes: the edit needs no nonlocal registration or caller tracing | `f3b3ffca43e43672ff2f58ab797d65c7532aaed8` |
 
 The stage scenario's four trees live under `repository/<arm>/`; the pointer

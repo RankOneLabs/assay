@@ -433,6 +433,21 @@ scope retained with each attempt, and reads the current checkout only for an arc
 with no attempt record. Committed sidecars do not change here: `tests/agent/` applies
 to scenarios that declare it. Revision 3 grades and archives stay as recorded.
 
+## Matched tasks
+
+`stage-status-report` and `stage-collect-artifacts` add two four-shape tasks to
+`stage-pass-through`. `authoring.py` derives their arms from the pass-through trees
+and one solution each, and `qualify.py` builds a manifest for a new shape scenario,
+which it could previously only replay. Both tasks declare `src/` and `tests/agent/`.
+
+`STUDY_GROUPS` stays at three. Each feature test name starts with `reachability:` or
+`semantics:`, and the evaluator's retained group output names the failing tests, so
+analysis reads the split from there. The reachability test fails only when normal
+dispatch cannot find the stage, and it checks the existing `unregistered stage type`
+message rather than a passing compile, so a registered but wrong compiler counts as
+reachable. Semantics tests need a reachable stage, so count a semantic failure only
+where reachability passed.
+
 ## Offline reporting and replay
 
 - The runner accepts `report --archive DIR --output DIR` and `regrade --archive DIR --image DIGEST --output DIR`. Archive reading stays in `publish.py`; `report.py` renders from ledger rows and the ledger's counts, rates, states and terminal causes. The committed fixture and run locations remain command defaults. CSV, JSON and Markdown output names are fixed, and rendered bytes contain no generation time, host or absolute path.
