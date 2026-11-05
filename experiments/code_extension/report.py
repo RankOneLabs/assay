@@ -135,8 +135,8 @@ def render_from_ledgers(
         subject: [row for row in rows if row.subject_id == subject] for subject in subjects
     }
     by_arm = {arm: [row for row in rows if row.arm_id == arm] for arm in arms}
-    common: set[tuple[int, str]] = set()
-    for index, ledger in enumerate(ledgers):
+    common: set[str] = set()
+    for ledger in ledgers:
         run_arms = {row.arm_id for row in ledger.rows}
         if len(run_arms) >= 2:
             subjects_in_every_arm = set.intersection(
@@ -145,7 +145,7 @@ def render_from_ledgers(
                     for arm in sorted(run_arms)
                 )
             )
-            common.update((index, subject) for subject in subjects_in_every_arm)
+            common.update(subjects_in_every_arm)
     measures = secondary or {}
     policy = index_policy or {}
     if any(

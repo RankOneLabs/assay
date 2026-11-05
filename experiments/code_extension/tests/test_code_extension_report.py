@@ -342,6 +342,20 @@ def test_one_common_subject_is_descriptive_only() -> None:
     assert "p-value" not in report and "adjusted interval" not in report
 
 
+def test_same_subjects_in_two_runs_count_once_for_pair_eligibility() -> None:
+    def run(name: str) -> AttemptLedger:
+        return AttemptLedger(tuple(
+            _row(f"{name}-{index}-{arm}", f"subject-{index}", arm,
+                 completed=True, accounting=Accounting())
+            for index in range(5) for arm in ("modular", "central")
+        ))
+
+    report = render_from_ledgers((run("first-model"), run("second-model")))
+    assert "Common subjects with an attempt in every arm of a multi-arm run: 5." in report
+    assert "Descriptive only" in report
+    assert "Paired inference is eligible" not in report
+
+
 def test_single_arm_run_is_not_pair_eligible_with_ten_subjects() -> None:
     ledger = AttemptLedger(
         tuple(

@@ -855,10 +855,11 @@ async def execute_plan(
         """Only active slots start; a stop signal halts new dispatch, active calls still drain."""
         nonlocal interruption
         iterator = iter(items)
+        abandoned = False
 
         async def consume() -> None:
             nonlocal fatal
-            while not should_stop():
+            while not abandoned and not should_stop():
                 try:
                     item = next(iterator)
                 except StopIteration:
@@ -899,6 +900,8 @@ async def execute_plan(
                 if first_error is not None:
                     raise first_error
         except BaseException:
+            # A worker can swallow cancellation and return; its loop must not start another.
+            abandoned = True
             record = await _drain(tasks)
             if record is not None and interruption is None:
                 interruption = record

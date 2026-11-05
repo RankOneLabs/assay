@@ -282,6 +282,7 @@ async def test_resume_refuses_a_cleanup_timeout_while_its_worker_is_still_runnin
     finally:
         release.set()
         await asyncio.sleep(0.01)
+    assert len(calls) == 1, "an abandoned dispatch loop started another cell"
 
 
 async def test_resume_refuses_an_empty_v3_checkpoint(
