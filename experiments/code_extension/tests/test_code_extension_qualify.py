@@ -18,6 +18,7 @@ from code_extension.settings import SMOKE_SUBJECT_IDS
 
 from assay.canonical import digest_bytes
 from assay.fixture_manifest import FixtureManifestV3
+from assay.investigations import workflow_correctness
 from assay.investigations.workflow_correctness import (
     GroupResult,
     WorkflowCorrectnessResult,
@@ -246,6 +247,12 @@ async def test_passing_agent_test_cannot_rescue_failing_feature(
     )
     with pytest.raises(ValueError, match="submission was incorrect"):
         await probe.reference_submission(fixture, manifest, qualify.IMAGE_TAG)
+
+
+def test_evaluator_refuses_every_name_the_worker_protects() -> None:
+    from assay_pier_bridge.paths import PROTECTED_NAMES
+
+    assert all(repr(name) in workflow_correctness._HARNESS for name in PROTECTED_NAMES)
 
 
 def test_submission_scope_keeps_shipped_tests_protected_beside_agent_tests() -> None:

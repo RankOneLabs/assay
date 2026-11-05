@@ -217,6 +217,9 @@ baseline_files = {name: source.encode('utf-8') for name, source in payload['base
 restored_paths = {name for group in payload['groups'] if group['restores']
                   for name in group['files']}
 protected = {'package.json', 'package-lock.json', 'tsconfig.json'}
+# The worker refuses these at any depth, but a recovered candidate never reached it.
+scoped_protected_names = {'package.json', 'package-lock.json', 'bun.lock', 'bun.lockb',
+                          'bunfig.toml', 'tsconfig.json'}
 writable_scope = payload['writable_scope']
 rejections = []
 for name in sorted(candidate_files.keys() | baseline_files.keys()):
@@ -224,7 +227,11 @@ for name in sorted(candidate_files.keys() | baseline_files.keys()):
     if original == changed:
         continue
     restore = name in protected or name.startswith('tests/visible/') or name in restored_paths
-    if not restore and (writable_scope is None or name.startswith(tuple(writable_scope))):
+    in_scope = writable_scope is None or (
+        name.startswith(tuple(writable_scope))
+        and name.rsplit('/', 1)[-1] not in scoped_protected_names
+    )
+    if not restore and in_scope:
         continue
     rejections.append({'path': name, 'disposition': 'restored' if restore else 'refused',
                        'baseline_digest': 'sha256:' + hashlib.sha256(original).hexdigest()

@@ -197,6 +197,29 @@ async def test_grading_uses_the_scope_the_worker_enforces(
 
 
 @pytest.mark.asyncio
+async def test_a_retained_scope_is_used_without_reading_the_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ObjectStore(tmp_path / "store")
+    fixture = load_pilot_study_fixture(store)
+    scenario = fixture.scenarios[0]
+    baseline = scenario.realizations["baseline"]
+    runner = RecordingRunner(fixture.manifest.observed_runtime_image_digest)
+
+    def absent(*_: object) -> None:
+        raise AssertionError("a replay read the current checkout")
+
+    monkeypatch.setattr("code_extension.bridge.sidecar_for_subject", absent)
+    await evaluate_scenario_candidate(
+        store=store, manifest=fixture.manifest, subject_id=scenario.subject_id,
+        arm_id="baseline", baseline=baseline, submission=_submission(store, baseline),
+        runner=runner,  # type: ignore[arg-type]
+        writable_scope=("src/retained/",),
+    )
+    assert runner.calls[0]["writable_scope"] == ("src/retained/",)
+
+
+@pytest.mark.asyncio
 async def test_a_subject_without_a_declared_scope_is_not_graded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

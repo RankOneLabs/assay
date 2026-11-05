@@ -456,6 +456,39 @@ async def test_a_path_outside_the_declared_scope_is_refused_even_under_src(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["tsconfig.json", "package.json", "bunfig.toml", "bun.lock"])
+async def test_a_nested_toolchain_file_is_refused_inside_the_declared_scope(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    path = f"src/compiler/{name}"
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups(),
+        patch=added_file(path, "{}"),
+        expected_tree_digest=workflow_tree_digest({**BASELINE, path: "{}\n"}),
+        writable_scope=("src/compiler/",),
+    )
+    assert result.cause == "patch_rejected"
+    assert [item.path for item in result.rejected_changes] == [path]
+
+
+@pytest.mark.asyncio
+async def test_a_nested_toolchain_file_is_not_refused_without_a_declared_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepare_fake_toolchain(tmp_path, monkeypatch)
+    runner = DockerWorkflowRunner(WorkflowRunnerSettings(image=IMAGE))
+    path = "src/compiler/tsconfig.json"
+    result = await run_fake_docker(
+        monkeypatch, runner, tmp_path / "work", groups_to_run=groups(),
+        patch=PATCH + added_file(path, "{}"),
+        expected_tree_digest=workflow_tree_digest({**FINAL_TREE, path: "{}\n"}),
+    )
+    assert result.verdict == "correct" and result.rejected_changes == ()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("writable", "baseline"), [
     (("src/",), BASELINE),
     (None, BASELINE),

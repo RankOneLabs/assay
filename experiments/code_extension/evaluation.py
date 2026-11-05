@@ -79,8 +79,13 @@ async def evaluate_scenario_candidate(
     baseline: Mapping[str, str],
     submission: CandidateSubmission,
     runner: DockerWorkflowRunner,
+    writable_scope: tuple[str, ...] | None = None,
 ) -> WorkflowCorrectnessResult:
-    """Use the coordinate's arm, realization tree, and worker-reported baseline digest."""
+    """Use the coordinate's arm, realization tree, and worker-reported baseline digest.
+
+    A replay passes the scope retained with the attempt, so grading an archive
+    does not depend on the sidecars in the current checkout.
+    """
     scenario = manifest.scenario(subject_id)
     if scenario is None:
         return unavailable_result("unknown_subject")
@@ -116,7 +121,10 @@ async def evaluate_scenario_candidate(
     ] != [not hidden for _, hidden in STUDY_GROUPS]:
         return unavailable_result("invalid_test_groups")
     try:
-        scope = declared_writable_scope(subject_id, arm_id)
+        scope = (
+            writable_scope if writable_scope is not None
+            else declared_writable_scope(subject_id, arm_id)
+        )
     except ValueError:
         return unavailable_result("missing_writable_scope")
     return await runner.run(

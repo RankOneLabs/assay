@@ -427,9 +427,11 @@ acceptance with the scope each sidecar declares, so worker and evaluator read on
 value. Scope is now per subject and arm in the evaluator configuration. Scenarios
 with a narrower scope such as `src/compiler/` are graded against it; the worker
 already refused those paths at submission, but a regrade of a recovered candidate
-that wrote elsewhere under `src/` now reports `patch_rejected`. Committed sidecars
-do not change here: `tests/agent/` applies to scenarios that declare it. Revision
-3 grades and archives stay as recorded.
+that wrote elsewhere under `src/` now reports `patch_rejected`. The same applies to
+a dependency or toolchain file at any depth, matching the worker. A regrade uses the
+scope retained with each attempt, and reads the current checkout only for an archive
+with no attempt record. Committed sidecars do not change here: `tests/agent/` applies
+to scenarios that declare it. Revision 3 grades and archives stay as recorded.
 
 ## Offline reporting and replay
 

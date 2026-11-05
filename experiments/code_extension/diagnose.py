@@ -206,6 +206,18 @@ def diagnose_candidate(
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _retained_scopes(run_directory: Path, store: ObjectStore) -> dict[str, tuple[str, ...]]:
+    """The scope each attempt ran under; archives without records have none."""
+    attempt_index = run_directory / "index.json"
+    if not attempt_index.exists():
+        return {}
+    records = json.loads(attempt_index.read_bytes())
+    return {
+        cell_id: AttemptArchiveRecord.model_validate_json(store.read_bytes(ref)).writable_scope
+        for cell_id, ref in records.items()
+    }
+
+
 def _replay_fixtures(
     archive: Path, run_directory: Path, store: ObjectStore,
 ) -> dict[str, tuple[FixtureManifestV3, str | None]]:
@@ -261,6 +273,7 @@ def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]
         plan = ExecutionPlanV3.model_validate_json(store.read_bytes(index["plan_ref"]))
         manifest = RunManifest.model_validate_json(store.read_bytes(index["manifest_ref"]))
         by_subject = _replay_fixtures(archive, index_path.parent, store)
+        scopes = _retained_scopes(index_path.parent, store)
         runner: DockerWorkflowRunner = make_runner(image)
         for cell in plan.cells:
             execution_ref = manifest.execution_records.get(cell.id)
@@ -313,6 +326,7 @@ def regrade_archive(archive: Path, image: str, output: Path) -> tuple[Path, ...]
                         baseline=baseline,
                         submission=submission,
                         runner=runner,
+                        writable_scope=scopes.get(cell.id),
                     )
                 )
             record = {
