@@ -345,7 +345,9 @@ async def execute_plan(
     A verified resume manifest preserves its run identity and terminal records.
     Only missing coordinates are called, and the original V3 wall deadline and
     cell allowance still apply. Request-admission workers need a separately
-    resumable request ledger and are refused here.
+    resumable request ledger and are refused here. A checkpoint with a cleanup
+    interruption may have work still running, and a V3 checkpoint with no terminal
+    outcome cannot restore those limits; both are refused.
     """
     prior: RunManifest | None = None
     prior_outcomes: dict[str, ExecutionOutcome] = {}
@@ -406,12 +408,16 @@ async def execute_plan(
             failures = verify_manifest(store, resume_from)
             if any(item.code != "incomplete_run" for item in failures):
                 raise ValueError(f"invalid resume manifest: {failures}")
+            if prior.interruption_ref is not None:
+                raise ValueError("resume manifest records work that may still be running")
             if any(getattr(worker, "supports_run_admission", False) for worker in workers.values()):
                 raise ValueError("resume of admission-bound request workers is unsupported")
             prior_outcomes = {
                 key: ExecutionOutcome.model_validate_json(store.read_bytes(ref))
                 for key, ref in prior.execution_records.items()
             }
+            if not prior_outcomes and isinstance(plan, ExecutionPlanV3):
+                raise ValueError("resume checkpoint cannot restore the authorized run limits")
         # A plan and configuration used as record references must themselves be durable.
         store.publish_bytes(plan_bytes)
         for arm in snapshot.arms:

@@ -6,16 +6,18 @@ import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx
 import pytest
 from code_extension import run
+from code_extension.budget import AttemptJournal
 from code_extension.config import RunConfiguration
 from code_extension.fixture import PILOT, materialize, read_tree
 from code_extension.fixtures import load_scenario
 from code_extension.probe import SUBMIT
-from code_extension.resume import resume
+from code_extension.resume import checkpoint, resume
 from code_extension.tests.test_code_extension_hosted import hosted_configuration
 from workflow_edit.tests.test_workflow_edit_bridge import FakeSandbox
 
@@ -25,7 +27,7 @@ from assay.investigations.workflow_correctness import (
     PreflightResult,
     WorkflowCorrectnessResult,
 )
-from assay.models import RunManifest
+from assay.models import ExecutionPlanV3, RunManifest
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
 
@@ -153,3 +155,20 @@ async def test_resume_unknown_bill_retains_prior_attempts_and_dispatches_only_un
     assert any(r["event"] == "finished" and r["cost_usd"] is None for r in journal)
     audit = json.loads(store.read_bytes(str(result["resume_audit_ref"])))
     assert len(audit["remaining_coordinates"]) == 6
+
+
+def test_checkpoint_refuses_a_claimed_attempt_without_a_terminal_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    digest = "sha256:" + "a" * 64
+    store = ObjectStore(tmp_path / "store")
+    ref = str(store.publish_json(RunManifest(
+        run_id="run", plan_ref=digest, status="incomplete", execution_records={},
+        evaluation_records={}, missing_coordinates=("cell",),
+    ).model_dump(mode="json")))
+    journal = AttemptJournal(tmp_path / "attempts.jsonl", digest, "sha256:" + "b" * 64)
+    journal.claim_attempt("cell", "attempt")
+    monkeypatch.setattr("code_extension.resume.verify_manifest", lambda *_: ())
+    plan = cast(ExecutionPlanV3, SimpleNamespace(cells=(), evaluations=()))
+    with pytest.raises(run.LaunchRefused, match="lacks a terminal outcome"):
+        checkpoint(store, plan, ref, journal)

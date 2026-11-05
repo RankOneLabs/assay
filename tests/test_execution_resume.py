@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,9 +11,10 @@ from typing import Any
 import pytest
 from test_execution import FakeEvaluator, FakeWorker, default_runtime, execution_fixture
 
+import assay.execution as execution
 from assay.canonical import canonical_json
 from assay.execution import AdmissionHalt, RunFailed, RunSucceeded, execute_plan
-from assay.models import ExecutionOutcome, ExecutionPlanV3, parse_execution_plan
+from assay.models import ExecutionOutcome, ExecutionPlanV3, RunManifest, parse_execution_plan
 from assay.planning import compile_plan_v2
 from assay.store import ObjectStore
 from assay.verify import verify_manifest
@@ -163,3 +165,108 @@ async def test_resume_does_not_reset_authorized_v3_limits(
     assert len(calls) == 1
     assert resumed.manifest is not None
     assert resumed.manifest.execution_records == first.manifest.execution_records
+
+
+def v3_fixture(tmp_path: Path) -> Any:
+    fixture = execution_fixture(
+        ObjectStore(tmp_path), subject_ids=("ok",), worker_repeats=1, evaluator_repeats=1,
+        concurrency=1,
+    )
+    base = compile_plan_v2(
+        fixture.snapshot,
+        snapshot_ref=str(fixture.store.publish_json(fixture.snapshot.model_dump(mode="json"))),
+        worker_repeats=1, runtime=default_runtime(fixture.store), concurrency=1,
+    )
+    plan = ExecutionPlanV3.model_validate({
+        **base.model_dump(mode="json"), "schema_version": "assay-execution-plan/0.3.0",
+        "ceiling": {"max_cells": 2, "max_wall_time_seconds": 600, "max_fleet_occupancy": 1},
+    })
+    fixture.plan_bytes = canonical_json(plan.model_dump(mode="json"))
+    return fixture
+
+
+def published_manifests(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """A cancelled run publishes its manifest without returning the reference."""
+    refs: list[str] = []
+    publish = ObjectStore.publish_json
+
+    def recording(self: ObjectStore, value: Any) -> Any:
+        ref = publish(self, value)
+        if isinstance(value, dict) and value.get("schema_version") == "assay-run-manifest/0.1.0":
+            refs.append(str(ref))
+        return ref
+
+    monkeypatch.setattr(ObjectStore, "publish_json", recording)
+    return refs
+
+
+async def cancel_when(run: asyncio.Task[Any], entered: asyncio.Event) -> None:
+    await entered.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+
+async def test_resume_refuses_a_cleanup_timeout_while_its_worker_is_still_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execution, "CANCELLATION_CLEANUP_TIMEOUT", 0.01)
+    refs = published_manifests(monkeypatch)
+    fixture = v3_fixture(tmp_path)
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls: list[str] = []
+
+    class StubbornWorker(FakeWorker):
+        async def run(self, *, input_value: Any, arm_id: str) -> Any:
+            calls.append(arm_id)
+            if len(calls) == 1:
+                entered.set()
+                while not release.is_set():
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        continue
+            return await super().run(input_value=input_value, arm_id=arm_id)
+
+    arguments = fixture.arguments
+    arguments["workers"] = {arm.id: StubbornWorker() for arm in fixture.snapshot.arms}
+    try:
+        await cancel_when(asyncio.create_task(execute_plan(**arguments)), entered)
+        manifest = RunManifest.model_validate_json(fixture.store.read_bytes(refs[-1]))
+        assert manifest.interruption_ref is not None
+        assert [f.code for f in verify_manifest(fixture.store, refs[-1])] == ["incomplete_run"]
+        resumed = await execute_plan(**arguments, resume_from=refs[-1])
+        assert isinstance(resumed, RunFailed)
+        assert "may still be running" in resumed.message
+        assert len(calls) == 1
+    finally:
+        release.set()
+        await asyncio.sleep(0.01)
+
+
+async def test_resume_refuses_an_empty_v3_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refs = published_manifests(monkeypatch)
+    fixture = v3_fixture(tmp_path)
+    entered = asyncio.Event()
+    calls: list[str] = []
+
+    class BlockedWorker(FakeWorker):
+        async def run(self, *, input_value: Any, arm_id: str) -> Any:
+            calls.append(arm_id)
+            if len(calls) == 1:
+                entered.set()
+                await asyncio.Event().wait()
+            return await super().run(input_value=input_value, arm_id=arm_id)
+
+    arguments = fixture.arguments
+    arguments["workers"] = {arm.id: BlockedWorker() for arm in fixture.snapshot.arms}
+    await cancel_when(asyncio.create_task(execute_plan(**arguments)), entered)
+    manifest = RunManifest.model_validate_json(fixture.store.read_bytes(refs[-1]))
+    assert manifest.execution_records == {} and manifest.interruption_ref is None
+    assert [f.code for f in verify_manifest(fixture.store, refs[-1])] == ["incomplete_run"]
+    resumed = await execute_plan(**arguments, resume_from=refs[-1])
+    assert isinstance(resumed, RunFailed)
+    assert "cannot restore the authorized run limits" in resumed.message
+    assert len(calls) == 1

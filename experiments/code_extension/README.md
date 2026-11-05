@@ -146,6 +146,11 @@ unknown request at its entire reservation for admission while keeping its actual
 cost explicitly unknown. This cannot acknowledge a known over-reservation bill,
 increase a cap, or redispatch an already claimed attempt.
 
+Resume refuses a manifest with a cleanup interruption, because that work may
+still be running. It also refuses a checkpoint with no retained attempt, because
+the original deadline cannot be restored from it; no attempt has run, so start
+that plan again with `execute`.
+
 The separate three-task baseline pilot's launch preconditions remain open.
 Cross-module-event is feasible at
 the upstream pin, but config-plugin lacks a configuration-driven loading path,
