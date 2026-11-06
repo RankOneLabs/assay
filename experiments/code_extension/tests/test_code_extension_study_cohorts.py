@@ -5,12 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from code_extension.config import RunConfiguration
 from code_extension.launch import prepare_cohort
 
 STUDY = Path(__file__).parents[1] / "studies" / "matched-tasks-2026-11"
 MINISTRAL = ("mistralai/ministral-14b-2512", "mistral/zdr")
 QWEN = ("qwen/qwen3.8-27b", "deepinfra/bf16")
 SOL = ("openai/gpt-6.1-sol", "azure/us")
+
+
+@pytest.fixture(autouse=True)
+def pinned_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preparing checks the local Docker image, which CI does not provision."""
+    image = RunConfiguration.load(STUDY / "study-qwen.json").image_digest
+    monkeypatch.setattr("code_extension.bridge.observed_image_digest", lambda _: image)
 
 
 @pytest.mark.parametrize(
