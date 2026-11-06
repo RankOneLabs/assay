@@ -1,0 +1,22 @@
+{
+  "cohort": "matched-tasks-2026-11-study-with-control",
+  "combined_cap_usd": "24.00",
+  "plans": [
+    {
+      "name": "ministral",
+      "config": "study-ministral.json"
+    },
+    {
+      "name": "ministral-control",
+      "config": "control-ministral.json"
+    },
+    {
+      "name": "qwen",
+      "config": "study-qwen.json"
+    },
+    {
+      "name": "qwen-control",
+      "config": "control-qwen.json"
+    }
+  ]
+}
