@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import fcntl
 import json
 import os
 import sys
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -25,7 +28,14 @@ from workflow_edit.bridge import SmithersTurnCompletion, trial_limits, turn_idem
 from assay.adapters.pier import PierAdapter
 from assay.adapters.smithers import SmithersFactory
 from assay.canonical import canonical_json, digest_bytes
-from assay.execution import AdmissionHalt, RunFailed, RunResult, WorkerFailure, WorkerResult
+from assay.execution import (
+    AdmissionHalt,
+    RunFailed,
+    RunResult,
+    WorkerFailure,
+    WorkerResult,
+    WorkerSuccess,
+)
 from assay.investigations.workflow_correctness import DockerWorkflowRunner
 from assay.models import (
     CellCoordinate,
@@ -39,7 +49,7 @@ from assay.pier_protocol import RuntimeBinding
 from assay.planning import authorize
 from assay.store import ObjectStore
 from code_extension import qualify
-from code_extension.archive import AttemptArchive
+from code_extension.archive import AttemptArchive, _atomic
 from code_extension.bridge import ExtensionBridgeClient, declared_writable_scope
 from code_extension.budget import AttemptJournal, JournaledAgentClient, RequestBudget
 from code_extension.bridge import EXTENSION_SYSTEM_PROMPT
@@ -72,6 +82,8 @@ class ArchiveBinding:
     fixture_ref: str | None
     routing_digest: str | None
     grader_identity: str | None
+    schedule_seed: int
+    schedule_order: Mapping[str, int]
 
 
 @dataclass
@@ -134,18 +146,50 @@ class ExtensionStudyWorker:
                 ),
                 source=self.binding.source,
                 fixture_ref=self.binding.fixture_ref,
+                schedule_seed=self.binding.schedule_seed,
+                schedule_order=self.binding.schedule_order[coordinate.id],
                 grader_identity=self.binding.grader_identity,
                 routing_digest=self.binding.routing_digest,
             )
-        return await self.adapters[coordinate.subject_id].run_cell(
-            input_value=input_value,
-            coordinate=coordinate,
+        try:
+            result = await self.adapters[coordinate.subject_id].run_cell(
+                input_value=input_value,
+                coordinate=coordinate,
+            )
+        except Exception as error:
+            self.journal.finish_attempt(
+                coordinate.id, attempt_id, status="failed", error_type=type(error).__name__,
+            )
+            raise
+        self.journal.finish_attempt(
+            coordinate.id, attempt_id,
+            status="succeeded" if isinstance(result, WorkerSuccess) else "failed",
+            error_type=result.error_type if isinstance(result, WorkerFailure) else None,
         )
+        return result
 
 
 def _plan_dir(store: ObjectStore, plan_digest: str) -> Path:
     """Each frozen plan owns a directory, so one store can hold several plans."""
     return store.root / "plans" / plan_digest.removeprefix("sha256:")
+
+
+@contextlib.contextmanager
+def _plan_lock(directory: Path) -> Iterator[None]:
+    """One process per plan. Journal checks are unlocked, so two runs could both bill.
+
+    The kernel drops this lock when its holder dies, unlike a marker file.
+    """
+    with (directory / "run.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise LaunchRefused("another process is running this plan") from error
+        yield
+
+
+def _run_label(config: RunConfiguration) -> str:
+    return f"extension-{config.digest().removeprefix('sha256:')[:20]}"
 
 
 def _build(
@@ -197,7 +241,7 @@ def _build(
         if gate.halt is not None:
             raise LaunchRefused(f"resume halted: {gate.halt}")
     workers: dict[str, ExtensionStudyWorker] = {}
-    run_label = f"extension-{config.digest().removeprefix('sha256:')[:20]}"
+    run_label = _run_label(config)
     for arm_id in fixture.manifest.arm_set.arm_ids:
         bridges: dict[str, ExtensionBridgeClient] = {}
         adapters: dict[str, PierAdapter] = {}
@@ -316,7 +360,9 @@ def _build(
             cell.id: cell.realization_ref for cell in compiled.cells if cell.arm_id == worker.arm_id
         }
     if live:
-        archive_binding = _open_archive(store, fixture, prepared, compiled, run_label)
+        archive_binding = _open_archive(
+            store, fixture, prepared, compiled, run_label, config.randomization_seed,
+        )
         for worker in workers.values():
             worker.binding = archive_binding
     return prepared
@@ -328,6 +374,7 @@ def _open_archive(
     prepared: PreparedStudy,
     compiled: ExecutionPlanV3,
     run_label: str,
+    seed: int,
 ) -> ArchiveBinding:
     """Open the run's retention archive and publish the inputs it attests to."""
     root = _archive_root(store)
@@ -346,6 +393,8 @@ def _open_archive(
         fixture_ref=fixture_ref,
         routing_digest=fixture.manifest.routing_config_digest,
         grader_identity=GRADER_REVISION,
+        schedule_seed=seed,
+        schedule_order={cell.id: index for index, cell in enumerate(compiled.cells)},
     )
 
 
@@ -449,7 +498,9 @@ def prepare(config_path: Path, store_path: Path) -> dict[str, Any]:
     return summary
 
 
-async def execute(plan_path: Path, authorization: str, store_path: Path) -> dict[str, Any]:
+async def execute(
+    plan_path: Path, authorization: str, store_path: Path, *, unstarted_only: bool = False,
+) -> dict[str, Any]:
     plan_bytes = plan_path.read_bytes()
     actual = digest_bytes(plan_bytes)
     if actual != authorization:
@@ -461,6 +512,15 @@ async def execute(plan_path: Path, authorization: str, store_path: Path) -> dict
     launch_dir = _plan_dir(store, actual)
     if plan_path.resolve() != (launch_dir / "plan.json").resolve():
         raise LaunchRefused("original frozen plan artifact is required")
+    with _plan_lock(launch_dir):
+        if unstarted_only and (launch_dir / "attempts.jsonl").exists():
+            raise LaunchRefused("plan has already started")
+        return await _execute(plan_bytes, actual, store, launch_dir)
+
+
+async def _execute(
+    plan_bytes: bytes, actual: str, store: ObjectStore, launch_dir: Path,
+) -> dict[str, Any]:
     config = RunConfiguration.load(launch_dir / "config.json")
     prepared = _build(config, store, live=True, plan_digest=actual)
     if prepared.plan_bytes != plan_bytes:
@@ -468,21 +528,54 @@ async def execute(plan_path: Path, authorization: str, store_path: Path) -> dict
     runtime_failure = await prepared.evaluator.runner._check_runtime()
     if runtime_failure is not None:
         raise LaunchRefused(f"evaluator_runtime_unavailable: {runtime_failure.error_type}")
-    await _route_probe(config, store, actual, prepared)
-    result = await run_study(prepared, store)
     worker = cast(ExtensionStudyWorker, next(iter(prepared.workers.values())))
     assert worker.gate is not None
     assert worker.binding is not None
-    manifest_ref = None if result.manifest_ref is None else str(result.manifest_ref)
-    index = _settle_archive(worker.binding, fixture=prepared, manifest_ref=manifest_ref,
-                            interruption=_interruption(result))
+    binding = worker.binding
+
+    async def dispatch() -> RunResult:
+        await _route_probe(config, store, actual, prepared)
+        return await run_study(prepared, store)
+
+    def settle(result: RunResult) -> Path | None:
+        manifest_ref = None if result.manifest_ref is None else str(result.manifest_ref)
+        return _settle_archive(binding, fixture=prepared, manifest_ref=manifest_ref,
+                               interruption=_interruption(result))
+
+    result, index = await _recorded(worker, dispatch(), settle)
     return {
         "status": type(result).__name__,
-        "authorization": authorization,
+        "authorization": actual,
         "spend": worker.gate.record(),
         "archive": str(worker.binding.archive.directory),
         "run_index": None if index is None else str(index),
     }
+
+
+async def _recorded(
+    worker: ExtensionStudyWorker,
+    dispatch: Awaitable[RunResult],
+    settle: Callable[[RunResult], Path | None],
+) -> tuple[RunResult, Path | None]:
+    """Bracket one execute or resume call, so its plan's state can be read back."""
+    journal, gate = worker.journal, worker.gate
+    assert journal is not None and gate is not None
+    journal.record_run_started()
+    try:
+        result = await dispatch
+        if result.manifest_ref is not None:
+            journal.record_manifest(str(result.manifest_ref))
+        index = settle(result)
+    except BaseException as error:
+        journal.record_run_ended(
+            result=type(error).__name__, halt=gate.halt,
+            detail=f"{type(error).__name__}: {error}",
+        )
+        raise
+    journal.record_run_ended(
+        result=type(result).__name__, halt=gate.halt, detail=_interruption(result),
+    )
+    return result, index
 
 
 def _interruption(result: RunResult) -> str | None:
@@ -537,7 +630,9 @@ def _settle_archive(
                 if len(scenario.arms) == 1:
                     expected[scenario.subject_id] = list(reference.touched_paths)
     path = archive.directory / "run.json"
-    path.write_bytes(
+    # Status reads this while a run settles, so it must never appear half written.
+    _atomic(
+        path,
         canonical_json(
             {
                 "plan_ref": binding.plan_ref,
@@ -548,7 +643,7 @@ def _settle_archive(
                 "retry_of": {},
             }
         )
-        + b"\n"
+        + b"\n",
     )
     return path
 
@@ -666,6 +761,9 @@ def main() -> None:
     regrade_command.add_argument("--archive", type=Path, required=True)
     regrade_command.add_argument("--image", required=True)
     regrade_command.add_argument("--output", type=Path, required=True)
+    status_command = commands.add_parser("status")
+    status_command.add_argument("--store", type=Path, required=True)
+    status_command.add_argument("--cohort")
     args = parser.parse_args()
     if args.command == "qualify":
         sys.argv = ["code_extension.qualify", "--scenario", args.scenario, "--image", args.image]
@@ -704,6 +802,10 @@ def main() -> None:
 
         paths = regrade_archive(args.archive, args.image, args.output)
         print(json.dumps([str(path) for path in paths]))
+    elif args.command == "status":
+        from code_extension.status import store_status
+
+        print(json.dumps(store_status(args.store, cohort=args.cohort), sort_keys=True))
     else:
         print(
             json.dumps(asyncio.run(execute(args.plan, args.authorize, args.store)), sort_keys=True)

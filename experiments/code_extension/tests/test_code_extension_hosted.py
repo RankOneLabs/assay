@@ -185,9 +185,10 @@ async def test_failed_hosted_probe_blocks_execution_and_resume_without_losing_bi
     with pytest.raises(LaunchRefused, match=f"route_probe_failed: {cause}"):
         await execute(plan, summary["digest"], store)
     journal = AttemptJournal(plan.parent / "attempts.jsonl", summary["digest"], config.digest())
-    record = journal.records()[-1]
+    *_, record, ended = journal.records()
     assert record["event"] == "finished" and record["status"] == "settled"
     assert record["cost_usd"] == "0.001"
+    assert ended["event"] == "run_ended" and ended["result"] == "LaunchRefused"
     restored = SpendGate(config.total_cap_usd)
     journal.reconcile(restored)
     assert restored.spent_usd == Decimal("0.001")

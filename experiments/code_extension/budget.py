@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TypeVar
@@ -47,8 +48,9 @@ class AttemptJournal:
 
     def _append(self, record: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        stamped = {**record, "at": datetime.now(UTC).isoformat()}
         with self.path.open("ab") as stream:
-            stream.write(canonical_json(record) + b"\n")
+            stream.write(canonical_json(stamped) + b"\n")
             stream.flush()
             os.fsync(stream.fileno())
         directory_fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
@@ -94,6 +96,59 @@ class AttemptJournal:
                 "event": "attempt_started",
                 "coordinate": coordinate,
                 "attempt_id": attempt_id,
+                "plan_digest": self.plan_digest,
+                "config_digest": self.config_digest,
+            }
+        )
+
+    def finish_attempt(
+        self, coordinate: str, attempt_id: str, *, status: str, error_type: str | None,
+    ) -> None:
+        """Mark a claimed attempt terminal, so status can read a grid that is still running."""
+        self.validate_resume()
+        self._append(
+            {
+                "event": "attempt_finished",
+                "coordinate": coordinate,
+                "attempt_id": attempt_id,
+                "status": status,
+                "error_type": error_type,
+                "plan_digest": self.plan_digest,
+                "config_digest": self.config_digest,
+            }
+        )
+
+    def record_run_started(self) -> None:
+        self.validate_resume()
+        self._append(
+            {
+                "event": "run_started",
+                "plan_digest": self.plan_digest,
+                "config_digest": self.config_digest,
+            }
+        )
+
+    def record_manifest(self, manifest_ref: str) -> None:
+        """Keep the checkpoint a resume needs, even if archive settlement then fails."""
+        self.validate_resume()
+        self._append(
+            {
+                "event": "run_manifest",
+                "manifest_ref": manifest_ref,
+                "plan_digest": self.plan_digest,
+                "config_digest": self.config_digest,
+            }
+        )
+
+    def record_run_ended(self, *, result: str, halt: str | None, detail: str | None) -> None:
+        """Name how an execute or resume call stopped; the journal is the plan's state."""
+        self.validate_resume()
+        self._append(
+            {
+                "event": "run_ended",
+                "result": result,
+                "halt": halt,
+                "detail": detail,
                 "plan_digest": self.plan_digest,
                 "config_digest": self.config_digest,
             }

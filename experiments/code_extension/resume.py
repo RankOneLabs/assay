@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 
 from assay.canonical import canonical_json, digest_bytes
-from assay.execution import execute_plan
+from assay.execution import RunResult, execute_plan
 from assay.models import ExecutionOutcome, ExecutionPlanV3, RunManifest
 from assay.planning import authorize
 from assay.store import ObjectStore
@@ -21,6 +21,8 @@ from code_extension.run import (
     _build,
     _interruption,
     _plan_dir,
+    _plan_lock,
+    _recorded,
     _route_probe,
     _settle_archive,
 )
@@ -103,6 +105,16 @@ async def resume(
     directory = _plan_dir(store, authorization)
     if plan_path.resolve() != (directory / "plan.json").resolve():
         raise LaunchRefused("original frozen plan artifact is required")
+    with _plan_lock(directory):
+        return await _resume(
+            plan, plan_bytes, authorization, store, directory, manifest_ref, accept_unknown,
+        )
+
+
+async def _resume(
+    plan: ExecutionPlanV3, plan_bytes: bytes, authorization: str, store: ObjectStore,
+    directory: Path, manifest_ref: str, accept_unknown: str | None,
+) -> dict[str, object]:
     config = RunConfiguration.load(directory / "config.json")
     journal = AttemptJournal(directory / "attempts.jsonl", authorization, config.digest())
     checkpoint_ref, remaining = checkpoint(store, plan, manifest_ref, journal)
@@ -140,17 +152,24 @@ async def resume(
     runtime_failure = await prepared.evaluator.runner._check_runtime()
     if runtime_failure is not None:
         raise LaunchRefused("resume evaluator runtime is unavailable")
-    await _route_probe(config, store, authorization, prepared)
-    result = await execute_plan(
-        plan_bytes=plan_bytes, authorization=authorization, snapshot=prepared.snapshot,
-        store=store, workers=prepared.workers, evaluators={"correctness": prepared.evaluator},
-        resume_from=checkpoint_ref,
-    )
-    latest = str(result.manifest_ref) if result.manifest_ref is not None else None
-    index = _settle_archive(
-        worker.binding, fixture=prepared, manifest_ref=latest,
-        interruption=_interruption(result), preserve_settled=True,
-    )
+    binding = worker.binding
+
+    async def dispatch() -> RunResult:
+        await _route_probe(config, store, authorization, prepared)
+        return await execute_plan(
+            plan_bytes=plan_bytes, authorization=authorization, snapshot=prepared.snapshot,
+            store=store, workers=prepared.workers, evaluators={"correctness": prepared.evaluator},
+            resume_from=checkpoint_ref,
+        )
+
+    def settle(result: RunResult) -> Path | None:
+        latest = str(result.manifest_ref) if result.manifest_ref is not None else None
+        return _settle_archive(
+            binding, fixture=prepared, manifest_ref=latest,
+            interruption=_interruption(result), preserve_settled=True,
+        )
+
+    result, index = await _recorded(worker, dispatch(), settle)
     return {
         "status": type(result).__name__, "authorization": authorization,
         "spend": worker.gate.record(), "resume_audit_ref": audit_ref,
