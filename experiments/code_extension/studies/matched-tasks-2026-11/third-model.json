@@ -1,0 +1,10 @@
+{
+  "cohort": "matched-tasks-2026-11-third-model",
+  "combined_cap_usd": "15.00",
+  "plans": [
+    {
+      "name": "sol",
+      "config": "third-model-sol.json"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "cohort": "matched-tasks-2026-11-study",
+  "combined_cap_usd": "16.00",
+  "plans": [
+    {
+      "name": "ministral",
+      "config": "study-ministral.json"
+    },
+    {
+      "name": "qwen",
+      "config": "study-qwen.json"
+    }
+  ]
+}
