@@ -268,7 +268,9 @@ including requests charged at their full reservation.
 `execute` checks every plan before the first paid request, then runs them one at a
 time and stops at the first halt. It never retries, replaces or resumes a cell. Each
 plan's journal records how its last run ended, so launching again skips finished
-plans and refuses a partial one. Continue a halted plan with `code_extension.resume`,
+plans and refuses a partial one. A lock in each plan's directory holds one process per
+plan across `execute`, `resume` and any cohorts sharing it, and a killed process
+releases it. Continue a halted plan with `code_extension.resume`,
 using the `manifest_ref` that status prints, then launch again for the plans after it.
 Unknown charges still need an explicit `--accept-unknown` on each resume.
 

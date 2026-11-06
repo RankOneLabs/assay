@@ -21,6 +21,7 @@ from code_extension.run import (
     _build,
     _interruption,
     _plan_dir,
+    _plan_lock,
     _recorded,
     _route_probe,
     _settle_archive,
@@ -104,6 +105,16 @@ async def resume(
     directory = _plan_dir(store, authorization)
     if plan_path.resolve() != (directory / "plan.json").resolve():
         raise LaunchRefused("original frozen plan artifact is required")
+    with _plan_lock(directory):
+        return await _resume(
+            plan, plan_bytes, authorization, store, directory, manifest_ref, accept_unknown,
+        )
+
+
+async def _resume(
+    plan: ExecutionPlanV3, plan_bytes: bytes, authorization: str, store: ObjectStore,
+    directory: Path, manifest_ref: str, accept_unknown: str | None,
+) -> dict[str, object]:
     config = RunConfiguration.load(directory / "config.json")
     journal = AttemptJournal(directory / "attempts.jsonl", authorization, config.digest())
     checkpoint_ref, remaining = checkpoint(store, plan, manifest_ref, journal)

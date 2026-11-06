@@ -10,12 +10,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
-import fcntl
 import json
 import os
 import sys
-from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
@@ -166,17 +163,6 @@ def _preflight(frozen: FrozenCohort, store: ObjectStore) -> list[FrozenPlan]:
     return remaining
 
 
-@contextlib.contextmanager
-def _exclusive(directory: Path) -> Iterator[None]:
-    """A killed launcher releases this, unlike a marker file."""
-    with (directory / "launch.lock").open("w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            raise LaunchRefused("another launcher is running this cohort") from error
-        yield
-
-
 async def launch(cohort_path: Path, authorization: str, store_path: Path) -> dict[str, Any]:
     data = cohort_path.read_bytes()
     actual = digest_bytes(data)
@@ -185,20 +171,20 @@ async def launch(cohort_path: Path, authorization: str, store_path: Path) -> dic
             f"cohort_authorization_mismatch: supplied {authorization}; actual {actual}"
         )
     store = ObjectStore(store_path)
-    directory = cohort_dir(store, actual)
-    if cohort_path.resolve() != (directory / "cohort.json").resolve():
+    if cohort_path.resolve() != (cohort_dir(store, actual) / "cohort.json").resolve():
         raise LaunchRefused("original frozen cohort artifact is required")
     frozen = FrozenCohort.model_validate_json(data)
     results: list[dict[str, Any]] = []
-    with _exclusive(directory):
-        for plan in _preflight(frozen, store):
-            result = await execute(
-                _plan_dir(store, plan.plan_digest) / "plan.json", plan.plan_digest, store_path,
-            )
-            results.append({"name": plan.name, **result})
-            print(json.dumps({"event": "plan_ended", **results[-1]}, sort_keys=True), flush=True)
-            if result["status"] != "RunSucceeded" or result["spend"]["halt"] is not None:
-                return {"status": "halted", "cohort": actual, "plans": results}
+    for plan in _preflight(frozen, store):
+        # Preflight reads state without a lock, so execute checks it again under one.
+        result = await execute(
+            _plan_dir(store, plan.plan_digest) / "plan.json", plan.plan_digest, store_path,
+            unstarted_only=True,
+        )
+        results.append({"name": plan.name, **result})
+        print(json.dumps({"event": "plan_ended", **results[-1]}, sort_keys=True), flush=True)
+        if result["status"] != "RunSucceeded" or result["spend"]["halt"] is not None:
+            return {"status": "halted", "cohort": actual, "plans": results}
     return {"status": "finished", "cohort": actual, "plans": results}
 
 

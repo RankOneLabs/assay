@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import fcntl
 import json
 import os
 import sys
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Iterator, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -47,7 +49,7 @@ from assay.pier_protocol import RuntimeBinding
 from assay.planning import authorize
 from assay.store import ObjectStore
 from code_extension import qualify
-from code_extension.archive import AttemptArchive
+from code_extension.archive import AttemptArchive, _atomic
 from code_extension.bridge import ExtensionBridgeClient, declared_writable_scope
 from code_extension.budget import AttemptJournal, JournaledAgentClient, RequestBudget
 from code_extension.bridge import EXTENSION_SYSTEM_PROMPT
@@ -170,6 +172,20 @@ class ExtensionStudyWorker:
 def _plan_dir(store: ObjectStore, plan_digest: str) -> Path:
     """Each frozen plan owns a directory, so one store can hold several plans."""
     return store.root / "plans" / plan_digest.removeprefix("sha256:")
+
+
+@contextlib.contextmanager
+def _plan_lock(directory: Path) -> Iterator[None]:
+    """One process per plan. Journal checks are unlocked, so two runs could both bill.
+
+    The kernel drops this lock when its holder dies, unlike a marker file.
+    """
+    with (directory / "run.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise LaunchRefused("another process is running this plan") from error
+        yield
 
 
 def _run_label(config: RunConfiguration) -> str:
@@ -482,7 +498,9 @@ def prepare(config_path: Path, store_path: Path) -> dict[str, Any]:
     return summary
 
 
-async def execute(plan_path: Path, authorization: str, store_path: Path) -> dict[str, Any]:
+async def execute(
+    plan_path: Path, authorization: str, store_path: Path, *, unstarted_only: bool = False,
+) -> dict[str, Any]:
     plan_bytes = plan_path.read_bytes()
     actual = digest_bytes(plan_bytes)
     if actual != authorization:
@@ -494,6 +512,15 @@ async def execute(plan_path: Path, authorization: str, store_path: Path) -> dict
     launch_dir = _plan_dir(store, actual)
     if plan_path.resolve() != (launch_dir / "plan.json").resolve():
         raise LaunchRefused("original frozen plan artifact is required")
+    with _plan_lock(launch_dir):
+        if unstarted_only and (launch_dir / "attempts.jsonl").exists():
+            raise LaunchRefused("plan has already started")
+        return await _execute(plan_bytes, actual, store, launch_dir)
+
+
+async def _execute(
+    plan_bytes: bytes, actual: str, store: ObjectStore, launch_dir: Path,
+) -> dict[str, Any]:
     config = RunConfiguration.load(launch_dir / "config.json")
     prepared = _build(config, store, live=True, plan_digest=actual)
     if prepared.plan_bytes != plan_bytes:
@@ -516,7 +543,7 @@ async def execute(plan_path: Path, authorization: str, store_path: Path) -> dict
     result, index = await _recorded(worker, dispatch())
     return {
         "status": type(result).__name__,
-        "authorization": authorization,
+        "authorization": actual,
         "spend": worker.gate.record(),
         "archive": str(worker.binding.archive.directory),
         "run_index": None if index is None else str(index),
@@ -596,7 +623,9 @@ def _settle_archive(
                 if len(scenario.arms) == 1:
                     expected[scenario.subject_id] = list(reference.touched_paths)
     path = archive.directory / "run.json"
-    path.write_bytes(
+    # Status reads this while a run settles, so it must never appear half written.
+    _atomic(
+        path,
         canonical_json(
             {
                 "plan_ref": binding.plan_ref,
@@ -607,7 +636,7 @@ def _settle_archive(
                 "retry_of": {},
             }
         )
-        + b"\n"
+        + b"\n",
     )
     return path
 

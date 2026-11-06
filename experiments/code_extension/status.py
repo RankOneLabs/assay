@@ -90,6 +90,16 @@ def plan_status(store: ObjectStore, plan_digest: str) -> dict[str, Any]:
     outcomes = {
         r["coordinate"]: r["status"] for r in records if r["event"] == "attempt_finished"
     }
+    # A manifest speaks for the runs before it. A resume reuses the last one until
+    # it settles, and that one can hold a refusal for a cell that is running now.
+    ended = max(
+        (index for index, r in enumerate(records) if r["event"] == "run_ended"),
+        default=len(records),
+    )
+    retained = [
+        r["coordinate"] for r in records[:ended]
+        if r["event"] == "attempt_started" and r["coordinate"] != ROUTE_PROBE
+    ]
     settled = _manifest(store, config)
     evaluated: int | None = None
     passed: int | None = None
@@ -98,8 +108,7 @@ def plan_status(store: ObjectStore, plan_digest: str) -> dict[str, Any]:
         _, manifest = settled
         evaluated = passed = 0
         missing = list(manifest.missing_coordinates)
-        # A manifest also lists spending refusals for cells that were never claimed.
-        for cell in claimed:
+        for cell in retained:
             reference = manifest.execution_records.get(cell)
             if reference is None:
                 continue

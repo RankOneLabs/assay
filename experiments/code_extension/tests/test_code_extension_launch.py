@@ -274,11 +274,27 @@ async def test_a_halt_stops_the_cohort_until_resume_clears_that_plan(
         await cohort.launch(Path(summary["cohort"]), summary["digest"], store)
     assert not (Path(second["plan"]).parent / "attempts.jsonl").exists()
 
+    # The halted manifest holds a spending refusal for the next cell. Once that
+    # cell really runs, status must describe the attempt and not the refusal.
+    refused = cell_id(first["tasks"][2])
+    during: list[dict[str, Any]] = []
+
+    def watch(coordinate: str) -> None:
+        if coordinate == refused and not during:
+            during.append(plan_status(ObjectStore(store), first["digest"]))
+
+    provider.before_request = watch
+    index = Path(halted["plans"][0]["run_index"])
+    replaced = index.stat().st_ino
     resumed = await resume(
         Path(first["plan"]), first["digest"], store, plan["manifest_ref"],
         accept_unknown="Operator accepted the full reservation",
     )
     assert resumed["status"] == "RunSucceeded"
+    assert during[0]["active_coordinate"] == refused
+    assert (during[0]["started"], during[0]["terminal"]) == (3, 2)
+    assert index.stat().st_ino != replaced, "a reader must never see run.json half written"
+    assert plan_status(ObjectStore(store), first["digest"])["completed_normally"] == 3
     finished = await cohort.launch(Path(summary["cohort"]), summary["digest"], store)
     assert [item["name"] for item in finished["plans"]] == ["second"]
     assert finished["status"] == "finished"
@@ -325,10 +341,43 @@ async def test_a_second_launcher_is_refused_while_the_first_runs(
 ) -> None:
     store = tmp_path / "store"
     summary = cohort.prepare_cohort(write_request(tmp_path / "request"), store)
-    with cohort._exclusive(cohort.cohort_dir(ObjectStore(store), summary["digest"])), \
-            pytest.raises(run.LaunchRefused, match="another launcher"):
+    first = Path(summary["plans"][0]["plan"])
+    with run._plan_lock(first.parent), \
+            pytest.raises(run.LaunchRefused, match="another process is running this plan"):
         await cohort.launch(Path(summary["cohort"]), summary["digest"], store)
     assert provider.requests == Counter()
+
+
+@pytest.mark.asyncio
+async def test_cohorts_sharing_a_plan_cannot_both_run_it(
+    tmp_path: Path, provider: Provider,
+) -> None:
+    store = tmp_path / "store"
+    request = write_request(tmp_path / "request")
+    both = cohort.prepare_cohort(request, store)
+    only = request.with_name("only-first.json")
+    only.write_text(json.dumps({
+        "cohort": "shares-first", "combined_cap_usd": "2.00",
+        "plans": [{"name": "first", "config": "first.json"}],
+    }))
+    other = cohort.prepare_cohort(only, store)
+    shared = both["plans"][0]
+    assert other["plans"][0]["digest"] == shared["digest"]
+
+    with run._plan_lock(Path(shared["plan"]).parent), \
+            pytest.raises(run.LaunchRefused, match="another process is running this plan"):
+        await cohort.launch(Path(other["cohort"]), other["digest"], store)
+    with run._plan_lock(Path(shared["plan"]).parent), \
+            pytest.raises(run.LaunchRefused, match="another process is running this plan"):
+        await resume(Path(shared["plan"]), shared["digest"], store, "sha256:" + "0" * 64)
+    assert provider.requests == Counter()
+
+    # A launcher that passed preflight before the other run began still stops here.
+    await cohort.launch(Path(both["cohort"]), both["digest"], store)
+    before = dict(provider.requests)
+    with pytest.raises(run.LaunchRefused, match="plan has already started"):
+        await run.execute(Path(shared["plan"]), shared["digest"], store, unstarted_only=True)
+    assert dict(provider.requests) == before
 
 
 def test_plan_caps_must_fit_the_combined_cap(tmp_path: Path, provider: Provider) -> None:
