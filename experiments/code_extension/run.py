@@ -10,7 +10,7 @@ import fcntl
 import json
 import os
 import sys
-from collections.abc import Awaitable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -533,14 +533,16 @@ async def _execute(
     assert worker.binding is not None
     binding = worker.binding
 
-    async def dispatch() -> tuple[RunResult, Path | None]:
+    async def dispatch() -> RunResult:
         await _route_probe(config, store, actual, prepared)
-        result = await run_study(prepared, store)
-        manifest_ref = None if result.manifest_ref is None else str(result.manifest_ref)
-        return result, _settle_archive(binding, fixture=prepared, manifest_ref=manifest_ref,
-                                       interruption=_interruption(result))
+        return await run_study(prepared, store)
 
-    result, index = await _recorded(worker, dispatch())
+    def settle(result: RunResult) -> Path | None:
+        manifest_ref = None if result.manifest_ref is None else str(result.manifest_ref)
+        return _settle_archive(binding, fixture=prepared, manifest_ref=manifest_ref,
+                               interruption=_interruption(result))
+
+    result, index = await _recorded(worker, dispatch(), settle)
     return {
         "status": type(result).__name__,
         "authorization": actual,
@@ -551,14 +553,19 @@ async def _execute(
 
 
 async def _recorded(
-    worker: ExtensionStudyWorker, dispatch: Awaitable[tuple[RunResult, Path | None]],
+    worker: ExtensionStudyWorker,
+    dispatch: Awaitable[RunResult],
+    settle: Callable[[RunResult], Path | None],
 ) -> tuple[RunResult, Path | None]:
     """Bracket one execute or resume call, so its plan's state can be read back."""
     journal, gate = worker.journal, worker.gate
     assert journal is not None and gate is not None
     journal.record_run_started()
     try:
-        result, index = await dispatch
+        result = await dispatch
+        if result.manifest_ref is not None:
+            journal.record_manifest(str(result.manifest_ref))
+        index = settle(result)
     except BaseException as error:
         journal.record_run_ended(
             result=type(error).__name__, halt=gate.halt,

@@ -457,10 +457,15 @@ unknown charges and resumes until a plan finishes did not move either, because a
 a charge stays an operator decision for each cohort.
 
 The journal is the only state. It now stamps every record and adds `attempt_finished`,
-`run_started` and `run_ended`, so status can read a running grid and the launcher can tell
-finished plans from partial ones without a mutable status file. The combined cap is a
-check that plan caps fit under it, not a shared gate, because plans run one at a time and
-each already stops at its own cap.
+`run_started`, `run_manifest` and `run_ended`, so status can read a running grid and the
+launcher can tell finished plans from partial ones without a mutable status file. The
+manifest reference is journaled before archive settlement, because the pilot's settlement
+failed once and left its checkpoint recoverable only by hand.
+
+The combined cap is a check that plan caps fit under it, not a shared gate, because plans
+run one at a time and each refuses reservations past its own cap. A provider bill above
+its reservation can still pass a cap by that excess. That plan then halts in a way
+`--accept-unknown` cannot clear, so no later plan starts.
 
 New attempts record `schedule_seed` and `schedule_order`, the attempt's position in the
 frozen plan. With concurrency one and resume dispatching only unclaimed cells in plan

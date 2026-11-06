@@ -154,20 +154,22 @@ async def _resume(
         raise LaunchRefused("resume evaluator runtime is unavailable")
     binding = worker.binding
 
-    async def dispatch() -> tuple[RunResult, Path | None]:
+    async def dispatch() -> RunResult:
         await _route_probe(config, store, authorization, prepared)
-        result = await execute_plan(
+        return await execute_plan(
             plan_bytes=plan_bytes, authorization=authorization, snapshot=prepared.snapshot,
             store=store, workers=prepared.workers, evaluators={"correctness": prepared.evaluator},
             resume_from=checkpoint_ref,
         )
+
+    def settle(result: RunResult) -> Path | None:
         latest = str(result.manifest_ref) if result.manifest_ref is not None else None
-        return result, _settle_archive(
+        return _settle_archive(
             binding, fixture=prepared, manifest_ref=latest,
             interruption=_interruption(result), preserve_settled=True,
         )
 
-    result, index = await _recorded(worker, dispatch())
+    result, index = await _recorded(worker, dispatch(), settle)
     return {
         "status": type(result).__name__, "authorization": authorization,
         "spend": worker.gate.record(), "resume_audit_ref": audit_ref,

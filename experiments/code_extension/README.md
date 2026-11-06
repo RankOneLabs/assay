@@ -262,8 +262,10 @@ uv run python -m code_extension.run status --store .assay-extension --cohort sha
 ```
 
 Preparing refuses plan caps that total more than the combined cap. Each plan's
-spending gate stops at its own cap, so the combined cap then holds for every outcome,
-including requests charged at their full reservation.
+spending gate refuses any request whose reservation would pass its cap, so reservations
+cannot exceed the combined cap. A provider bill above its reservation can still take a
+plan past its cap by that excess. The plan then halts, `--accept-unknown` cannot clear
+it, and later plans do not start.
 
 `execute` checks every plan before the first paid request, then runs them one at a
 time and stops at the first halt. It never retries, replaces or resumes a cell. Each
@@ -273,6 +275,14 @@ plan across `execute`, `resume` and any cohorts sharing it, and a killed process
 releases it. Continue a halted plan with `code_extension.resume`,
 using the `manifest_ref` that status prints, then launch again for the plans after it.
 Unknown charges still need an explicit `--accept-unknown` on each resume.
+
+A plan with no `manifest_ref` cannot resume, because no manifest records which cells
+ended. A failed route probe and a process killed mid-run both leave one. `execute` and
+the launcher will not restart it, and preparing the same configuration returns the same
+plan. To run its cells, change the configuration's `cohort` label, leave finished plans
+out of the cohort file, and prepare a new cohort, which needs its own authorization. The
+old journal keeps its charges, so count that plan's conservative cost against the total
+authorized before setting the new caps.
 
 `status` reads durable records and writes nothing. Without `--cohort` it reports every
 plan in the store. For each plan it gives planned, started, terminal, normally

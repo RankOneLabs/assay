@@ -128,6 +128,18 @@ class AttemptJournal:
             }
         )
 
+    def record_manifest(self, manifest_ref: str) -> None:
+        """Keep the checkpoint a resume needs, even if archive settlement then fails."""
+        self.validate_resume()
+        self._append(
+            {
+                "event": "run_manifest",
+                "manifest_ref": manifest_ref,
+                "plan_digest": self.plan_digest,
+                "config_digest": self.config_digest,
+            }
+        )
+
     def record_run_ended(self, *, result: str, halt: str | None, detail: str | None) -> None:
         """Name how an execute or resume call stopped; the journal is the plan's state."""
         self.validate_resume()

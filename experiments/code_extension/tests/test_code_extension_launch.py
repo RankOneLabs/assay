@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -170,7 +171,7 @@ def tree_digest(root: Path) -> str:
 
 @pytest.mark.asyncio
 async def test_cohort_runs_in_order_and_a_second_launch_dispatches_nothing(
-    tmp_path: Path, provider: Provider,
+    tmp_path: Path, provider: Provider, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = tmp_path / "store"
     summary = cohort.prepare_cohort(write_request(tmp_path / "request"), store)
@@ -215,6 +216,9 @@ async def test_cohort_runs_in_order_and_a_second_launch_dispatches_nothing(
     assert again == {"status": "finished", "cohort": summary["digest"], "plans": []}
     assert dict(provider.requests) == before
     assert second != first
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    done = await cohort.launch(Path(summary["cohort"]), summary["digest"], store)
+    assert done["status"] == "finished", "nothing is left to run, so no key is needed"
 
 
 @pytest.mark.asyncio
@@ -331,6 +335,30 @@ async def test_preflight_checks_every_plan_before_the_first_request(
     plan.write_bytes(plan.read_bytes() + b" ")
     with pytest.raises(run.LaunchRefused, match="second: frozen plan artifact changed"):
         await cohort.launch(path, summary["digest"], store)
+    assert provider.requests == Counter()
+    assert not (Path(summary["plans"][0]["plan"]).parent / "attempts.jsonl").exists()
+
+
+@pytest.mark.asyncio
+async def test_preflight_checks_a_later_plans_evaluator_runtime(
+    tmp_path: Path, provider: Provider, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = tmp_path / "store"
+    summary = cohort.prepare_cohort(write_request(tmp_path / "request"), store)
+    original = run._build
+
+    def build(config: RunConfiguration, *args: Any, **kwargs: Any) -> Any:
+        prepared = original(config, *args, **kwargs)
+        if config.randomization_seed == 2:
+            async def unavailable() -> Any:
+                return SimpleNamespace(error_type="image_missing")
+
+            monkeypatch.setattr(prepared.evaluator.runner, "_check_runtime", unavailable)
+        return prepared
+
+    monkeypatch.setattr("code_extension.launch._build", build)
+    with pytest.raises(run.LaunchRefused, match="second: evaluator_runtime_unavailable"):
+        await cohort.launch(Path(summary["cohort"]), summary["digest"], store)
     assert provider.requests == Counter()
     assert not (Path(summary["plans"][0]["plan"]).parent / "attempts.jsonl").exists()
 
@@ -488,4 +516,58 @@ async def test_a_failed_route_probe_ends_the_run_with_its_reason(
     first, second = store_status(store, cohort=summary["digest"])["plans"]
     assert first["state"] == "halted"
     assert first["halt_reason"] == "LaunchRefused: route_probe_failed: provider_error"
+    assert first["manifest_ref"] is None
     assert second["state"] == "prepared"
+    with pytest.raises(run.LaunchRefused, match="first is halted with no manifest"):
+        await cohort.launch(Path(summary["cohort"]), summary["digest"], store)
+
+    # The documented way forward: a changed label freezes a different plan.
+    relabelled = study_configuration(1).model_dump(mode="json") | {"cohort": "retry"}
+    path = tmp_path / "retry.json"
+    path.write_text(json.dumps(relabelled))
+    assert run.prepare(path, store)["digest"] != first["plan_digest"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_settlement_leaves_the_manifest_resume_needs(
+    tmp_path: Path, provider: Provider, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*_args: Any, **_kwargs: Any) -> None:
+        raise ValueError("archive closure requires redaction")
+
+    monkeypatch.setattr("code_extension.run._settle_archive", fail)
+    store = tmp_path / "store"
+    summary = cohort.prepare_cohort(write_request(tmp_path / "request"), store)
+    first = summary["plans"][0]
+    provider.fail_on.add((cell_id(first["tasks"][1]), 1))
+    with pytest.raises(ValueError, match="requires redaction"):
+        await cohort.launch(Path(summary["cohort"]), summary["digest"], store)
+
+    plan = plan_status(ObjectStore(store), first["digest"])
+    assert plan["state"] == "halted" and plan["manifest_ref"] is not None
+    assert (plan["started"], plan["terminal"], plan["evaluated"]) == (2, 2, 1)
+    resumed = await resume(
+        Path(first["plan"]), first["digest"], store, plan["manifest_ref"],
+        accept_unknown="Operator accepted the full reservation",
+    )
+    assert resumed["status"] == "RunSucceeded" and resumed["run_index"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_resume_that_dies_early_does_not_revive_an_old_refusal(
+    tmp_path: Path, provider: Provider,
+) -> None:
+    store = tmp_path / "store"
+    summary = cohort.prepare_cohort(write_request(tmp_path / "request"), store)
+    first = summary["plans"][0]
+    provider.fail_on.add((cell_id(first["tasks"][1]), 1))
+    await cohort.launch(Path(summary["cohort"]), summary["digest"], store)
+
+    directory = Path(first["plan"]).parent
+    config = RunConfiguration.load(directory / "config.json")
+    journal = AttemptJournal(directory / "attempts.jsonl", first["digest"], config.digest())
+    journal.record_run_started()
+    journal.claim_attempt(cell_id(first["tasks"][2]), "resumed-attempt")
+    journal.record_run_ended(result="ValueError", halt=None, detail="ValueError: died")
+    plan = plan_status(ObjectStore(store), first["digest"])
+    assert (plan["started"], plan["terminal"]) == (3, 2)

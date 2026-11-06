@@ -78,8 +78,9 @@ def prepare_cohort(request_path: Path, store_path: Path) -> dict[str, Any]:
     if len({config.digest() for config in configs}) != len(configs):
         raise LaunchRefused("duplicate plan configuration in cohort")
     total = sum((config.total_cap_usd for config in configs), Decimal(0))
-    # Each plan's own gate stops at its cap, so caps that fit the combined cap
-    # hold it for every outcome, including reservations charged in full.
+    # Each plan's gate refuses a reservation past its cap, so caps that fit here
+    # bound every reservation. A bill above its reservation can still pass a cap
+    # by that excess; the plan then halts and later plans do not start.
     if total > request.combined_cap_usd:
         raise LaunchRefused(
             f"combined_cap_exceeded: plan caps total {total}; "
@@ -135,7 +136,7 @@ def prepare_cohort(request_path: Path, store_path: Path) -> dict[str, Any]:
     return summary
 
 
-def _preflight(frozen: FrozenCohort, store: ObjectStore) -> list[FrozenPlan]:
+async def _preflight(frozen: FrozenCohort, store: ObjectStore) -> list[FrozenPlan]:
     """Check the whole cohort before the first paid request; return what remains to run."""
     if sum((plan.cap_usd for plan in frozen.plans), Decimal(0)) > frozen.combined_cap_usd:
         raise LaunchRefused("combined_cap_exceeded: frozen plan caps exceed the combined cap")
@@ -147,18 +148,31 @@ def _preflight(frozen: FrozenCohort, store: ObjectStore) -> list[FrozenPlan]:
         if digest_bytes(plan_bytes) != plan.plan_digest or config.digest() != plan.config_digest \
                 or config.total_cap_usd != plan.cap_usd:
             raise LaunchRefused(f"{plan.name}: frozen plan artifact changed")
-        if config.route.provider != "smithers-local" and not os.environ.get("OPENROUTER_API_KEY"):
-            raise LaunchRefused("hosted execution requires OPENROUTER_API_KEY")
-        if _build(config, store, live=False).plan_bytes != plan_bytes:
+        prepared = _build(config, store, live=False)
+        if prepared.plan_bytes != plan_bytes:
             raise LaunchRefused(f"{plan.name}: plan differs from its frozen configuration")
         journal = AttemptJournal(directory / "attempts.jsonl", plan.plan_digest, config.digest())
-        state = plan_state(journal.records())
+        records = journal.records()
+        state = plan_state(records)
         if state == "prepared":
+            if config.route.provider != "smithers-local" \
+                    and not os.environ.get("OPENROUTER_API_KEY"):
+                raise LaunchRefused("hosted execution requires OPENROUTER_API_KEY")
+            failure = await prepared.evaluator.runner._check_runtime()
+            if failure is not None:
+                raise LaunchRefused(
+                    f"{plan.name}: evaluator_runtime_unavailable: {failure.error_type}"
+                )
             remaining.append(plan)
         elif state != "finished":
+            if any(record["event"] == "run_manifest" for record in records):
+                raise LaunchRefused(
+                    f"{plan.name} is {state}; continue it with code_extension.resume, "
+                    "then launch again"
+                )
             raise LaunchRefused(
-                f"{plan.name} is {state}; continue it with code_extension.resume, "
-                "then launch again"
+                f"{plan.name} is {state} with no manifest, so nothing can resume it; "
+                "prepare a new cohort from a relabelled configuration"
             )
     return remaining
 
@@ -175,7 +189,7 @@ async def launch(cohort_path: Path, authorization: str, store_path: Path) -> dic
         raise LaunchRefused("original frozen cohort artifact is required")
     frozen = FrozenCohort.model_validate_json(data)
     results: list[dict[str, Any]] = []
-    for plan in _preflight(frozen, store):
+    for plan in await _preflight(frozen, store):
         # Preflight reads state without a lock, so execute checks it again under one.
         result = await execute(
             _plan_dir(store, plan.plan_digest) / "plan.json", plan.plan_digest, store_path,

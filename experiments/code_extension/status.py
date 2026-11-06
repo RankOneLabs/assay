@@ -68,11 +68,18 @@ def _charges(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _manifest(store: ObjectStore, config: RunConfiguration) -> tuple[str, RunManifest] | None:
+def _manifest(
+    store: ObjectStore, config: RunConfiguration, records: list[dict[str, Any]],
+) -> tuple[str, RunManifest] | None:
+    """The journal outlives a failed settlement; `run.json` serves older journals."""
+    recorded = [r["manifest_ref"] for r in records if r["event"] == "run_manifest"]
     index = _archive_root(store) / _run_label(config) / "run.json"
-    if not index.is_file():
+    if recorded:
+        reference = str(recorded[-1])
+    elif index.is_file():
+        reference = str(json.loads(index.read_bytes())["manifest_ref"])
+    else:
         return None
-    reference = str(json.loads(index.read_bytes())["manifest_ref"])
     return reference, RunManifest.model_validate_json(store.read_bytes(reference))
 
 
@@ -90,17 +97,17 @@ def plan_status(store: ObjectStore, plan_digest: str) -> dict[str, Any]:
     outcomes = {
         r["coordinate"]: r["status"] for r in records if r["event"] == "attempt_finished"
     }
-    # A manifest speaks for the runs before it. A resume reuses the last one until
-    # it settles, and that one can hold a refusal for a cell that is running now.
-    ended = max(
-        (index for index, r in enumerate(records) if r["event"] == "run_ended"),
+    # A manifest speaks only for the runs before it. The last one can hold a
+    # refusal for a cell that a later resume has since claimed.
+    written = max(
+        (index for index, r in enumerate(records) if r["event"] == "run_manifest"),
         default=len(records),
     )
     retained = [
-        r["coordinate"] for r in records[:ended]
+        r["coordinate"] for r in records[:written]
         if r["event"] == "attempt_started" and r["coordinate"] != ROUTE_PROBE
     ]
-    settled = _manifest(store, config)
+    settled = _manifest(store, config, records)
     evaluated: int | None = None
     passed: int | None = None
     missing: list[str] | None = None
