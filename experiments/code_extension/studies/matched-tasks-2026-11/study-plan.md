@@ -55,9 +55,10 @@ Apply the first row that matches.
 | Scope or integrity stop | Stop cause `out_of_scope_edit`, `tampering` or another rejected workspace. |
 | No submission | Any other attempt that ended without a submission. |
 | Unusable patch | Submitted, but the patch was rejected or preflight failed, so the check groups did not run. |
-| Reachability failure | Graded, and the `new_behavior` test titled `reachability:` failed. |
+| Omitted stage | Graded, the `new_behavior` test titled `reachability:` failed, and the patch adds no line naming the stage, in any spelling, outside `tests/`. |
+| Reachability failure | Graded, the `reachability:` test failed, and the patch adds stage code. |
 | Semantic failure | Graded, the reachability test passed and a test titled `semantics:` failed. |
-| Unattributed feature failure | `new_behavior` failed with neither title failing. Each one is reviewed. |
+| Unattributed feature failure | `new_behavior` failed and no row above applies, including a group that failed with no test titles. Each one is reviewed. |
 | Regression only | `new_behavior` passed and a regression group failed. |
 | Passed | The independent evaluator returned `correct`. |
 
@@ -78,6 +79,7 @@ All counts are per task, model and shape, five attempts each.
 | Completion | Normally completed submissions | Dispatched attempts |
 | Conditional correctness | Passed | Graded attempts |
 | Reachability failures (shape question) | Reachability failure | Dispatched attempts, with the ungraded count beside it |
+| Omitted stages | Omitted stage | Dispatched attempts, with the ungraded count beside it |
 | Semantic failures | Semantic failure | Dispatched attempts, with the ungraded count beside it |
 | Stops before grading (secondary) | Ungraded attempts that used all 60 requests, and timeouts, counted separately | Dispatched attempts |
 
@@ -92,12 +94,23 @@ The rule reads only mechanical outcomes, so review of failures cannot change it.
 **Recurs:** for one model, on both new tasks, `plugin` has at least 2 reachability failures
 in 5 attempts, and more than each of the other three shapes on that task.
 
+Apply the first row that matches. An omitted stage never counts toward the rule.
+
 | Result | Next step |
 |---|---|
+| Any shape has fewer than 5 dispatched attempts on a new task | Incomplete. Do not apply the rule. Review the plan's halt first. |
+| Each model and task pairing has 0 or 20 passes of 20 | Stop and review, because the cohort is at floor or ceiling. This holds even if the rule is met. |
 | Recurs | Continue to the seven further tasks. |
 | Meets the rule on one task only | Review before committing to further tasks. |
 | Meets the rule on neither task | Stop and review. |
-| Each model and task pairing is 0 of 20 or 20 of 20 | Stop and review, because the cohort is at floor or ceiling. |
+
+## Amendments
+
+2026-11-06, after launch from `70ac898`, from review of PR 171. Attempts had started, but no
+verdict or test output from the run had been read. Added the omitted stage outcome, so a
+patch that never writes the stage does not count as missed integration. Defined the
+incomplete result, defined floor and ceiling as passes, and gave them precedence over the
+rule, as Spec 3B does. Widened the unattributed row to cover a failed group with no titles.
 
 ## Limits every report must state
 

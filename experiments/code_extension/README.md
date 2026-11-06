@@ -251,7 +251,7 @@ recovery default.
 
 `studies/matched-tasks-2026-11/` holds the matched-task cohorts, with their analysis,
 billing recovery and store policy in `study-plan.md`. A cohort's caps authorize nothing
-until a launch names it. `python -m code_extension.reachability --store S --plan sha256:...`
+until a launch names it. `uv run python -m code_extension.reachability --store S --plan sha256:...`
 prints each attempt's stop, request count, verdict and reachability split.
 
 ## Running several plans
