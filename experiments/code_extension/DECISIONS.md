@@ -448,6 +448,27 @@ message rather than a passing compile, so a registered but wrong compiler counts
 reachable. Semantics tests need a reachable stage, so count a semantic failure only
 where reachability passed.
 
+## Multi-plan launch and status
+
+`launch.py` replaces the pilot's `launch.py`, `resume.py` and status file, which lived
+only in its study store. `code_extension.resume` already covers the pilot's archive and
+billing recovery for one plan, so neither recovery script moved. Their loop that accepts
+unknown charges and resumes until a plan finishes did not move either, because accepting
+a charge stays an operator decision for each cohort.
+
+The journal is the only state. It now stamps every record and adds `attempt_finished`,
+`run_started` and `run_ended`, so status can read a running grid and the launcher can tell
+finished plans from partial ones without a mutable status file. The combined cap is a
+check that plan caps fit under it, not a shared gate, because plans run one at a time and
+each already stops at its own cap.
+
+New attempts record `schedule_seed` and `schedule_order`, the attempt's position in the
+frozen plan. With concurrency one and resume dispatching only unclaimed cells in plan
+order, that position is also the dispatch order. `subject-rotated-v1` does not consume
+the seed. `completed_at` is now the attempt's own end when it has an execution outcome,
+and otherwise the settling time. Archives from before this change keep a batch time there
+and a null `schedule_order`; use `started_at` and execution outcomes for those.
+
 ## Offline reporting and replay
 
 - The runner accepts `report --archive DIR --output DIR` and `regrade --archive DIR --image DIGEST --output DIR`. Archive reading stays in `publish.py`; `report.py` renders from ledger rows and the ledger's counts, rates, states and terminal causes. The committed fixture and run locations remain command defaults. CSV, JSON and Markdown output names are fixed, and rendered bytes contain no generation time, host or absolute path.

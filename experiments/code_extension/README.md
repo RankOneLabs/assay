@@ -247,7 +247,42 @@ uv run python -m code_extension.run prepare --config code_extension/examples/hos
 `prepare` dispatches nothing and needs no API key. The launch summary under
 `STORE/plans/<digest>/` names every coordinate, the route, the image, the prompt,
 tool and scope identities, the caps, the worst-case serial duration and the billing
-recovery default. The combined cap across plans belongs to the multi-plan launcher.
+recovery default.
+
+## Running several plans
+
+A cohort file lists plans in launch order under one combined cap. Preparing it
+freezes every plan, then writes `cohort.json` and a combined launch summary to
+`STORE/cohorts/<digest>/`. It dispatches nothing and needs no API key.
+
+```sh
+uv run python -m code_extension.launch prepare --cohort code_extension/examples/hosted-matched-tasks.json --store .assay-extension
+uv run python -m code_extension.launch execute --cohort .assay-extension/cohorts/<digest>/cohort.json --authorize sha256:<digest> --store .assay-extension
+uv run python -m code_extension.run status --store .assay-extension --cohort sha256:<digest>
+```
+
+Preparing refuses plan caps that total more than the combined cap. Each plan's
+spending gate stops at its own cap, so the combined cap then holds for every outcome,
+including requests charged at their full reservation.
+
+`execute` checks every plan before the first paid request, then runs them one at a
+time and stops at the first halt. It never retries, replaces or resumes a cell. Each
+plan's journal records how its last run ended, so launching again skips finished
+plans and refuses a partial one. Continue a halted plan with `code_extension.resume`,
+using the `manifest_ref` that status prints, then launch again for the plans after it.
+Unknown charges still need an explicit `--accept-unknown` on each resume.
+
+`status` reads durable records and writes nothing. Without `--cohort` it reports every
+plan in the store. For each plan it gives planned, started, terminal, normally
+completed, evaluated, passed and unstarted counts, the active coordinate, last
+activity, halt reason, measured and conservative cost, and unknown charges. Conservative
+cost counts an unknown or unsettled request at its full reservation.
+
+- Grading follows the last attempt and is retained only in the run manifest, so
+  `evaluated` and `passed` stay null until a plan has settled once.
+- `in_progress` also describes a killed process. Compare `last_activity` with the clock.
+- `unrecorded` marks a journal from before runs recorded their own end. Its cost and
+  attempt counts are still correct, but it has no timestamps.
 
 ## ce-v1 contract and protocol
 

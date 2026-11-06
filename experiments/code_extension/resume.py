@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 
 from assay.canonical import canonical_json, digest_bytes
-from assay.execution import execute_plan
+from assay.execution import RunResult, execute_plan
 from assay.models import ExecutionOutcome, ExecutionPlanV3, RunManifest
 from assay.planning import authorize
 from assay.store import ObjectStore
@@ -21,6 +21,7 @@ from code_extension.run import (
     _build,
     _interruption,
     _plan_dir,
+    _recorded,
     _route_probe,
     _settle_archive,
 )
@@ -140,17 +141,22 @@ async def resume(
     runtime_failure = await prepared.evaluator.runner._check_runtime()
     if runtime_failure is not None:
         raise LaunchRefused("resume evaluator runtime is unavailable")
-    await _route_probe(config, store, authorization, prepared)
-    result = await execute_plan(
-        plan_bytes=plan_bytes, authorization=authorization, snapshot=prepared.snapshot,
-        store=store, workers=prepared.workers, evaluators={"correctness": prepared.evaluator},
-        resume_from=checkpoint_ref,
-    )
-    latest = str(result.manifest_ref) if result.manifest_ref is not None else None
-    index = _settle_archive(
-        worker.binding, fixture=prepared, manifest_ref=latest,
-        interruption=_interruption(result), preserve_settled=True,
-    )
+    binding = worker.binding
+
+    async def dispatch() -> tuple[RunResult, Path | None]:
+        await _route_probe(config, store, authorization, prepared)
+        result = await execute_plan(
+            plan_bytes=plan_bytes, authorization=authorization, snapshot=prepared.snapshot,
+            store=store, workers=prepared.workers, evaluators={"correctness": prepared.evaluator},
+            resume_from=checkpoint_ref,
+        )
+        latest = str(result.manifest_ref) if result.manifest_ref is not None else None
+        return result, _settle_archive(
+            binding, fixture=prepared, manifest_ref=latest,
+            interruption=_interruption(result), preserve_settled=True,
+        )
+
+    result, index = await _recorded(worker, dispatch())
     return {
         "status": type(result).__name__, "authorization": authorization,
         "spend": worker.gate.record(), "resume_audit_ref": audit_ref,

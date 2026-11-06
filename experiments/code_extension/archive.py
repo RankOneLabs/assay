@@ -612,7 +612,9 @@ class AttemptArchive:
         values["completion_cause"] = stop or interruption or (
             outcome.error_type if outcome else "CandidateUnavailable"
         )
-        values["completed_at"] = _now()
+        # Settling happens once per batch, so only the outcome knows when this
+        # attempt ended. An attempt with no outcome has only the settling time.
+        values["completed_at"] = outcome.completed_at if outcome else _now()
         settled = AttemptArchiveRecord.model_validate(values)
         self._record(settled)
         return settled

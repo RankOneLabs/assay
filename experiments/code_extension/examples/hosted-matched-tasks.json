@@ -1,0 +1,8 @@
+{
+  "cohort": "matched-tasks-example",
+  "combined_cap_usd": "16.00",
+  "plans": [
+    {"name": "ministral", "config": "hosted-matched-tasks-ministral.json"},
+    {"name": "qwen", "config": "hosted-matched-tasks-qwen.json"}
+  ]
+}
