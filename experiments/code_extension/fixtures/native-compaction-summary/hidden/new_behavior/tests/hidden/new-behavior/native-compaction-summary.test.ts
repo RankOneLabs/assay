@@ -126,6 +126,20 @@ test("semantics: an unfinished or cancelled compaction yields no native summary"
   expect([unfinished, cancelled]).toEqual([{ method: "final_response", markdown: "answer" }, { method: "final_response", markdown: "answer" }]);
 });
 
+async function expectEmptyHandoffFallsThrough(...updates: schema.SessionUpdate[]) {
+  const generated = await nativeGenerator().generate({ session_id: sid, produced_at, events: events(...updates) });
+  expect(generated.ok).toBe(false);
+  expect(await handoff(...updates)).toEqual({ method: "final_response", markdown: "answer" });
+}
+
+test("semantics: a completed summary of only whitespace fails, so the next strategy runs", async () => {
+  await expectEmptyHandoffFallsThrough(user("go"), compaction("c1", "in_progress"), compaction("c1", "completed", " \n "), reply("answer"));
+});
+
+test("semantics: a completed compaction with no summary and no chunks fails, so the next strategy runs", async () => {
+  await expectEmptyHandoffFallsThrough(user("go"), compaction("c1", "in_progress"), compaction("c1", "completed"), reply("answer"));
+});
+
 test("semantics: the latest completed compaction wins", async () => {
   expect(await handoff(
     user("go"), compaction("c1", "completed", "first"), compaction("c2", "completed", "second"), reply("answer"),

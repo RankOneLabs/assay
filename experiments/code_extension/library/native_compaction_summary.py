@@ -265,6 +265,9 @@ _REQUIREMENTS: Requirements = (
     ("Only the latest compaction completed in the final turn, after the last user message, "
      "counts.",
      ("latest-compaction-wins", "earlier-turn-is-stale")),
+    ("A completed compaction whose trimmed text is empty produces no native summary, and the "
+     "next strategy runs.",
+     ("whitespace-summary-falls-through", "empty-compaction-falls-through")),
 )
 
 TASKS = (
