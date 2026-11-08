@@ -1,0 +1,349 @@
+/**
+ * Route-level lifecycle behavior for the ACP-backed session surface:
+ * listing as PWA session snapshots, resume-as-worktree-inheritance (§17.3),
+ * and purge. Model and effort validation lives in the session, covered by
+ * sessions.contract.test.ts.
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Hono } from "hono";
+
+import {
+  mountSessionsRoutes,
+  resolveResumedRuntimeSelection,
+  selectTerminalWaitMs,
+  TERMINAL_WAIT_MS_DEFAULT,
+  TERMINAL_WAIT_MS_MAX,
+} from "../../src/server/handlers/sessions";
+import { makeAcpTestService, type AcpTestHarness } from "../../src/acp/test-harness";
+import type { KbblSessionId, TurnKey } from "../../src/acp/types";
+
+let tmpRoot: string;
+let repoDir: string;
+let harness: AcpTestHarness;
+
+async function gitInitRepo(dir: string): Promise<void> {
+  const cmds: string[][] = [
+    ["git", "-C", dir, "init", "-q", "-b", "main"],
+    ["git", "-C", dir, "config", "user.email", "test@example.com"],
+    ["git", "-C", dir, "config", "user.name", "test"],
+    ["git", "-C", dir, "config", "commit.gpgsign", "false"],
+    ["git", "-C", dir, "config", "tag.gpgsign", "false"],
+    ["git", "-C", dir, "commit", "--allow-empty", "-q", "-m", "init"],
+  ];
+  for (const cmd of cmds) {
+    const p = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+    const [stderr, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+    if (code !== 0) throw new Error(`${cmd.join(" ")} failed (exit ${code}): ${stderr}`);
+  }
+}
+
+
+function makeApp(): Hono {
+  const app = new Hono();
+  mountSessionsRoutes(app, {
+    acp: harness.service,
+    defaultWorkdir: repoDir,
+  });
+  return app;
+}
+
+async function postSessions(app: Hono, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await app.request("/sessions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+beforeEach(async () => {
+  tmpRoot = mkdtempSync(join(tmpdir(), "kbbl-sessions-model-test-"));
+  repoDir = join(tmpRoot, "repo");
+  await mkdir(join(tmpRoot, "worktrees"), { recursive: true });
+  await mkdir(join(tmpRoot, "state"), { recursive: true });
+  mkdirSync(repoDir, { recursive: true });
+  await gitInitRepo(repoDir);
+  harness = makeAcpTestService({
+    stateDir: join(tmpRoot, "state"),
+    worktreesRoot: join(tmpRoot, "worktrees"),
+  });
+});
+
+afterEach(async () => {
+  await harness.service.shutdown();
+  rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+describe("worktree git access", () => {
+  test("a worktree session is granted the main repository's .git as a workspace root", async () => {
+    const created = await postSessions(makeApp(), { workdir: repoDir, name: "git-root" });
+    expect(created.status).toBe(200);
+    const row = harness.store.getSession(created.body.sid as KbblSessionId);
+    if (!row?.acp_session_id) throw new Error("session has no agent session id");
+
+    const granted = JSON.parse(
+      readFileSync(join(tmpRoot, "state", `${row.acp_session_id}.additional-directories.json`), "utf8"),
+    ) as string[];
+    expect(granted).toEqual([realpathSync(join(repoDir, ".git"))]);
+  });
+});
+
+describe("GET /sessions", () => {
+  test("lists ACP sessions in the PWA snapshot shape", async () => {
+    const app = makeApp();
+    const created = await postSessions(app, { workdir: repoDir, name: "one" });
+    expect(created.status).toBe(200);
+
+    const res = await app.request("/sessions");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { sessions: Array<Record<string, unknown>> };
+    expect(body.sessions).toHaveLength(1);
+    const snapshot = body.sessions[0]!;
+    expect(snapshot.sid).toBe(created.body.sid);
+    expect(snapshot.name).toBe("one");
+    // Native ACP vocabulary on the browser wire: idle stays idle.
+    expect(snapshot.status).toBe("idle");
+    expect(snapshot.agentProfile).toBe("claude-code");
+    expect(typeof snapshot.lastActivityTs).toBe("string");
+  });
+
+  test("artifact-tagged sessions surface through /artifacts/:id/sessions", async () => {
+    const app = makeApp();
+    await postSessions(app, { workdir: repoDir, artifact_id: "artifact-7" });
+    await postSessions(app, { workdir: repoDir });
+
+    const res = await app.request("/artifacts/artifact-7/sessions");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { sessions: Array<{ artifactId: string | null }> };
+    expect(body.sessions).toHaveLength(1);
+    expect(body.sessions[0]!.artifactId).toBe("artifact-7");
+  });
+});
+
+describe("POST /sessions resume_from (§17.3: worktree inheritance)", () => {
+  test("the resumed agent receives the parent's conversation as its first durable turn", async () => {
+    const app = makeApp();
+    const parent = await postSessions(app, { workdir: repoDir, name: "parent" });
+    const parentSid = parent.body.sid as string;
+    const sent = await harness.service.sendInput(parentSid, "Please remember the blue heron.");
+    expect(sent.ok).toBe(true);
+    if (!sent.ok) return;
+    const deadline = Date.now() + 5_000;
+    while (harness.store.getTurn(parentSid as never, sent.value.turn_key)?.status !== "succeeded") {
+      if (Date.now() > deadline) throw new Error("parent turn did not complete");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await harness.service.closeSession(parentSid);
+
+    const child = await postSessions(app, { resume_from: parentSid, name: "child" });
+    expect(child.status).toBe(200);
+    const childSid = child.body.sid as string;
+    const initial = harness.store.getTurn(childSid as never, `initial:${childSid}` as TurnKey);
+    expect(initial?.payload).toContain("User: Please remember the blue heron.");
+    expect(initial?.payload).toContain("Assistant:");
+  });
+
+  test("the child runs in a fresh worktree cut from the parent's, with lineage recorded", async () => {
+    const app = makeApp();
+    const parent = await postSessions(app, { workdir: repoDir, name: "parent" });
+    expect(parent.status).toBe(200);
+    const parentSid = parent.body.sid as string;
+    const parentWorktree = parent.body.worktreePath as string;
+
+    const child = await postSessions(app, { resume_from: parentSid, name: "child" });
+    expect(child.status).toBe(200);
+    expect(child.body.worktreePath).not.toBe(parentWorktree);
+    expect(child.body.worktreeBranch).toMatch(/-r1$/);
+    const childRow = harness.store.getSession(
+      child.body.sid as never,
+    );
+    expect(childRow?.parent_sid).toBe(parentSid as never);
+    // Project identity points at the original repo, not the parent worktree.
+    expect(childRow?.project_workdir).toBe(repoDir);
+  });
+
+  test("resume_from an unknown session is a 404", async () => {
+    const app = makeApp();
+    const res = await postSessions(app, { resume_from: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" });
+    expect(res.status).toBe(404);
+  });
+
+  test("the child inherits the parent's agent, model and effort", async () => {
+    const app = makeApp();
+    const parent = await postSessions(app, {
+      workdir: repoDir,
+      runtime: "codex",
+      model: "fake-large",
+      effort: "high",
+    });
+    expect(parent.status).toBe(200);
+
+    // The PWA's resume button posts nothing but resume_from. Without
+    // inheritance the child fell back to default_agent with a null model.
+    const child = await postSessions(app, { resume_from: parent.body.sid as string });
+    expect(child.status).toBe(200);
+    const childRow = harness.store.getSession(child.body.sid as never);
+    expect(childRow?.agent_profile).toBe("codex");
+    expect(childRow?.requested_model).toBe("fake-large");
+    expect(childRow?.requested_effort).toBe("high");
+  });
+
+  test("an explicit body selection overrides what the parent ran", async () => {
+    const app = makeApp();
+    const parent = await postSessions(app, { workdir: repoDir, runtime: "codex", model: "fake-large" });
+    expect(parent.status).toBe(200);
+
+    const child = await postSessions(app, {
+      resume_from: parent.body.sid as string,
+      runtime: "claude-code",
+      model: "fake-small",
+    });
+    expect(child.status).toBe(200);
+    const childRow = harness.store.getSession(child.body.sid as never);
+    expect(childRow?.agent_profile).toBe("claude-code");
+    expect(childRow?.requested_model).toBe("fake-small");
+  });
+});
+
+describe("resolveResumedRuntimeSelection", () => {
+  const parent = {
+    agent_profile: "codex",
+    requested_model: "gpt-6-astra",
+    requested_effort: "high",
+  } as const;
+
+  test("an unstated field falls back to the parent's", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: undefined, model: undefined, effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "codex", model: "gpt-6-astra", effort: "high" });
+  });
+
+  test("a stated field wins over the parent's", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: undefined, model: "gpt-5.6-sol", effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "codex", model: "gpt-5.6-sol", effort: "high" });
+  });
+
+  test("switching agent inherits no model or effort from the old one", () => {
+    // `gpt-6-astra` and a Codex effort id mean nothing to Claude Code;
+    // inheriting them would provision straight into
+    // `requested_model_unsupported`.
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: "claude-code", model: undefined, effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "claude-code", model: undefined, effort: undefined });
+  });
+
+  test("switching agent still honours a model the request names", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: "claude-code", model: "sonnet", effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "claude-code", model: "sonnet", effort: undefined });
+  });
+
+  test("restating the parent's own agent still inherits its selection", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: "codex", model: undefined, effort: undefined },
+        parent,
+      ),
+    ).toEqual({ agent_profile: "codex", model: "gpt-6-astra", effort: "high" });
+  });
+
+  test("a parent that requested nothing leaves the child unset, not null", () => {
+    expect(
+      resolveResumedRuntimeSelection(
+        { agent_profile: undefined, model: undefined, effort: undefined },
+        { agent_profile: "claude-code", requested_model: null, requested_effort: null },
+      ),
+    ).toEqual({ agent_profile: "claude-code", model: undefined, effort: undefined });
+  });
+});
+
+describe("selectTerminalWaitMs", () => {
+  test("defaults, clamps, and rejects non-numeric input", () => {
+    expect(selectTerminalWaitMs(undefined)).toBe(TERMINAL_WAIT_MS_DEFAULT);
+    expect(selectTerminalWaitMs("1000")).toBe(1000);
+    expect(selectTerminalWaitMs("999999")).toBe(TERMINAL_WAIT_MS_MAX);
+    expect(selectTerminalWaitMs("-5")).toBe(TERMINAL_WAIT_MS_DEFAULT);
+    expect(selectTerminalWaitMs("nonsense")).toBe(TERMINAL_WAIT_MS_DEFAULT);
+    expect(TERMINAL_WAIT_MS_MAX).toBeLessThan(255_000);
+  });
+});
+
+describe("DELETE /sessions/:sid?purge=true", () => {
+  test("purge removes the worktree and the session row", async () => {
+    const app = makeApp();
+    const created = await postSessions(app, { workdir: repoDir });
+    const sid = created.body.sid as string;
+    const worktreePath = created.body.worktreePath as string;
+    expect(existsSync(worktreePath)).toBe(true);
+
+    const res = await app.request(`/sessions/${sid}?purge=true`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, removed: true });
+    expect(existsSync(worktreePath)).toBe(false);
+    expect(harness.service.getSession(sid)).toBeNull();
+  });
+
+  test("plain close retains the session row and worktree", async () => {
+    const app = makeApp();
+    const created = await postSessions(app, { workdir: repoDir });
+    const sid = created.body.sid as string;
+
+    const res = await app.request(`/sessions/${sid}`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    const after = harness.service.getSession(sid);
+    expect(after?.status).toBe("ended");
+    expect(existsSync(created.body.worktreePath as string)).toBe(true);
+  });
+});
+
+describe("DELETE /sessions/:sid?archive=true", () => {
+  test("ends a live session, persists its archive marker, and retains its transcript", async () => {
+    const app = makeApp();
+    const created = await postSessions(app, { workdir: repoDir, name: "archive-me" });
+    const sid = created.body.sid as string;
+    const row = harness.store.getSession(sid as KbblSessionId);
+    if (!row?.acp_session_id) throw new Error("session has no agent session id");
+    const transcript = join(tmpRoot, "state", `${row.acp_session_id}.jsonl`);
+    expect(existsSync(transcript)).toBe(true);
+
+    const archived = await app.request(`/sessions/${sid}?archive=true`, { method: "DELETE" });
+    expect(archived.status).toBe(200);
+    expect(harness.service.getSession(sid)?.status).toBe("ended");
+    expect(harness.service.listSessionArchives().has(sid as KbblSessionId)).toBe(true);
+    expect(existsSync(transcript)).toBe(true);
+    const listed = await app.request("/sessions");
+    const body = (await listed.json()) as { sessions: Array<{ sid: string; archivedAt: string | null }> };
+    expect(body.sessions.find((session) => session.sid === sid)?.archivedAt).not.toBeNull();
+    const history = await harness.service.loadHistory(sid);
+    expect(history.ok).toBe(true);
+  });
+
+  test("an ended session can be archived without changing its terminal state", async () => {
+    const app = makeApp();
+    const created = await postSessions(app, { workdir: repoDir });
+    const sid = created.body.sid as string;
+    await app.request(`/sessions/${sid}`, { method: "DELETE" });
+    const archived = await app.request(`/sessions/${sid}?archive=true`, { method: "DELETE" });
+    expect(archived.status).toBe(200);
+    expect(harness.service.getSession(sid)?.status).toBe("ended");
+    expect(harness.service.listSessionArchives().has(sid as KbblSessionId)).toBe(true);
+  });
+});

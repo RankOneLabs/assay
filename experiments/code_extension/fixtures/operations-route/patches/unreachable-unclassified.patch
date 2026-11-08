@@ -1,0 +1,51 @@
+diff --git a/src/http/app.ts b/src/http/app.ts
+--- a/src/http/app.ts
++++ b/src/http/app.ts
+@@ -15,6 +15,7 @@
+ import { installEventStream } from "./events";
+ import { installIngress } from "./ingress";
+ import { installMergeStatus } from "./merge-status";
++import { selectOperationList } from "./operations";
+ import { installProjectApi } from "./projects";
+ import { installReadModels } from "./read-models";
+ 
+@@ -68,6 +69,7 @@
+   app.post("/api/runs/:run_id/units/:unit_id/threads/:thread_id/messages", collaboration.addMessage);
+   app.post("/api/runs/:run_id/units/:unit_id/threads/:thread_id/review-items", collaboration.addReviewItem);
+ 
++  app.get("/api/operations", (context) => context.json(selectOperationList()));
+   app.get("/api/prompts", () => { try { return Response.json(listCommittedPrompts()); }
+     catch (cause) { return fault(cause); } });
+   const archiveRun = (is_archived: boolean) => async (c: Context<{}, "/api/runs/:run_id/:action">) => { try {
+diff --git a/src/http/operations.ts b/src/http/operations.ts
+new file mode 100644
+--- /dev/null
++++ b/src/http/operations.ts
+@@ -0,0 +1,16 @@
++import type { TypeExpression } from "../core-client/core-types";
++import { OPERATION_REGISTRY } from "../operations/registry";
++
++/** One code operation a workflow may name, as the definition view reads it. */
++export interface OperationView {
++  readonly key: string;
++  readonly input_schema: TypeExpression;
++  readonly output_schema: TypeExpression;
++  readonly error_codes: readonly string[];
++}
++export interface OperationList { readonly operations: readonly OperationView[] }
++
++/** The body of `GET /api/operations`: the registry, in its own order. */
++export const selectOperationList = (): OperationList => ({
++  operations: OPERATION_REGISTRY.map(({ key, input_schema, output_schema, error_codes }): OperationView => ({ key, input_schema, output_schema, error_codes })),
++});
+diff --git a/src/http/operator-api.ts b/src/http/operator-api.ts
+--- a/src/http/operator-api.ts
++++ b/src/http/operator-api.ts
+@@ -12,6 +12,7 @@
+ export type { UnitHistory, UnitDiagnostics } from "../projections/history-view";
+ export type { CollaborationThreadView } from "../projections/collaboration-view";
+ export type { ProjectDraft, ProjectList, ProjectView } from "./projects";
++export type { OperationList, OperationView } from "./operations";
+ export type { RunEvent } from "../projections/run-event";
+ export type { StreamFrameData, StreamInvalidation } from "../projections/operator-event";
+ export type { SessionHold, SessionHoldResponse, SessionRunLocation } from "../projections/session-hold";

@@ -1,0 +1,128 @@
+// Static process-launch configuration for ACP agents (§8.1, §20). A
+// profile describes HOW to start an agent binary; it carries no protocol
+// or provider event knowledge.
+
+import type { KbblConfig } from "../config";
+import { acpError, err, ok, type AcpError, type Result } from "./types";
+
+export type AgentProfileId = "claude-code" | "codex" | (string & {});
+
+/** Per-profile environment rules (§20.1). */
+export interface AgentProfileEnvPolicy {
+  readonly inherit: boolean;
+  readonly include?: readonly string[];
+  /** Names to drop; one ending in `*` drops every name with that prefix. */
+  readonly exclude?: readonly string[];
+  readonly set?: Readonly<Record<string, string>>;
+}
+
+export interface AgentProfile {
+  readonly id: AgentProfileId;
+  readonly label: string;
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env_policy: AgentProfileEnvPolicy;
+  readonly enabled: boolean;
+  /** Required for DBOS delegated-session use (§10.3, guardrail 18). */
+  readonly requireLoadSession: boolean;
+  /**
+   * Value for the agent's `mode` config option that a new session starts in
+   * (§12 semantic category "mode"). Null leaves the agent's own default.
+   */
+  readonly sessionMode: string | null;
+}
+
+export type AcpRuntimeConfig = KbblConfig["acp"];
+
+/**
+ * Profiles from config, overlaid on optional built-in defaults. A config
+ * entry replaces the builtin of the same id wholesale — including its
+ * env_policy — so an operator override is never surprised by hidden
+ * merged fields. (The ANTHROPIC_API_KEY exclusion travels with the
+ * builtin claude-code profile; overriding that profile takes ownership
+ * of the billing hazard too.)
+ */
+export function loadAgentProfiles(
+  acp: AcpRuntimeConfig,
+  builtins?: ReadonlyMap<AgentProfileId, AgentProfile>,
+): Map<AgentProfileId, AgentProfile> {
+  const profiles = new Map<AgentProfileId, AgentProfile>(builtins ?? []);
+  for (const [id, agent] of Object.entries(acp.agents)) {
+    profiles.set(id, {
+      id,
+      label: agent.label ?? id,
+      command: agent.command,
+      args: agent.args,
+      env_policy: {
+        inherit: agent.env_policy.inherit,
+        include: agent.env_policy.include ?? undefined,
+        exclude: agent.env_policy.exclude,
+        set: agent.env_policy.set,
+      },
+      enabled: agent.enabled,
+      requireLoadSession: agent.require_load_session,
+      sessionMode: agent.session_mode,
+    });
+  }
+  return profiles;
+}
+
+export function resolveProfile(
+  profiles: ReadonlyMap<AgentProfileId, AgentProfile>,
+  id: AgentProfileId,
+): Result<AgentProfile, AcpError> {
+  const profile = profiles.get(id);
+  if (!profile) {
+    return err(
+      acpError(
+        "agent_profile_unavailable",
+        "resolveProfile",
+        `no ACP agent profile named "${id}"`,
+      ),
+    );
+  }
+  if (!profile.enabled) {
+    return err(
+      acpError(
+        "agent_profile_unavailable",
+        "resolveProfile",
+        `ACP agent profile "${id}" is disabled`,
+      ),
+    );
+  }
+  return ok(profile);
+}
+
+/** Whether `key` matches an exclude entry: exactly, or by prefix for an entry ending in `*`. */
+export function isExcluded(key: string, exclude: readonly string[]): boolean {
+  return exclude.some((pattern) =>
+    pattern.endsWith("*") ? key.startsWith(pattern.slice(0, -1)) : key === pattern,
+  );
+}
+
+/**
+ * Pure transform from the policy plus a base environment to the child's
+ * environment. `exclude` wins over `include`; `set` wins over both. The
+ * hardening reason this exists: a stray ANTHROPIC_API_KEY in kbbl's own
+ * environment must never silently flip an agent to per-token billing.
+ */
+export function buildAgentEnv(
+  policy: AgentProfileEnvPolicy,
+  base: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (policy.inherit) {
+    for (const [key, value] of Object.entries(base)) {
+      if (value === undefined) continue;
+      if (policy.include && !policy.include.includes(key)) continue;
+      env[key] = value;
+    }
+  }
+  for (const key of Object.keys(env)) {
+    if (isExcluded(key, policy.exclude ?? [])) delete env[key];
+  }
+  for (const [key, value] of Object.entries(policy.set ?? {})) {
+    env[key] = value;
+  }
+  return env;
+}

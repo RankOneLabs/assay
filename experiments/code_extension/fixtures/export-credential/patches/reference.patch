@@ -1,0 +1,38 @@
+diff --git a/src/http/exports.ts b/src/http/exports.ts
+--- a/src/http/exports.ts
++++ b/src/http/exports.ts
+@@ -25,7 +25,7 @@
+   app.post("/v1/exports/assay", async (c) => {
+     const authorization = c.req.header("authorization");
+     const rawCredential = credentialFor(authorization, deps.credentials.export_raw ?? []);
+-    const tenant = rawCredential ?? credentialFor(authorization, deps.credentials.read);
++    const tenant = rawCredential ?? credentialFor(authorization, deps.credentials.export ?? []);
+     if (!tenant) return errorResponse(c, 403, "forbidden", "export credential required");
+     let body: unknown;
+     try { body = await c.req.json(); } catch { return errorResponse(c, 400, "invalid_json", "valid JSON body required"); }
+diff --git a/src/http/ingest-auth.ts b/src/http/ingest-auth.ts
+--- a/src/http/ingest-auth.ts
++++ b/src/http/ingest-auth.ts
+@@ -3,7 +3,8 @@
+ 
+ export interface Credential extends TenantScope { readonly token: string; readonly reviewer_id?: string }
+ export interface Credentials { readonly ingest: readonly Credential[]; readonly read: readonly Credential[];
+-  readonly grade?: readonly Credential[]; readonly export_raw?: readonly Credential[] }
++  readonly grade?: readonly Credential[]; readonly export?: readonly Credential[];
++  readonly export_raw?: readonly Credential[] }
+ 
+ function sameSecret(left: string, right: string): boolean {
+   const a = Buffer.from(left);
+@@ -39,9 +40,10 @@
+   const grade = configuredCredentials(env.OBSERVATION_GRADE_CREDENTIALS);
+   if (grade.some((credential) => !credential.reviewer_id?.trim()))
+     throw new Error("grade credentials require a reviewer_id binding");
++  const exporting = configuredCredentials(env.OBSERVATION_EXPORT_CREDENTIALS);
+   const export_raw = configuredCredentials(env.OBSERVATION_EXPORT_RAW_CREDENTIALS);
+-  const all = [...ingest, ...read, ...grade, ...export_raw];
++  const all = [...ingest, ...read, ...grade, ...exporting, ...export_raw];
+   if (all.some((item, index) => all.findIndex((candidate) => sameSecret(item.token, candidate.token)) !== index))
+     throw new Error("observation credential tokens must be unique across capabilities");
+-  return { ingest, read, grade, export_raw };
++  return { ingest, read, grade, export: exporting, export_raw };
+ }

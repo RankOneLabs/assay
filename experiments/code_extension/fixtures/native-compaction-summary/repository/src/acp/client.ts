@@ -1,0 +1,237 @@
+// Thin wrapper around @agentclientprotocol/sdk (§8.3). This is the IO
+// boundary for the protocol: every fallible operation catches at the SDK
+// edge and returns a Result. It forwards session/update notifications and
+// permission requests to the controller via callbacks and never interprets
+// provider-private payloads.
+
+import {
+  client,
+  ndJsonStream,
+  PROTOCOL_VERSION,
+  RequestError,
+  type ClientConnection,
+} from "@agentclientprotocol/sdk";
+import type * as schema from "@agentclientprotocol/sdk";
+
+import type { AcpChildProcess } from "./process-supervisor";
+import {
+  acpError,
+  err,
+  ok,
+  type AcpError,
+  type AcpFailureCode,
+  type AcpSessionWorkflowIdentity,
+  type KbblSessionId,
+  type Result,
+} from "./types";
+
+export interface AcpClientHandlers {
+  onSessionUpdate(notification: schema.SessionNotification): void;
+  onPermissionRequest(
+    request: schema.RequestPermissionRequest,
+  ): Promise<schema.RequestPermissionResponse>;
+}
+
+/** The validated declaration stored with the workflow session. */
+export function selectGatedReviewAccess(workflow: AcpSessionWorkflowIdentity | null): AcpSessionWorkflowIdentity["gated_review"] {
+  const access = workflow?.gated_review;
+  if (access?.kind === "unscoped") return access;
+  if (access?.kind === "restricted" && (access.role === "builder" || access.role === "assessor")) return access;
+  return null;
+}
+
+/** The MCP server supplied by the launcher, using ACP's session setup contract. */
+export function selectMcpServers(gatedReviewUrl: string | undefined, access: AcpSessionWorkflowIdentity["gated_review"]): schema.McpServer[] {
+  if (!gatedReviewUrl || !access || (access.kind !== "unscoped" && (access.kind !== "restricted" || (access.role !== "builder" && access.role !== "assessor")))) return [];
+  const base = gatedReviewUrl.replace(/\/+$/, "");
+  const url = access.kind === "unscoped" ? base : `${base}/${access.role}`;
+  return [{ type: "http", name: "gated-review", url, headers: [] }];
+}
+
+export class AcpClient {
+  private readonly connection: ClientConnection;
+  private capabilities: schema.AgentCapabilities = {};
+  private readonly mcpServers: schema.McpServer[];
+
+  constructor(
+    private readonly sid: KbblSessionId,
+    child: AcpChildProcess,
+    handlers: AcpClientHandlers,
+    access: AcpSessionWorkflowIdentity["gated_review"],
+  ) {
+    this.mcpServers = selectMcpServers(process.env.OAKRIDGE_GATED_REVIEW_URL, access);
+    this.connection = client({ name: `kbbl:${sid}` })
+      .onNotification("session/update", (ctx) => {
+        handlers.onSessionUpdate(ctx.params);
+      })
+      .onRequest("session/request_permission", (ctx) =>
+        handlers.onPermissionRequest(ctx.params),
+      )
+      .connect(ndJsonStream(child.stdin, child.stdout));
+  }
+
+  /** Resolves when the transport closes (child exit, stream error). */
+  get closed(): Promise<void> {
+    return this.connection.closed;
+  }
+
+  get agentCapabilities(): schema.AgentCapabilities {
+    return this.capabilities;
+  }
+
+  close(): void {
+    this.connection.close();
+  }
+
+  async initialize(): Promise<Result<schema.InitializeResponse, AcpError>> {
+    const result = await this.request<schema.InitializeResponse>(
+      "acp_initialize_failed",
+      "client.initialize",
+      () =>
+        this.connection.agent.request("initialize", {
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: {},
+        }),
+    );
+    if (!result.ok) return result;
+    if (result.value.protocolVersion !== PROTOCOL_VERSION) {
+      return err(
+        acpError(
+          "acp_protocol_mismatch",
+          "client.initialize",
+          `agent answered protocol v${result.value.protocolVersion}, kbbl requires v${PROTOCOL_VERSION}`,
+          this.sid,
+        ),
+      );
+    }
+    this.capabilities = result.value.agentCapabilities ?? {};
+    return result;
+  }
+
+  newSession(
+    cwd: string,
+    additionalDirectories: readonly string[],
+  ): Promise<Result<schema.NewSessionResponse, AcpError>> {
+    return this.request(
+      "acp_session_new_failed",
+      "client.newSession",
+      () =>
+        this.connection.agent.request("session/new", {
+          cwd,
+          mcpServers: this.mcpServers,
+          ...this.additionalDirectoriesField(additionalDirectories),
+        }),
+    );
+  }
+
+  loadSession(
+    sessionId: string,
+    cwd: string,
+    additionalDirectories: readonly string[],
+  ): Promise<Result<schema.LoadSessionResponse | void, AcpError>> {
+    return this.request(
+      "acp_session_load_failed",
+      "client.loadSession",
+      () =>
+        this.connection.agent.request("session/load", {
+          sessionId,
+          cwd,
+          mcpServers: this.mcpServers,
+          ...this.additionalDirectoriesField(additionalDirectories),
+        }),
+    );
+  }
+
+  /**
+   * `additionalDirectories` goes on the wire only to an agent that advertises
+   * `sessionCapabilities.additionalDirectories` (ACP: clients MUST NOT send
+   * it otherwise), and only when there is something to add.
+   */
+  private additionalDirectoriesField(
+    additionalDirectories: readonly string[],
+  ): { additionalDirectories?: string[] } {
+    const isSupported =
+      this.capabilities.sessionCapabilities?.additionalDirectories != null;
+    if (!isSupported || additionalDirectories.length === 0) return {};
+    return { additionalDirectories: [...additionalDirectories] };
+  }
+
+  prompt(
+    sessionId: string,
+    text: string,
+  ): Promise<Result<schema.PromptResponse, AcpError>> {
+    return this.request("acp_prompt_failed", "client.prompt", () =>
+      this.connection.agent.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text }],
+      }),
+    );
+  }
+
+  async cancel(sessionId: string): Promise<Result<void, AcpError>> {
+    try {
+      await this.connection.agent.notify("session/cancel", { sessionId });
+      return ok(undefined);
+    } catch (error) {
+      return err(this.toError("acp_cancel_failed", "client.cancel", error));
+    }
+  }
+
+  closeSession(
+    sessionId: string,
+  ): Promise<Result<schema.CloseSessionResponse | void, AcpError>> {
+    return this.request(
+      "acp_close_failed",
+      "client.closeSession",
+      () => this.connection.agent.request("session/close", { sessionId }),
+    );
+  }
+
+  setConfigOption(
+    sessionId: string,
+    configId: string,
+    value: string | boolean,
+  ): Promise<Result<schema.SetSessionConfigOptionResponse, AcpError>> {
+    const params =
+      typeof value === "boolean"
+        ? { sessionId, configId, value, type: "boolean" as const }
+        : { sessionId, configId, value };
+    return this.request(
+      "acp_config_unsupported",
+      "client.setConfigOption",
+      () =>
+        this.connection.agent.request("session/set_config_option", params),
+    );
+  }
+
+  private async request<T>(
+    code: AcpFailureCode,
+    operation: string,
+    send: () => Promise<T>,
+  ): Promise<Result<T, AcpError>> {
+    try {
+      return ok(await send());
+    } catch (error) {
+      return err(this.toError(code, operation, error));
+    }
+  }
+
+  private toError(
+    code: AcpFailureCode,
+    operation: string,
+    error: unknown,
+  ): AcpError {
+    if (error instanceof RequestError) {
+      return acpError(
+        code,
+        operation,
+        `agent error ${error.code}: ${error.message}${error.data == null ? "" : `; data: ${JSON.stringify(error.data)}`}`,
+        this.sid,
+      );
+    }
+    // A rejection that is not a JSON-RPC error means the transport itself
+    // failed (child exit, closed stream) — the answer never arrived, so
+    // the outcome is uncertain (§10.4), whatever the operation was.
+    return acpError("acp_transport_lost", operation, String(error), this.sid);
+  }
+}

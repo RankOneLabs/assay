@@ -18,10 +18,21 @@ Per-scenario counts:
 |---|---|---|---|
 | oakridge-dbos-context-defaults | 0 | 0 | 0 |
 | oakridge-dbos-dispatch-handler | 0 | 0 | 0 |
+| oakridge-dbos-operations-route | 0 | 0 | 0 |
 | oakridge-dbos-pointer-root | 0 | 0 | 0 |
 | oakridge-dbos-stage-collect-artifacts | 0 | 0 | 0 |
 | oakridge-dbos-stage-pass-through | 0 | 0 | 0 |
 | oakridge-dbos-stage-status-report | 0 | 0 | 0 |
+| oakridge-dbos-worker-silence-bound | 0 | 0 | 0 |
+| oakridge-dbos-worker-start-budget | 0 | 0 | 0 |
+| oakridge-kbbl-agent-default-model | 0 | 0 | 0 |
+| oakridge-kbbl-context-usage-inbox | 0 | 0 | 0 |
+| oakridge-kbbl-gated-review-shortcuts | 0 | 0 | 0 |
+| oakridge-kbbl-native-compaction-summary | 0 | 0 | 0 |
+| oakridge-observation-addressing-runner | 0 | 0 | 0 |
+| oakridge-observation-export-credential | 0 | 0 | 0 |
+| oakridge-observation-restricted-evidence | 0 | 0 | 0 |
+| oakridge-observation-subject-only-build | 0 | 0 | 0 |
 
 Per-arm counts:
 
@@ -39,6 +50,7 @@ Scenario/arm cells, including cells with no completed attempt:
 |---|---|---|---|---|
 | oakridge-dbos-context-defaults | baseline | 0 | 0 | 0 |
 | oakridge-dbos-dispatch-handler | baseline | 0 | 0 | 0 |
+| oakridge-dbos-operations-route | baseline | 0 | 0 | 0 |
 | oakridge-dbos-pointer-root | baseline | 0 | 0 | 0 |
 | oakridge-dbos-stage-collect-artifacts | central | 0 | 0 | 0 |
 | oakridge-dbos-stage-collect-artifacts | cross_module | 0 | 0 | 0 |
@@ -52,6 +64,16 @@ Scenario/arm cells, including cells with no completed attempt:
 | oakridge-dbos-stage-status-report | cross_module | 0 | 0 | 0 |
 | oakridge-dbos-stage-status-report | modular | 0 | 0 | 0 |
 | oakridge-dbos-stage-status-report | plugin | 0 | 0 | 0 |
+| oakridge-dbos-worker-silence-bound | baseline | 0 | 0 | 0 |
+| oakridge-dbos-worker-start-budget | baseline | 0 | 0 | 0 |
+| oakridge-kbbl-agent-default-model | baseline | 0 | 0 | 0 |
+| oakridge-kbbl-context-usage-inbox | baseline | 0 | 0 | 0 |
+| oakridge-kbbl-gated-review-shortcuts | baseline | 0 | 0 | 0 |
+| oakridge-kbbl-native-compaction-summary | baseline | 0 | 0 | 0 |
+| oakridge-observation-addressing-runner | baseline | 0 | 0 | 0 |
+| oakridge-observation-export-credential | baseline | 0 | 0 | 0 |
+| oakridge-observation-restricted-evidence | baseline | 0 | 0 | 0 |
+| oakridge-observation-subject-only-build | baseline | 0 | 0 | 0 |
 
 ## Verification behavior
 
@@ -96,16 +118,27 @@ Scope of diff and unnecessary changed paths come from offline `assay code-metric
 
 This table counts primary attempts only, including invalid and unevaluable primary attempts. Other tables count all retained attempts. In the CSV and JSON ledgers, `retry_of` is `none` for a primary attempt and names the original attempt for a retry.
 
-Intervals use the Wilson score method at alpha 0.05. They describe execution variability on a fixed task, rather than sampling error over tasks. The fixture roster shown here lists 6 qualified scenarios; the planned pilot has fifteen attempts, five repeats on each of three fixed tasks. Only retained planned coordinates count as attempts. The repeats are not fifteen independently sampled tasks.
+Intervals use the Wilson score method at alpha 0.05. They describe execution variability on a fixed task, rather than sampling error over tasks. The fixture roster shown here lists 17 qualified scenarios; the planned pilot has fifteen attempts, five repeats on each of three fixed tasks. Only retained planned coordinates count as attempts. The repeats are not fifteen independently sampled tasks.
 
 | Scenario | Planned | Missing | No candidate | Operational yield | Primary task success | Conditional correctness | Invalid | Unevaluable |
 |---|---|---|---|---|---|---|---|---|
 | oakridge-dbos-context-defaults | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-dispatch-handler | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-dbos-operations-route | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-pointer-root | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-stage-collect-artifacts | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-stage-pass-through | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-stage-status-report | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-dbos-worker-silence-bound | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-dbos-worker-start-budget | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-kbbl-agent-default-model | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-kbbl-context-usage-inbox | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-kbbl-gated-review-shortcuts | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-kbbl-native-compaction-summary | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-observation-addressing-runner | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-observation-export-credential | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-observation-restricted-evidence | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| oakridge-observation-subject-only-build | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 
 ## Terminal causes and measurement coverage
 
@@ -113,10 +146,21 @@ Intervals use the Wilson score method at alpha 0.05. They describe execution var
 |---|---|---|---|---|---|
 | oakridge-dbos-context-defaults | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-dispatch-handler | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-dbos-operations-route | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-pointer-root | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-stage-collect-artifacts | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-stage-pass-through | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-stage-status-report | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-dbos-worker-silence-bound | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-dbos-worker-start-budget | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-kbbl-agent-default-model | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-kbbl-context-usage-inbox | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-kbbl-gated-review-shortcuts | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-kbbl-native-compaction-summary | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-observation-addressing-runner | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-observation-export-credential | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-observation-restricted-evidence | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| oakridge-observation-subject-only-build | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 
 ## Interpretation
 

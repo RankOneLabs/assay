@@ -1,0 +1,83 @@
+import { describe, expect, test } from "bun:test";
+
+import { KbblConfigSchema } from "../../src/config";
+
+describe("sessions.worktree_dir_name validation", () => {
+  // worktree_dir_name is joined directly onto dataDir, so anything that
+  // looks like a path (separators, ..) could collapse worktrees into the
+  // dataDir itself or escape it entirely. Validation lives in the schema
+  // so a misconfigured config.json fails at startup, not at the first
+  // worktree create.
+  test("rejects empty string", () => {
+    const r = KbblConfigSchema.safeParse({
+      sessions: { worktree_dir_name: "" },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  test("rejects '.'", () => {
+    const r = KbblConfigSchema.safeParse({
+      sessions: { worktree_dir_name: "." },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  test("rejects '..'", () => {
+    const r = KbblConfigSchema.safeParse({
+      sessions: { worktree_dir_name: "../escape" },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  test("rejects forward slash (path-like)", () => {
+    const r = KbblConfigSchema.safeParse({
+      sessions: { worktree_dir_name: "nested/dir" },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  test("rejects backslash (Windows separator)", () => {
+    const r = KbblConfigSchema.safeParse({
+      sessions: { worktree_dir_name: "nested\\dir" },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  test("accepts a simple name", () => {
+    const r = KbblConfigSchema.safeParse({
+      sessions: { worktree_dir_name: "my-worktrees" },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  test("default is 'worktrees' when omitted", () => {
+    const r = KbblConfigSchema.parse({});
+    expect(r.sessions.worktree_dir_name).toBe("worktrees");
+  });
+});
+
+describe("skills.confirm", () => {
+  test("defaults to mutating gated-review MCP tools", () => {
+    const r = KbblConfigSchema.parse({});
+    expect(r.skills.confirm).toEqual([
+      "mcp:gated-review:git.push",
+      "mcp:gated-review:git.pull",
+      "mcp:gated-review:open_pr",
+    ]);
+  });
+
+  test("an explicit list overrides the default", () => {
+    const r = KbblConfigSchema.parse({ skills: { confirm: ["deploy"] } });
+    expect(r.skills.confirm).toEqual(["deploy"]);
+  });
+});
+
+describe("acp.default_agent", () => {
+  test("defaults to claude-code when omitted", () => {
+    expect(KbblConfigSchema.parse({}).acp.default_agent).toBe("claude-code");
+  });
+
+  test("a removed top-level block fails the strict schema", () => {
+    expect(KbblConfigSchema.safeParse({ runtime: { default: "codex" } }).success).toBe(false);
+  });
+});

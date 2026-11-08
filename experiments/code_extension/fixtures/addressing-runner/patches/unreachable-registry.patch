@@ -1,0 +1,220 @@
+diff --git a/src/grading/catalogue/oakridge-questions.ts b/src/grading/catalogue/oakridge-questions.ts
+--- a/src/grading/catalogue/oakridge-questions.ts
++++ b/src/grading/catalogue/oakridge-questions.ts
+@@ -1,12 +1,12 @@
+ import type { QuestionId } from "../../domain/identity";
+ import type { PinnedExpectation, QuestionDefinition } from "../question";
+-import { ANALYSIS_RELEVANCE_RECIPE, ASSESSMENT_COVERAGE_RECIPE, BRIEF_FIDELITY_RECIPE, PLAN_TRACEABILITY_RECIPE,
++import { ANALYSIS_ADDRESSING_RECIPE, ANALYSIS_RELEVANCE_RECIPE, ASSESSMENT_COVERAGE_RECIPE, BRIEF_FIDELITY_RECIPE, PLAN_TRACEABILITY_RECIPE,
+   pinnedInputRecipe } from "../evidence-packages/pilot-recipe";
+ 
+ /** The four questions this catalogue authors. Ids live here, where they are the data a question
+  * is declared with — never a dispatch key in the builders. */
+ export const PILOT_QUESTION_IDS = ["analysis.finding_relevance", "plan.criterion_traceability",
+-  "brief.source_fidelity", "assessment.coverage"] as const;
++  "brief.source_fidelity", "assessment.coverage", "analysis.finding_addressing"] as const;
+ export type PilotQuestionId = typeof PILOT_QUESTION_IDS[number];
+ 
+ export interface PilotQuestion { readonly definition: QuestionDefinition; readonly text: string }
+@@ -58,6 +58,16 @@
+   requires_repository_snapshot: false,
+ };
+ 
++const addressing: Omit<QuestionDefinition, "pinned_expectation"> = {
++  question_id: "analysis.finding_addressing" as QuestionId, question_version: "v1", target_item_kinds: ["finding"],
++  input_recipe: pinnedInputRecipe(ANALYSIS_ADDRESSING_RECIPE),
++  response_kind: "boolean", allowed_values: null, missing_evidence_policy: "fail",
++  abstain_semantics: "No answer is recorded when the finding or the proposed spec updates are unavailable; zero addressing updates is a negative answer.",
++  unclear_semantics: "Link absence is not unknown: an update that does not list the finding id does not address it.",
++  interpretation_caveats: "Only a proposed spec update whose finding_ids names this finding addresses it; a related section or wording is not an address.",
++  requires_repository_snapshot: false,
++};
++
+ /** Four independently versioned questions, one per stage, pinned to Oakridge's selected item kinds. */
+ export function oakridgeQuestions(expectations: PilotExpectations): PilotQuestions {
+   return {
+@@ -65,5 +75,6 @@
+     "plan.criterion_traceability": pinnedQuestion(traceability, "Does this plan criterion follow from the tasks and decisions it cites?", expectations["plan.criterion_traceability"]),
+     "brief.source_fidelity": pinnedQuestion(fidelity, "Does this brief criterion preserve the meaning of its identified plan criterion?", expectations["brief.source_fidelity"]),
+     "assessment.coverage": pinnedQuestion(coverage, "Does at least one assessment finding explicitly assess this brief criterion?", expectations["assessment.coverage"]),
++    "analysis.finding_addressing": pinnedQuestion(addressing, "Is this analysis finding addressed by at least one proposed spec update?", expectations["analysis.finding_addressing"]),
+   };
+ }
+diff --git a/src/grading/evidence-packages/pilot-recipe.ts b/src/grading/evidence-packages/pilot-recipe.ts
+--- a/src/grading/evidence-packages/pilot-recipe.ts
++++ b/src/grading/evidence-packages/pilot-recipe.ts
+@@ -2,7 +2,7 @@
+ import type { QuestionDefinition } from "../question";
+ 
+ export const EVIDENCE_ROLES = ["requested_change", "relevant_excerpt", "analysis_finding", "plan_task", "plan_decision",
+-  "plan_criterion", "brief_criterion", "assessment_finding"] as const;
++  "plan_criterion", "brief_criterion", "assessment_finding", "proposed_spec_update"] as const;
+ export type EvidenceRole = typeof EVIDENCE_ROLES[number];
+ 
+ /** Where a slot's items come from. `subject` is the graded item itself. `linked` names one
+@@ -89,6 +89,16 @@
+     { link_type: "assesses", direction: "in", artifact_kind: "assessment", item_kind: "assessment_finding" }, 0, 100)],
+ };
+ 
++/** Proposed spec updates name the findings they address, so the relation points inward and the
++ * analysis revision that holds the updates is found by capture window, as for coverage. */
++export const ANALYSIS_ADDRESSING_RECIPE: PilotEvidenceRecipe = {
++  recipe_version: "v1", subject: { artifact_kind: "analysis", item_kind: "finding" },
++  build: { kind: "assessment_window" },
++  input: [subjectSlot("analysis_finding")],
++  output: [linkedSlot("proposed_spec_update",
++    { link_type: "addresses", direction: "in", artifact_kind: "analysis", item_kind: "proposed_spec_update" }, 0, 100)],
++};
++
+ const slotSourceSchema = z.discriminatedUnion("from", [
+   z.object({ from: z.literal("subject") }),
+   z.object({ from: z.literal("linked"), link_type: z.string().min(1), direction: z.enum(["out", "in"]),
+diff --git a/src/producers/oakridge/evidence-packages.ts b/src/producers/oakridge/evidence-packages.ts
+--- a/src/producers/oakridge/evidence-packages.ts
++++ b/src/producers/oakridge/evidence-packages.ts
+@@ -11,6 +11,7 @@
+ import { hasJudgeRecipe, judgeRecipeSchema, type JudgeRecipe } from "../../grading/evidence-packages/judge-recipe";
+ import { hasCapturedEvidenceRecipe, pinnedRepositoryMinimum, requiresRepositorySnapshot } from "../../grading/evidence-packages/recipe";
+ import { coverageInput, type CoverageInput } from "../../runners/coverage-checker";
++import { addressingInput, type AddressingInput } from "../../runners/addressing-checker";
+ import type { PilotQuestion } from "../../grading/catalogue/oakridge-questions";
+ import type { QuestionDefinition } from "../../grading/question";
+ 
+@@ -171,6 +172,30 @@
+     content: links as unknown as JsonValue, digest: digest.value });
+ }
+ 
++/** The addressing view, like the coverage view, has its own digest and precedes the captured
++ * source references in the package. */
++function addressingLinkReference(subject: CapturedItem, links: AddressingInput): Result<EvidenceReference, EvidencePackageError> {
++  const digest = canonicalDigest(links);
++  if (!digest.ok) return err({ operation: "evidence_packages", entity_id: subject.occurrence_id,
++    detail: digest.error.detail });
++  return ok({ ref: `addressing_links:${subject.occurrence_id}`, kind: "internal",
++    content: links as unknown as JsonValue, digest: digest.value });
++}
++
++/** The link view a window question's code runner decodes, chosen by the item kind the pinned
++ * inward relation reaches: proposed spec updates for addressing, assessment findings for coverage. */
++function windowLinkReference(subject: CapturedItem, relation: LinkRelation, found: readonly CapturedItem[])
++  : Result<EvidenceReference, EvidencePackageError> {
++  if (relation.item_kind === "proposed_spec_update") {
++    const view = addressingInput(subject, found);
++    return view.ok ? addressingLinkReference(subject, view.value)
++      : err({ operation: "evidence_packages", entity_id: subject.occurrence_id, detail: view.error.detail });
++  }
++  const links = coverageInput(subject, found);
++  return links.ok ? coverageLinkReference(subject, links.value)
++    : err({ operation: "evidence_packages", entity_id: subject.occurrence_id, detail: links.error.detail });
++}
++
+ /** The pinned relation points inward, so the source revision is found by capture window rather
+  * than by a link on the subject. An empty resolved set is valid evidence of a miss. */
+ function assessmentWindowPackages({ revisions, subjects, question, recipe }: BuilderInput)
+@@ -206,11 +231,8 @@
+       }
+       for (const source of sources) {
+         const found = linkedItems(subject, relation, recipe.subject, source.items).resolved;
+-        const links = coverageInput(subject, found);
+-        if (!links.ok) return err({ operation: "evidence_packages", entity_id: subject.occurrence_id,
+-          detail: links.error.detail });
+         const references = collectReferences([
+-          coverageLinkReference(subject, links.value),
++          windowLinkReference(subject, relation, found),
+           ...own.map((slot) => reference(slot.role, host.artifact_kind, subject)),
+           ...found.map((item) => reference(role, source.artifact_kind, item)),
+         ]);
+diff --git a/src/runners/addressing-checker.ts b/src/runners/addressing-checker.ts
+new file mode 100644
+--- /dev/null
++++ b/src/runners/addressing-checker.ts
+@@ -0,0 +1,89 @@
++import { pinnedPilotRecipe } from "../grading/evidence-packages/pilot-recipe";
++import { err, ok, type JsonValue, type Result } from "../domain/primitives";
++import type { EvaluationOutcome, GradingContext, GradingError, RunnerResult } from "../grading/runner";
++import type { GradeRunner } from "../ports/grade-runner";
++import type { LinkReference, SelectedItem } from "../projection/extractor";
++
++/** The small link view mirrors analysis.findings and analysis.proposed_updates selections. */
++export interface AddressedFinding {
++  readonly item_kind: "finding";
++  readonly item_scope: string;
++  readonly producer_local_id: string;
++}
++export type AddressingLink = Pick<LinkReference, "type" | "target_artifact_kind" | "target_item_kind" | "target_scope" | "target_local_id">;
++export interface AddressingUpdate {
++  readonly item_kind: "proposed_spec_update";
++  readonly links: readonly AddressingLink[];
++}
++export interface AddressingInput {
++  readonly analysis_finding: AddressedFinding;
++  readonly proposed_spec_updates: readonly AddressingUpdate[];
++}
++
++export function addressingInput(finding: SelectedItem, updates: readonly SelectedItem[]): Result<AddressingInput, GradingError> {
++  if (finding.item_kind !== "finding" || !finding.item_scope || !finding.producer_local_id)
++    return err({ operation: "addressing_input", entity_id: finding.item_id_or_path,
++      detail: "subject must have a scoped analysis finding identity" });
++  if (updates.some((update) => update.item_kind !== "proposed_spec_update"))
++    return err({ operation: "addressing_input", entity_id: finding.item_id_or_path,
++      detail: "all addressing candidates must be proposed spec updates" });
++  return ok({ analysis_finding: { item_kind: "finding", item_scope: finding.item_scope, producer_local_id: finding.producer_local_id },
++    proposed_spec_updates: updates.map((update) => ({ item_kind: "proposed_spec_update", links: update.links.map((link) => ({
++      type: link.type, target_artifact_kind: link.target_artifact_kind, target_item_kind: link.target_item_kind,
++      target_scope: link.target_scope, target_local_id: link.target_local_id })) })) });
++}
++
++/** Only an explicit addresses link naming this finding counts; a shared section is not an address. */
++export function checkFindingAddressed(input: AddressingInput): Result<EvaluationOutcome, GradingError> {
++  const finding = input.analysis_finding;
++  const addressing = input.proposed_spec_updates.filter((update) => update.links.some((link) =>
++    link.type === "addresses" && link.target_artifact_kind === "analysis" && link.target_item_kind === "finding"
++    && link.target_scope === finding.item_scope && link.target_local_id === finding.producer_local_id));
++  return ok({ answer: { state: "answered", kind: "boolean", value: addressing.length > 0 },
++    rationale: `${addressing.length} proposed spec updates explicitly address analysis finding ${finding.producer_local_id}` });
++}
++
++function isObject(value: JsonValue): value is { readonly [key: string]: JsonValue } {
++  return value !== null && typeof value === "object" && !Array.isArray(value);
++}
++
++/** Decode the small, local link view stored in the first addressing evidence reference. */
++export function decodeAddressingInput(value: JsonValue): Result<AddressingInput, GradingError> {
++  const invalid = () => err({ operation: "decode_addressing_input", entity_id: "assessment_window",
++    detail: "addressing evidence must contain an analysis finding and proposed spec update links" });
++  if (!isObject(value) || !isObject(value.analysis_finding) || !Array.isArray(value.proposed_spec_updates)) return invalid();
++  const finding = value.analysis_finding;
++  if (finding.item_kind !== "finding" || typeof finding.item_scope !== "string"
++    || typeof finding.producer_local_id !== "string") return invalid();
++  const updates: AddressingUpdate[] = [];
++  for (const candidate of value.proposed_spec_updates) {
++    if (!isObject(candidate) || candidate.item_kind !== "proposed_spec_update" || !Array.isArray(candidate.links)) return invalid();
++    const links: AddressingLink[] = [];
++    for (const link of candidate.links) {
++      if (!isObject(link) || typeof link.type !== "string" || typeof link.target_artifact_kind !== "string"
++        || typeof link.target_item_kind !== "string" || (link.target_scope !== null && typeof link.target_scope !== "string")
++        || typeof link.target_local_id !== "string") return invalid();
++      links.push({ type: link.type as LinkReference["type"], target_artifact_kind: link.target_artifact_kind,
++        target_item_kind: link.target_item_kind, target_scope: link.target_scope, target_local_id: link.target_local_id });
++    }
++    updates.push({ item_kind: "proposed_spec_update", links });
++  }
++  return ok({ analysis_finding: { item_kind: "finding", item_scope: finding.item_scope,
++    producer_local_id: finding.producer_local_id }, proposed_spec_updates: updates });
++}
++
++export function runAddressingCheck(context: GradingContext): RunnerResult {
++  // Bind to the pinned contract, as coverage does: a boolean question whose pin builds an
++  // assessment window over proposed spec updates produces the view this runner decodes.
++  if (pinnedPilotRecipe(context.question)?.build.kind !== "assessment_window"
++    || context.question.response_kind !== "boolean")
++    return err({ operation: "finding_addressing", entity_id: context.question.question_id,
++      detail: "addressing runner requires a boolean question pinning an assessment window" });
++  const content = context.evidence.references[0]?.content;
++  if (content === undefined) return err({ operation: "finding_addressing", entity_id: context.evidence.evidence_set_id,
++    detail: "addressing link evidence is absent" });
++  const decoded = decodeAddressingInput(content);
++  return decoded.ok ? checkFindingAddressed(decoded.value) : decoded;
++}
++
++export const addressingChecker: GradeRunner = { kind: "code", run: async (context) => runAddressingCheck(context) };

@@ -1,6 +1,6 @@
 # Locked bridge image: dependency resolution happens only at build time,
-# against the checked uv.lock and workflow_edit/package-lock.json. The
-# container's entrypoint never installs or resolves dependencies: it starts
+# against the checked uv.lock and the selected ${NODE_DEPS}/package-lock.json.
+# The container's entrypoint never installs or resolves dependencies: it starts
 # the bridge directly against the environment this image already froze.
 #
 # All four upstream images are pinned by digest, not just by tag: Node, bun,
@@ -8,8 +8,19 @@
 # different bytes on a later build. Re-pin deliberately; don't drop the digests.
 FROM node:22.21.1-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754fcd09536a3ae2c AS node_toolchain
 
-COPY workflow_edit/package.json workflow_edit/package-lock.json /opt/workflow_edit/
-RUN npm ci --prefix /opt/workflow_edit --ignore-scripts --no-audit --no-fund \
+# Which node dependency lock governs this image. Published wf-13 evidence and
+# the matched-task fixtures were built against workflow_edit's lock, so it stays
+# the default and those images stay reproducible. The scenario library's slices
+# at oakridge 1495ec34 also import hono, kysely, pg, yaml and the agent protocol
+# SDK, so they carry their own lock instead of growing that one.
+ARG NODE_DEPS=workflow_edit
+# Both locks are copied with literal paths so the build context stays auditable;
+# the argument only selects which one this image installs.
+COPY workflow_edit/package.json workflow_edit/package-lock.json /opt/locks/workflow_edit/
+COPY scenario_library/package.json scenario_library/package-lock.json /opt/locks/scenario_library/
+RUN mkdir -p /opt/workflow_edit \
+    && cp /opt/locks/${NODE_DEPS}/package.json /opt/locks/${NODE_DEPS}/package-lock.json /opt/workflow_edit/ \
+    && npm ci --prefix /opt/workflow_edit --ignore-scripts --no-audit --no-fund \
     && node --version \
     && node /opt/workflow_edit/node_modules/typescript/bin/tsc --version
 

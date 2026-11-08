@@ -46,6 +46,7 @@ from code_extension.fixture import (
     read_tree,
 )
 from code_extension.fixtures import ScenarioArm, ScenarioFixture, load_scenario
+from code_extension.library import manifest_scope
 
 IMAGE_TAG = "assay-code-extension:ce-v1-bounds"
 CHECKS = ("baseline_passes", "feature_fails", "reference_passes")
@@ -343,6 +344,19 @@ def assemble_manifest(
     included = tuple(
         sorted(path for name in fixture.repository if (path := _pin_path(name)) is not None)
     )
+    checkpoint = CHECKPOINT_SHA
+    excluded: tuple[str, ...] = EXCLUDED_PATHS
+    feature_request = (
+        "Add a work_started run-event handler"
+        if isinstance(fixture, ScenarioFixture)
+        else "Optional run-context bindings with a declared default"
+    )
+    library = manifest_scope(fixture.subject_id) if isinstance(fixture, ScenarioFixture) else None
+    if library is not None:
+        # A library slice names its own pin and every pinned file it ships.
+        checkpoint, included = library
+        excluded = ()
+        feature_request = fixture.task.splitlines()[0].removeprefix("# ")
     manifest = FixtureManifestV3(
         schema_version="assay-fixture-manifest/0.3.0",
         arm_set=BaselineArmSet(factor="baseline", arm_ids=("baseline",)),
@@ -353,19 +367,15 @@ def assemble_manifest(
                 subject_id=fixture.subject_id
                 if isinstance(fixture, ScenarioFixture)
                 else SUBJECT_ID,
-                checkpoint_sha=CHECKPOINT_SHA,
+                checkpoint_sha=checkpoint,
                 included_paths=included,
-                excluded_paths=EXCLUDED_PATHS,
+                excluded_paths=excluded,
                 dependency_lock_digests={
                     "package-lock.json": digest_bytes(
                         fixture.repository["package-lock.json"].encode()
                     )
                 },
-                feature_request=(
-                    "Add a work_started run-event handler"
-                    if isinstance(fixture, ScenarioFixture)
-                    else "Optional run-context bindings with a declared default"
-                ),
+                feature_request=feature_request,
                 visible_requirements=fixture.sidecar.public_requirements
                 if isinstance(fixture, ScenarioFixture)
                 else (

@@ -13,6 +13,23 @@ ALLOWED_BUNDLES: set[PurePosixPath] = {
     PurePosixPath("experiments/code_extension/fixtures/pilot/qualification/evidence"),
     # The dispatch-handler manifest binds its deterministic qualification records too.
     PurePosixPath("experiments/code_extension/fixtures/dispatch-handler/qualification/evidence"),
+    # Each scenario library manifest binds its deterministic qualification records too.
+    *(
+        PurePosixPath(f"experiments/code_extension/fixtures/{scenario}/qualification/evidence")
+        for scenario in (
+            "addressing-runner",
+            "agent-default-model",
+            "context-usage-inbox",
+            "export-credential",
+            "gated-review-shortcuts",
+            "native-compaction-summary",
+            "operations-route",
+            "restricted-evidence",
+            "subject-only-build",
+            "worker-silence-bound",
+            "worker-start-budget",
+        )
+    ),
 }
 RUN_RECEIPTS_PROSE = {
     PurePosixPath("experiments/typesafe_relevance/run_packet.py"),

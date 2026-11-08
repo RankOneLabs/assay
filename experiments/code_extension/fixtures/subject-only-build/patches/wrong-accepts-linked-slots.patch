@@ -1,0 +1,59 @@
+diff --git a/src/grading/evidence-packages/pilot-recipe.ts b/src/grading/evidence-packages/pilot-recipe.ts
+--- a/src/grading/evidence-packages/pilot-recipe.ts
++++ b/src/grading/evidence-packages/pilot-recipe.ts
+@@ -34,7 +34,9 @@
+   | { readonly kind: "linked_sources"; readonly undeclared: "uncited" | "unlinked";
+     readonly uncaptured_source: "incomplete" | "dangling" }
+   | { readonly kind: "assessment_window" }
+-  | { readonly kind: "unscheduled_source"; readonly detail: string };
++  | { readonly kind: "unscheduled_source"; readonly detail: string }
++  /** Each supported subject item packaged on its own, from subject slots alone. */
++  | { readonly kind: "subject_only" };
+ 
+ /** The captured item a decision is recorded against. Replaces matching on the question id. */
+ export interface SubjectBinding { readonly artifact_kind: string; readonly item_kind: string }
+@@ -105,6 +107,7 @@
+     uncaptured_source: z.enum(["incomplete", "dangling"]) }),
+   z.object({ kind: z.literal("assessment_window") }),
+   z.object({ kind: z.literal("unscheduled_source"), detail: z.string().min(1) }),
++  z.object({ kind: z.literal("subject_only") }),
+ ]);
+ 
+ /** The pin carries the whole recipe — build, subject binding and slot counts — so reading it
+diff --git a/src/producers/oakridge/evidence-packages.ts b/src/producers/oakridge/evidence-packages.ts
+--- a/src/producers/oakridge/evidence-packages.ts
++++ b/src/producers/oakridge/evidence-packages.ts
+@@ -238,6 +238,23 @@
+     }))) };
+ }
+ 
++/** Package each supported subject item on its own, from the subject slots alone. Nothing is
++ * walked, so a subject that declares no links is packaged like any other. */
++function subjectOnlyPackages({ subjects, question, recipe }: BuilderInput): Result<PackageBatch, RunPackageError> {
++  const packages: PilotPackage[] = [];
++  const own = slotsFrom(recipeSlots(recipe), "subject");
++  for (const host of subjects) {
++    for (const subject of host.items.filter((item) => item.item_kind === recipe.subject.item_kind)) {
++      const references = collectReferences(own.map((slot) => reference(slot.role, host.artifact_kind, subject)));
++      if (!references.ok) return references;
++      const evidence = packagedEvidenceSet(question.question_id, references.value, null);
++      if (!evidence.ok) return evidence;
++      packages.push({ question_id: question.question_id, subject, revision_id: host.revision_id, evidence: evidence.value });
++    }
++  }
++  return ok({ packages, exclusions: [], eligibility: [] });
++}
++
+ interface SubjectSelection {
+   readonly revisions: readonly CapturedRevision[];
+   readonly eligibility: readonly PackageDecision[];
+@@ -326,7 +343,8 @@
+       question: question.definition, recipe };
+     const built = recipe.build.kind === "linked_sources" ? linkedSourcePackages(input, recipe.build)
+       : recipe.build.kind === "assessment_window" ? assessmentWindowPackages(input)
+-        : ok(unscheduledSourcePackages(input, recipe.build));
++        : recipe.build.kind === "subject_only" ? subjectOnlyPackages(input)
++          : ok(unscheduledSourcePackages(input, recipe.build));
+     if (!built.ok) return built;
+     batches.push({ ...built.value, eligibility: [...selection.eligibility, ...built.value.eligibility] });
+   }
