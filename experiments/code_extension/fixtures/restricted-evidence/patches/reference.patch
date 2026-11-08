@@ -1,0 +1,118 @@
+diff --git a/src/export/manifest.ts b/src/export/manifest.ts
+--- a/src/export/manifest.ts
++++ b/src/export/manifest.ts
+@@ -9,12 +9,14 @@
+   | { readonly disposition: "included"; readonly reason: string }
+   | { readonly disposition: "excluded"; readonly reason: string };
+ 
+-export interface RedactionReason { readonly path: string; readonly reason: "raw_build_output" | "raw_test_output" | "repository_content" | "unclassified_content" }
++export interface RedactionReason { readonly path: string; readonly reason: "raw_build_output" | "raw_test_output" | "repository_content" | "restricted_content" | "unclassified_content" }
+ export interface RedactionPolicy {
+   readonly target_name: string;
+   readonly allow_raw_build_output: boolean;
+   readonly allow_raw_test_output: boolean;
+   readonly allow_repository_content: boolean;
++  /** Restricted evidence content; absent means withheld. */
++  readonly allow_restricted_content?: boolean;
+ }
+ export type ExportMembership = {
+   readonly candidate_id: CanonicalDigest;
+diff --git a/src/export/redaction.ts b/src/export/redaction.ts
+--- a/src/export/redaction.ts
++++ b/src/export/redaction.ts
+@@ -44,7 +44,7 @@
+   if (key === "content" && /^\/evidence_set\/evidence_refs\/\d+$/.test(path)) {
+     const kind = "kind" in parent ? parent.kind : null;
+     return kind === "raw_build_output" || kind === "raw_test_output" || kind === "repository_content"
+-      ? kind : kind === "public" ? null : "unclassified_content";
++      ? kind : kind === "restricted" ? "restricted_content" : kind === "public" ? null : "unclassified_content";
+   }
+   const name = key.toLowerCase();
+   const place = path.toLowerCase();
+@@ -83,7 +83,8 @@
+       const reason = reasonFor(key, path, artifactKind, value);
+       const allowed = reason === "raw_build_output" ? policy.allow_raw_build_output
+         : reason === "raw_test_output" ? policy.allow_raw_test_output
+-          : reason === "repository_content" ? policy.allow_repository_content : reason === null;
++          : reason === "repository_content" ? policy.allow_repository_content
++            : reason === "restricted_content" ? policy.allow_restricted_content === true : reason === null;
+       if (reason && !allowed) {
+         reasons.push({ path: nextPath, reason });
+         result[key] = { redacted: true, reason };
+diff --git a/src/grading/evidence-packages/references.ts b/src/grading/evidence-packages/references.ts
+--- a/src/grading/evidence-packages/references.ts
++++ b/src/grading/evidence-packages/references.ts
+@@ -8,7 +8,7 @@
+ 
+ export function capturedReference(role: string, item: CapturedItem, kind: EvidenceKind, content: EvidenceReference["content"] = null)
+   : Result<EvidenceReference, EvidencePackageError> {
+-  if (!(["raw_build_output", "raw_test_output", "repository_content", "public", "internal"] as readonly unknown[]).includes(kind))
++  if (!(["raw_build_output", "raw_test_output", "repository_content", "restricted", "public", "internal"] as readonly unknown[]).includes(kind))
+     return err({ operation: "evidence_packages", entity_id: item.occurrence_id, detail: "evidence classification is required" });
+   const digest = canonicalDigest(item.selected_value);
+   if (!digest.ok) return err({ operation: "evidence_packages", entity_id: item.occurrence_id, detail: digest.error.detail });
+diff --git a/src/grading/evidence.ts b/src/grading/evidence.ts
+--- a/src/grading/evidence.ts
++++ b/src/grading/evidence.ts
+@@ -2,7 +2,7 @@
+ import type { CanonicalDigest, EvidenceSetId } from "../domain/identity";
+ import { err, type JsonValue, type Result } from "../domain/primitives";
+ 
+-export type EvidenceKind = "raw_build_output" | "raw_test_output" | "repository_content" | "public" | "internal";
++export type EvidenceKind = "raw_build_output" | "raw_test_output" | "repository_content" | "restricted" | "public" | "internal";
+ export interface EvidenceReference {
+   readonly ref: string;
+   /** Classification at capture time; internal content is withheld on export. */
+diff --git a/src/http/evaluations.ts b/src/http/evaluations.ts
+--- a/src/http/evaluations.ts
++++ b/src/http/evaluations.ts
+@@ -25,7 +25,7 @@
+     unclear_semantics: z.string(), interpretation_caveats: z.string(), requires_repository_snapshot: z.boolean() }),
+   evidence: z.object({ evidence_set_id: z.string().min(1),
+     references: z.array(z.object({ ref: z.string().min(1),
+-      kind: z.enum(["raw_build_output", "raw_test_output", "repository_content", "public", "internal"]),
++      kind: z.enum(["raw_build_output", "raw_test_output", "repository_content", "restricted", "public", "internal"]),
+       content: z.unknown().nullable(), digest: z.string().nullable(), deep_link: z.string().optional(),
+       reviewed_commit: z.string().optional(), is_truncated: z.boolean().optional(),
+       is_unreadable: z.boolean().optional(), incompleteness_reason: z.string().optional() })),
+diff --git a/src/http/exports.ts b/src/http/exports.ts
+--- a/src/http/exports.ts
++++ b/src/http/exports.ts
+@@ -14,10 +14,12 @@
+     occurrence_ids: z.array(z.string().min(1)).nullable().default(null) }).default({ run_id: null, occurrence_ids: null }),
+   target: z.object({ name: z.string().min(1), redaction_policy: z.object({
+     allow_raw_build_output: z.boolean().default(false), allow_raw_test_output: z.boolean().default(false),
+-    allow_repository_content: z.boolean().default(false),
+-  }).default({ allow_raw_build_output: false, allow_raw_test_output: false, allow_repository_content: false })
++    allow_repository_content: z.boolean().default(false), allow_restricted_content: z.boolean().default(false),
++  }).default({ allow_raw_build_output: false, allow_raw_test_output: false, allow_repository_content: false,
++    allow_restricted_content: false })
+   }).default({ name: "assay", redaction_policy: {
+     allow_raw_build_output: false, allow_raw_test_output: false, allow_repository_content: false,
++    allow_restricted_content: false,
+   } }),
+ });
+ 
+@@ -32,7 +34,8 @@
+     const parsed = requestSchema.safeParse(body);
+     if (!parsed.success) return errorResponse(c, 400, "invalid_export", parsed.error.message);
+     const allowances = parsed.data.target.redaction_policy;
+-    if ((allowances.allow_raw_build_output || allowances.allow_raw_test_output || allowances.allow_repository_content)
++    if ((allowances.allow_raw_build_output || allowances.allow_raw_test_output || allowances.allow_repository_content
++      || allowances.allow_restricted_content)
+       && !rawCredential) return errorResponse(c, 403, "forbidden", "raw export credential required");
+     const policy = { target_name: parsed.data.target.name, ...parsed.data.target.redaction_policy };
+     const prepared = await prepareExport(deps.db, tenant, parsed.data.selection, policy);
+diff --git a/src/producers/oakridge/classification.ts b/src/producers/oakridge/classification.ts
+--- a/src/producers/oakridge/classification.ts
++++ b/src/producers/oakridge/classification.ts
+@@ -61,7 +61,8 @@
+   const classified = classifyProjectionField(kind, field);
+   if (!classified.ok) return classified;
+   return ok(classified.value === "public" ? "public"
+-    : classified.value === "repository_content" ? "repository_content" : "internal");
++    : classified.value === "repository_content" ? "repository_content"
++      : classified.value === "restricted" ? "restricted" : "internal");
+ }
+ 
+ /** Only fields explicitly declared public can enter a whole-body projection. */

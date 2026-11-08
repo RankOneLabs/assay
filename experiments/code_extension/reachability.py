@@ -14,6 +14,7 @@ from assay.store import ObjectStore
 from code_extension.config import RunConfiguration
 from code_extension.diagnose import _FAIL
 from code_extension.ledger import _evaluation_detail, _Output, _stop, _verdict
+from code_extension.library import feature_tokens
 from code_extension.metrics import artifact_bytes
 from code_extension.run import _plan_dir
 from code_extension.status import ROUTE_PROBE, _manifest
@@ -64,6 +65,11 @@ def stage_type(cell: str) -> str:
     return cell.split(":")[0].removeprefix("oakridge-dbos-stage-").replace("-", "_")
 
 
+def feature_names(cell: str) -> tuple[str, ...]:
+    """A library task declares its own feature names; a stage task's is its stage type."""
+    return feature_tokens(cell.split(":")[0]) or (stage_type(cell),)
+
+
 def claimed_cells(records: list[dict[str, Any]]) -> list[str]:
     """Only a claim is a dispatch: a halted manifest also holds refused cells."""
     return [
@@ -111,7 +117,7 @@ def _settled_row(
     if failure == "reachability" and outcome.output_ref is not None:
         output = _Output.model_validate_json(store.read_bytes(outcome.output_ref))
         patch = artifact_bytes(store, output.patch_ref).decode("utf-8")
-        if not adds_stage_code(patch, stage_type(cell)):
+        if not any(adds_stage_code(patch, name) for name in feature_names(cell)):
             failure = "omitted_stage"
     return {
         "stop": getattr(stop, "cause", stop.kind),

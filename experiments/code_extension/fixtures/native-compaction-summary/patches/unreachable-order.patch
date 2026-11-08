@@ -1,0 +1,136 @@
+diff --git a/src/acp/client.ts b/src/acp/client.ts
+--- a/src/acp/client.ts
++++ b/src/acp/client.ts
+@@ -90,7 +90,9 @@
+       () =>
+         this.connection.agent.request("initialize", {
+           protocolVersion: PROTOCOL_VERSION,
+-          clientCapabilities: {},
++          // ACP agents send compaction updates only to a client that
++          // advertises them; `{}` takes the complete compaction contract.
++          clientCapabilities: { session: { compaction: {} } },
+         }),
+     );
+     if (!result.ok) return result;
+diff --git a/src/acp/event-projector.ts b/src/acp/event-projector.ts
+--- a/src/acp/event-projector.ts
++++ b/src/acp/event-projector.ts
+@@ -77,7 +77,7 @@
+ 
+ /**
+  * Projects one session/update into a UI event, or null for update types
+- * the UI does not render (compaction internals, mode echoes, unknown
++ * the UI does not render (unfinished compactions, mode echoes, unknown
+  * extension updates). `fallbackChunkId` names a message chunk that
+  * carries no messageId; the caller owns its uniqueness (per session).
+  */
+@@ -167,6 +167,21 @@
+           ? { amount: update.cost.amount, currency: update.cost.currency }
+           : undefined,
+       };
++    case "compaction_summary_chunk":
++      return {
++        kind: "compaction_chunk",
++        compactionId: update.compactionId,
++        content: [contentBlockText(update.content)],
++      };
++    case "compaction_update":
++      // Only a completed compaction retains a summary (ACP: a non-empty
++      // summary is valid only with `completed`).
++      if (update.status !== "completed") return null;
++      return {
++        kind: "compaction",
++        compactionId: update.compactionId,
++        summary: update.summary == null ? null : update.summary.map(contentBlockText),
++      };
+     default:
+       return null;
+   }
+diff --git a/src/acp/session-service.ts b/src/acp/session-service.ts
+--- a/src/acp/session-service.ts
++++ b/src/acp/session-service.ts
+@@ -14,6 +14,7 @@
+   FinalResponseSummaryGenerator,
+   generateSessionSummary,
+   ManualCompactionSummaryGenerator,
++  NativeCompactionSummaryGenerator,
+   type SessionSummaryGenerator,
+ } from "./session-summary";
+ import {
+@@ -103,6 +104,7 @@
+     this.summaryGenerators = deps.summary_generators ?? [
+       new ManualCompactionSummaryGenerator(),
+       new FinalResponseSummaryGenerator(),
++      new NativeCompactionSummaryGenerator(),
+     ];
+   }
+ 
+diff --git a/src/acp/session-summary.ts b/src/acp/session-summary.ts
+--- a/src/acp/session-summary.ts
++++ b/src/acp/session-summary.ts
+@@ -23,6 +23,48 @@
+ export interface SessionSummaryGenerator {
+   readonly method: TerminalSessionSummary["method"];
+   generate(request: SessionSummaryRequest): Promise<Result<TerminalSessionSummaryDraft, SessionSummaryFailure>>;
++}
++
++/**
++ * The agent's own context compaction (ACP `compaction_update`). The latest
++ * compaction completed in the final turn is the handoff: the summary on its
++ * completed update is authoritative, and without one its own streamed
++ * chunks are. Unfinished or failed compactions never count.
++ */
++export class NativeCompactionSummaryGenerator implements SessionSummaryGenerator {
++  readonly method = "native_compaction" as const;
++
++  async generate(request: SessionSummaryRequest): Promise<Result<TerminalSessionSummaryDraft, SessionSummaryFailure>> {
++    const finalTurn = request.events.slice(
++      request.events.reduce((found, event, index) => event.kind === "user_message" ? index : found, -1) + 1,
++    );
++    const completed = [...finalTurn].reverse().find(
++      (event): event is Extract<AcpUiEvent, { kind: "compaction" }> => event.kind === "compaction",
++    );
++    if (!completed) {
++      return { ok: false, error: summaryFailure(this.method, request.session_id, "the final turn completed no compaction") };
++    }
++    const content = completed.summary !== null && completed.summary.length > 0
++      ? completed.summary
++      : finalTurn
++        .filter((event): event is Extract<AcpUiEvent, { kind: "compaction_chunk" }> =>
++          event.kind === "compaction_chunk" && event.compactionId === completed.compactionId)
++        .flatMap((event) => event.content);
++    const markdown = content.map((part) => part.text).join("").trim();
++    if (!markdown) {
++      return { ok: false, error: summaryFailure(this.method, request.session_id, "the completed compaction retained no summary") };
++    }
++    return {
++      ok: true,
++      value: {
++        schema_version: 1,
++        session_id: request.session_id,
++        method: this.method,
++        produced_at: request.produced_at,
++        markdown,
++      },
++    };
++  }
+ }
+ 
+ /**
+diff --git a/src/acp/types.ts b/src/acp/types.ts
+--- a/src/acp/types.ts
++++ b/src/acp/types.ts
+@@ -449,6 +449,13 @@
+       size?: number;
+       cost?: { amount: number; currency: string };
+     }
++  /**
++   * A context compaction the agent completed. `summary` is the retained
++   * summary the completed update carried, or null when it carried none.
++   */
++  | { kind: "compaction"; compactionId: string; summary: UiContent[] | null }
++  /** One streamed piece of a compaction's summary. */
++  | { kind: "compaction_chunk"; compactionId: string; content: UiContent[] }
+   | {
+       kind: "turn_state";
+       turnKey: TurnKey;

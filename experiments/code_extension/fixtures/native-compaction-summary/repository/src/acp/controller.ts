@@ -1,0 +1,826 @@
+// One controller == one kbbl session == at most one ACP child process
+// (§8.4). Owns: spawn+initialize+new/load, the live prompt mutex, turn
+// outcome recording, accepted-turn dispatch, pending permissions, UI
+// event projection, cancel, and the fence sequence. It owns NO workflow
+// policy and NO provider-specific branches.
+
+import type * as schema from "@agentclientprotocol/sdk";
+
+import { matchAdvertisedId, matchAdvertisedModel, type IdMatchKind } from "../runtime";
+import { resolveExternalGitDir } from "../session/worktree";
+import type { AgentProfile } from "./agent-profile";
+import { AcpClient, selectGatedReviewAccess } from "./client";
+import {
+  projectConfigOptions,
+  projectPermissionRequest,
+  projectSessionUpdate,
+} from "./event-projector";
+import type { AcpChildProcess, AcpProcessSupervisor } from "./process-supervisor";
+import { AcpSessionStore } from "./store";
+import {
+  acpError,
+  err,
+  ok,
+  type AcpAgentSessionId,
+  type AcpError,
+  type AcpSessionRow,
+  type AcpTurnRow,
+  type AcpUiEvent,
+  type KbblSessionId,
+  type Result,
+  type StopReason,
+  type TurnKey,
+} from "./types";
+
+export interface ControllerConfig {
+  readonly live_event_buffer: number;
+  /** Bounded wait for a session/close answer before killing the child. */
+  readonly close_grace_ms: number;
+}
+
+export interface ControllerDeps {
+  readonly sid: KbblSessionId;
+  readonly profile: AgentProfile;
+  readonly store: AcpSessionStore;
+  readonly supervisor: AcpProcessSupervisor;
+  readonly config: ControllerConfig;
+  /** Called when the child dies so the registry can drop this controller. */
+  readonly onDefunct: (sid: KbblSessionId) => void;
+}
+
+export type ControllerStartMode =
+  | { kind: "new" }
+  | { kind: "load"; acp_session_id: AcpAgentSessionId };
+
+interface PendingPermission {
+  readonly requestId: string;
+  resolve(response: schema.RequestPermissionResponse): void;
+}
+
+export type UiEventListener = (event: AcpUiEvent) => void;
+
+/** The durable §12 requests a session row carries across every spawn. */
+export type RequestedSessionConfig = Pick<
+  AcpSessionRow,
+  "requested_model" | "requested_effort" | "requested_mode"
+>;
+
+/**
+ * How a request was satisfied — the shared `IdMatchKind` from core/runtime,
+ * re-exported under the name the ACP surface has always used.
+ *
+ * `exact` means the agent advertises the id (or display name) that was asked
+ * for. The other two mean it does not, and something other than the requested
+ * spelling will run: `context_hint_ignored` found the same model in a
+ * different context window, `retired_id_mapped` found the alias that replaced
+ * a withdrawn id. The caller logs both, because nothing else can tell the
+ * operator what changed.
+ */
+export type OptionMatchKind = IdMatchKind;
+
+export interface ResolvedOption {
+  readonly configId: string;
+  readonly valueId: string;
+  readonly match: OptionMatchKind;
+}
+
+/**
+ * Pure resolver for requested model/effort against the agent's config
+ * options (§12): first select option in the semantic category, matched by
+ * value id or normalized display name. Returns null when nothing was
+ * requested; an error when a request cannot be satisfied.
+ *
+ * **The agent's model vocabulary is not a constant.** The same pinned binary
+ * advertises different ids from one `session/new` to the next as the 1M
+ * context entitlement comes and goes — `opus[1m]` and `opus` are each
+ * sometimes the only opus on offer, and likewise `claude-fable-5-1[1m]` and
+ * `claude-fable-5-1`. Matching those ids strictly means a launch button that
+ * works all morning and kills the session before its first turn in the
+ * afternoon, so the context hint is the last thing compared and the first
+ * thing dropped: a hint mismatch changes the window, which beats not running.
+ */
+export function resolveRequestedOption(
+  options: readonly schema.SessionConfigOption[],
+  category: "model" | "thought_level",
+  requested: string | null,
+): Result<ResolvedOption | null, AcpError> {
+  if (requested === null) return ok(null);
+  const code =
+    category === "model"
+      ? ("requested_model_unsupported" as const)
+      : ("requested_effort_unsupported" as const);
+  const matched = matchRequestedOption(options, category, requested);
+  if (!matched.ok) {
+    return err(acpError(code, "resolveRequestedOption", matched.error));
+  }
+  return matched;
+}
+
+/** Semantic config-option categories kbbl resolves requests against (§12). */
+export type RequestedOptionCategory = "model" | "thought_level" | "mode";
+
+/**
+ * Pure matcher behind every §12 request: the first select option in the
+ * category, matched by value id or normalized display name. The error is a
+ * human-readable detail; callers decide whether a miss is fatal (model,
+ * effort) or advisory (mode).
+ */
+export function matchRequestedOption(
+  options: readonly schema.SessionConfigOption[],
+  category: RequestedOptionCategory,
+  requested: string,
+): Result<ResolvedOption, string> {
+  const selector = options.find(
+    (option) => option.type === "select" && option.category === category,
+  );
+  if (!selector || selector.type !== "select") {
+    return err(
+      `agent exposes no select config option with category "${category}"`,
+    );
+  }
+  const flat = selector.options.flatMap((entry) =>
+    "options" in entry ? entry.options : [entry],
+  );
+  // Models carry a retirement history; effort and mode ids do not. Both paths
+  // are the shared transform in core/runtime — this function owns finding the
+  // selector and naming the error, nothing about what an id means.
+  const matched =
+    category === "model"
+      ? matchAdvertisedModel(requested, flat)
+      : matchAdvertisedId(requested, flat);
+  if (matched) {
+    return ok({
+      configId: selector.id,
+      valueId: matched.valueId,
+      match: matched.match,
+    });
+  }
+  return err(
+    `no option matching "${requested}" in config option "${selector.id}"`,
+  );
+}
+
+/** The semantic category of a config option id, or null when it has none. */
+export function configOptionCategory(
+  options: readonly schema.SessionConfigOption[],
+  configId: string,
+): string | null {
+  return options.find((option) => option.id === configId)?.category ?? null;
+}
+
+export class AcpSessionController {
+  /** §14.4: SSE event ids only have meaning within one projection epoch. */
+  readonly streamEpoch: string = crypto.randomUUID();
+  private child: AcpChildProcess | null = null;
+  private client: AcpClient | null = null;
+  private acpSessionId: AcpAgentSessionId | null = null;
+  private configOptions: readonly schema.SessionConfigOption[] = [];
+  private activeTurnKey: TurnKey | null = null;
+  private replaying = false;
+  private fenced = false;
+  private defunct = false;
+  private permissionCounter = 0;
+  private chunkCounter = 0;
+  private readonly pendingPermissions = new Map<string, PendingPermission>();
+  private readonly events: AcpUiEvent[] = [];
+  private readonly listeners = new Set<UiEventListener>();
+
+  constructor(private readonly deps: ControllerDeps) {}
+
+  get sid(): KbblSessionId {
+    return this.deps.sid;
+  }
+
+  get sessionId(): AcpAgentSessionId | null {
+    return this.acpSessionId;
+  }
+
+  get isPromptActive(): boolean {
+    return this.activeTurnKey !== null;
+  }
+
+  get isDefunct(): boolean {
+    return this.defunct;
+  }
+
+  get liveConfigOptions(): readonly schema.SessionConfigOption[] {
+    return this.configOptions;
+  }
+
+  get childPid(): number | null {
+    return this.child?.pid ?? null;
+  }
+
+  get hasSubscribers(): boolean {
+    return this.listeners.size > 0;
+  }
+
+  snapshotEvents(): readonly AcpUiEvent[] {
+    return [...this.events];
+  }
+
+  subscribe(listener: UiEventListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Spawns the child, initializes ACP v1, validates capabilities, and
+   * creates or loads the agent session (§10.2 steps 5–10 / §10.3).
+   */
+  async start(
+    cwd: string,
+    mode: ControllerStartMode,
+    abortSignal?: AbortSignal,
+  ): Promise<Result<void, AcpError>> {
+    if (abortSignal?.aborted) {
+      return err(
+        acpError(
+          "acp_session_load_failed",
+          "controller.start",
+          "cold history load was cancelled",
+          this.deps.sid,
+        ),
+      );
+    }
+    // A linked worktree's git data lives outside cwd; granting it as a
+    // workspace root lets a sandboxed agent commit without asking. Resolved
+    // before the spawn: an await between initialize and session/new|load
+    // would open a window where a cancel's teardown nulls the client.
+    const externalGitDir = await resolveExternalGitDir(cwd);
+    const additionalDirectories = externalGitDir === null ? [] : [externalGitDir];
+    const spawned = this.deps.supervisor.spawn(this.deps.profile, cwd);
+    if (!spawned.ok) return spawned;
+    this.child = spawned.value;
+    this.child.onExit((code) => this.handleChildExit(code));
+    if (abortSignal?.aborted) {
+      await this.teardownChild();
+      return err(
+        acpError(
+          "acp_session_load_failed",
+          "controller.start",
+          "cold history load was cancelled",
+          this.deps.sid,
+        ),
+      );
+    }
+    abortSignal?.addEventListener(
+      "abort",
+      () => {
+        void this.teardownChild().catch((error: unknown) => {
+          console.error(
+            `[acp] sid=${this.deps.sid} cancelled child teardown failed`,
+            error,
+          );
+        });
+      },
+      { once: true },
+    );
+
+    const access = selectGatedReviewAccess(this.deps.store.getSession(this.deps.sid)?.workflow ?? null);
+    if (access) console.info(`[acp] sid=${this.deps.sid} gated-review surface=${access.kind}`);
+    this.client = new AcpClient(this.deps.sid, this.child, {
+      onSessionUpdate: (notification) => this.handleUpdate(notification),
+      onPermissionRequest: (request) => this.handlePermissionRequest(request),
+    }, access);
+
+    const initialized = await this.client.initialize();
+    if (!initialized.ok) {
+      await this.teardownChild();
+      return initialized;
+    }
+    if (
+      this.deps.profile.requireLoadSession &&
+      this.client.agentCapabilities.loadSession !== true
+    ) {
+      await this.teardownChild();
+      return err(
+        acpError(
+          "acp_required_capability_missing",
+          "controller.start",
+          `profile "${this.deps.profile.id}" requires session/load but the agent does not advertise loadSession`,
+          this.deps.sid,
+        ),
+      );
+    }
+
+    if (mode.kind === "new") {
+      const created = await this.client.newSession(cwd, additionalDirectories);
+      if (!created.ok) {
+        await this.teardownChild();
+        return created;
+      }
+      this.acpSessionId = created.value.sessionId as AcpAgentSessionId;
+      this.configOptions = created.value.configOptions ?? [];
+      this.deps.store.setAcpSessionId(this.deps.sid, this.acpSessionId);
+      if (this.configOptions.length > 0) {
+        this.emit(projectConfigOptions(this.configOptions));
+      }
+      return ok(undefined);
+    }
+
+    this.acpSessionId = mode.acp_session_id;
+    this.replaying = true;
+    const loaded = await this.client.loadSession(
+      mode.acp_session_id,
+      cwd,
+      additionalDirectories,
+    );
+    this.replaying = false;
+    if (!loaded.ok) {
+      await this.teardownChild();
+      return loaded;
+    }
+    // session/load answers with configOptions like session/new does; a
+    // respawned session must keep the §12 resolver cache and the UI's
+    // config selectors alive across child restarts.
+    const loadedOptions = loaded.value?.configOptions ?? [];
+    if (loadedOptions.length > 0) {
+      this.configOptions = loadedOptions;
+      this.emit(projectConfigOptions(loadedOptions));
+    }
+    return ok(undefined);
+  }
+
+  /**
+   * §12: apply the session's durable model/effort/mode requests via semantic
+   * config categories. A model or effort the agent cannot satisfy fails the
+   * session; a mode it cannot satisfy is logged and left at the agent's
+   * default — a missing permission preset must not kill a session that
+   * would otherwise run.
+   */
+  async applyRequestedConfig(
+    requested: RequestedSessionConfig,
+  ): Promise<Result<void, AcpError>> {
+    const requests: Array<["model" | "thought_level", string | null]> = [
+      ["model", requested.requested_model],
+      ["thought_level", requested.requested_effort],
+    ];
+    for (const [category, value] of requests) {
+      const resolved = resolveRequestedOption(this.configOptions, category, value);
+      if (!resolved.ok) return resolved;
+      if (resolved.value === null) continue;
+      // Any match that is not exact changed what will run, and nothing else
+      // can tell the operator: the picker showed one id and the session got
+      // another.
+      const match = resolved.value.match;
+      const prefix =
+        `[acp] sid=${this.deps.sid} ${category} requested=${value} ` +
+        `resolved=${resolved.value.valueId} `;
+      if (match.kind === "context_hint_ignored") {
+        console.log(
+          prefix +
+            `context_hint_ignored requested_hint=${match.requestedHint ?? "none"} ` +
+            `matched_hint=${match.matchedHint ?? "none"}`,
+        );
+      } else if (match.kind === "retired_id_mapped") {
+        console.log(prefix + `retired_id_mapped retired_id=${match.retiredId}`);
+      }
+      const applied = await this.setConfigOption(
+        resolved.value.configId,
+        resolved.value.valueId,
+      );
+      if (!applied.ok) return applied;
+    }
+    return this.applyRequestedMode(requested.requested_mode);
+  }
+
+  private async applyRequestedMode(
+    requestedMode: string | null,
+  ): Promise<Result<void, AcpError>> {
+    if (requestedMode === null) return ok(undefined);
+    const resolved = matchRequestedOption(this.configOptions, "mode", requestedMode);
+    if (!resolved.ok) {
+      console.warn(
+        `[acp] sid=${this.deps.sid} mode requested=${requestedMode} not applied: ${resolved.error}`,
+      );
+      return ok(undefined);
+    }
+    const current = this.configOptions.find(
+      (option) => option.id === resolved.value.configId,
+    );
+    if (current?.currentValue === resolved.value.valueId) return ok(undefined);
+    const applied = await this.setConfigOption(
+      resolved.value.configId,
+      resolved.value.valueId,
+    );
+    if (!applied.ok) {
+      console.warn(
+        `[acp] sid=${this.deps.sid} mode requested=${requestedMode} not applied: ${applied.error.detail}`,
+      );
+    }
+    return ok(undefined);
+  }
+
+  async setConfigOption(
+    configId: string,
+    value: string | boolean,
+  ): Promise<Result<void, AcpError>> {
+    const client = this.client;
+    if (!client || this.acpSessionId === null) {
+      return err(this.notLiveError("controller.setConfigOption"));
+    }
+    const applied = await client.setConfigOption(
+      this.acpSessionId,
+      configId,
+      value,
+    );
+    if (!applied.ok) return applied;
+    this.configOptions = applied.value.configOptions;
+    this.emit(projectConfigOptions(this.configOptions));
+    return ok(undefined);
+  }
+
+  /**
+   * Runs one prompt turn to completion. The caller must have inserted the
+   * turn row; this flips it to `prompting` BEFORE sending (§10.7), then
+   * records the outcome from the prompt response — the only success
+   * signal (§18). Exactly one prompt may be active (guardrail 8).
+   */
+  async runTurn(turn: AcpTurnRow): Promise<Result<void, AcpError>> {
+    if (this.fenced) {
+      return err(
+        acpError(
+          "session_fenced",
+          "controller.runTurn",
+          "session is fenced",
+          this.deps.sid,
+        ),
+      );
+    }
+    if (this.activeTurnKey !== null) {
+      return err(
+        acpError(
+          "session_busy",
+          "controller.runTurn",
+          `turn ${this.activeTurnKey} is active`,
+          this.deps.sid,
+        ),
+      );
+    }
+    const client = this.client;
+    if (!client || this.acpSessionId === null) {
+      return err(this.notLiveError("controller.runTurn"));
+    }
+
+    this.activeTurnKey = turn.turn_key;
+    this.deps.store.markTurnPrompting(turn.sid, turn.turn_key);
+    this.deps.store.setStatus(turn.sid, "prompting");
+    this.deps.store.touchActivity(turn.sid);
+    // Agents do not echo the prompt back as a user_message_chunk (that
+    // update type is for replay and agent-injected user turns), so the
+    // dispatched text is projected here — the only place every turn
+    // source (initial, operator, collaboration) passes through.
+    this.emit({
+      kind: "user_message",
+      id: turn.turn_key,
+      content: [{ type: "text", text: turn.payload }],
+      replayed: false,
+    });
+    this.emit({ kind: "turn_state", turnKey: turn.turn_key, state: "prompting" });
+    console.log(
+      `[acp] sid=${turn.sid} turn=${turn.turn_key} prompting (pid=${this.childPid})`,
+    );
+
+    const response = await client.prompt(this.acpSessionId, turn.payload);
+    // The exit handler may have already classified this turn as lost.
+    if (this.activeTurnKey !== turn.turn_key) {
+      return err(
+        acpError(
+          "acp_transport_lost",
+          "controller.runTurn",
+          "agent process/transport was lost during the prompt",
+          this.deps.sid,
+        ),
+      );
+    }
+    this.activeTurnKey = null;
+
+    if (!response.ok) {
+      // §10.4: transport loss (child exit, closed stream) means the answer
+      // never arrived — the outcome is uncertain, never a plain failure.
+      const lost =
+        this.defunct || response.error.code === "acp_transport_lost";
+      const code = lost ? ("acp_transport_lost" as const) : response.error.code;
+      this.deps.store.completeTurn(turn.sid, turn.turn_key, {
+        status: lost ? "unknown" : "failed",
+        failure_code: code,
+        failure_detail: response.error.detail,
+      });
+      this.finishTurn(
+        turn,
+        lost ? "unknown" : "failed",
+        undefined,
+        response.error.detail,
+      );
+      return err({ ...response.error, code });
+    }
+
+    const stopReason: StopReason = response.value.stopReason;
+    if (stopReason === "end_turn") {
+      this.deps.store.completeTurn(turn.sid, turn.turn_key, {
+        status: "succeeded",
+        stop_reason: stopReason,
+      });
+      this.finishTurn(turn, "idle", stopReason);
+      return ok(undefined);
+    }
+    if (stopReason === "cancelled") {
+      this.deps.store.completeTurn(turn.sid, turn.turn_key, {
+        status: "cancelled",
+        stop_reason: stopReason,
+      });
+      this.finishTurn(turn, "cancelled", stopReason);
+      return ok(undefined);
+    }
+    // Any other stop reason is failure unless deliberately allowlisted
+    // (§18) — there is no allowlist yet.
+    this.deps.store.completeTurn(turn.sid, turn.turn_key, {
+      status: "failed",
+      stop_reason: stopReason,
+      failure_code: "acp_prompt_failed",
+      failure_detail: `stop reason "${stopReason}"`,
+    });
+    this.finishTurn(turn, "failed", stopReason);
+    return err(
+      acpError(
+        "acp_prompt_failed",
+        "controller.runTurn",
+        `prompt stopped with "${stopReason}"`,
+        this.deps.sid,
+      ),
+    );
+  }
+
+  /**
+   * §11.3: dispatches retained `accepted` turns serially, oldest first,
+   * until none remain or one fails to reach the agent.
+   */
+  async dispatchAcceptedTurns(): Promise<void> {
+    while (!this.fenced && !this.defunct && this.activeTurnKey === null) {
+      const next = this.deps.store.listAcceptedTurns(this.deps.sid)[0];
+      if (!next) return;
+      const result = await this.runTurn(next);
+      // A turn that reached the agent and failed is completed; move on to
+      // the next accepted turn. A turn that could not be dispatched at
+      // all (busy/fenced/transport) leaves the ledger as-is for a later
+      // touch — bail rather than spin.
+      if (
+        !result.ok &&
+        (result.error.code === "session_busy" ||
+          result.error.code === "session_fenced" ||
+          result.error.code === "acp_transport_lost")
+      ) {
+        return;
+      }
+    }
+  }
+
+  /** Normal user stop: forwards session/cancel; outcome arrives via the
+   * active prompt's response (stopReason "cancelled"). Not a fence. */
+  async cancelActiveTurn(): Promise<Result<void, AcpError>> {
+    const client = this.client;
+    if (!client || this.acpSessionId === null) {
+      return err(this.notLiveError("controller.cancelActiveTurn"));
+    }
+    return client.cancel(this.acpSessionId);
+  }
+
+  /**
+   * §10.5 fence sequence: record fencer, reject new input, cancel any
+   * active prompt, session/close when advertised, bounded terminate,
+   * SIGKILL fallback. Idempotent.
+   */
+  async fence(fencedBy: string, endReason = "fenced"): Promise<void> {
+    if (this.fenced) return;
+    this.fenced = true;
+    this.deps.store.setFencedBy(this.deps.sid, fencedBy);
+    this.rejectPendingPermissions();
+
+    const client = this.client;
+    if (client && this.acpSessionId !== null) {
+      if (this.activeTurnKey !== null) {
+        await client.cancel(this.acpSessionId);
+      }
+      await this.closeSessionBounded(client);
+    }
+    await this.teardownChild();
+    this.deps.store.markEnded(this.deps.sid, {
+      status: "fenced",
+      reason: endReason,
+      fenced_by: fencedBy,
+    });
+    console.log(`[acp] sid=${this.deps.sid} fenced by ${fencedBy}`);
+    this.deps.onDefunct(this.deps.sid);
+  }
+
+  /** Idle-child close (§10.8) and shutdown path: no fence semantics. */
+  async closeChild(): Promise<void> {
+    if (this.defunct) return;
+    const client = this.client;
+    if (client && this.acpSessionId !== null) {
+      await this.closeSessionBounded(client);
+    }
+    await this.teardownChild();
+    this.deps.onDefunct(this.deps.sid);
+  }
+
+  /** §10.5 steps 4–5: session/close when advertised, bounded grace — an
+   * agent that ignores close must not stall the kill (guardrail 19). */
+  private async closeSessionBounded(client: AcpClient): Promise<void> {
+    if (!client.agentCapabilities.sessionCapabilities?.close) return;
+    if (this.acpSessionId === null) return;
+    await Promise.race([
+      client.closeSession(this.acpSessionId),
+      new Promise((resolve) =>
+        setTimeout(resolve, this.deps.config.close_grace_ms),
+      ),
+    ]);
+  }
+
+  resolvePermission(
+    requestId: string,
+    optionId: string,
+  ): Result<void, AcpError> {
+    const pending = this.pendingPermissions.get(requestId);
+    if (!pending) {
+      return err(
+        acpError(
+          "acp_prompt_failed",
+          "controller.resolvePermission",
+          `no pending permission request "${requestId}"`,
+          this.deps.sid,
+        ),
+      );
+    }
+    this.pendingPermissions.delete(requestId);
+    pending.resolve({ outcome: { outcome: "selected", optionId } });
+    this.deps.store.touchActivity(this.deps.sid);
+    this.emit({
+      kind: "permission_resolved",
+      requestId,
+      outcome: "selected",
+      optionId,
+    });
+    return ok(undefined);
+  }
+
+  get pendingPermissionCount(): number {
+    return this.pendingPermissions.size;
+  }
+
+  stderrTail(): readonly string[] {
+    return this.child?.stderrTail() ?? [];
+  }
+
+  // === internals ===
+
+  private emit(event: AcpUiEvent): void {
+    this.events.push(event);
+    const overflow = this.events.length - this.deps.config.live_event_buffer;
+    if (overflow > 0) this.events.splice(0, overflow);
+    for (const listener of this.listeners) listener(event);
+  }
+
+  private handleUpdate(notification: schema.SessionNotification): void {
+    // session/load replays historical chunks through the same notification
+    // callback. A history read is not live activity and must not rewrite the
+    // session timestamp or fan out one global inbox update per replay chunk.
+    if (!this.replaying) this.deps.store.touchActivity(this.deps.sid);
+    // While a kbbl-dispatched prompt is active, a live user_message_chunk
+    // is the agent echoing that prompt back — runTurn already projected
+    // the dispatched text, so the echo would duplicate it. Replayed user
+    // chunks (session/load) still flow: there runTurn emitted nothing.
+    if (
+      !this.replaying &&
+      this.activeTurnKey !== null &&
+      notification.update.sessionUpdate === "user_message_chunk"
+    ) {
+      return;
+    }
+    this.chunkCounter += 1;
+    const projected = projectSessionUpdate(
+      notification.update,
+      this.replaying,
+      `chunk-${this.chunkCounter}`,
+    );
+    if (projected === null) {
+      console.log(
+        `[acp] sid=${this.deps.sid} unprojected update "${notification.update.sessionUpdate}"`,
+      );
+      return;
+    }
+    if (projected.kind === "config_options") {
+      // Keep the controller's cache authoritative for the §12 resolver.
+      const update = notification.update;
+      if (update.sessionUpdate === "config_option_update") {
+        this.configOptions = update.configOptions;
+      }
+    }
+    this.emit(projected);
+  }
+
+  private handlePermissionRequest(
+    request: schema.RequestPermissionRequest,
+  ): Promise<schema.RequestPermissionResponse> {
+    this.permissionCounter += 1;
+    const requestId = `perm-${this.permissionCounter}`;
+    return new Promise((resolve) => {
+      this.pendingPermissions.set(requestId, { requestId, resolve });
+      // A waiting permission is session activity: it bumps the inbox so
+      // the operator sees the session asking, not just going quiet.
+      this.deps.store.touchActivity(this.deps.sid);
+      this.emit(projectPermissionRequest(requestId, request));
+      console.log(
+        `[acp] sid=${this.deps.sid} permission requested (${requestId}: ${request.toolCall.title ?? "untitled"})`,
+      );
+    });
+  }
+
+  private rejectPendingPermissions(): void {
+    for (const pending of this.pendingPermissions.values()) {
+      pending.resolve({ outcome: { outcome: "cancelled" } });
+      this.emit({
+        kind: "permission_resolved",
+        requestId: pending.requestId,
+        outcome: "cancelled",
+      });
+    }
+    this.pendingPermissions.clear();
+  }
+
+  /**
+   * §10.4: transport loss during an active prompt is an uncertain
+   * outcome — never success. Process loss also fails pending permissions
+   * and retires this controller.
+   */
+  private handleChildExit(code: number): void {
+    if (this.defunct) return;
+    this.defunct = true;
+    this.rejectPendingPermissions();
+    if (this.activeTurnKey !== null) {
+      const turnKey = this.activeTurnKey;
+      this.activeTurnKey = null;
+      this.deps.store.completeTurn(
+        this.deps.sid,
+        turnKey as AcpTurnRow["turn_key"],
+        {
+          status: "unknown",
+          failure_code: "acp_transport_lost",
+          failure_detail: `agent process exited (code ${code}) during an active prompt`,
+        },
+      );
+      this.deps.store.setStatus(this.deps.sid, "idle");
+      this.emit({
+        kind: "turn_state",
+        turnKey,
+        state: "unknown",
+        detail: `agent process exited (code ${code}) during the turn`,
+      });
+      console.error(
+        `[acp] sid=${this.deps.sid} child exited code=${code} during turn ${turnKey}; outcome unknown`,
+      );
+    }
+    this.client?.close();
+    this.deps.onDefunct(this.deps.sid);
+  }
+
+  private finishTurn(
+    turn: AcpTurnRow,
+    state: "idle" | "cancelled" | "failed" | "unknown",
+    stopReason?: string,
+    detail?: string,
+  ): void {
+    if (!this.defunct) this.deps.store.setStatus(turn.sid, "idle");
+    this.deps.store.touchActivity(turn.sid);
+    this.emit({
+      kind: "turn_state",
+      turnKey: turn.turn_key,
+      state,
+      stopReason,
+      detail,
+    });
+    console.log(
+      `[acp] sid=${turn.sid} turn=${turn.turn_key} finished state=${state} stop=${stopReason ?? "-"}`,
+    );
+  }
+
+  private async teardownChild(): Promise<void> {
+    this.defunct = true;
+    this.client?.close();
+    this.client = null;
+    if (this.child) {
+      await this.child.kill();
+      this.child = null;
+    }
+  }
+
+  private notLiveError(operation: string): AcpError {
+    return acpError(
+      "acp_transport_lost",
+      operation,
+      "no live ACP connection for this controller",
+      this.deps.sid,
+    );
+  }
+}

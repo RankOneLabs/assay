@@ -1,0 +1,64 @@
+diff --git a/src/skills/registry.ts b/src/skills/registry.ts
+--- a/src/skills/registry.ts
++++ b/src/skills/registry.ts
+@@ -14,10 +14,11 @@
+ export function aggregateSkillsForProfile(
+   profileId: string,
+   config: KbblConfig,
++  gatedReview = true,
+ ): Skill[] {
+   const raw = config.skills.fixtures
+     ? FIXTURE_SKILLS.filter((skill) => skill.backend === profileId)
+-    : gatedReviewSkills(profileId);
++    : gatedReview ? gatedReviewSkills(profileId) : [];
+ 
+   const visible = raw.filter((skill) => skill.user_invocable !== false);
+   const hiddenSet = new Set(config.skills.hidden);
+diff --git a/src/skills/routes.ts b/src/skills/routes.ts
+--- a/src/skills/routes.ts
++++ b/src/skills/routes.ts
+@@ -7,14 +7,26 @@
+ import type { Hono } from "hono";
+ 
+ import { isValidSid } from "../server/handlers/acp-per-sid";
++import { selectGatedReviewAccess, selectMcpServers } from "../acp/client";
+ import type { AcpSessionService } from "../acp/session-service";
++import type { AcpSessionSnapshot } from "../acp/types";
+ import type { KbblConfig } from "../config";
+ import { aggregateSkillsForProfile } from "./registry";
+ import { formatSkillInvocation } from "./format";
++import type { Skill } from "./types";
+ 
+ export interface SkillRoutesDeps {
+   acp: AcpSessionService;
+   config: KbblConfig;
++}
++
++/**
++ * The session's skills: the gated-review shortcuts only when the launcher
++ * attaches the gated-review server to this session, by the same policy.
++ */
++export function sessionSkills(session: AcpSessionSnapshot, config: KbblConfig): Skill[] {
++  const attached = selectMcpServers(process.env.OAKRIDGE_GATED_REVIEW_URL, selectGatedReviewAccess(session.workflow)).length > 0;
++  return aggregateSkillsForProfile(session.agent_profile, config, attached);
+ }
+ 
+ export function mountSkillsRoutes(app: Hono, deps: SkillRoutesDeps): void {
+@@ -31,7 +43,7 @@
+     if (!session || session.status === "ended" || session.status === "fenced" || session.status === "failed") {
+       return c.json([]);
+     }
+-    return c.json(aggregateSkillsForProfile(session.agent_profile, config));
++    return c.json(sessionSkills(session, config));
+   });
+ 
+   // POST /sessions/:sid/skills/invoke — format the selection and submit it
+@@ -75,7 +87,7 @@
+     // Re-aggregate on every invoke — this is the authorization boundary.
+     // Re-applying the policy filter here ensures a hidden or stale skill
+     // can never be invoked even if the client crafts the id directly.
+-    const skills = aggregateSkillsForProfile(session.agent_profile, config);
++    const skills = sessionSkills(session, config);
+     const skill = skills.find((entry) => entry.id === skillId);
+     if (!skill) return c.json({ error: "unknown or hidden skill" }, 404);
+ 

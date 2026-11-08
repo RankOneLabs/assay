@@ -1,0 +1,72 @@
+diff --git a/src/domain/effect-instruction.ts b/src/domain/effect-instruction.ts
+--- a/src/domain/effect-instruction.ts
++++ b/src/domain/effect-instruction.ts
+@@ -226,7 +226,8 @@
+   return isGatedReviewAccess(value.gated_review) && isString(value.session_key) && (value.session === "resume" || value.session === "fresh" || value.session === "shared")
+     && (value.session !== "shared" || isString(value.shared_session_unit) && value.shared_session_unit !== "")
+     && isPinnedPrompt(value.prompt) && (value.handoff === null || isPinnedPrompt(value.handoff))
+-    && (settings === null || isFields(settings) && isString(settings.harness) && isString(settings.model) && isNullableString(settings.effort))
++    && (settings === null || isFields(settings) && isString(settings.harness) && isString(settings.model) && isNullableString(settings.effort)
++      && (settings.max_silent_ms === undefined || isCount(settings.max_silent_ms) && settings.max_silent_ms > 0))
+     && Array.isArray(value.creates) && value.creates.length > 0 && value.creates.every(isCreatedArtifact)
+     && isFields(value.schemas) && Object.values(value.schemas).every((schema) => isTypeExpression(schema));
+ }
+diff --git a/src/domain/run-config.ts b/src/domain/run-config.ts
+--- a/src/domain/run-config.ts
++++ b/src/domain/run-config.ts
+@@ -1,7 +1,11 @@
+ import type { WorkerRuntime } from "../core-client/core-types";
+ 
+ /** The runtime, model and effort an agent worker starts with. */
+-export interface SessionSettings { readonly harness: string; readonly model: string; readonly effort: string | null }
++export interface SessionSettings {
++  readonly harness: string; readonly model: string; readonly effort: string | null;
++  /** How long this worker's session may stay silent; absent means the provider's bound. */
++  readonly max_silent_ms?: number;
++}
+ /** Launch settings are keyed separately by stage and worker. */
+ export interface RunConfig {
+   readonly sessions: { readonly [stage: string]: { readonly [worker: string]: SessionSettings } };
+diff --git a/src/effects/agent-provider.ts b/src/effects/agent-provider.ts
+--- a/src/effects/agent-provider.ts
++++ b/src/effects/agent-provider.ts
+@@ -97,6 +97,10 @@
+     detail: "agent workers need KBBL_BASE_URL and OAKRIDGE_PUBLICATION_KEY" } as const;
+   const max_silent_ms = config.max_silent_ms ?? DEFAULT_MAX_SILENT_MS;
+   const now = config.now ?? Date.now;
++  /** A worker's own launch bound wins over the provider's. */
++  const silenceBound = (instruction: EffectInstruction): number =>
++    instruction.worker.kind === "agent" && instruction.worker.settings?.max_silent_ms !== undefined
++      ? instruction.worker.settings.max_silent_ms : max_silent_ms;
+ 
+   async function ensure(instruction: EffectInstruction, options: EnsureOptions) {
+     if (!config.kbbl || config.publication_key === null || instruction.worker.kind !== "agent") return null;
+@@ -122,7 +126,7 @@
+    * refuses the observation rather than ending the attempt: the carrier then
+    * stops the session, and a later revise does not find it busy.
+    */
+-  async function silence(kbbl: KbblClient, sid: string, signal: AbortSignal | undefined): Promise<ProviderResult<TerminalObservation>> {
++  async function silence(kbbl: KbblClient, sid: string, signal: AbortSignal | undefined, bound: number): Promise<ProviderResult<TerminalObservation>> {
+     const reading = await kbbl.read(sid, signal);
+     // A failed read is not activity: it counts toward the observation's unavailable bound.
+     if (reading.kind !== "acknowledged") return reading.kind === "permanently_rejected"
+@@ -130,8 +134,8 @@
+     const session: KbblSession = reading.value.session;
+     const last = session.last_activity_ts ? Date.parse(session.last_activity_ts) : Number.NaN;
+     const silent_for = Number.isNaN(last) ? null : Math.max(0, now() - last);
+-    if (silent_for !== null && silent_for > max_silent_ms) return { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.executor_silent_timeout,
+-      detail: `kbbl session ${sid} reported no activity for ${Math.round(silent_for / 1000)}s (limit ${Math.round(max_silent_ms / 1000)}s)` };
++    if (silent_for !== null && silent_for > bound) return { kind: "permanently_rejected", code: PROVIDER_ERROR_CODES.executor_silent_timeout,
++      detail: `kbbl session ${sid} reported no activity for ${Math.round(silent_for / 1000)}s (limit ${Math.round(bound / 1000)}s)` };
+     return { kind: "acknowledged", value: { kind: "running" } };
+   }
+ 
+@@ -162,7 +166,7 @@
+         case "succeeded": return { kind: "acknowledged", value: { kind: "terminal", result: { kind: "succeeded" } } };
+         case "failed": case "unknown": case "cancelled":
+           return failed(PROVIDER_ERROR_CODES.session_failed, `the task's turn in kbbl session ${handle.session_id} ended ${receipt.value.status}`);
+-        case "accepted": case "prompting": return silence(kbbl, handle.session_id, options.signal);
++        case "accepted": case "prompting": return silence(kbbl, handle.session_id, options.signal, silenceBound(instruction));
+       }
+     },
+ 

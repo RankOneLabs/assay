@@ -1,0 +1,106 @@
+diff --git a/src/acp/controller.ts b/src/acp/controller.ts
+--- a/src/acp/controller.ts
++++ b/src/acp/controller.ts
+@@ -687,6 +687,11 @@
+     // callback. A history read is not live activity and must not rewrite the
+     // session timestamp or fan out one global inbox update per replay chunk.
+     if (!this.replaying) this.deps.store.touchActivity(this.deps.sid);
++    // Replayed history is not the agent's current context: only a live report counts.
++    if (!this.replaying && notification.update.sessionUpdate === "usage_update") {
++      const { used, size } = notification.update;
++      this.deps.store.setContextUsage(this.deps.sid, used, size);
++    }
+     // While a kbbl-dispatched prompt is active, a live user_message_chunk
+     // is the agent echoing that prompt back — runTurn already projected
+     // the dispatched text, so the echo would duplicate it. Replayed user
+diff --git a/src/acp/pwa-wire.ts b/src/acp/pwa-wire.ts
+--- a/src/acp/pwa-wire.ts
++++ b/src/acp/pwa-wire.ts
+@@ -40,6 +40,10 @@
+   /** Permission requests currently awaiting an operator answer. */
+   pendingPermissionCount: number;
+   workflow: PwaSessionWorkflowIdentity | null;
++  /** Tokens in the agent's context at its latest live report; null until one. */
++  contextUsed: number | null;
++  /** The agent's context window in tokens; null until a report. */
++  contextSize: number | null;
+ }
+ 
+ function toPwaWorkflowIdentity(
+@@ -75,5 +79,7 @@
+     archivedAt,
+     pendingPermissionCount,
+     workflow: toPwaWorkflowIdentity(snapshot.workflow),
++    contextUsed: snapshot.context_used,
++    contextSize: snapshot.context_size,
+   };
+ }
+diff --git a/src/acp/store.ts b/src/acp/store.ts
+--- a/src/acp/store.ts
++++ b/src/acp/store.ts
+@@ -160,6 +160,8 @@
+   unit_id: string | null;
+   worker: string | null;
+   gated_review_json: string | null;
++  context_used: number | null;
++  context_size: number | null;
+ }
+ 
+ /** Invalid persisted grants fail closed. */
+@@ -487,6 +489,16 @@
+       .run(mode, nowIso(), sid);
+   }
+ 
++  /** Latest live context-window usage, in tokens; every report overwrites the last. */
++  setContextUsage(sid: KbblSessionId, used: number, size: number): void {
++    this.db
++      .prepare(
++        "UPDATE acp_sessions SET context_used = ?, context_size = ?, updated_at = ? WHERE sid = ?",
++      )
++      .run(size, used, nowIso(), sid);
++    this.notifySessionsChanged();
++  }
++
+   setAcpSessionId(sid: KbblSessionId, acpSessionId: string): void {
+     this.db
+       .prepare(
+@@ -831,5 +843,7 @@
+     last_activity_at: row.last_activity_at,
+     created_at: row.created_at,
+     workflow: row.workflow,
++    context_used: row.context_used,
++    context_size: row.context_size,
+   };
+ }
+diff --git a/src/acp/types.ts b/src/acp/types.ts
+--- a/src/acp/types.ts
++++ b/src/acp/types.ts
+@@ -150,6 +150,10 @@
+   created_at: string;
+   updated_at: string;
+   workflow: AcpSessionWorkflowIdentity | null;
++  /** Tokens in the agent's context at its latest live usage_update; null until one. */
++  context_used: number | null;
++  /** The agent's context window in tokens at that update; null until one. */
++  context_size: number | null;
+ }
+ 
+ /**
+@@ -263,6 +267,8 @@
+   last_activity_at: string;
+   created_at: string;
+   workflow: AcpSessionWorkflowIdentity | null;
++  context_used: number | null;
++  context_size: number | null;
+ }
+ 
+ export type EnsureResult =
+diff --git a/src/db/migrations/004_context_usage.sql b/src/db/migrations/004_context_usage.sql
+new file mode 100644
+--- /dev/null
++++ b/src/db/migrations/004_context_usage.sql
+@@ -0,0 +1,4 @@
++-- The agent's latest live context-window report (ACP usage_update), in tokens.
++-- Null until the session's first live report.
++ALTER TABLE acp_sessions ADD COLUMN context_used INTEGER;
++ALTER TABLE acp_sessions ADD COLUMN context_size INTEGER;

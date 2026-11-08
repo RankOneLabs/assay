@@ -1,0 +1,117 @@
+diff --git a/src/acp/agent-profile.ts b/src/acp/agent-profile.ts
+--- a/src/acp/agent-profile.ts
++++ b/src/acp/agent-profile.ts
+@@ -30,6 +30,12 @@
+    * (§12 semantic category "mode"). Null leaves the agent's own default.
+    */
+   readonly sessionMode: string | null;
++  /**
++   * Model and effort a new session requests when its request names none.
++   * Absent or null leaves the agent's own default.
++   */
++  readonly defaultModel?: string | null;
++  readonly defaultEffort?: string | null;
+ }
+ 
+ export type AcpRuntimeConfig = KbblConfig["acp"];
+@@ -62,6 +68,8 @@
+       enabled: agent.enabled,
+       requireLoadSession: agent.require_load_session,
+       sessionMode: agent.session_mode,
++      defaultModel: agent.default_model,
++      defaultEffort: agent.default_effort,
+     });
+   }
+   return profiles;
+diff --git a/src/acp/session-service.ts b/src/acp/session-service.ts
+--- a/src/acp/session-service.ts
++++ b/src/acp/session-service.ts
+@@ -210,8 +210,8 @@
+       artifact_id: spec.artifact_id ?? null,
+       project_workdir: spec.workdir,
+       worktree_path: spec.workdir,
+-      requested_model: spec.model ?? null,
+-      requested_effort: spec.effort ?? null,
++      requested_model: spec.model ?? this.profileDefaults(profileId).model,
++      requested_effort: spec.effort ?? this.profileDefaults(profileId).effort,
+       requested_mode: this.profileSessionMode(profileId),
+       workflow: null,
+     });
+@@ -276,11 +276,19 @@
+     return this.deps.store.subscribeSessionsChanged(listener);
+   }
+ 
+-  listProfiles(): Array<{ id: string; label: string; enabled: boolean }> {
++  listProfiles(): Array<{
++    id: string;
++    label: string;
++    enabled: boolean;
++    defaultModel?: string;
++    defaultEffort?: string;
++  }> {
+     return [...this.deps.profiles.values()].map((profile) => ({
+       id: profile.id,
+       label: profile.label,
+       enabled: profile.enabled,
++      ...(profile.defaultModel ? { defaultModel: profile.defaultModel } : {}),
++      ...(profile.defaultEffort ? { defaultEffort: profile.defaultEffort } : {}),
+     }));
+   }
+ 
+@@ -758,6 +766,12 @@
+   /** The profile's starting permission mode; null when the profile is unknown or sets none. */
+   private profileSessionMode(profileId: AgentProfileId): string | null {
+     return this.deps.profiles.get(profileId)?.sessionMode ?? null;
++  }
++
++  /** The profile's default model and effort; null when the profile is unknown or sets none. */
++  private profileDefaults(profileId: AgentProfileId): { model: string | null; effort: string | null } {
++    const profile = this.deps.profiles.get(profileId);
++    return { model: profile?.defaultModel ?? null, effort: profile?.defaultEffort ?? null };
+   }
+ 
+   subscribe(
+diff --git a/src/config.ts b/src/config.ts
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -90,6 +90,10 @@
+     // session (e.g. "auto" for Claude Code). Null leaves the agent's own
+     // settings default in place.
+     session_mode: z.string().min(1).nullable().default(null),
++    // Model and effort a new session requests when its create or ensure
++    // request names none. Null leaves the agent's own default in place.
++    default_model: z.string().min(1).nullable().default(null),
++    default_effort: z.string().min(1).nullable().default(null),
+   })
+   .strict();
+ 
+diff --git a/src/server/app.ts b/src/server/app.ts
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -106,12 +106,18 @@
+         .listProfiles()
+         .filter((profile) => profile.enabled)
+         .map((profile) => {
++          // The launch form preselects a configured default; unset ones are omitted.
++          const defaults = {
++            ...(profile.defaultModel ? { defaultModel: profile.defaultModel } : {}),
++            ...(profile.defaultEffort ? { defaultEffort: profile.defaultEffort } : {}),
++          };
+           if (!isRuntimeId(profile.id)) {
+             return {
+               id: profile.id,
+               label: profile.label,
+               models: [],
+               efforts: [],
++              ...defaults,
+             };
+           }
+           return {
+@@ -119,6 +125,7 @@
+             label: profile.label,
+             models: RUNTIME_MODELS[profile.id],
+             efforts: RUNTIME_EFFORTS[profile.id],
++            ...defaults,
+           };
+         }),
+     });

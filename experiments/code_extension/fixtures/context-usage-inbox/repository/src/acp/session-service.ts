@@ -1,0 +1,1127 @@
+// Application service used by HTTP handlers (§8.6). Routes never reach into
+// an SDK connection; everything goes through this facade. Every prompt is
+// dispatched through the controller's accepted-turn loop, so "one active
+// prompt per session, ledger as the only deferral" holds by construction.
+
+import { randomUUID } from "node:crypto";
+
+import type { AgentProfile, AgentProfileId } from "./agent-profile";
+import { resolveProfile } from "./agent-profile";
+import { AcpSessionController, configOptionCategory } from "./controller";
+import type { AcpControllerRegistry } from "./controller-registry";
+import type { AcpProcessSupervisor } from "./process-supervisor";
+import {
+  FinalResponseSummaryGenerator,
+  generateSessionSummary,
+  ManualCompactionSummaryGenerator,
+  type SessionSummaryGenerator,
+} from "./session-summary";
+import {
+  sha256Hex,
+  startSpecHash,
+  toSnapshot,
+  type AcpSessionStore,
+  type OpenTurnRow,
+} from "./store";
+import {
+  acpError,
+  err,
+  isAcpFailureCode,
+  ok,
+  type AcpError,
+  type AcpSessionRow,
+  type AcpSessionSnapshot,
+  type AcpSessionStartSpec,
+  type AcpSessionWorkflowIdentity,
+  type AcpTurnRow,
+  type AcpUiEvent,
+  type AdvanceResult,
+  type EnsureResult,
+  type FenceContext,
+  type InputReceipt,
+  type KbblSessionId,
+  type ResumableKey,
+  type Result,
+  type TerminalObservation,
+  type TurnKey,
+  type UiSessionHistory,
+  type UiOpenTurn,
+  type WorktreeProvider,
+} from "./types";
+
+export interface AcpServiceConfig {
+  readonly default_agent: string;
+  readonly graceful_kill_ms: number;
+  readonly idle_child_ttl_ms: number;
+  readonly live_event_buffer: number;
+}
+
+export interface AcpSessionServiceDeps {
+  readonly store: AcpSessionStore;
+  readonly controllers: AcpControllerRegistry;
+  readonly profiles: ReadonlyMap<AgentProfileId, AgentProfile>;
+  readonly supervisor: AcpProcessSupervisor;
+  readonly worktrees: WorktreeProvider;
+  readonly config: AcpServiceConfig;
+  readonly summary_generators?: readonly SessionSummaryGenerator[];
+}
+
+const OBSERVE_POLL_MS = 100;
+
+function turnToReceipt(row: AcpTurnRow): InputReceipt {
+  return {
+    sid: row.sid,
+    turn_key: row.turn_key,
+    payload_hash: row.payload_hash,
+    status: row.status,
+    created_at: row.created_at,
+  };
+}
+
+function turnToOpenTurn(row: OpenTurnRow): UiOpenTurn {
+  return {
+    turnKey: row.turn_key,
+    source: row.source,
+    text: row.payload,
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+export interface HistoryLease {
+  readonly history: UiSessionHistory;
+  release(): Promise<void>;
+}
+
+export class AcpSessionService {
+  private readonly historyConsumers = new Map<KbblSessionId, number>();
+  private readonly coldHistoryLoads = new Map<KbblSessionId, AbortController>();
+
+  private readonly summaryGenerators: readonly SessionSummaryGenerator[];
+
+  constructor(private readonly deps: AcpSessionServiceDeps) {
+    this.summaryGenerators = deps.summary_generators ?? [
+      new ManualCompactionSummaryGenerator(),
+      new FinalResponseSummaryGenerator(),
+    ];
+  }
+
+  /** §10.7 boot recovery sweep. Call once before serving requests. */
+  recoverOnBoot(): void {
+    const swept = this.deps.store.bootSweep();
+    console.log(
+      `[acp] boot sweep: ${swept.turns_marked_unknown} prompting turn(s) -> unknown, ` +
+        `${swept.turns_retained_accepted} accepted turn(s) retained, ` +
+        `${swept.sessions_marked_idle} session(s) -> idle, ` +
+        `${swept.sessions_marked_failed} provisioning session(s) -> failed`,
+    );
+  }
+
+  /**
+   * Idempotent DBOS ensure (§10.2). `identity` is not part of the hashed
+   * start spec (folding it in would change `startSpecHash` for
+   * already-claimed keys) — it is written on create, and backfilled by
+   * the store on an attach whose stored identity is still null.
+   */
+  async ensureResumableSession(
+    key: string,
+    spec: AcpSessionStartSpec,
+    identity: AcpSessionWorkflowIdentity | null = null,
+  ): Promise<Result<EnsureResult, AcpError>> {
+    const resumableKey = key as ResumableKey;
+    const specHash = startSpecHash(spec);
+    const sid = randomUUID() as KbblSessionId;
+    const profileId = spec.runtime ?? this.deps.config.default_agent;
+
+    const claimed = this.deps.store.claimResumable(resumableKey, {
+      sid,
+      resumable_key: resumableKey,
+      start_spec_hash: specHash,
+      agent_profile: profileId,
+      name: spec.name ?? key,
+      artifact_id: spec.artifact_id ?? null,
+      project_workdir: spec.workdir,
+      worktree_path: spec.workdir,
+      requested_model: spec.model ?? null,
+      requested_effort: spec.effort ?? null,
+      requested_mode: this.profileSessionMode(profileId),
+      workflow: identity,
+    });
+
+    if (claimed.kind === "spec_conflict") {
+      return err(
+        acpError(
+          "session_key_conflict",
+          "service.ensureResumableSession",
+          `resumable key "${key}" already claimed with a different start spec`,
+          claimed.row.sid,
+        ),
+      );
+    }
+    if (claimed.kind === "existing") {
+      // Re-touch so retained accepted turns dispatch (§10.7 lazy spawn).
+      if (this.hasDispatchableWork(claimed.row)) {
+        void this.touchController(claimed.row.sid);
+      }
+      return ok({ kind: "existing", session: toSnapshot(claimed.row) });
+    }
+
+    const provisioned = await this.provision(claimed.row, spec);
+    if (!provisioned.ok) return provisioned;
+    const controller = provisioned.value;
+
+    const accepted = this.deps.store.acceptTurn({
+      sid: claimed.row.sid,
+      turn_key: `initial:${key}` as TurnKey,
+      source: "initial",
+      payload: spec.initial_prompt,
+    });
+    if (accepted.kind === "payload_conflict") {
+      return err(
+        acpError(
+          "delivery_key_conflict",
+          "service.ensureResumableSession",
+          "initial turn already recorded with different payload",
+          claimed.row.sid,
+        ),
+      );
+    }
+    // §10.2 step 13: return immediately; the initial prompt runs async.
+    void controller.dispatchAcceptedTurns();
+    const row = this.deps.store.getSession(claimed.row.sid);
+    return ok({
+      kind: "created",
+      session: toSnapshot(row ?? claimed.row),
+    });
+  }
+
+  /** Browser-created session (no resumable key). */
+  async createSession(
+    spec: AcpSessionStartSpec,
+  ): Promise<Result<AcpSessionSnapshot, AcpError>> {
+    const sid = randomUUID() as KbblSessionId;
+    const profileId = spec.runtime ?? this.deps.config.default_agent;
+    const row = this.deps.store.insertSession({
+      sid,
+      resumable_key: null,
+      start_spec_hash: null,
+      agent_profile: profileId,
+      name: spec.name ?? sid.slice(0, 8),
+      artifact_id: spec.artifact_id ?? null,
+      project_workdir: spec.workdir,
+      worktree_path: spec.workdir,
+      requested_model: spec.model ?? null,
+      requested_effort: spec.effort ?? null,
+      requested_mode: this.profileSessionMode(profileId),
+      workflow: null,
+    });
+
+    const provisioned = await this.provision(row, spec);
+    if (!provisioned.ok) return provisioned;
+
+    if (spec.initial_prompt.length > 0) {
+      this.deps.store.acceptTurn({
+        sid,
+        turn_key: `initial:${sid}` as TurnKey,
+        source: "initial",
+        payload: spec.initial_prompt,
+      });
+      void provisioned.value.dispatchAcceptedTurns();
+    }
+    const fresh = this.deps.store.getSession(sid);
+    return ok(toSnapshot(fresh ?? row));
+  }
+
+  listSessions(): AcpSessionSnapshot[] {
+    return this.deps.store.listSessions().map(toSnapshot);
+  }
+
+  listSessionArchives(): Map<KbblSessionId, string> {
+    return this.deps.store.listSessionArchives();
+  }
+
+  archiveSession(sid: string): Result<void, AcpError> {
+    const row = this.deps.store.getSession(sid as KbblSessionId);
+    if (!row) return err(acpError("session_not_found", "service.archiveSession", `no session ${sid}`, sid as KbblSessionId));
+    if (row.status !== "ended" && row.status !== "fenced" && row.status !== "failed") {
+      return err(acpError("session_busy", "service.archiveSession", `session ${sid} is still active`, row.sid));
+    }
+    this.deps.store.archiveSession(row.sid);
+    return ok(undefined);
+  }
+
+  getSession(sid: string): AcpSessionSnapshot | null {
+    const row = this.deps.store.getSession(sid as KbblSessionId);
+    return row ? toSnapshot(row) : null;
+  }
+
+  listByArtifact(artifactId: string): AcpSessionSnapshot[] {
+    return this.deps.store.listByArtifact(artifactId).map(toSnapshot);
+  }
+
+  /** Permission requests awaiting an operator answer (0 with no live
+   * controller — pending permissions do not survive the child). */
+  pendingPermissionCount(sid: string): number {
+    return (
+      this.deps.controllers.getLive(sid as KbblSessionId)
+        ?.pendingPermissionCount ?? 0
+    );
+  }
+
+  /**
+   * Coarse §14.1 change feed: fires after any sessions-table write. The
+   * inbox re-reads snapshots on each tick; there are no delta payloads.
+   */
+  subscribeSessionsChanged(listener: () => void): () => void {
+    return this.deps.store.subscribeSessionsChanged(listener);
+  }
+
+  listProfiles(): Array<{ id: string; label: string; enabled: boolean }> {
+    return [...this.deps.profiles.values()].map((profile) => ({
+      id: profile.id,
+      label: profile.label,
+      enabled: profile.enabled,
+    }));
+  }
+
+  get defaultAgent(): string {
+    return this.deps.config.default_agent;
+  }
+
+  /**
+   * Input delivery (§11.3). Operator and collaboration turns are accepted
+   * durably even while another turn is active, then dispatched serially.
+   * `client_message_id` makes an operator turn idempotent (§14.5).
+   */
+  async sendInput(
+    sid: string,
+    input: string,
+    opts?: { delivery_key?: string; client_message_id?: string },
+  ): Promise<Result<InputReceipt, AcpError>> {
+    const inputKey = opts?.delivery_key;
+    const row = this.deps.store.getSession(sid as KbblSessionId);
+    if (!row) {
+      return err(
+        acpError("session_not_found", "service.sendInput", `no session ${sid}`),
+      );
+    }
+    if (row.status === "fenced" || row.fenced_by !== null) {
+      return err(
+        acpError(
+          "session_fenced",
+          "service.sendInput",
+          `session is fenced by ${row.fenced_by ?? "unknown"}`,
+          row.sid,
+        ),
+      );
+    }
+    if (row.status === "ended" || row.status === "failed") {
+      return err(
+        acpError(
+          "session_not_found",
+          "service.sendInput",
+          `session is ${row.status}`,
+          row.sid,
+        ),
+      );
+    }
+
+    const isCollaboration = inputKey !== undefined;
+    const turnKey = (inputKey ??
+      `operator:${opts?.client_message_id ?? randomUUID()}`) as TurnKey;
+
+    // §14.5 idempotency: a retry of an already-recorded operator turn
+    // returns its stored receipt (or conflicts on different text).
+    if (!isCollaboration && opts?.client_message_id !== undefined) {
+      const existing = this.deps.store.getTurn(row.sid, turnKey);
+      if (existing) {
+        if (existing.payload_hash !== sha256Hex(input)) {
+          return err(
+            acpError(
+              "delivery_key_conflict",
+              "service.sendInput",
+              `input key "${turnKey}" already used with different text`,
+              row.sid,
+            ),
+          );
+        }
+        return ok(turnToReceipt(existing));
+      }
+    }
+
+    const accepted = this.deps.store.acceptTurn({
+      sid: row.sid,
+      turn_key: turnKey,
+      source: isCollaboration ? "collaboration" : "operator",
+      payload: input,
+    });
+    if (accepted.kind === "payload_conflict") {
+      return err(
+        acpError(
+          "delivery_key_conflict",
+          "service.sendInput",
+          `input key "${turnKey}" already used with different text`,
+          row.sid,
+        ),
+      );
+    }
+    if (accepted.kind === "existing") {
+      return ok(turnToReceipt(accepted.row));
+    }
+
+    // Durable now; dispatch when the controller is (or becomes) idle.
+    const touched = await this.touchController(row.sid);
+    if (touched.ok) void touched.value.dispatchAcceptedTurns();
+    // A failed immediate touch does not revoke durable acceptance. The
+    // retained turn is safe to dispatch after controller recovery because
+    // it has not crossed the accepted -> prompting boundary.
+    return ok(turnToReceipt(accepted.row));
+  }
+
+  resolvePermission(
+    sid: string,
+    requestId: string,
+    optionId: string,
+  ): Result<void, AcpError> {
+    const controller = this.deps.controllers.getLive(sid as KbblSessionId);
+    if (!controller) {
+      return err(
+        acpError(
+          "session_not_found",
+          "service.resolvePermission",
+          `no live controller for ${sid}`,
+        ),
+      );
+    }
+    return controller.resolvePermission(requestId, optionId);
+  }
+
+  /** Normal user stop — session/cancel, not a fence (guardrail 15). */
+  async cancelTurn(sid: string): Promise<Result<void, AcpError>> {
+    const controller = this.deps.controllers.getLive(sid as KbblSessionId);
+    if (!controller || !controller.isPromptActive) return ok(undefined);
+    return controller.cancelActiveTurn();
+  }
+
+  /**
+   * Close, or fence when a FenceContext is supplied (§10.5). An unknown
+   * or already-closed session remains success — matching the DBOS
+   * cancellation contract.
+   */
+  async closeSession(
+    sid: string,
+    fence?: FenceContext,
+  ): Promise<Result<void, AcpError>> {
+    const row = this.deps.store.getSession(sid as KbblSessionId);
+    if (!row) return ok(undefined);
+    const controller = this.deps.controllers.getLive(row.sid);
+    if (fence) {
+      if (controller) {
+        // Fence ownership is durable before summary generation awaits agent
+        // or storage work, so no new operator input can race terminalization.
+        this.deps.store.setFencedBy(row.sid, fence.fenced_by);
+        await this.captureSummary(controller);
+        await controller.fence(fence.fenced_by);
+      } else if (row.status !== "fenced") {
+        this.deps.store.setFencedBy(row.sid, fence.fenced_by);
+        await this.captureColdSummary(this.deps.store.getSession(row.sid) ?? row);
+        this.deps.store.markEnded(row.sid, {
+          status: "fenced",
+          reason: "fenced",
+          fenced_by: fence.fenced_by,
+        });
+      }
+      return ok(undefined);
+    }
+    if (controller) {
+      await this.captureSummary(controller);
+      await controller.closeChild();
+    } else if (row.status !== "ended" && row.status !== "fenced") {
+      await this.captureColdSummary(row);
+    }
+    if (row.status !== "ended" && row.status !== "fenced") {
+      this.deps.store.markEnded(row.sid, { status: "ended", reason: "user_closed" });
+    }
+    return ok(undefined);
+  }
+
+  /**
+   * §10.6 operator advance: an explicit escape hatch for a key whose
+   * session can no longer make progress. Fences whatever the key points
+   * at, then detaches the key so the next ensure creates a fresh session.
+   * Never reachable by an ensure retry.
+   */
+  async advanceResumable(key: string): Promise<AdvanceResult> {
+    const row = this.deps.store.getByResumableKey(key as ResumableKey);
+    if (!row) return { kind: "not_found" };
+    await this.closeSession(row.sid, { fenced_by: `advance:${key}` });
+    this.deps.store.clearResumableKey(row.sid);
+    const after = this.deps.store.getSession(row.sid);
+    return { kind: "advanced", session: toSnapshot(after ?? row) };
+  }
+
+  /**
+   * A session that ended before its agent reported an ACP session id never
+   * accepted its initial prompt: it has no transcript to resume and no work
+   * that could still be running. A revive could only refuse it, so a
+   * reviving ensure fences it and detaches its key instead, and the next
+   * ensure provisions a fresh session. Unlike `advanceResumable`, no agent
+   * that may still be working is left behind.
+   */
+  async releaseUnprovisioned(key: string): Promise<boolean> {
+    const row = this.deps.store.getByResumableKey(key as ResumableKey);
+    if (!row || !this.isUnprovisioned(row)) return false;
+    await this.closeSession(row.sid, { fenced_by: `unprovisioned:${key}` });
+    this.deps.store.clearResumableKey(row.sid);
+    console.log(`[acp] sid=${row.sid} released unprovisioned session for key=${key}`);
+    return true;
+  }
+
+  private isUnprovisioned(row: AcpSessionRow): boolean {
+    return (row.status === "failed" || row.status === "ended")
+      && row.fenced_by === null
+      && row.acp_session_id === null
+      && this.deps.store.getInitialTurn(row.sid) === null;
+  }
+
+  /** Collaboration resumes the pinned sid and ACP transcript without replaying the initial turn. */
+  async reviveResumable(key: string): Promise<Result<AcpSessionSnapshot, AcpError>> {
+    const row = this.deps.store.getByResumableKey(key as ResumableKey);
+    if (!row) return err(acpError("session_not_found", "service.reviveResumable", `no resumable session for ${key}`));
+    if (row.fenced_by !== null || row.status === "fenced")
+      return err(acpError("session_fenced", "service.reviveResumable", `session is fenced`, row.sid));
+    if (row.status !== "ended" && row.status !== "failed") return ok(toSnapshot(row));
+    if (row.acp_session_id === null)
+      return err(acpError("acp_session_load_failed", "service.reviveResumable", "session has no stored ACP session id", row.sid));
+    const loaded = await this.touchController(row.sid, undefined, true);
+    if (!loaded.ok) return loaded;
+    this.deps.store.reviveEnded(row.sid);
+    const revived = this.deps.store.getSession(row.sid);
+    if (!revived || revived.fenced_by !== null || revived.status === "fenced") {
+      await loaded.value.closeChild();
+      return err(acpError("session_fenced", "service.reviveResumable", "session was fenced during resume", row.sid));
+    }
+    return ok(toSnapshot(revived));
+  }
+
+  /**
+   * Operator hard delete: fence out any live child, best-effort worktree
+   * removal, then drop the row (turn ledger goes with it).
+   */
+  async purgeSession(sid: string): Promise<Result<boolean, AcpError>> {
+    const row = this.deps.store.markPurgeStarted(sid as KbblSessionId);
+    if (!row) return ok(false);
+    await this.closeSession(sid);
+    const hasOtherOwner = row.worktree_branch !== null
+      && this.deps.store.hasOtherWorktreeOwner(
+        row.sid,
+        row.worktree_path,
+        row.worktree_branch,
+      );
+    if (!hasOtherOwner) {
+      await this.deps.worktrees.remove?.({
+        project_workdir: row.project_workdir,
+        worktree_path: row.worktree_path,
+        worktree_branch: row.worktree_branch,
+      });
+    }
+    this.deps.store.deleteSession(row.sid);
+    return ok(true);
+  }
+
+  /** Live projection epoch (§14.4), or null with no live controller. */
+  streamEpoch(sid: string): string | null {
+    return this.deps.controllers.getLive(sid as KbblSessionId)?.streamEpoch ?? null;
+  }
+
+  /**
+   * Bounded observation of the INITIAL turn (§11.2): pending until that
+   * turn has a known final outcome; the child staying alive afterwards is
+   * not non-terminal. Also the lazy-spawn touch that dispatches retained
+   * accepted turns (§10.7).
+   */
+  async observeInitialTurn(
+    sid: string,
+    waitMs: number,
+  ): Promise<Result<TerminalObservation, AcpError>> {
+    const kbblSid = sid as KbblSessionId;
+    const first = this.deps.store.getSession(kbblSid);
+    if (!first) {
+      return err(
+        acpError(
+          "session_not_found",
+          "service.observeInitialTurn",
+          `no session ${sid}`,
+        ),
+      );
+    }
+    if (this.hasDispatchableWork(first)) void this.touchController(kbblSid);
+
+    const deadline = Date.now() + Math.max(0, waitMs);
+    for (;;) {
+      const row = this.deps.store.getSession(kbblSid);
+      if (!row) {
+        return err(
+          acpError(
+            "session_not_found",
+            "service.observeInitialTurn",
+            `session ${sid} disappeared`,
+          ),
+        );
+      }
+      const observation = this.classifyInitialTurn(row);
+      if (observation.kind !== "pending" || Date.now() >= deadline) {
+        return ok(observation);
+      }
+      await new Promise((resolve) => setTimeout(resolve, OBSERVE_POLL_MS));
+    }
+  }
+
+  /**
+   * History via the agent's own store (§10.3): live controllers answer
+   * from the projection buffer; otherwise a fresh child replays
+   * session/load. A failed load reports an expired history, not an error.
+   */
+  async loadHistory(
+    sid: string,
+    loadSignal?: AbortSignal,
+  ): Promise<Result<UiSessionHistory, AcpError>> {
+    const kbblSid = sid as KbblSessionId;
+    const row = this.deps.store.getSession(kbblSid);
+    if (!row) {
+      return err(
+        acpError(
+          "session_not_found",
+          "service.loadHistory",
+          `no session ${sid}`,
+        ),
+      );
+    }
+    const live = this.deps.controllers.getLive(kbblSid);
+    if (live) {
+      return ok({
+        kind: "transcript",
+        sid: kbblSid,
+        events: live.snapshotEvents(),
+        openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
+        expired: false,
+        summary: null,
+      });
+    }
+    if (
+      row.status === "ended" ||
+      row.status === "fenced" ||
+      row.status === "failed"
+    ) {
+      return this.loadTerminalHistory(row, loadSignal);
+    }
+    const touched = await this.touchController(kbblSid, loadSignal);
+    if (!touched.ok) {
+      if (touched.error.code === "acp_session_load_failed") {
+        return ok({
+          kind: "unavailable",
+          sid: kbblSid,
+          events: [],
+          openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
+          expired: true,
+          summary: null,
+          reason: "agent_history_unavailable",
+        });
+      }
+      return touched;
+    }
+    return ok({
+      kind: "transcript",
+      sid: kbblSid,
+      events: touched.value.snapshotEvents(),
+      openTurns: this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn),
+      expired: false,
+      summary: null,
+    });
+  }
+
+  /** Resume needs the complete ACP replay, including events evicted from a
+   * live controller's bounded display buffer. The replay child is private and
+   * never takes ownership of the parent's active session. */
+  async loadResumeHistory(
+    sid: string,
+    loadSignal?: AbortSignal,
+  ): Promise<Result<UiSessionHistory, AcpError>> {
+    const kbblSid = sid as KbblSessionId;
+    const row = this.deps.store.getSession(kbblSid);
+    if (!row) return err(acpError("session_not_found", "service.loadResumeHistory", `no session ${sid}`));
+    const openTurns = this.deps.store.listOpenTurns(kbblSid).map(turnToOpenTurn);
+    const fallback = (reason: "missing_acp_session_id" | "agent_history_unavailable"): UiSessionHistory => {
+      const summary = this.deps.store.getSessionSummary(kbblSid);
+      return summary
+        ? { kind: "summary", sid: kbblSid, events: [], openTurns, expired: true, summary }
+        : { kind: "unavailable", sid: kbblSid, events: [], openTurns, expired: true, summary: null, reason };
+    };
+    if (loadSignal?.aborted) return err(acpError("acp_session_load_failed", "service.loadResumeHistory", "resume request was cancelled", kbblSid));
+    if (row.acp_session_id === null) return ok(fallback("missing_acp_session_id"));
+    const profile = resolveProfile(this.deps.profiles, row.agent_profile);
+    if (!profile.ok) return ok(fallback("agent_history_unavailable"));
+
+    const controller = new AcpSessionController({
+      sid: kbblSid,
+      profile: profile.value,
+      store: this.deps.store,
+      supervisor: this.deps.supervisor,
+      config: {
+        live_event_buffer: Number.MAX_SAFE_INTEGER,
+        close_grace_ms: this.deps.config.graceful_kill_ms,
+      },
+      onDefunct: () => undefined,
+    });
+    try {
+      const started = await controller.start(row.worktree_path, {
+        kind: "load",
+        acp_session_id: row.acp_session_id,
+      }, loadSignal);
+      if (loadSignal?.aborted) return err(acpError("acp_session_load_failed", "service.loadResumeHistory", "resume request was cancelled", kbblSid));
+      if (!started.ok) return ok(fallback("agent_history_unavailable"));
+      return ok({ kind: "transcript", sid: kbblSid, events: controller.snapshotEvents(), openTurns, expired: false, summary: null });
+    } finally {
+      await controller.closeChild();
+    }
+  }
+
+  /**
+   * History ownership for HTTP/SSE readers. A cold read may need an ACP child
+   * for session/load, but that display-only child must not outlive its final
+   * reader. Durable work and pre-existing live controllers are never owned by
+   * this lease and are therefore never closed by it.
+   */
+  async acquireHistory(
+    sid: string,
+    consumerSignal?: AbortSignal,
+  ): Promise<Result<HistoryLease, AcpError>> {
+    const kbblSid = sid as KbblSessionId;
+    let coldLoad = this.coldHistoryLoads.get(kbblSid) ?? null;
+    if (coldLoad === null && this.deps.controllers.getLive(kbblSid) === null) {
+      coldLoad = new AbortController();
+      this.coldHistoryLoads.set(kbblSid, coldLoad);
+    }
+    this.historyConsumers.set(
+      kbblSid,
+      (this.historyConsumers.get(kbblSid) ?? 0) + 1,
+    );
+
+    let isReleased = false;
+    const release = async () => {
+      if (isReleased) return;
+      isReleased = true;
+      consumerSignal?.removeEventListener("abort", releaseOnAbort);
+      await this.releaseHistoryConsumer(kbblSid, coldLoad);
+    };
+    const releaseOnAbort = () => {
+      void release().catch((error: unknown) => {
+        console.error(`[acp] sid=${kbblSid} history release failed`, error);
+      });
+    };
+    consumerSignal?.addEventListener("abort", releaseOnAbort, { once: true });
+    if (consumerSignal?.aborted) releaseOnAbort();
+
+    const history = await this.loadHistory(sid, coldLoad?.signal);
+    if (!history.ok) {
+      await release();
+      return history;
+    }
+
+    return ok({
+      history: history.value,
+      release,
+    });
+  }
+
+  async setConfigOption(
+    sid: string,
+    configId: string,
+    value: string | boolean,
+  ): Promise<Result<void, AcpError>> {
+    const touched = await this.touchController(sid as KbblSessionId);
+    if (!touched.ok) return touched;
+    const controller = touched.value;
+    const applied = await controller.setConfigOption(configId, value);
+    if (!applied.ok) return applied;
+    // The operator's mode choice outlives this child: a respawn re-applies
+    // requested_mode, so a toggle sticks for the session's life.
+    if (
+      typeof value === "string" &&
+      configOptionCategory(controller.liveConfigOptions, configId) === "mode"
+    ) {
+      this.deps.store.setRequestedMode(sid as KbblSessionId, value);
+    }
+    return ok(undefined);
+  }
+
+  /** The profile's starting permission mode; null when the profile is unknown or sets none. */
+  private profileSessionMode(profileId: AgentProfileId): string | null {
+    return this.deps.profiles.get(profileId)?.sessionMode ?? null;
+  }
+
+  subscribe(
+    sid: string,
+    listener: (event: AcpUiEvent) => void,
+  ): (() => void) | null {
+    const controller = this.deps.controllers.getLive(sid as KbblSessionId);
+    return controller ? controller.subscribe(listener) : null;
+  }
+
+  /** §10.8: close children idle past the TTL. Wire to a timer at startup. */
+  async reapIdleChildren(now = Date.now()): Promise<void> {
+    for (const row of this.deps.store.listSessions()) {
+      if (row.status !== "idle") continue;
+      const controller = this.deps.controllers.getLive(row.sid);
+      if (!controller || controller.isPromptActive) continue;
+      if (controller.hasSubscribers) continue;
+      if (this.deps.store.listAcceptedTurns(row.sid).length > 0) continue;
+      const idleMs = now - Date.parse(row.last_activity_at);
+      if (idleMs < this.deps.config.idle_child_ttl_ms) continue;
+      console.log(`[acp] sid=${row.sid} idle ${idleMs}ms; reaping child`);
+      await controller.closeChild();
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    await this.deps.controllers.shutdownAll();
+  }
+
+  // === internals ===
+
+  /** §10.2 steps 3–10 for a fresh `provisioning` row. Failures become a
+   * visible failed session, never an invisible claimed key. */
+  private async provision(
+    row: AcpSessionRow,
+    spec: AcpSessionStartSpec,
+  ): Promise<Result<AcpSessionController, AcpError>> {
+    const profile = resolveProfile(this.deps.profiles, row.agent_profile);
+    if (!profile.ok) return this.failProvisioning(row, profile.error);
+
+    const worktree = await this.deps.worktrees.resolve(row.sid, spec);
+    if (!worktree.ok) return this.failProvisioning(row, worktree.error);
+    this.deps.store.setWorktree(row.sid, {
+      worktree_path: worktree.value.worktree_path,
+      worktree_branch: worktree.value.worktree_branch,
+      worktree_base_ref: worktree.value.worktree_base_ref,
+      parent_sid: worktree.value.parent_sid,
+      project_workdir: worktree.value.project_workdir,
+    });
+
+    const created = await this.deps.controllers.getOrCreate(row.sid, async () => {
+      const controller = new AcpSessionController({
+        sid: row.sid,
+        profile: profile.value,
+        store: this.deps.store,
+        supervisor: this.deps.supervisor,
+        config: {
+          live_event_buffer: this.deps.config.live_event_buffer,
+          close_grace_ms: this.deps.config.graceful_kill_ms,
+        },
+        onDefunct: (sid) => this.deps.controllers.remove(sid),
+      });
+      const started = await controller.start(worktree.value.worktree_path, {
+        kind: "new",
+      });
+      if (!started.ok) return started;
+      const configured = await controller.applyRequestedConfig(row);
+      if (!configured.ok) {
+        await controller.closeChild();
+        return configured;
+      }
+      return ok(controller);
+    });
+    if (!created.ok) return this.failProvisioning(row, created.error);
+
+    this.deps.store.setStatus(row.sid, "idle");
+    console.log(
+      `[acp] sid=${row.sid} provisioned profile=${row.agent_profile} pid=${created.value.childPid}`,
+    );
+    return created;
+  }
+
+  private failProvisioning(
+    row: AcpSessionRow,
+    error: AcpError,
+  ): Result<never, AcpError> {
+    this.deps.store.markEnded(row.sid, {
+      status: "failed",
+      reason: error.code,
+      detail: error.detail,
+    });
+    console.error(
+      `[acp] sid=${row.sid} provisioning failed: ${error.code} (${error.detail})`,
+    );
+    return err({ ...error, sid: row.sid });
+  }
+
+  private async captureSummary(controller: AcpSessionController): Promise<void> {
+    if (this.deps.store.getSessionSummary(controller.sid)) return;
+    if (controller.isPromptActive) return;
+    const generated = await generateSessionSummary({
+      session_id: controller.sid,
+      events: controller.snapshotEvents(),
+      produced_at: new Date().toISOString(),
+    }, this.summaryGenerators);
+    if (!generated.ok) {
+      const detail = generated.error.map((failure) => `${failure.method}: ${failure.detail}`).join("; ");
+      console.warn(`[acp] sid=${controller.sid} terminal summary unavailable: ${detail || "no generators configured"}`);
+      return;
+    }
+    try {
+      this.deps.store.putSessionSummary(generated.value);
+    } catch (error) {
+      console.error(`[acp] sid=${controller.sid} terminal summary persistence failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Capture a terminal fallback without registering a live controller or
+   * dispatching durable input. This is the cold counterpart to
+   * `captureSummary`: fencing records ownership first, then this display-only
+   * load runs before the session row is finalized.
+   */
+  private async captureColdSummary(row: AcpSessionRow): Promise<void> {
+    if (this.deps.store.getSessionSummary(row.sid)) return;
+    await this.loadTerminalHistory(row);
+  }
+
+  /**
+   * Terminal history is display-only: replay through a private controller so
+   * it cannot dispatch accepted work, reapply config, or reactivate the row.
+   */
+  private async loadTerminalHistory(
+    row: AcpSessionRow,
+    loadSignal?: AbortSignal,
+  ): Promise<Result<UiSessionHistory, AcpError>> {
+    const openTurns = this.deps.store.listOpenTurns(row.sid).map(turnToOpenTurn);
+    const fallback = (reason: "missing_acp_session_id" | "agent_history_unavailable"): Result<UiSessionHistory, AcpError> => {
+      const summary = this.deps.store.getSessionSummary(row.sid);
+      return summary
+        ? ok({ kind: "summary", sid: row.sid, events: [], openTurns, expired: true, summary })
+        : ok({ kind: "unavailable", sid: row.sid, events: [], openTurns, expired: true, summary: null, reason });
+    };
+    if (row.acp_session_id === null) return fallback("missing_acp_session_id");
+    const profile = resolveProfile(this.deps.profiles, row.agent_profile);
+    if (!profile.ok) return fallback("agent_history_unavailable");
+
+    const controller = new AcpSessionController({
+      sid: row.sid,
+      profile: profile.value,
+      store: this.deps.store,
+      supervisor: this.deps.supervisor,
+      config: {
+        live_event_buffer: this.deps.config.live_event_buffer,
+        close_grace_ms: this.deps.config.graceful_kill_ms,
+      },
+      onDefunct: () => undefined,
+    });
+    const started = await controller.start(row.worktree_path, {
+      kind: "load",
+      acp_session_id: row.acp_session_id,
+    }, loadSignal);
+    if (!started.ok) {
+      await controller.closeChild();
+      return fallback("agent_history_unavailable");
+    }
+    const events = controller.snapshotEvents();
+    await this.captureSummary(controller);
+    await controller.closeChild();
+    return ok({
+      kind: "transcript",
+      sid: row.sid,
+      events,
+      openTurns,
+      expired: false,
+      summary: null,
+    });
+  }
+
+  /** §10.3 lazy respawn: fresh child + session/load for an idle session. */
+  private async touchController(
+    sid: KbblSessionId,
+    loadSignal?: AbortSignal,
+    allowTerminalResume = false,
+  ): Promise<Result<AcpSessionController, AcpError>> {
+    const live = this.deps.controllers.getLive(sid);
+    if (live) return ok(live);
+    const row = this.deps.store.getSession(sid);
+    if (!row) {
+      return err(
+        acpError(
+          "session_not_found",
+          "service.touchController",
+          `no session ${sid}`,
+        ),
+      );
+    }
+    if (
+      (row.status === "ended" && !allowTerminalResume) ||
+      row.status === "fenced" ||
+      (row.status === "failed" && !allowTerminalResume) ||
+      row.fenced_by !== null
+    ) {
+      return err(
+        acpError(
+          "session_not_found",
+          "service.touchController",
+          `session is ${row.status}`,
+          sid,
+        ),
+      );
+    }
+    if (row.acp_session_id === null) {
+      return err(
+        acpError(
+          "acp_session_load_failed",
+          "service.touchController",
+          "session has no stored ACP session id",
+          sid,
+        ),
+      );
+    }
+    const acpSessionId = row.acp_session_id;
+    const profile = resolveProfile(this.deps.profiles, row.agent_profile);
+    if (!profile.ok) return profile;
+
+    const created = await this.deps.controllers.getOrCreate(sid, async () => {
+      const controller = new AcpSessionController({
+        sid,
+        profile: profile.value,
+        store: this.deps.store,
+        supervisor: this.deps.supervisor,
+        config: {
+          live_event_buffer: this.deps.config.live_event_buffer,
+          close_grace_ms: this.deps.config.graceful_kill_ms,
+        },
+        onDefunct: (defunctSid) => this.deps.controllers.remove(defunctSid),
+      });
+      // Some agents do not persist session/new until the first prompt. The
+      // durable ledger proves whether any prompt may have reached the agent;
+      // only a never-dispatched session can safely start afresh on this same
+      // worktree. Accepted input keeps its original key and dispatches once.
+      const hasDispatchedTurns = this.deps.store.hasDispatchedTurns(sid);
+      const started = await controller.start(row.worktree_path, hasDispatchedTurns
+        ? { kind: "load", acp_session_id: acpSessionId }
+        : { kind: "new" }, loadSignal);
+      if (!started.ok) return started;
+      // session/load may report the agent's default config instead of the
+      // selection used before the child exited. The durable requested values
+      // remain authoritative across both new-session recovery and reload.
+      const configured = await controller.applyRequestedConfig(row);
+      if (!configured.ok) {
+        await controller.closeChild();
+        return configured;
+      }
+      return ok(controller);
+    });
+    if (created.ok) void created.value.dispatchAcceptedTurns();
+    return created;
+  }
+
+  private hasDispatchableWork(row: AcpSessionRow): boolean {
+    return (
+      row.fenced_by === null &&
+      (row.status === "idle" || row.status === "prompting") &&
+      this.deps.controllers.getLive(row.sid) === null &&
+      this.deps.store.listAcceptedTurns(row.sid).length > 0
+    );
+  }
+
+  private async releaseHistoryConsumer(
+    sid: KbblSessionId,
+    coldLoad: AbortController | null,
+  ): Promise<void> {
+    const remaining = Math.max(0, (this.historyConsumers.get(sid) ?? 1) - 1);
+    if (remaining > 0) {
+      this.historyConsumers.set(sid, remaining);
+      return;
+    }
+    this.historyConsumers.delete(sid);
+    if (coldLoad === null) return;
+    const controller = this.deps.controllers.getLive(sid);
+    const hasDurableWork =
+      (controller?.isPromptActive ?? false) ||
+      this.deps.store.listAcceptedTurns(sid).length > 0;
+    if (hasDurableWork || (controller?.hasSubscribers ?? false)) {
+      // The display-only child has acquired a real owner. Detach it from
+      // history lifecycle without aborting the active/queued work.
+      if (this.coldHistoryLoads.get(sid) === coldLoad) {
+        this.coldHistoryLoads.delete(sid);
+      }
+      return;
+    }
+    if (controller) {
+      if (this.coldHistoryLoads.get(sid) === coldLoad) {
+        this.coldHistoryLoads.delete(sid);
+      }
+      await controller.closeChild();
+      return;
+    }
+    if (this.coldHistoryLoads.get(sid) === coldLoad) {
+      this.coldHistoryLoads.delete(sid);
+      coldLoad.abort();
+    }
+  }
+
+  private classifyInitialTurn(row: AcpSessionRow): TerminalObservation {
+    const session = toSnapshot(row);
+    if (row.status === "failed") {
+      // `failProvisioning` ends the row with the failing error's own code and
+      // detail, so the row already says what happened. Reporting
+      // `agent_spawn_failed` for all of them threw that away at the one
+      // boundary that matters: a caller watching for terminal state
+      // (Oakridge's observer, the PWA) saw "the agent would not start" for a
+      // session whose agent started fine and was handed a model it does not
+      // offer.
+      return {
+        kind: "failed",
+        session,
+        failure_code: isAcpFailureCode(row.end_reason)
+          ? row.end_reason
+          : "agent_spawn_failed",
+        failure_detail:
+          row.end_detail ?? row.end_reason ?? "session failed during provisioning",
+      };
+    }
+    const turn = this.deps.store.getInitialTurn(row.sid);
+    // A closed/fenced session can never complete its initial turn: pending
+    // here would be a wait on a state that cannot arrive. Success stays
+    // success (the turn finished before the close); everything else is a
+    // terminal fence/close outcome.
+    if (
+      (row.status === "fenced" || row.status === "ended") &&
+      turn?.status !== "succeeded"
+    ) {
+      return {
+        kind: "failed",
+        session,
+        failure_code: "session_fenced",
+        failure_detail: `session was ${row.status} (${row.end_reason ?? "closed"}) before the initial turn completed`,
+      };
+    }
+    if (!turn) return { kind: "pending", session };
+    switch (turn.status) {
+      case "succeeded":
+        return { kind: "succeeded", session };
+      case "failed":
+      case "unknown":
+        return {
+          kind: "failed",
+          session,
+          failure_code: turn.failure_code ?? "acp_prompt_failed",
+          failure_detail:
+            turn.failure_detail ?? `initial turn is ${turn.status}`,
+        };
+      case "cancelled":
+        return {
+          kind: "failed",
+          session,
+          failure_code: "acp_prompt_failed",
+          failure_detail: "initial turn was cancelled",
+        };
+      default:
+        return { kind: "pending", session };
+    }
+  }
+}
