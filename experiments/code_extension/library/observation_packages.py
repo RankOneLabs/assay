@@ -215,17 +215,18 @@ _SUBJECT_ONLY_PATCHES: Patches = {
 }
 
 _SUBJECT_ONLY_REQUIREMENTS: Requirements = (
-    ("A recipe may pin the build { kind: \"subject_only\" }, and such a pin is read as a supported "
-     "slot recipe.", ("pin-is-readable",)),
+    ("runPackages accepts a question that pins the build { kind: \"subject_only\" }.",
+     ("pin-is-supported",)),
     ("runPackages packages every subject item of each supported subject revision on its own, "
-     "even when it declares no links, and marks it eligible.",
-     ("uncited-subject-packaged", "every-subject-alone", "other-question-unchanged")),
-    ("A subject_only package holds only the subject slots' captured references and is "
-     "complete.", ("subject-reference-only",)),
+     "even when it declares no links or its links resolve to nothing, and marks it eligible.",
+     ("uncited-subject-packaged", "every-subject-alone", "dangling-links-packaged",
+      "other-question-unchanged")),
+    ("A subject_only package holds only the subject slots' captured references, input slots "
+     "before output slots, and is complete.", ("subject-reference-only", "slots-in-pin-order")),
     ("A revision with unsupported provenance keeps its inapplicable decisions and gets no "
      "package.", ("inapplicable-not-packaged",)),
-    ("A subject_only pin that declares a linked or unscheduled slot is not a readable pin.",
-     ("non-subject-slot-refused",)),
+    ("runPackages refuses a subject_only question whose pin declares a linked or unscheduled "
+     "slot.", ("non-subject-slot-refused",)),
 )
 
 # ---------------------------------------------------------------------------------------
@@ -532,16 +533,17 @@ _ADDRESSING_PATCHES: Patches = {
 _ADDRESSING_REQUIREMENTS: Requirements = (
     ("The catalogue pins analysis.finding_addressing: a boolean question over analysis findings "
      "with the stated assessment-window recipe.", ("catalogue-question",)),
-    ("An addressing code runner without network is registered, so grading can name it.",
+    ("runnerEntry(\"addressing\") returns a code entry without network, and grading can name it.",
      ("runner-registered",)),
     ("runPackages packages each analysis finding with an addressing link view, its own reference "
      "and the updates that address it, and the runner answers true exactly when an update addresses "
-     "the finding.", ("addressed-answers-true", "unaddressed-answers-false", "link-view-contract",
-                      "shared-update-in-both-views")),
+     "the finding.", ("addressed-answered", "unaddressed-answered", "captured-answers-match",
+                      "link-view-contract", "shared-update-in-both-views")),
     ("The runner counts only addresses links whose target names the finding's artifact kind, item "
      "kind, scope and local id.", ("only-addresses-links", "scope-must-match", "other-finding-not-counted")),
-    ("The runner refuses a non-boolean question and a view that is not an addressing link view.",
-     ("refuses-coverage-view", "refuses-non-boolean")),
+    ("The runner refuses a non-boolean question, a question without an assessment_window build, "
+     "and a view that is not an addressing link view.",
+     ("refuses-coverage-view", "refuses-non-boolean", "refuses-other-build")),
 )
 
 _NUL_ESCAPE = (

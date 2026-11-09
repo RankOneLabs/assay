@@ -3,7 +3,7 @@ import type { ItemOccurrenceId, QuestionId } from "../../../src/domain/identity"
 import type { JsonValue } from "../../../src/domain/primitives";
 import { oakridgeQuestions, PILOT_QUESTION_IDS, type PilotExpectations, type PilotQuestion } from "../../../src/grading/catalogue/oakridge-questions";
 import type { CapturedRevision } from "../../../src/grading/evidence-packages/capture";
-import { pinnedInputRecipe, pinnedPilotRecipe, type PilotEvidenceRecipe } from "../../../src/grading/evidence-packages/pilot-recipe";
+import { pinnedInputRecipe, type PilotEvidenceRecipe } from "../../../src/grading/evidence-packages/pilot-recipe";
 import { runPackages } from "../../../src/producers/oakridge/evidence-packages";
 import { oakridgeDevelopmentCatalogue } from "../../../src/projection/catalogue/oakridge-development";
 import { selectRevision } from "../../../src/projection/extractor";
@@ -48,16 +48,16 @@ function derive(revisions: readonly CapturedRevision[], extra: Record<string, Pi
 const criterion = (revision: CapturedRevision, local_id: string) =>
   revision.items.find((item) => item.item_kind === "criterion" && item.producer_local_id === local_id)!;
 
-test("reachability: a subject_only pin is read as a supported slot recipe", () => {
-  expect(pinnedPilotRecipe(question().definition)?.build as unknown).toEqual({ kind: "subject_only" });
+test("reachability: runPackages accepts a question that pins subject_only", () => {
+  expect(runPackages([plan("plan-1")], { [ID]: question() }).ok).toBe(true);
 });
 
-test("reachability: a criterion that cites nothing is packaged on its own and eligible", () => {
+test("reachability: a criterion that cites nothing gets a package and is eligible", () => {
   const revision = plan("plan-1");
   const derived = derive([revision]);
   const subject = criterion(revision, "crit-a");
   const pack = derived.packages.find((item) => item.question_id === ID && item.subject.occurrence_id === subject.occurrence_id);
-  expect(pack?.evidence.references.map((ref) => ref.ref)).toEqual(["plan_criterion:crit-a"]);
+  expect(pack).toBeDefined();
   expect(derived.eligibility.find((item) => item.question_id === ID && item.occurrence_id === subject.occurrence_id)?.decision)
     .toEqual({ tag: "eligible", payload: { evidence_set_id: pack!.evidence.evidence_set_id } });
 });
@@ -92,13 +92,31 @@ test("semantics: a revision with unsupported provenance keeps its inapplicable d
     [criterion(unsupported, "crit-a").occurrence_id, "inapplicable"], [criterion(unsupported, "crit-b").occurrence_id, "inapplicable"]]);
 });
 
-test("semantics: a subject_only pin naming a linked or unscheduled slot is not readable", () => {
+test("semantics: a package holds one reference per subject slot, input slots before output slots", () => {
+  const revision = plan("plan-1");
+  const pin = recipe({ input: [subjectSlot("relevant_excerpt")], output: [subjectSlot("plan_criterion")] });
+  const result = runPackages([revision], { [ID]: question(pin) });
+  if (!result.ok) throw new Error(result.error.detail);
+  const subject = criterion(revision, "crit-a");
+  expect(result.value.packages.find((item) => item.subject.occurrence_id === subject.occurrence_id)?.evidence.references.map((ref) => ref.ref))
+    .toEqual(["relevant_excerpt:crit-a", "plan_criterion:crit-a"]);
+});
+
+test("semantics: a criterion whose links resolve to nothing is packaged like any other", () => {
+  const revision = captured("plan-1", "plan/alpha", { cohorts: [{ id: "alpha", decisions: [],
+    acceptance_criteria: [{ id: "crit-a", text: "A works", task_ids: [], decision_ids: ["decision-gone"] }] }] }, "2026-11-01T00:00:00Z");
+  const derived = derive([revision]);
+  expect(derived.packages.map((item) => item.evidence.references.map((ref) => ref.ref))).toEqual([["plan_criterion:crit-a"]]);
+  expect([derived.exclusions, derived.eligibility.map((item) => item.decision.tag)]).toEqual([[], ["eligible"]]);
+});
+
+test("semantics: a subject_only pin naming a linked or unscheduled slot is refused", () => {
   const linked = recipe({ input: [{ role: "plan_decision", min_count: 0, max_count: 20,
     source: { from: "linked", link_type: "derived_from", direction: "out", artifact_kind: "plan", item_kind: "decision" } }] });
   const unscheduled = recipe({ input: [{ role: "plan_task", min_count: 1, max_count: 1, source: { from: "unscheduled" } }] });
-  expect([pinnedPilotRecipe(question(linked).definition), pinnedPilotRecipe(question(unscheduled).definition)]).toEqual([null, null]);
-  expect(runPackages([plan("plan-1")], { [ID]: question(linked) }))
-    .toMatchObject({ ok: false, error: { detail: "question has no supported captured evidence recipe" } });
+  const refused = { ok: false, error: { detail: "question has no supported captured evidence recipe" } };
+  expect(runPackages([plan("plan-1")], { [ID]: question(linked) })).toMatchObject(refused);
+  expect(runPackages([plan("plan-1")], { [ID]: question(unscheduled) })).toMatchObject(refused);
 });
 
 test("semantics: a linked_sources question over the same revision keeps excluding the uncited criterion", () => {

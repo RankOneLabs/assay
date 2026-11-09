@@ -117,12 +117,12 @@ test("semantics: a granted session with the URL configured lists every shortcut,
     skills.find((skill) => skill.name === "mcp:gated-review:get_review_round")?.confirm]).toEqual([SHORTCUT_NAMES, true, false]);
 });
 
-test("semantics: invoking a shortcut on a hand-started session is refused as hidden and submits nothing", async () => {
+test("reachability: invoking a shortcut on a hand-started session is refused as hidden and submits nothing", async () => {
   const status = await withRoutes(GATED_URL, defaults(), (app) => invoke(app, sids.hand!, FETCH_ID));
   expect([status, operatorTurns(sids.hand!)]).toEqual([404, []]);
 });
 
-test("semantics: invoking a shortcut on a workflow session without a grant is refused and submits nothing", async () => {
+test("reachability: invoking a shortcut on a workflow session without a grant is refused and submits nothing", async () => {
   const status = await withRoutes(GATED_URL, defaults(), (app) => invoke(app, sids.ungranted!, FETCH_ID));
   expect([status, operatorTurns(sids.ungranted!)]).toEqual([404, []]);
 });

@@ -19,12 +19,12 @@ builds are pinned:
 
 The build has no other fields. The required behavior:
 
-- **Readable pin.** A pin with `build: { kind: "subject_only" }` must be read as a supported slot
-  recipe. `pinnedPilotRecipe` returns it, and `runPackages` accepts a question that pins it.
+- **Supported question.** `runPackages` accepts a question that pins
+  `build: { kind: "subject_only" }`.
 - **Only subject slots.** Every slot of a `subject_only` pin, input and output, must have
-  `source: { from: "subject" }`. A pin that declares a `linked` or `unscheduled` slot is not a
-  readable pin: `pinnedPilotRecipe` returns null, and `runPackages` refuses the question with
-  its existing "question has no supported captured evidence recipe" error.
+  `source: { from: "subject" }`. For a pin that declares a `linked` or `unscheduled` slot,
+  `runPackages` refuses the question with its existing "question has no supported captured
+  evidence recipe" error.
 - **One package per subject item.** `runPackages` packages every item of the pinned
   `subject.item_kind` in each subject revision whose recorded provenance matches the question's
   pinned expectation. Each package's `revision_id` is that revision's id. A subject that

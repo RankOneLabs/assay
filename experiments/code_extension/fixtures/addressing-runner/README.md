@@ -78,4 +78,4 @@ No production behavior is changed.
 
 `unreachable-registry.patch` also fails the semantics tests that reach the runner through
 `runnerEntry`, since an unregistered runner can't be reached any other way.
-`unreachable-producer.patch` also fails the two semantics tests that read the packaged view.
+`unreachable-producer.patch` also fails the three semantics tests that read the packaged view.

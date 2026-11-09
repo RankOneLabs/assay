@@ -53,9 +53,10 @@ No production behavior is changed.
   authoritative summary), but only when `initialize` advertised
   `clientCapabilities.session.compaction`. It ships only in this group (survey decision 5).
   - `reachability:` tests run a session against the fake agent over in-memory SQLite and a
-    bun child process, close it, and read the stored summary: one with an ordinary prompt,
-    one with `/compact`. They fail unless the capability is advertised and the default list
-    reaches the new generator before the manual and final-response ones.
+    bun child process, close it, and read the stored summary's method: one with an ordinary
+    prompt, one with `/compact`. They fail unless the capability is advertised and the default
+    list reaches the new generator before the manual and final-response ones. A `semantics:`
+    test checks the stored text from the same path.
   - `semantics:` tests project ACP updates through `projectSessionUpdate` and run the new
     generator directly, so they do not depend on the event shape the attempt chooses:
     summary over chunks, chunks of the completed compaction only, failed, cancelled and

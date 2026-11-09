@@ -272,8 +272,8 @@ _PATCHES: Patches = {
 }
 
 _REQUIREMENTS: Requirements = (
-    ("An agent in config.acp.agents may declare default_model and default_effort; a create or "
-     "ensure request for that agent that names no model (or effort) requests the default.",
+    ("An agent in config.acp.agents may declare default_model and default_effort; any new session "
+     "for that agent whose request names no model (or effort) requests the default.",
      ("ensure-takes-defaults", "ensure-route-takes-defaults", "create-takes-defaults",
       "default-effort-alone", "default-survives-respawn")),
     ("A model or effort the request names, or that a resumed session inherits from its parent, "

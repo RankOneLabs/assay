@@ -8,23 +8,21 @@ produces it.
 ACP agents can compact their own context and report it with two session updates:
 `compaction_update` (a compaction's lifecycle, identified by `compactionId`, with status
 `in_progress`, `completed`, `failed` or `cancelled`) and `compaction_summary_chunk`
-(a piece of that compaction's summary, streamed while it is in progress). An agent sends
-these only to a client that advertises compaction support when it initializes. kbbl
-advertises nothing, and drops these updates if they arrive.
+(a piece of that compaction's summary, streamed while it is in progress). kbbl does not
+use them today. The ACP SDK in the dependency lock defines how they work.
 
 Make the agent's own compaction the session handoff:
 
-- Advertise compaction support to the agent, as the ACP SDK in the dependency lock
-  defines it.
-- Project these updates into kbbl's UI event union instead of dropping them, so a
-  session's events record its completed compactions.
+- When a session's agent compacts its context, the terminal summary stored when the
+  session closes comes from that compaction, with method `native_compaction`.
+- A session's events record its completed compactions.
 - Add a summary generator `NativeCompactionSummaryGenerator`, exported from
   `src/acp/session-summary.ts`, whose `method` is `"native_compaction"`. It implements
   `SessionSummaryGenerator`, and like the existing generators it returns a draft with
   `schema_version: 1`, the request's `session_id` and `produced_at`, and the summary text
   as `markdown`.
-- By default, kbbl tries native compaction first, then manual `/compact`, then the final
-  response.
+- A native compaction summary takes priority over a manual `/compact` turn and over the
+  final response.
 
 Which compaction counts, and which text it contributes:
 

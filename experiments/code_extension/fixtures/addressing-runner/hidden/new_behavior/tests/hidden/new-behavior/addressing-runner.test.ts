@@ -74,16 +74,20 @@ test("reachability: an addressing code runner without network is registered", ()
   expect([entry?.kind, entry?.network, entry?.factory(0, {}).kind]).toEqual(["code", false, "code"]);
 });
 
-test("reachability: a finding a proposed spec update addresses is answered true from its captured package", async () => {
+test("reachability: a finding a proposed spec update addresses is answered from its captured package", async () => {
   const { pack, decision } = packaged("finding-a");
   expect(decision).toEqual({ tag: "eligible", payload: { evidence_set_id: pack.evidence.evidence_set_id } });
-  expect(await answer(pack.evidence)).toEqual(TRUE);
+  expect(await answer(pack.evidence)).toMatchObject({ state: "answered", kind: "boolean" });
 });
 
-test("reachability: a finding no proposed spec update addresses is packaged and answered false", async () => {
+test("reachability: a finding no proposed spec update addresses is packaged and answered", async () => {
   const { pack, decision } = packaged("finding-c");
   expect(decision?.tag).toBe("eligible");
-  expect(await answer(pack.evidence)).toEqual(FALSE);
+  expect(await answer(pack.evidence)).toMatchObject({ state: "answered", kind: "boolean" });
+});
+
+test("semantics: a captured package answers true when an update addresses the finding, and false when none does", async () => {
+  expect([await answer(packaged("finding-a").pack.evidence), await answer(packaged("finding-c").pack.evidence)]).toEqual([TRUE, FALSE]);
 });
 
 test("semantics: the catalogue pins a boolean question over analysis findings with the stated recipe", () => {
@@ -141,5 +145,11 @@ test("semantics: the runner refuses a coverage link view", async () => {
 
 test("semantics: the runner refuses a question that is not boolean", async () => {
   const question = { ...addressingQuestion().definition, response_kind: "choice" as const, allowed_values: ["yes", "no"] };
+  expect(await answer(view([link()]), question)).toHaveProperty("error");
+});
+
+test("semantics: the runner refuses a question that does not pin an assessment_window build", async () => {
+  const definition = addressingQuestion().definition;
+  const question = { ...definition, input_recipe: { ...(definition.input_recipe as object), build: { kind: "linked_sources" } } } as unknown as QuestionDefinition;
   expect(await answer(view([link()]), question)).toHaveProperty("error");
 });

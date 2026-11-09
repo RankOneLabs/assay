@@ -4,19 +4,15 @@ The development artifact classification declares two body fields `restricted`:
 `brief.files_in_scope` and `assessment.test_evidence`. Evidence collapses them to
 `internal`, so export withholds them as `unclassified_content`, and an export target has no
 way to opt in to them. Add restricted evidence as its own kind with its own export
-allowance. Model it on the `repository_content` evidence kind, which already exists at
-each layer below, and treat it the same way on export: off by default, and allowed only
-with the raw export credential.
+allowance. On export, treat it the way the `repository_content` evidence kind is treated:
+off by default, and allowed only with the raw export credential.
 
 - **Evidence kind `restricted`.** Captured evidence selected from a body field declared
-  `restricted` has kind `restricted`, not `internal`. Evidence packaging and every other
-  place that validates an evidence kind accept it. Other declared kinds keep their current
-  evidence kind.
-- **Grade-context intake.** No extractor selects these fields today, so the path that
-  carries restricted evidence end to end is grade-context intake: the `context` submitted
-  with `POST /v1/evaluations`, `POST /v1/evaluation-jobs` or `POST /v1/grades`. Its evidence
-  references must accept kind `restricted`, and that content must then reach export with
-  its kind.
+  `restricted` has kind `restricted`, not `internal`, and can be packaged like other
+  captured evidence. Other declared kinds keep their current evidence kind.
+- **Grade context.** Restricted evidence can be submitted in the `context` of
+  `POST /v1/evaluations`, `POST /v1/evaluation-jobs` or `POST /v1/grades`, and it reaches
+  export with its kind.
 - **Redaction reason `restricted_content`.** On export, the content of an evidence
   reference of kind `restricted` is withheld, and its omission is recorded with reason
   `restricted_content`.

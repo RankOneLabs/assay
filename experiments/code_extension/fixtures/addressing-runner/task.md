@@ -1,9 +1,8 @@
 # Add an addressing code runner for analysis findings
 
 Add a code-graded question, "Is this analysis finding addressed by at least one proposed spec
-update?", with a new `addressing` runner. It works like `assessment.coverage`: the producer
-packages a small link view into each finding's evidence, and the runner decodes that view and
-answers from it.
+update?", with a new `addressing` runner. It works like `assessment.coverage`: each finding's
+evidence carries a small link view, and the runner decodes that view and answers from it.
 
 ## The question
 
@@ -22,7 +21,7 @@ for that id. Its definition:
 | `requires_repository_snapshot` | `false` |
 
 The question text and the semantics and caveat strings are yours to write. Its `input_recipe`
-is exactly this slot recipe. It adds a new evidence role, `proposed_spec_update`.
+is exactly this slot recipe.
 
 ```json
 { "recipe_version": "v1",
@@ -73,8 +72,9 @@ Evidence-set digests are computed over it.
 
 ## The runner
 
-Register `addressing` in the runner registry as a `code` runner with `network: false`, whose
-factory returns a code runner. Given a grading context, it:
+`runnerEntry("addressing")` returns a `code` entry with `network: false`, whose factory returns
+a code runner, and grading can name `addressing` as it names any other runner. Given a grading
+context, the runner:
 
 - returns an error result, not an answer, unless the question has `response_kind: "boolean"`
   and pins a slot recipe with an `assessment_window` build;

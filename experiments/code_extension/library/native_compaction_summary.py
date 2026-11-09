@@ -248,10 +248,9 @@ _PATCHES: Patches = {
 }
 
 _REQUIREMENTS: Requirements = (
-    ("kbbl advertises ACP compaction support when it initializes an agent, so a compliant "
-     "agent's completed compaction becomes the session's terminal summary with method "
-     "native_compaction.",
-     ("native-summary-on-close",)),
+    ("A compliant agent's completed compaction becomes the session's terminal summary with "
+     "method native_compaction.",
+     ("native-summary-on-close", "stored-summary-text")),
     ("The native compaction summary takes priority over a manual /compact turn and over the "
      "final response.",
      ("native-before-manual",)),
