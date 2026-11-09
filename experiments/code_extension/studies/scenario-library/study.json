@@ -1,0 +1,18 @@
+{
+  "cohort": "scenario-library-2026-11-study",
+  "combined_cap_usd": "40.00",
+  "plans": [
+    {
+      "name": "ministral",
+      "config": "study-ministral.json"
+    },
+    {
+      "name": "qwen",
+      "config": "study-qwen.json"
+    },
+    {
+      "name": "sol",
+      "config": "study-sol.json"
+    }
+  ]
+}

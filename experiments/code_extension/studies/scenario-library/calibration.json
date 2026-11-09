@@ -1,0 +1,18 @@
+{
+  "cohort": "scenario-library-2026-11-calibration",
+  "combined_cap_usd": "10.00",
+  "plans": [
+    {
+      "name": "ministral",
+      "config": "calibration-ministral.json"
+    },
+    {
+      "name": "qwen",
+      "config": "calibration-qwen.json"
+    },
+    {
+      "name": "sol",
+      "config": "calibration-sol.json"
+    }
+  ]
+}

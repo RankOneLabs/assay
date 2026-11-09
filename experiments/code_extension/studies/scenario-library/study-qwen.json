@@ -1,0 +1,90 @@
+{
+  "scenario_qualifications": [
+    {
+      "scenario": "addressing-runner",
+      "manifest_digest": "sha256:959fe4188ffc8ad88941cb437d95804f366e1d87609064a8f5f5548ff2d21d64"
+    },
+    {
+      "scenario": "agent-default-model",
+      "manifest_digest": "sha256:281c771ac59c8662cccb345179db75539eccaf3a98bf58922e3898880d6a5e91"
+    },
+    {
+      "scenario": "context-usage-inbox",
+      "manifest_digest": "sha256:b62bce700c4fb96f6d0455a397f4d04c7912bd2d169981be1ec081b39e4680cc"
+    },
+    {
+      "scenario": "export-credential",
+      "manifest_digest": "sha256:98f7cbde690714fdbe09ec57d47b2186b3e4a405b1f9ce446d221b972f0fd3e3"
+    },
+    {
+      "scenario": "gated-review-shortcuts",
+      "manifest_digest": "sha256:eb2566c20115ef713c917f46d1e45223f17769153a4426d3d61bdaffb71df76d"
+    },
+    {
+      "scenario": "native-compaction-summary",
+      "manifest_digest": "sha256:c44043f1445f064d1879ec12b7a974f061cab823f4628551d16a10359f0cb4ec"
+    },
+    {
+      "scenario": "operations-route",
+      "manifest_digest": "sha256:33a72b29bb0d85748c6fe9ebda991c680a69ad644eb5ca04896b2bc467b69330"
+    },
+    {
+      "scenario": "restricted-evidence",
+      "manifest_digest": "sha256:5a03a9e771a83b5b0f9efc30d5786129f924f77488e5ca6a1183d2384176a11e"
+    },
+    {
+      "scenario": "subject-only-build",
+      "manifest_digest": "sha256:bf445b9336d27cf813f09e5a90ff85cf0c2982f02ec2494f07d9025b4d0205a7"
+    },
+    {
+      "scenario": "worker-silence-bound",
+      "manifest_digest": "sha256:422a8c10af6d6030f88ee7ed6b620c8d92662dcafbebcd2c584bb7d1623af3b3"
+    },
+    {
+      "scenario": "worker-start-budget",
+      "manifest_digest": "sha256:50b08d35b48a679236637aeaeb64792c52409f2bcb320ccac54d7aca71c433a1"
+    }
+  ],
+  "cohort": "scenario-library-2026-11-study-qwen",
+  "route": {
+    "endpoint": "https://openrouter.ai/api/v1",
+    "model": "qwen/qwen3.8-27b",
+    "provider": "deepinfra/bf16"
+  },
+  "profile": "openrouter",
+  "system_prompt_digest": "sha256:d6f2f100a9a362ddae1d201fd96de86b24ad47b7449ff863d42c64ed71607cfb",
+  "tool_schemas_digest": "sha256:698286ad88a625d2ebdccb8c5f1fffc7d7831692f09eac7b146123fd2f8c8c9c",
+  "image_digest": "sha256:b48e43d170e6c0eb0d7e70364c2e385488c07f93ef8ea38f9942dc573cfba0da",
+  "bounds": {
+    "served_context_tokens": null,
+    "model_context_limit_tokens": null,
+    "request_timeout_s": 120.0,
+    "max_turns": 60,
+    "timeout_s": 900.0,
+    "attempts": 1,
+    "concurrency": 1,
+    "provider_retries": 0,
+    "sdk_retries": 0,
+    "max_tool_schema_bytes": 16384,
+    "max_tool_output_bytes": 32768,
+    "max_conversation_bytes": 3670016,
+    "max_request_bytes": 3932160,
+    "max_response_bytes": 131072,
+    "max_output_tokens": 8192,
+    "max_storage_mb": 512,
+    "per_cell_tool_call_ceiling": "unavailable",
+    "per_cell_tool_call_ceiling_reason": "extension_mode cannot enforce a per-cell tool-call ceiling: the repository-agent loop honors max_tool_calls_per_cell and max_tool_calls_per_turn only under pilot_mode",
+    "requested_sampling": null,
+    "provider_reported_sampling": null
+  },
+  "repeats": 5,
+  "randomization_seed": 71,
+  "dispatch_schedule": "subject-rotated-v1",
+  "concurrency": 1,
+  "pricing": {
+    "basis": "openrouter-pinned-price-ceilings",
+    "conservative_request_bound_usd": null
+  },
+  "per_attempt_cap_usd": "0.75",
+  "total_cap_usd": "12.00"
+}
