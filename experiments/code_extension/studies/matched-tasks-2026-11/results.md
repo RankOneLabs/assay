@@ -24,18 +24,21 @@ not type-check, or an attempt that stopped before it submitted. The decision rul
 
 Each row is 20 attempts: 5 repeats of each of 4 shapes. "Stopped" attempts were never graded.
 
-| Model | Task | Passed | Wrong | Stopped at 60 requests | Timed out (900 s) | Infrastructure stop | Mean requests |
-|---|---|---:|---:|---:|---:|---:|---:|
-| Ministral | status report | 16 | 2 | 2 | 0 | 0 | 43.9 |
-| Ministral | collect artifacts | 0 | 14 | 5 | 0 | 1 | 48.0 |
-| Qwen | status report | 16 | 0 | 1 | 3 | 0 | 36.0 |
-| Qwen | collect artifacts | 4 | 1 | 8 | 7 | 0 | 29.1 |
-| Sol | status report | 20 | 0 | 0 | 0 | 0 | 12.2 |
-| Sol | collect artifacts | 19 | 0 | 0 | 0 | 1 | 15.8 |
-| Sol | pass-through | 18 | 0 | 0 | 0 | 2 | 9.2 |
+| Model | Task | Passed | Wrong | Stopped at 60 requests | Stopped by output limit (8,192 tokens) | Timed out (900 s) | Infrastructure stop | Mean requests |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Ministral | status report | 16 | 2 | 2 | 0 | 0 | 0 | 43.9 |
+| Ministral | collect artifacts | 0 | 14 | 5 | 0 | 0 | 1 | 48.0 |
+| Qwen | status report | 16 | 0 | 0 | 1 | 3 | 0 | 36.0 |
+| Qwen | collect artifacts | 4 | 1 | 0 | 8 | 7 | 0 | 29.1 |
+| Sol | status report | 20 | 0 | 0 | 0 | 0 | 0 | 12.2 |
+| Sol | collect artifacts | 19 | 0 | 0 | 0 | 0 | 1 | 15.8 |
+| Sol | pass-through | 18 | 0 | 0 | 0 | 0 | 2 | 9.2 |
 
 Sol passed all 57 attempts it submitted. Its 3 ungraded attempts are the connection drops
 below.
+
+Corrected 2026-11-08: this table first counted Qwen's 9 output-limit stops as stopped at 60
+requests. They came after 14 to 24 requests. No Qwen attempt reached 60.
 
 ## Passes by shape (out of 5)
 

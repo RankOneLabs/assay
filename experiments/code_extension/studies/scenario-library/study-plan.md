@@ -29,7 +29,8 @@ Each cohort has a file in this directory, and each is its own authorization.
 The 11 tasks are 9 with a non-local edit and 2 local controls. The three models and their
 routes are the ones in the matched-task study, which keeps its results as a reference point.
 All three are needed. In that study Sol submitted almost every time, while Ministral used all
-60 requests in 7 of 40 attempts and Qwen timed out in 10 of 40.
+60 requests in 7 of 40 attempts, and Qwen timed out in 10 of 40 and hit the per-request output
+limit in 9 of 40.
 
 The cap per attempt stays at $0.75 for Ministral and Qwen and $2.00 for Sol. The bounds also
 stay the same: 900 seconds, 60 requests, 8,192 output tokens per request and 32 KiB of tool
@@ -161,7 +162,12 @@ span at least 2 of the 3 apps.
 
 **Control clean:** for that same model, neither control shows missed integration.
 
-**Readable:** a model has at least 3 graded attempts on at least 5 of the 9 non-local tasks.
+**Readable:** a model has at least 3 attempts whose feature tests ran on at least 5 of the 9
+non-local tasks. A patch that failed to apply or type-check ran no feature tests, so it cannot
+show a reachability failure.
+
+`uv run python -m code_extension.tally --store <store> --cohort <cohort.json>` prints the tables
+and applies this rule.
 
 Apply the first row that matches.
 
@@ -224,5 +230,3 @@ stay outside this repository.
   `sha256:bc68cdf8cc9a1c392ecd0b61e9e8b5ada00cda47ca2362d6d319592ad75ef7cf` and the study at
   `sha256:6ef4c1f602abdb277c5aec447a09cc1a83ebd15f05adbddd2fafcd6625fdb61c`. Those digests were
   taken in a scratch store and are only a check. Freeze again in the real store before authorizing.
-- Add the script that tallies results per task and model to the repository. The last study's
-  tally scripts assume shapes and are not in the repository.

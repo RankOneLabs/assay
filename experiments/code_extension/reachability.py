@@ -11,17 +11,68 @@ from typing import Any, Literal
 
 from assay.models import ExecutionOutcome, RunManifest
 from assay.store import ObjectStore
+from code_extension.classification import (
+    EvaluatorVerdict,
+    HarnessOrProviderFailure,
+    NeedsOperatorJudgment,
+    StopCause,
+    Timeout,
+    classify,
+)
 from code_extension.config import RunConfiguration
 from code_extension.diagnose import _FAIL
-from code_extension.ledger import _evaluation_detail, _Output, _stop, _verdict
+from code_extension.ledger import (
+    _evaluation_detail,
+    _Output,
+    _stop,
+    _Trace,
+    _verdict,
+    terminal_cause,
+)
 from code_extension.library import feature_tokens
 from code_extension.metrics import artifact_bytes
 from code_extension.run import _plan_dir
 from code_extension.status import ROUTE_PROBE, _manifest
 
 type FeatureFailure = Literal["reachability", "omitted_stage", "semantic", "unattributed"]
+type AttemptOutcome = Literal[
+    "unsettled", "harness_failure", "timeout", "limit_stop", "scope_or_integrity", "no_submission",
+    "unusable_patch", "omitted_stage", "reachability", "semantic", "unattributed",
+    "regression_only", "passed",
+]
 
 _PASSED_REACHABILITY = re.compile(r"^\(pass\) reachability: ", re.MULTILINE)
+_LIMIT_CAUSES = frozenset(
+    {"output_token_limit", "request_limit", "conversation_limit", "turn_limit"}
+)
+_REJECTED_WORKSPACE = frozenset({
+    "out_of_scope_edit", "tampering", "traversal", "escaping_symlink", "symlink_submission",
+    "hard_link_submission", "binary_payload", "oversized_artifact", "aggregate_artifact_limit",
+    "entry_limit", "non_utf8_path",
+})
+
+
+def attempt_outcome(
+    stop: StopCause,
+    verdict: EvaluatorVerdict | None,
+    terminal: str,
+    failure: FeatureFailure | None,
+) -> AttemptOutcome:
+    """Exactly one outcome per settled attempt, in the study plans' table order."""
+    classified = classify(stop, verdict)
+    if isinstance(classified, HarnessOrProviderFailure):
+        return "harness_failure"
+    if isinstance(classified, Timeout):
+        return "timeout"
+    if stop.kind != "submitted":
+        if terminal in _LIMIT_CAUSES:
+            return "limit_stop"
+        return "scope_or_integrity" if terminal in _REJECTED_WORKSPACE else "no_submission"
+    if isinstance(classified, NeedsOperatorJudgment):
+        if classified.distinction == "invalid_or_incomplete":
+            return "unusable_patch"
+        return failure or "regression_only"
+    return "passed"
 
 
 def feature_failure(output: str, *, group_failed: bool) -> FeatureFailure | None:
@@ -99,6 +150,16 @@ def request_counts(records: list[dict[str, Any]]) -> Counter[str]:
     )
 
 
+def _terminal(outcome: ExecutionOutcome, store: ObjectStore) -> str:
+    """Why the attempt ended: `no_submission` alone hides which bound stopped it."""
+    if outcome.status == "succeeded":
+        return terminal_cause("submitted", "")
+    if outcome.trace_ref is None:
+        return "unknown"
+    bridge = _Trace.model_validate_json(store.read_bytes(outcome.trace_ref)).bridge_outcome
+    return "unknown" if bridge is None else terminal_cause(bridge.kind, bridge.cause, bridge.detail)
+
+
 def _settled_row(
     cell: str, reference: str, store: ObjectStore, manifest: RunManifest,
 ) -> dict[str, Any]:
@@ -119,10 +180,13 @@ def _settled_row(
         patch = artifact_bytes(store, output.patch_ref).decode("utf-8")
         if not any(adds_stage_code(patch, name) for name in feature_names(cell)):
             failure = "omitted_stage"
+    terminal = _terminal(outcome, store)
     return {
         "stop": getattr(stop, "cause", stop.kind),
+        "terminal": terminal,
         "verdict": verdict.value if verdict else None,
         "feature_failure": failure,
+        "outcome": attempt_outcome(stop, verdict, terminal, failure),
     }
 
 
@@ -138,7 +202,10 @@ def plan_rows(store_path: Path, plan_digest: str) -> list[dict[str, Any]]:
     requests = request_counts(records)
     rows = []
     for cell in claimed_cells(records):
-        row: dict[str, Any] = {"stop": "unsettled", "verdict": None, "feature_failure": None}
+        row: dict[str, Any] = {
+            "stop": "unsettled", "terminal": "unknown", "verdict": None, "feature_failure": None,
+            "outcome": "unsettled",
+        }
         if found is not None and cell in settled and cell in found[1].execution_records:
             row = _settled_row(cell, found[1].execution_records[cell], store, found[1])
         rows.append({"cell": cell, "requests": requests[cell], **row})
