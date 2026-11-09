@@ -166,8 +166,8 @@ _REQUIREMENTS: Requirements = (
       "granted-lists-all")),
     ("For any other session, a gated-review shortcut behaves as an unknown or hidden skill: "
      "invoking it answers 404 and submits nothing.",
-     ("hand-started-invoke-refused", "ungranted-workflow-invoke-refused", "unset-url-invoke-refused",
-      "granted-invoke-dispatches")),
+     ("hand-started-invoke-refused", "ungranted-workflow-invoke-refused", "hidden-invoke-answers-404",
+      "unset-url-invoke-refused", "granted-invoke-dispatches")),
     ("The decision depends only on whether a grant is present: every grant kind and role gets the "
      "same shortcuts.", ("every-grant-same-set",)),
     ("Fixture mode is unchanged: config.skills.fixtures still lists and invokes the fixture skills "

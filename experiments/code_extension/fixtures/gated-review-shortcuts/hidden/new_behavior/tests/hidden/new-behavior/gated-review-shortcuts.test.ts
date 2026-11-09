@@ -117,14 +117,20 @@ test("semantics: a granted session with the URL configured lists every shortcut,
     skills.find((skill) => skill.name === "mcp:gated-review:get_review_round")?.confirm]).toEqual([SHORTCUT_NAMES, true, false]);
 });
 
-test("reachability: invoking a shortcut on a hand-started session is refused as hidden and submits nothing", async () => {
-  const status = await withRoutes(GATED_URL, defaults(), (app) => invoke(app, sids.hand!, FETCH_ID));
-  expect([status, operatorTurns(sids.hand!)]).toEqual([404, []]);
+test("reachability: invoking a shortcut on a hand-started session submits nothing", async () => {
+  await withRoutes(GATED_URL, defaults(), (app) => invoke(app, sids.hand!, FETCH_ID));
+  expect(operatorTurns(sids.hand!)).toEqual([]);
 });
 
-test("reachability: invoking a shortcut on a workflow session without a grant is refused and submits nothing", async () => {
-  const status = await withRoutes(GATED_URL, defaults(), (app) => invoke(app, sids.ungranted!, FETCH_ID));
-  expect([status, operatorTurns(sids.ungranted!)]).toEqual([404, []]);
+test("reachability: invoking a shortcut on a workflow session without a grant submits nothing", async () => {
+  await withRoutes(GATED_URL, defaults(), (app) => invoke(app, sids.ungranted!, FETCH_ID));
+  expect(operatorTurns(sids.ungranted!)).toEqual([]);
+});
+
+test("semantics: invoking a shortcut on a session without the server answers 404", async () => {
+  const statuses = await withRoutes(GATED_URL, defaults(), async (app) =>
+    [await invoke(app, sids.hand!, FETCH_ID), await invoke(app, sids.ungranted!, FETCH_ID)]);
+  expect(statuses).toEqual([404, 404]);
 });
 
 test("semantics: invoking a shortcut on a granted session is refused when no gated-review URL is configured", async () => {

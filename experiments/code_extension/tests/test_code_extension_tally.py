@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
 from collections import Counter
+from pathlib import Path
 
 import pytest
 from code_extension.classification import (
@@ -12,9 +14,10 @@ from code_extension.classification import (
     Submitted,
 )
 from code_extension.library import SUBJECTS
-from code_extension.reachability import attempt_outcome
+from code_extension.reachability import attempt_outcome, plan_rows
 from code_extension.tally import CONTROLS, GROUPS, NON_LOCAL, Counts, app, decide, group_table
 
+STUDY = Path(__file__).parents[1] / "studies" / "scenario-library"
 MODELS = ("ministral", "sol")
 # Non-local tasks by app: dbos 2, observation 3, kbbl 4.
 DBOS = SUBJECTS["worker-silence-bound"]
@@ -95,6 +98,29 @@ def test_the_clean_control_must_belong_to_the_model_that_recurs() -> None:
     assert decide(counts, MODELS).result == "Recurs without a clean control: sol"
 
 
+def test_an_ungraded_control_is_not_clean() -> None:
+    counts = with_reachability(full(), "sol", DBOS, OBSERVATION, KBBL)
+    counts[("sol", CONTROL)] = Counter({"limit_stop": 5})
+    assert decide(counts, MODELS).result == "Recurs without a clean control: sol"
+
+
+def test_another_models_readability_does_not_vouch_for_the_model_that_recurs() -> None:
+    counts = with_reachability(full(), "sol", DBOS, OBSERVATION, KBBL)
+    for subject in NON_LOCAL - {DBOS, OBSERVATION, KBBL}:
+        counts[("sol", subject)] = Counter({"timeout": 5})
+    assert decide(counts, MODELS).result == "Recurs without a clean control: sol"
+
+
+def test_a_plan_with_no_journal_dispatched_nothing(tmp_path: Path) -> None:
+    digest = "0" * 64
+    directory = tmp_path / "plans" / digest
+    directory.mkdir(parents=True)
+    with pytest.raises(FileNotFoundError):
+        plan_rows(tmp_path, f"sha256:{digest}")
+    shutil.copy(STUDY / "calibration-sol.json", directory / "config.json")
+    assert plan_rows(tmp_path, f"sha256:{digest}") == []
+
+
 def test_tasks_shown_by_different_models_do_not_add_up() -> None:
     counts = with_reachability(full(), "sol", DBOS, OBSERVATION)
     with_reachability(counts, "ministral", KBBL, DBOS_2)
@@ -135,6 +161,8 @@ PASSED = EvaluatorVerdict("correct", (GroupVerdict("passed", name="new_behavior"
         (CandidateStopped("no_submission"), None, "output_token_limit", None, "limit_stop"),
         (CandidateStopped("no_submission"), None, "no_tool_call", None, "no_submission"),
         (CandidateStopped("tampering"), None, "tampering", None, "scope_or_integrity"),
+        (CandidateStopped("patch_capture_conflict"), None, "patch_capture_conflict", None,
+         "scope_or_integrity"),
         (Submitted(), None, "normal_submission", None, "harness_failure"),
         (Submitted(), NOTHING_RAN, "normal_submission", None, "unusable_patch"),
         (Submitted(), GROUP_RAN, "normal_submission", "reachability", "reachability"),

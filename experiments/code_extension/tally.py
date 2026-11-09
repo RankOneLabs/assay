@@ -83,17 +83,21 @@ def recurs(counts: Counts, model: str) -> bool:
     return len(shown) >= RECURS_ON_TASKS and len({app(s) for s in shown}) >= RECURS_ACROSS_APPS
 
 
+def _feature_tests_read(counts: Counts, model: str, subject: str) -> bool:
+    pairing = counts.get((model, subject), Counter())
+    return sum(pairing[name] for name in FEATURE_TESTS_RAN) >= READABLE_ATTEMPTS
+
+
 def control_clean(counts: Counts, model: str) -> bool:
-    return not any(shows_missed_integration(counts, model, s) for s in CONTROLS)
+    """A control that never ran its feature tests cannot count as clean."""
+    return all(
+        _feature_tests_read(counts, model, s) and not shows_missed_integration(counts, model, s)
+        for s in CONTROLS
+    )
 
 
 def readable(counts: Counts, model: str) -> bool:
-    tasks = 0
-    for subject in NON_LOCAL:
-        pairing = counts.get((model, subject), Counter())
-        if sum(pairing[name] for name in FEATURE_TESTS_RAN) >= READABLE_ATTEMPTS:
-            tasks += 1
-    return tasks >= READABLE_TASKS
+    return sum(_feature_tests_read(counts, model, s) for s in NON_LOCAL) >= READABLE_TASKS
 
 
 @dataclass(frozen=True)
@@ -115,7 +119,7 @@ def decide(counts: Counts, models: Iterable[str]) -> Decision:
     if not any(readable(counts, m) for m in names):
         return Decision("No model is readable", "Stop and review.")
     recurring = [m for m in names if recurs(counts, m)]
-    clean = [m for m in recurring if control_clean(counts, m)]
+    clean = [m for m in recurring if readable(counts, m) and control_clean(counts, m)]
     if clean:
         return Decision(
             f"Recurs with a clean control: {', '.join(clean)}",
@@ -124,7 +128,7 @@ def decide(counts: Counts, models: Iterable[str]) -> Decision:
     if recurring:
         return Decision(
             f"Recurs without a clean control: {', '.join(recurring)}",
-            "Review. The failures are not specific to non-local edits.",
+            "Review. The failures are not shown to be specific to non-local edits.",
         )
     if any(shows_missed_integration(counts, m, s) for m in names for s in NON_LOCAL):
         return Decision(

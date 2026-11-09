@@ -56,7 +56,7 @@ No production behavior is changed.
     bun child process, close it, and read the stored summary's method: one with an ordinary
     prompt, one with `/compact`. They fail unless the capability is advertised and the default
     list reaches the new generator before the manual and final-response ones. A `semantics:`
-    test checks the stored text from the same path.
+    test checks the stored text from the same path, for both prompts.
   - `semantics:` tests project ACP updates through `projectSessionUpdate` and run the new
     generator directly, so they do not depend on the event shape the attempt chooses:
     summary over chunks, chunks of the completed compaction only, failed, cancelled and

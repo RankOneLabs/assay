@@ -18,11 +18,11 @@
     },
     {
       "scenario": "gated-review-shortcuts",
-      "manifest_digest": "sha256:eb2566c20115ef713c917f46d1e45223f17769153a4426d3d61bdaffb71df76d"
+      "manifest_digest": "sha256:e6d18781644fd09134766c54335c58d7425b9a2a4a04946239df5bcd75e2f3ae"
     },
     {
       "scenario": "native-compaction-summary",
-      "manifest_digest": "sha256:c44043f1445f064d1879ec12b7a974f061cab823f4628551d16a10359f0cb4ec"
+      "manifest_digest": "sha256:7f6b6918b167047bfbf8ed190cbca3c71f64acdbb1399d90336e3df8825c05ec"
     },
     {
       "scenario": "operations-route",

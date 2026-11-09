@@ -48,7 +48,8 @@ _LIMIT_CAUSES = frozenset(
 _REJECTED_WORKSPACE = frozenset({
     "out_of_scope_edit", "tampering", "traversal", "escaping_symlink", "symlink_submission",
     "hard_link_submission", "binary_payload", "oversized_artifact", "aggregate_artifact_limit",
-    "entry_limit", "non_utf8_path",
+    "entry_limit", "non_utf8_path", "patch_capture_conflict", "workspace_capture_permission",
+    "invalid_tool_output_encoding",
 })
 
 
@@ -195,7 +196,10 @@ def plan_rows(store_path: Path, plan_digest: str) -> list[dict[str, Any]]:
     store = ObjectStore(store_path)
     directory = _plan_dir(store, plan_digest)
     config = RunConfiguration.load(directory / "config.json")
-    journal = (directory / "attempts.jsonl").read_text(encoding="utf-8").splitlines()
+    journal_path = directory / "attempts.jsonl"
+    if not journal_path.exists():
+        return []  # prepare writes no journal, so a plan that never started dispatched nothing
+    journal = journal_path.read_text(encoding="utf-8").splitlines()
     records = [json.loads(line) for line in journal]
     found = _manifest(store, config, records)
     settled = settled_cells(records)

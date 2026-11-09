@@ -160,11 +160,12 @@ attempts. This is the same threshold as the matched-task study. An omitted featu
 **Recurs:** for one model, at least 3 of the 9 non-local tasks show missed integration, and they
 span at least 2 of the 3 apps.
 
-**Control clean:** for that same model, neither control shows missed integration.
-
 **Readable:** a model has at least 3 attempts whose feature tests ran on at least 5 of the 9
 non-local tasks. A patch that failed to apply or type-check ran no feature tests, so it cannot
 show a reachability failure.
+
+**Control clean:** for that same model, each control has at least 3 attempts whose feature tests
+ran, and neither shows missed integration. A control that never ran its feature tests is not clean.
 
 `uv run python -m code_extension.tally --store <store> --cohort <cohort.json>` prints the tables
 and applies this rule.
@@ -176,8 +177,8 @@ Apply the first row that matches.
 | Any task and model pairing has fewer than 5 dispatched attempts | Incomplete. Do not apply the rule. Review the plan's halt first. |
 | Each task and model pairing has 0 or 5 passes of 5 | Stop and review, because the cohort is at floor or ceiling. This holds even if the rule is met. |
 | No model is readable | Stop and review. Too few attempts submitted to say anything about wiring. |
-| Recurs and control clean, for the same model | Review every counted failure against its patch and hidden tests, then plan a study of what hides the edit. |
-| Recurs, but no model that recurs has a clean control | Review. The failures are not specific to non-local edits. |
+| Recurs, readable and control clean, all for the same model | Review every counted failure against its patch and hidden tests, then plan a study of what hides the edit. |
+| Recurs, but no model that recurs is readable with a clean control | Review. The failures are not shown to be specific to non-local edits. |
 | Any non-local task shows missed integration | Review those tasks before committing to anything further. |
 | No non-local task shows missed integration | Stop and review. Report the combined count with the matched-task study. |
 
@@ -235,12 +236,27 @@ authorization. The plans are the same except for the Sol recheck.
 The Sol recheck exists because connection drops left restricted evidence and single-item evidence
 ungraded in the first Sol run. Those two attempts are not retried inside that plan.
 
+### Amendment: two tasks changed after calibration
+
+Review of this plan's pull request changed the hidden tests of two tasks after all three
+calibration runs had finished. The study uses the new versions.
+
+- **Native compaction summary:** the stored-text test now checks both the ordinary prompt and
+  `/compact`. It checked only the ordinary prompt before.
+- **Gated-review shortcuts:** the two reachability tests on invoking a hidden shortcut now check
+  only that nothing was submitted. A new semantics test checks the exact `404`. Before, a refusal
+  with the wrong status counted as a reachability failure.
+
+Neither task text changed. Both tasks went through qualification again. Calibration configs keep the digests of the versions
+that ran, and only `study-*.json` points at the new ones. Calibration ran on the old versions, which
+still holds for its two questions, cost and broken tasks. Its attempts are never pooled with the
+study.
+
 ## Before launch
 
-- Confirm this plan, then authorize `calibration.json` by its frozen digest. The study needs its
-  own authorization after calibration.
-- Both cohorts froze offline on 2026-11-08 with no blockers, using image
-  `sha256:b48e43d170e6c0eb0d7e70364c2e385488c07f93ef8ea38f9942dc573cfba0da`. Calibration froze at
-  `sha256:bc68cdf8cc9a1c392ecd0b61e9e8b5ada00cda47ca2362d6d319592ad75ef7cf` and the study at
-  `sha256:6ef4c1f602abdb277c5aec447a09cc1a83ebd15f05adbddd2fafcd6625fdb61c`. Those digests were
-  taken in a scratch store and are only a check. Freeze again in the real store before authorizing.
+- Calibration has run, as listed above. `calibration.json` itself never launched and is not used.
+- Confirm this plan. The study needs its own authorization.
+- With the two changed tasks, the study froze offline on 2026-11-08 with no blockers, using image
+  `sha256:b48e43d170e6c0eb0d7e70364c2e385488c07f93ef8ea38f9942dc573cfba0da`, at
+  `sha256:b8a4b10f827716fe9bd77b3f302b8ea665304e41d039a62319458fc5749e289b`. That digest was taken
+  in a scratch store and is only a check. Freeze again in the real store before authorizing.

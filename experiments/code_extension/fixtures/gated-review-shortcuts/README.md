@@ -48,7 +48,8 @@ in-memory SQLite database and fake agent process, with no network.
   `makeAcpTestService`, with sessions created by hand and ensured with workflow identities
   with and without a grant, and sets and restores `OAKRIDGE_GATED_REVIEW_URL` around each
   test. Titles start with `reachability:` when the test fails unless the listing and invoke
-  routes both apply the filter, and `semantics:` otherwise.
+  routes both apply the filter, and `semantics:` otherwise. So the reachability invoke tests
+  check only that nothing was submitted, and a semantics test checks the exact `404`.
 
 ## Patches
 

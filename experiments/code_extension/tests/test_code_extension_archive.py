@@ -200,6 +200,7 @@ def _closure_holding(
     b"headers: { authorization: `Bearer ${token}` },\n",
     b"  api_key: string | undefined;\n",
     b'expect(read).toEqual("Bearer wrong");\n',
+    b"Finished basic validation of the implementation.\n",
 ])
 def test_complete_closure_retains_auth_source_code(tmp_path: Path, text: bytes) -> None:
     archive, source, manifest_ref, artifact_ref = _closure_holding(tmp_path, text)
@@ -210,8 +211,11 @@ def test_complete_closure_retains_auth_source_code(tmp_path: Path, text: bytes) 
 @pytest.mark.parametrize("text", [
     b"const key = 'sk-or-v1-abcdef0123456789';\n",
     b"const token = 'ghp_abcdef0123456789';\n",
+    b"Authorization: Basic dXNlcjpwYXNzd29yZA==\n",
+    b"Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n",
+    b'{"stdout": "curl -H \'Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345\'"}',
 ])
-def test_complete_closure_refuses_a_key_shaped_value(tmp_path: Path, text: bytes) -> None:
+def test_complete_closure_refuses_a_real_credential(tmp_path: Path, text: bytes) -> None:
     archive, source, manifest_ref, artifact_ref = _closure_holding(tmp_path, text)
     with pytest.raises(ValueError, match="archive closure requires redaction"):
         archive.retain_manifest_closure(source, manifest_ref)
