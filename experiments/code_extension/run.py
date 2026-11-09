@@ -378,10 +378,11 @@ def _open_archive(
 ) -> ArchiveBinding:
     """Open the run's retention archive and publish the inputs it attests to."""
     root = _archive_root(store)
+    secrets = tuple(filter(None, (os.environ.get("OPENROUTER_API_KEY"),)))
     archive = (
-        AttemptArchive.open_existing(run_label, root)
+        AttemptArchive.open_existing(run_label, root, secrets=secrets)
         if (root / run_label / "index.json").is_file()
-        else AttemptArchive(run_label, root)
+        else AttemptArchive(run_label, root, secrets=secrets)
     )
     fixture_ref = str(store.publish_bytes(canonical_json(fixture.manifest.model_dump(mode="json"))))
     archive.retain_fixture(store, fixture_ref)

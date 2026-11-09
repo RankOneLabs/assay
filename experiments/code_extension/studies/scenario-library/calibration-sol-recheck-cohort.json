@@ -1,0 +1,10 @@
+{
+  "cohort": "scenario-library-2026-11-calibration-sol-recheck",
+  "combined_cap_usd": "1.00",
+  "plans": [
+    {
+      "name": "sol",
+      "config": "calibration-sol-recheck.json"
+    }
+  ]
+}

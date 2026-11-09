@@ -221,6 +221,20 @@ Run from `~/studies/assay-code-extension/scenario-library-2026-11/` on otto, whe
 Docker runtime lives, and copy the store to the same path on willie after each plan. Observations
 stay outside this repository.
 
+## Calibration as run
+
+Calibration ran as separate cohorts rather than as `calibration.json`, each with its own
+authorization. The plans are the same except for the Sol recheck.
+
+| Cohort file | Tasks | Models | Attempts | Combined cap |
+|---|---:|---|---:|---:|
+| `calibration-sol-only.json` | 11 | GPT-6.1 Sol | 11 | $5.00 |
+| `calibration-sol-recheck-cohort.json` | 2 | GPT-6.1 Sol | 2 | $1.00 |
+| `calibration-ministral-qwen.json` | 11 | Ministral 14B, Qwen3.8 27B | 22 | $5.00 |
+
+The Sol recheck exists because connection drops left restricted evidence and single-item evidence
+ungraded in the first Sol run. Those two attempts are not retried inside that plan.
+
 ## Before launch
 
 - Confirm this plan, then authorize `calibration.json` by its frozen digest. The study needs its

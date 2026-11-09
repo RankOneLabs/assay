@@ -190,6 +190,30 @@ def _basic_replacement(match: re.Match[bytes]) -> bytes:
     return b"[REDACTED-BASIC]" if b":" in credentials else match.group()
 
 
+def _has_sensitive_key(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(
+            key.lower() in _SENSITIVE_KEYS or _has_sensitive_key(item)
+            for key, item in value.items()
+        )
+    return isinstance(value, list) and any(_has_sensitive_key(item) for item in value)
+
+
+def _blocks_closure(payload: bytes, secrets: tuple[bytes, ...]) -> bool:
+    """Whether an object holds a real credential, so a complete index must not retain it.
+
+    Unlike `_safe_bytes`, text that only looks like a header does not count: a repository's
+    auth code says `authorization: Bearer ${token}`, and its tests use short tokens. A
+    configured secret, a key-shaped value or a JSON field named for a credential still does.
+    """
+    if any(secret in payload for secret in secrets) or _API_KEY.search(payload):
+        return True
+    try:
+        return _has_sensitive_key(json.loads(payload))
+    except (UnicodeDecodeError, ValueError):
+        return False
+
+
 def _safe_text(data: bytes, secrets: tuple[bytes, ...]) -> bytes:
     for secret in secrets:
         if secret:
@@ -482,11 +506,7 @@ class AttemptArchive:
                 "assay-pier-raw-artifact/0.1.0"
             ):
                 payload = base64.b64decode(parsed["content_base64"], validate=True)
-            try:
-                canonical = canonical_json(json.loads(payload))
-            except (ValueError, UnicodeError):
-                canonical = payload
-            if _safe_bytes(payload, self.secrets) != canonical:
+            if _blocks_closure(payload, self.secrets):
                 raise ValueError(f"archive closure requires redaction: {ref}")
         for ref in sorted(closure):
             if self._publish_verbatim(source.read_bytes(ref)) != ref:
