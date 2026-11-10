@@ -89,13 +89,18 @@ async function handoff(...updates: schema.SessionUpdate[]) {
   return generated.ok ? { method: generated.value.method, markdown: generated.value.markdown } : null;
 }
 
-test("reachability: a compacting agent's completed summary becomes the session handoff on close", async () => {
-  expect(await closedSummary("build the thing")).toEqual({ method: "native_compaction", markdown: NATIVE_SUMMARY });
+test("reachability: a compacting agent's completed compaction becomes the session handoff on close", async () => {
+  expect((await closedSummary("build the thing"))?.method).toBe("native_compaction");
 }, 20_000);
 
 test("reachability: the native summary wins over a manual /compact turn", async () => {
-  expect(await closedSummary("/compact")).toEqual({ method: "native_compaction", markdown: NATIVE_SUMMARY });
+  expect((await closedSummary("/compact"))?.method).toBe("native_compaction");
 }, 20_000);
+
+test("semantics: the stored handoff is the text of the agent's completed summary", async () => {
+  const native = { method: "native_compaction" as const, markdown: NATIVE_SUMMARY };
+  expect([await closedSummary("build the thing"), await closedSummary("/compact")]).toEqual([native, native]);
+}, 40_000);
 
 test("semantics: the completed update's summary replaces the streamed chunks", async () => {
   const generated = await nativeGenerator().generate({ session_id: sid, produced_at, events: events(

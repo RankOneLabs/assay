@@ -200,11 +200,10 @@ _RESTRICTED_PATCHES: Patches = {
 
 _RESTRICTED_REQUIREMENTS: Requirements = (
     ("A body field declared restricted (brief.files_in_scope, assessment.test_evidence) yields "
-     "captured evidence of kind restricted, which evidence packaging accepts.",
+     "captured evidence of kind restricted, which can be packaged like other captured evidence.",
      ("restricted-classifies", "restricted-packages")),
-    ("Grade-context intake accepts evidence references of kind restricted, and their content "
-     "reaches export with that kind.",
-     ("intake-withholds-restricted", "intake-releases-restricted")),
+    ("Restricted evidence submitted in a grade context reaches export with its kind.",
+     ("intake-withholds-restricted", "intake-releases-restricted", "intake-keeps-kind")),
     ("Export withholds restricted evidence content with redaction reason restricted_content "
      "unless the redaction policy sets allow_restricted_content; an absent flag means false, and "
      "no other allowance releases it.",

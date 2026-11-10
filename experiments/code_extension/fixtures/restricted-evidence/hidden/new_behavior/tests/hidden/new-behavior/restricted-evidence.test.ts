@@ -82,16 +82,17 @@ test("reachability: a captured files_in_scope item is packaged as restricted evi
   expect(packaged.ok && packaged.value.kind).toBe(RESTRICTED_KIND);
 });
 
-test("reachability: restricted evidence from grade-context intake is withheld on export as restricted_content", () => {
-  const { text, reasons } = exported(intake(), closed);
-  expect(text).not.toContain(RESTRICTED);
-  expect(reasons).toEqual([{ path: restrictedPath, reason: "restricted_content" }] as unknown as typeof reasons);
+test("reachability: restricted evidence from grade-context intake is withheld on export", () => {
+  expect(exported(intake(), closed).text).not.toContain(RESTRICTED);
 });
 
 test("reachability: restricted evidence from grade-context intake is exported when the target allows it", () => {
-  const { text, reasons } = exported(intake(), allowing({ allow_restricted_content: true }));
-  expect(text).toContain(RESTRICTED);
-  expect(reasons).toEqual([]);
+  expect(exported(intake(), allowing({ allow_restricted_content: true })).text).toContain(RESTRICTED);
+});
+
+test("semantics: restricted evidence from grade-context intake keeps its kind through export", () => {
+  expect(exported(intake(), closed).reasons).toEqual([{ path: restrictedPath, reason: "restricted_content" }] as unknown as ReturnType<typeof exported>["reasons"]);
+  expect(exported(intake(), allowing({ allow_restricted_content: true })).reasons).toEqual([]);
 });
 
 test("semantics: restricted content is withheld when the policy has no restricted flag", () => {

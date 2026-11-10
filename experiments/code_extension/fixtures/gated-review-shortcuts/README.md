@@ -47,14 +47,15 @@ in-memory SQLite database and fake agent process, with no network.
 - **New behavior:** `gated-review-shortcuts.test.ts`. It runs the real skills routes over
   `makeAcpTestService`, with sessions created by hand and ensured with workflow identities
   with and without a grant, and sets and restores `OAKRIDGE_GATED_REVIEW_URL` around each
-  test. Titles start with `reachability:` when the test fails unless the listing route
-  applies the filter, and `semantics:` otherwise.
+  test. Titles start with `reachability:` when the test fails unless the listing and invoke
+  routes both apply the filter, and `semantics:` otherwise. So the reachability invoke tests
+  check only that nothing was submitted, and a semantics test checks the exact `404`.
 
 ## Patches
 
 | Patch | What it does | Should fail |
 | --- | --- | --- |
 | `reference.patch` | Applies the attachment policy to the session's skills at listing and invoke | nothing |
-| `unreachable-helper.patch` | The filtered skills exist in a helper that no route calls | reachability (and the invoke refusals) |
-| `wrong-invoke-unfiltered.patch` | Listing filtered, invoke not, so a crafted id still dispatches | semantics only |
+| `unreachable-helper.patch` | The filtered skills exist in a helper that no route calls | reachability |
+| `unreachable-invoke.patch` | Listing filtered, invoke not, so a crafted id still dispatches | reachability |
 | `wrong-skips-url.patch` | Both routes filter by the grant alone, ignoring an unset URL | semantics only |

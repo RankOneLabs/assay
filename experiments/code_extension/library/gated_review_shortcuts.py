@@ -147,7 +147,7 @@ _PATCHES: Patches = {
         "The filtered session skills exist in a helper that no route calls.",
         (_REGISTRY, _IMPORTS, _SKILL_TYPE_IMPORT, _helper(_POLICY)),
     ),
-    "wrong-invoke-unfiltered.patch": (
+    "unreachable-invoke.patch": (
         "The listing is filtered but invoke re-aggregates unfiltered, so a crafted id still dispatches.",
         (_REGISTRY, _IMPORTS, _SKILL_TYPE_IMPORT, _helper(_POLICY), _LIST),
     ),
@@ -164,10 +164,10 @@ _REQUIREMENTS: Requirements = (
      "identity carries a gated-review grant.",
      ("hand-started-lists-none", "ungranted-workflow-lists-none", "unset-url-lists-none",
       "granted-lists-all")),
-    ("POST /sessions/:sid/skills/invoke refuses a gated-review shortcut for any other session as "
-     "an unknown or hidden skill, with 404, and submits nothing to it.",
-     ("hand-started-invoke-refused", "ungranted-workflow-invoke-refused", "unset-url-invoke-refused",
-      "granted-invoke-dispatches")),
+    ("For any other session, a gated-review shortcut behaves as an unknown or hidden skill: "
+     "invoking it answers 404 and submits nothing.",
+     ("hand-started-invoke-refused", "ungranted-workflow-invoke-refused", "hidden-invoke-answers-404",
+      "unset-url-invoke-refused", "granted-invoke-dispatches")),
     ("The decision depends only on whether a grant is present: every grant kind and role gets the "
      "same shortcuts.", ("every-grant-same-set",)),
     ("Fixture mode is unchanged: config.skills.fixtures still lists and invokes the fixture skills "

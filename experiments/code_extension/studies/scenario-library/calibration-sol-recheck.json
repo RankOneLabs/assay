@@ -1,0 +1,54 @@
+{
+  "scenario_qualifications": [
+    {
+      "scenario": "restricted-evidence",
+      "manifest_digest": "sha256:5a03a9e771a83b5b0f9efc30d5786129f924f77488e5ca6a1183d2384176a11e"
+    },
+    {
+      "scenario": "subject-only-build",
+      "manifest_digest": "sha256:bf445b9336d27cf813f09e5a90ff85cf0c2982f02ec2494f07d9025b4d0205a7"
+    }
+  ],
+  "cohort": "scenario-library-2026-11-calibration-sol-recheck",
+  "route": {
+    "endpoint": "https://openrouter.ai/api/v1",
+    "model": "openai/gpt-6.1-sol",
+    "provider": "azure/us"
+  },
+  "profile": "openrouter",
+  "system_prompt_digest": "sha256:d6f2f100a9a362ddae1d201fd96de86b24ad47b7449ff863d42c64ed71607cfb",
+  "tool_schemas_digest": "sha256:698286ad88a625d2ebdccb8c5f1fffc7d7831692f09eac7b146123fd2f8c8c9c",
+  "image_digest": "sha256:b48e43d170e6c0eb0d7e70364c2e385488c07f93ef8ea38f9942dc573cfba0da",
+  "bounds": {
+    "served_context_tokens": null,
+    "model_context_limit_tokens": null,
+    "request_timeout_s": 120.0,
+    "max_turns": 60,
+    "timeout_s": 900.0,
+    "attempts": 1,
+    "concurrency": 1,
+    "provider_retries": 0,
+    "sdk_retries": 0,
+    "max_tool_schema_bytes": 16384,
+    "max_tool_output_bytes": 32768,
+    "max_conversation_bytes": 3670016,
+    "max_request_bytes": 3932160,
+    "max_response_bytes": 131072,
+    "max_output_tokens": 8192,
+    "max_storage_mb": 512,
+    "per_cell_tool_call_ceiling": "unavailable",
+    "per_cell_tool_call_ceiling_reason": "extension_mode cannot enforce a per-cell tool-call ceiling: the repository-agent loop honors max_tool_calls_per_cell and max_tool_calls_per_turn only under pilot_mode",
+    "requested_sampling": null,
+    "provider_reported_sampling": null
+  },
+  "repeats": 1,
+  "randomization_seed": 63,
+  "dispatch_schedule": "subject-rotated-v1",
+  "concurrency": 1,
+  "pricing": {
+    "basis": "openrouter-pinned-price-ceilings",
+    "conservative_request_bound_usd": null
+  },
+  "per_attempt_cap_usd": "2.00",
+  "total_cap_usd": "1.00"
+}

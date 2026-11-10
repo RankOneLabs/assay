@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from code_extension.archive import AttemptArchive, AttemptArchiveRecord
@@ -174,6 +175,61 @@ def test_complete_closure_preserves_basic_validation_prose(
     archive = AttemptArchive("prose", tmp_path / "archive")
     archive.retain_manifest_closure(source, manifest_ref)
     assert archive.objects.read_bytes(artifact_ref) == source.read_bytes(artifact_ref)
+
+
+def _closure_holding(
+    tmp_path: Path, payload: bytes, *, secrets: tuple[str, ...] = (),
+) -> tuple[AttemptArchive, Any, str, str]:
+    from code_extension.tests.test_code_extension_ledger import _manifest, _outcome, _plan
+
+    source, plan, authorization = _plan(tmp_path / "source")
+    artifact_ref = str(source.publish_json({
+        "schema_version": "assay-pier-raw-artifact/0.1.0",
+        "path": "patch.diff", "content_base64": base64.b64encode(payload).decode(),
+        "byte_length": len(payload), "checksum": digest_bytes(payload),
+    }))
+    execution_ref, _ = _outcome(
+        source, plan, authorization, success=False, trace={"assay_object_refs": [artifact_ref]},
+    )
+    manifest_ref = _manifest(source, plan, authorization, execution_ref, passed=False)
+    archive = AttemptArchive("closure", tmp_path / "archive", secrets=secrets)
+    return archive, source, manifest_ref, artifact_ref
+
+
+@pytest.mark.parametrize("text", [
+    b"headers: { authorization: `Bearer ${token}` },\n",
+    b"  api_key: string | undefined;\n",
+    b'expect(read).toEqual("Bearer wrong");\n',
+    b"Finished basic validation of the implementation.\n",
+])
+def test_complete_closure_retains_auth_source_code(tmp_path: Path, text: bytes) -> None:
+    archive, source, manifest_ref, artifact_ref = _closure_holding(tmp_path, text)
+    archive.retain_manifest_closure(source, manifest_ref)
+    assert archive.objects.read_bytes(artifact_ref) == source.read_bytes(artifact_ref)
+
+
+@pytest.mark.parametrize("text", [
+    b"const key = 'sk-or-v1-abcdef0123456789';\n",
+    b"const token = 'ghp_abcdef0123456789';\n",
+    b"Authorization: Basic dXNlcjpwYXNzd29yZA==\n",
+    b"Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n",
+    b'{"stdout": "curl -H \'Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345\'"}',
+])
+def test_complete_closure_refuses_a_real_credential(tmp_path: Path, text: bytes) -> None:
+    archive, source, manifest_ref, artifact_ref = _closure_holding(tmp_path, text)
+    with pytest.raises(ValueError, match="archive closure requires redaction"):
+        archive.retain_manifest_closure(source, manifest_ref)
+    assert not archive.objects._path(artifact_ref).exists()
+
+
+def test_complete_closure_refuses_a_configured_secret(tmp_path: Path) -> None:
+    secret = "plainly-not-key-shaped"
+    archive, source, manifest_ref, artifact_ref = _closure_holding(
+        tmp_path, f"const value = '{secret}';\n".encode(), secrets=(secret,),
+    )
+    with pytest.raises(ValueError, match="archive closure requires redaction"):
+        archive.retain_manifest_closure(source, manifest_ref)
+    assert not archive.objects._path(artifact_ref).exists()
 
 
 @pytest.mark.parametrize("encoded", [False, True])
