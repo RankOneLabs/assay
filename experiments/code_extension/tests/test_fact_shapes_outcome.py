@@ -104,6 +104,13 @@ def test_assembly() -> None:
         trajectory,
         attempt.image_digest,
     )
+    assert assembled.cell == "cell"
+    assert assembled.stop == "submitted"
+    assert assembled.terminal == "normal_submission"
+    assert assembled.verdict == "incorrect"
+    assert assembled.outcome == "semantic"
+    assert assembled.evaluator == attempt.evaluator
+    assert assembled.request_timeout is False
     assert assembled.calls == (trajectory.turns[0].tool_calls[0],)
     assert assembled.self_assessed_verdict == "complete"
     assert assembled.patch == "patch"
@@ -167,6 +174,9 @@ def test_preflight() -> None:
     errors = diagnostics("src/x.ts(1,2): error TS123: wrong\nsrc/z.ts(2,3): error TS456: other")
     assert len(errors) == 2
     assert preflight_status("typecheck_nonzero_exit", errors, facts) == Scored(
+        {FactId("a"): Missed(), FactId("b"): Unavailable()}
+    )
+    assert preflight_status("typecheck_nonzero_exit", errors[:1], facts) == Scored(
         {FactId("a"): Missed(), FactId("b"): Unavailable()}
     )
     other = preflight_status("typecheck_nonzero_exit", errors[1:], facts)
@@ -254,3 +264,13 @@ def test_replay_applies_patch(tmp_path: Path) -> None:
     assert len(diagnostics(result.value)) == 1
     failed = replay_typecheck(replace(attempt, patch="invalid patch"), {}, runner)
     assert isinstance(failed, Err) and failed.error.operation == "replay_typecheck"
+
+
+def test_undeclared_failure_with_fact_prefix() -> None:
+    facts = sample().variant.facts
+    stdout = "(pass) fact:a: accepts\n(pass) fact:b: accepts"
+    stderr = "(fail) fact:a: unexpected regression [2ms]"
+    assert fact_titles(facts, stdout, stderr, ran=True) == {
+        FactId("a"): Missed(),
+        FactId("b"): Held(),
+    }

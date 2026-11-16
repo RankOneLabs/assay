@@ -76,7 +76,7 @@ def fact_titles(
         }
         if not ran:
             results[fact.id] = Unavailable()
-        elif failed & expected or not expected or not expected <= passed:
+        elif failed or not expected or not expected <= passed:
             results[fact.id] = Missed()
         else:
             results[fact.id] = Held()
