@@ -1,0 +1,10 @@
+{
+  "cohort": "fact-shapes-2026-11-library-rerun",
+  "combined_cap_usd": "5.00",
+  "plans": [
+    {
+      "name": "midtier",
+      "config": "library-rerun-midtier.json"
+    }
+  ]
+}

@@ -97,3 +97,65 @@ def test_caps_require_positive_finite_dollars(amount: str) -> None:
 
     with pytest.raises(ValueError):
         PerAttemptCaps(sol=Decimal(amount), argon=Decimal(1), midtier=Decimal(1))
+
+
+def test_approved_caps_and_observation_provenance() -> None:
+    from code_extension.fact_shapes.settings import (
+        LIBRARY_RERUN_TOTAL_CAP_USD,
+        PER_ATTEMPT_CAPS,
+        PILOT_TOTAL_CAP_USD,
+        QWEN_OBSERVATION_CITATION,
+        STUDY_MODELS,
+    )
+
+    assert PER_ATTEMPT_CAPS.model_dump() == {
+        "sol": Decimal("2"), "argon": Decimal("4"), "midtier": Decimal("1"),
+    }
+    assert all(getattr(PER_ATTEMPT_CAPS, model.name) > 0 for model in STUDY_MODELS)
+    assert Decimal("15") == PILOT_TOTAL_CAP_USD
+    assert Decimal("5") == LIBRARY_RERUN_TOTAL_CAP_USD
+    assert QWEN_OBSERVATION_CITATION
+    assert "original receipt unavailable" in QWEN_OBSERVATION_CITATION
+
+
+def test_library_rerun_matches_qualified_manifests_and_cohort() -> None:
+    from code_extension.config import RunConfiguration
+    from code_extension.fact_shapes.settings import (
+        LIBRARY_RERUN_TOTAL_CAP_USD,
+        PER_ATTEMPT_CAPS,
+        STUDY_ENVELOPE,
+        STUDY_MODELS,
+    )
+    from code_extension.fixture import PILOT
+    from code_extension.launch import CohortRequest
+    from code_extension.protocol import ORDERED_TOOL_SCHEMAS_SHA256, SYSTEM_PROMPT_SHA256
+    from code_extension.settings import ExtensionAgentSettings
+
+    directory = Path(__file__).resolve().parents[1] / "studies/fact-shapes-2026-11"
+    config = RunConfiguration.load(directory / "library-rerun-midtier.json")
+    midtier = next(model for model in STUDY_MODELS if model.name == "midtier")
+    assert config.route == midtier.route
+    assert config.envelope == STUDY_ENVELOPE
+    assert config.bounds == ExtensionAgentSettings.for_model(
+        midtier.route.model, envelope=STUDY_ENVELOPE,
+    )
+    assert config.repeats == config.concurrency == 1
+    assert config.profile == "openrouter"
+    assert config.system_prompt_digest == SYSTEM_PROMPT_SHA256
+    assert config.tool_schemas_digest == ORDERED_TOOL_SCHEMAS_SHA256
+    assert config.per_attempt_cap_usd == PER_ATTEMPT_CAPS.midtier
+    assert config.total_cap_usd == LIBRARY_RERUN_TOTAL_CAP_USD
+    assert {ref.scenario for ref in config.scenario_qualifications} == {
+        "addressing-runner", "agent-default-model", "context-usage-inbox", "export-credential",
+        "gated-review-shortcuts", "native-compaction-summary", "operations-route",
+        "restricted-evidence", "subject-only-build", "worker-silence-bound", "worker-start-budget",
+    }
+    for ref in config.scenario_qualifications:
+        manifest = PILOT.parent / ref.scenario / "qualification/manifest.json"
+        assert ref.manifest_digest == digest_bytes(manifest.read_bytes())
+        qualified_image = json.loads(manifest.read_bytes())["observed_runtime_image_digest"]
+        assert qualified_image == config.image_digest
+    cohort = CohortRequest.model_validate_json((directory / "library-rerun.json").read_bytes())
+    assert len(cohort.plans) == 1
+    assert cohort.plans[0].config == Path("library-rerun-midtier.json")
+    assert cohort.combined_cap_usd == config.total_cap_usd

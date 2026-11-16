@@ -69,11 +69,16 @@ The `library-v1` envelope retains each route's qualified bounds (60 requests,
 The fact-shapes study uses GPT-6.1 Sol on `azure/us`, Gemini 4 Argon on
 `google-vertex/global`, and the operator-selected GPT-6 Luna on `azure`.
 `fact_shapes.settings` declares these routes and the 24-attempt additive pilot:
-two attempts per shape for Sol, one per shape for Argon and Luna. Spending caps
-remain explicit operator inputs.
+two attempts per shape for Sol, one per shape for Argon and Luna. The approved per-attempt caps are $2 for Sol, $4 for Argon and $1 for Luna;
+the pilot total cap is $15.
 
 The mid-tier library rerun covers the eleven qualified scenario-library tasks,
-once each under `fact-shapes-v1`. Its mechanical qualification rule is
+once each under `fact-shapes-v1`. The cohort file is
+`studies/fact-shapes-2026-11/library-rerun.json`, naming only
+`library-rerun-midtier.json`, with a $1 per-attempt cap and $5 total cap
+(including its route probe). These caps can stop work before the request or time
+limits; they are spending ceilings, not expected costs.
+Its mechanical qualification rule is
 `fact_shapes.library_rerun.verdict(reachability.plan_rows(store, plan))`: pass
 only when all eleven attempts have settled and at most one ended on a request,
 turn, output-token, conversation, wall-time or per-request timeout limit. Two

@@ -45,6 +45,21 @@ class PerAttemptCaps(BaseModel):
     midtier: Decimal = Field(gt=0)
 
 
+PER_ATTEMPT_CAPS = PerAttemptCaps(sol=Decimal("2.00"), argon=Decimal("4.00"),
+                                  midtier=Decimal("1.00"))
+PILOT_TOTAL_CAP_USD = Decimal("15.00")
+LIBRARY_RERUN_TOTAL_CAP_USD = Decimal("5.00")
+# Original 30–45 s observation was supplied in the Oakridge cohort brief.
+# Its receipt has not been located; the related retained rerun below measures
+# about 31 s mean request reservation-to-settlement time (not a 30–45 s range).
+QWEN_OBSERVATION_CITATION = (
+    "Oakridge run run-ac759ddfd75b759f, routes-and-envelope cohort brief, "
+    "decision operator_mid_tier_pick (2026-11-15); original receipt unavailable. "
+    "Related retained evidence: ~/studies/assay-code-extension/scenario-library-2026-11/"
+    "plans/d5b866a43310adbedbc29cbc2c067d999387120fbaf4da4f2b304821988527c6/attempts.jsonl"
+)
+
+
 @dataclass(frozen=True)
 class PilotAllocation:
     model: StudyModelName
