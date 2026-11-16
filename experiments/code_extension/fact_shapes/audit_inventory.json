@@ -9,12 +9,15 @@
         "active",
         "complete"
       ],
-      "outside_holders": [
-        "stage/001_constraint.sql"
-      ],
-      "switch_holders": [
-        "stage/edit.ts",
-        "stage/sibling.ts"
+      "outside_holders": [],
+      "switch_holders": [],
+      "candidate_holders": [
+        "stage/types.ts",
+        "stage/policy.ts",
+        "stage/names.ts",
+        "stage/sibling.ts",
+        "stage/001_constraint.sql",
+        "stage/state.ts"
       ]
     },
     {
@@ -26,12 +29,15 @@
         "image",
         "testimony"
       ],
-      "outside_holders": [
-        "evidence_kind/001_constraint.sql"
-      ],
-      "switch_holders": [
-        "evidence_kind/edit.ts",
-        "evidence_kind/sibling.ts"
+      "outside_holders": [],
+      "switch_holders": [],
+      "candidate_holders": [
+        "evidence_kind/types.ts",
+        "evidence_kind/policy.ts",
+        "evidence_kind/names.ts",
+        "evidence_kind/sibling.ts",
+        "evidence_kind/001_constraint.sql",
+        "evidence_kind/state.ts"
       ]
     },
     {
@@ -43,12 +49,15 @@
         "case_write",
         "case_admin"
       ],
-      "outside_holders": [
-        "route_permission/001_constraint.sql"
-      ],
-      "switch_holders": [
-        "route_permission/edit.ts",
-        "route_permission/sibling.ts"
+      "outside_holders": [],
+      "switch_holders": [],
+      "candidate_holders": [
+        "route_permission/types.ts",
+        "route_permission/policy.ts",
+        "route_permission/names.ts",
+        "route_permission/sibling.ts",
+        "route_permission/001_constraint.sql",
+        "route_permission/state.ts"
       ]
     }
   ],

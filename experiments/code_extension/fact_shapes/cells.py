@@ -32,6 +32,36 @@ RepositoryPath = NewType('RepositoryPath', str)
 
 
 @dataclass(frozen=True)
+class FactHolder:
+    """Pre-task evidence for one fact, indexed by base-relative holder path."""
+
+    fact_id: FactId
+    holder_paths: tuple[RepositoryPath, ...]
+    fact_lines: dict[RepositoryPath, tuple[str, ...]]
+
+    def __post_init__(self) -> None:
+        if not self.holder_paths or set(self.fact_lines) != set(self.holder_paths):
+            raise ValueError('fact lines must cover exactly the nonempty holder paths')
+        for lines in self.fact_lines.values():
+            if not lines or any(not line.strip() or '\n' in line for line in lines):
+                raise ValueError('fact lines must be nonempty individual source lines')
+
+
+@dataclass(frozen=True)
+class HolderSpec:
+    """One entry in holders.json; shared with fact scoring consumers."""
+
+    scenario: str
+    shape: Shape
+    manipulated: FactHolder
+    anchor: FactHolder
+
+    def __post_init__(self) -> None:
+        if set(self.manipulated.holder_paths) & set(self.anchor.holder_paths):
+            raise ValueError('anchor and manipulated holders must be disjoint')
+
+
+@dataclass(frozen=True)
 class Cell:
     """One planned arm; holders always contains at least one base-relative path."""
 

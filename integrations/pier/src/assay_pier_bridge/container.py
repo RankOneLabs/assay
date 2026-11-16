@@ -651,6 +651,17 @@ class DockerTrialHandle:
         observation = _usable_observation(self._inspect_bounded())
         self._assert_enforcement(observation)
         assert observation is not None
+        if exit_code.stdout.strip() == "137" and not observation.oom_killed:
+            # Docker can publish process exit before its OOM event updates State.
+            # Require positive OOM evidence: exit 137 alone also means SIGKILL.
+            for _ in range(3):
+                self._remaining()
+                time.sleep(_POLL_INTERVAL_S)
+                observation = _usable_observation(self._inspect_bounded())
+                self._assert_enforcement(observation)
+                assert observation is not None
+                if observation.oom_killed:
+                    break
         if observation.oom_killed:
             raise MemoryLimitExceededError("trial exceeded the memory cgroup ceiling")
         if exit_code.stdout.strip() != "0":

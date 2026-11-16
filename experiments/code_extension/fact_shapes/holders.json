@@ -1,0 +1,938 @@
+[
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "stage_additive_type_enforced",
+      "holder_paths": [
+        "stage/types.ts"
+      ],
+      "fact_lines": {
+        "stage/types.ts": [
+          "export const values = vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"] as const);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "stage_additive_reference",
+      "holder_paths": [
+        "stage/policy.ts"
+      ],
+      "fact_lines": {
+        "stage/policy.ts": [
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "stage_additive_name_only",
+      "holder_paths": [
+        "stage/names.ts"
+      ],
+      "fact_lines": {
+        "stage/names.ts": [
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "stage_additive_sibling_only",
+      "holder_paths": [
+        "stage/sibling.ts"
+      ],
+      "fact_lines": {
+        "stage/sibling.ts": [
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "stage_additive_outside_code",
+      "holder_paths": [
+        "stage/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "stage/001_constraint.sql": [
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued', 'active', 'complete'))"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "stage_additive_existing_state",
+      "holder_paths": [
+        "stage/state.ts"
+      ],
+      "fact_lines": {
+        "stage/state.ts": [
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "stage_rename_type_enforced",
+      "holder_paths": [
+        "stage/types.ts"
+      ],
+      "fact_lines": {
+        "stage/types.ts": [
+          "export const values = vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"] as const);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "stage_rename_reference",
+      "holder_paths": [
+        "stage/policy.ts"
+      ],
+      "fact_lines": {
+        "stage/policy.ts": [
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "stage_rename_name_only",
+      "holder_paths": [
+        "stage/names.ts"
+      ],
+      "fact_lines": {
+        "stage/names.ts": [
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "stage_rename_sibling_only",
+      "holder_paths": [
+        "stage/sibling.ts"
+      ],
+      "fact_lines": {
+        "stage/sibling.ts": [
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "stage_rename_outside_code",
+      "holder_paths": [
+        "stage/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "stage/001_constraint.sql": [
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued', 'active', 'complete'))"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "stage_rename_existing_state",
+      "holder_paths": [
+        "stage/state.ts"
+      ],
+      "fact_lines": {
+        "stage/state.ts": [
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_type_enforced",
+      "holder_paths": [
+        "evidence_kind/types.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/types.ts": [
+          "export const values = vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"] as const);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_reference",
+      "holder_paths": [
+        "evidence_kind/policy.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/policy.ts": [
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_name_only",
+      "holder_paths": [
+        "evidence_kind/names.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/names.ts": [
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_sibling_only",
+      "holder_paths": [
+        "evidence_kind/sibling.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/sibling.ts": [
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_outside_code",
+      "holder_paths": [
+        "evidence_kind/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "evidence_kind/001_constraint.sql": [
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'image', 'testimony'))"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_existing_state",
+      "holder_paths": [
+        "evidence_kind/state.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/state.ts": [
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_type_enforced",
+      "holder_paths": [
+        "evidence_kind/types.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/types.ts": [
+          "export const values = vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"] as const);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_reference",
+      "holder_paths": [
+        "evidence_kind/policy.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/policy.ts": [
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_name_only",
+      "holder_paths": [
+        "evidence_kind/names.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/names.ts": [
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_sibling_only",
+      "holder_paths": [
+        "evidence_kind/sibling.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/sibling.ts": [
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_outside_code",
+      "holder_paths": [
+        "evidence_kind/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "evidence_kind/001_constraint.sql": [
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'image', 'testimony'))"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_existing_state",
+      "holder_paths": [
+        "evidence_kind/state.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/state.ts": [
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "route_permission_additive_type_enforced",
+      "holder_paths": [
+        "route_permission/types.ts"
+      ],
+      "fact_lines": {
+        "route_permission/types.ts": [
+          "export const values = vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"] as const);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "route_permission_additive_reference",
+      "holder_paths": [
+        "route_permission/policy.ts"
+      ],
+      "fact_lines": {
+        "route_permission/policy.ts": [
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "route_permission_additive_name_only",
+      "holder_paths": [
+        "route_permission/names.ts"
+      ],
+      "fact_lines": {
+        "route_permission/names.ts": [
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "route_permission_additive_sibling_only",
+      "holder_paths": [
+        "route_permission/sibling.ts"
+      ],
+      "fact_lines": {
+        "route_permission/sibling.ts": [
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "route_permission_additive_outside_code",
+      "holder_paths": [
+        "route_permission/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "route_permission/001_constraint.sql": [
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "route_permission_additive_existing_state",
+      "holder_paths": [
+        "route_permission/state.ts"
+      ],
+      "fact_lines": {
+        "route_permission/state.ts": [
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "route_permission_rename_type_enforced",
+      "holder_paths": [
+        "route_permission/types.ts"
+      ],
+      "fact_lines": {
+        "route_permission/types.ts": [
+          "export const values = vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"] as const);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "route_permission_rename_reference",
+      "holder_paths": [
+        "route_permission/policy.ts"
+      ],
+      "fact_lines": {
+        "route_permission/policy.ts": [
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "route_permission_rename_name_only",
+      "holder_paths": [
+        "route_permission/names.ts"
+      ],
+      "fact_lines": {
+        "route_permission/names.ts": [
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "route_permission_rename_sibling_only",
+      "holder_paths": [
+        "route_permission/sibling.ts"
+      ],
+      "fact_lines": {
+        "route_permission/sibling.ts": [
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "route_permission_rename_outside_code",
+      "holder_paths": [
+        "route_permission/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "route_permission/001_constraint.sql": [
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "route_permission_rename_existing_state",
+      "holder_paths": [
+        "route_permission/state.ts"
+      ],
+      "fact_lines": {
+        "route_permission/state.ts": [
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  }
+]

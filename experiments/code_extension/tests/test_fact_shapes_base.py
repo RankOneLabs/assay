@@ -38,9 +38,13 @@ def test_only_locked_imports() -> None:
             path.read_text(),
             flags=re.MULTILINE,
         ):
-            if specifier.startswith(".") or specifier in {"bun:test", "bun:sqlite"}:
+            if specifier.startswith(".") or specifier in {
+                "bun:test", "bun:sqlite", "node:fs/promises",
+            }:
                 continue
-            assert any(specifier == name or specifier.startswith(name + "/") for name in packages)
+            assert any(
+                specifier == name or specifier.startswith(name + "/") for name in packages
+            ), (path.relative_to(BASE), specifier)
 
 
 def test_all_cells_have_files_and_planned_distances() -> None:
@@ -91,7 +95,8 @@ def test_import_distances_match_cells() -> None:
 
 def test_size_and_repository_loader() -> None:
     tree = read_tree(BASE)
-    assert 60 <= len(tree) <= 80
+    # Includes the vocabulary registry, bootstrap and owner-mutation controls.
+    assert 60 <= len(tree) <= 90
     assert 8000 <= sum(text.count("\n") for text in tree.values()) <= 12000
     assert not any(
         word in text
@@ -115,10 +120,17 @@ def test_feature_switch_points_are_specific_and_exhaustive() -> None:
     for feature, (old, new, type_name) in values.items():
         edit = (BASE / feature / "edit.ts").read_text()
         sibling = (BASE / feature / "sibling.ts").read_text()
-        assert f"Record<{type_name}," in edit
+        types = (BASE / feature / "types.ts").read_text()
+        assert f'vocabularyStore.define("{feature}", [' in types
+        assert f'"{old}"' in types
+        assert f'"{new}"' not in types
+        assert f"export type {type_name} = (typeof values)[number];" in types
+        assert f"value: {type_name}" in edit
+        assert f'vocabularyStore.record("{feature}",' in edit
+        assert f'vocabularyStore.values("{feature}")' in sibling
         for source in (edit, sibling):
-            assert f'case "{old}":' in source
-            assert f'case "{new}":' not in source
-            assert "switch (value)" in source
+            assert "return isValue(value);" in source
+            assert f'"{old}"' not in source
+            assert f'"{new}"' not in source
         assert 'from "./edit.ts"' not in sibling
         assert 'from "./sibling.ts"' not in edit

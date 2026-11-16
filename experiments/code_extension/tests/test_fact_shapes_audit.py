@@ -110,12 +110,12 @@ def test_unauthorized_switch_copy(tmp_path: Path, concept_name: str, quote: str)
 
 @pytest.mark.parametrize("concept_name", ["stage", "evidence_kind", "route_permission"])
 @pytest.mark.parametrize("form", ["switch", "array"])
-def test_switch_sanction_is_limited(tmp_path: Path, concept_name: str, form: str) -> None:
+def test_candidate_switch_copies_are_rejected(tmp_path: Path, concept_name: str, form: str) -> None:
     target = tmp_path / "copy"
     shutil.copytree(BASE, target)
     inventory = load_inventory(INVENTORY)
     concept = next(item for item in inventory.concepts if item.name == concept_name)
-    path = concept.switch_holders[0]
+    path = concept.candidate_holders[3]
     source = target / path
     members = sorted(concept.members)
     if form == "switch":
@@ -131,14 +131,13 @@ def test_switch_sanction_is_limited(tmp_path: Path, concept_name: str, form: str
     )
 
 
-def test_missing_sanctioned_switch_is_reported(tmp_path: Path) -> None:
+def test_derived_sibling_has_no_second_declaration(tmp_path: Path) -> None:
     target = tmp_path / "copy"
     shutil.copytree(BASE, target)
-    (target / "stage/sibling.ts").write_text("// peer acceptance removed\n")
-    assert any(
-        finding.name == "stage" and finding.path == "stage/sibling.ts"
-        for finding in audit(target, load_inventory(INVENTORY))
-    )
+    source = target / "stage/sibling.ts"
+    assert "vocabularyStore.values" in source.read_text()
+    assert 'case "queued"' not in source.read_text()
+    assert audit(target, load_inventory(INVENTORY)) == ()
 
 
 @pytest.mark.parametrize("concept_name", ["stage", "evidence_kind", "route_permission"])
@@ -199,3 +198,20 @@ def test_canonical_symbol_must_own_values(tmp_path: Path, concept_name: str) -> 
         finding.name == concept_name and finding.message == "missing declaration"
         for finding in audit(target, inventory)
     )
+
+
+@pytest.mark.parametrize('form', ['object', 'array', 'switch', 'sql'])
+def test_candidate_is_not_a_duplicate_exemption(tmp_path: Path, form: str) -> None:
+    target = tmp_path / 'copy'
+    shutil.copytree(BASE, target)
+    seeds = {
+        'object': 'const copy = { queued: 1, active: 2, complete: 3 };',
+        'array': 'const copy = ["queued", "active", "complete"];',
+        'switch': 'switch (v) { case "queued": case "active": case "complete": break; }',
+        'sql': "CREATE TABLE copy (value TEXT CHECK (value IN ('queued', 'active', 'complete')));",
+    }
+    path = 'stage/001_constraint.sql' if form == 'sql' else 'stage/sibling.ts'
+    source = target / path
+    source.write_text(source.read_text() + '\n' + seeds[form])
+    assert any(finding.path == path and 'duplicate' in finding.message
+               for finding in audit(target, load_inventory(INVENTORY)))

@@ -1,0 +1,4 @@
+export function validateKey(key: string): string {
+  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(key)) throw new Error("invalid key");
+  return key;
+}
