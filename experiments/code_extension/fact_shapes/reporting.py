@@ -110,7 +110,13 @@ def _count_declarations(source: str, added: list[bool], names: set[str]) -> int:
 
 
 def mirrored_state_count(patch: str, state_source_fields: Iterable[str]) -> int:
-    """Count added type members, aliases and SQL columns matching the inventory.
+    """Return a lower bound on added declarations matching inventory state fields.
+
+    Report this measure as "mirrored-state count (lower bound)". It can miss
+    members whose enclosing declaration is outside the retained hunk context
+    and members of intersection type literals such as ``A & { ... }``.
+    An exhaustive measure would require base declaration ranges as a pure
+    input; this patch-only API does not claim an exhaustive count.
 
     Parse each hunk's candidate text together so multiline type headers, nested
     types, strings and block comments preserve their scope. Context establishes
