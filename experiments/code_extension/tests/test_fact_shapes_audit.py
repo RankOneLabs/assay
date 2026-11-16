@@ -86,3 +86,56 @@ def test_duplicate_state_tables(tmp_path: Path, name: str, table: str) -> None:
     (target / "mirror.sql").write_text(f"CREATE TABLE {table} (id TEXT PRIMARY KEY);")
     findings = audit(target, load_inventory(INVENTORY))
     assert any(finding.name == name and finding.path == "mirror.sql" for finding in findings)
+
+
+@pytest.mark.parametrize("concept_name", ["stage", "evidence_kind", "route_permission"])
+@pytest.mark.parametrize("quote", ['"', "'"])
+def test_unauthorized_switch_copy(tmp_path: Path, concept_name: str, quote: str) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    inventory = load_inventory(INVENTORY)
+    concept = next(item for item in inventory.concepts if item.name == concept_name)
+    labels = "\n/* fall through */\n".join(
+        f"case {quote}{member}{quote}:" for member in sorted(concept.members)
+    )
+    (target / "duplicate.ts").write_text(
+        f"function copy(value: string) {{ switch (value) {{\n{labels}\n"
+        "return true; default: return false; } }\n"
+    )
+    findings = audit(target, inventory)
+    assert any(
+        finding.name == concept_name and finding.path == "duplicate.ts" for finding in findings
+    )
+
+
+@pytest.mark.parametrize("concept_name", ["stage", "evidence_kind", "route_permission"])
+@pytest.mark.parametrize("form", ["switch", "array"])
+def test_switch_sanction_is_limited(tmp_path: Path, concept_name: str, form: str) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    inventory = load_inventory(INVENTORY)
+    concept = next(item for item in inventory.concepts if item.name == concept_name)
+    path = concept.switch_holders[0]
+    source = target / path
+    members = sorted(concept.members)
+    if form == "switch":
+        labels = " ".join(f'case "{member}":' for member in members)
+        seed = f"function extra(v: string) {{ switch (v) {{ {labels} return true; }} }}"
+    else:
+        literals = ", ".join(f'"{member}"' for member in members)
+        seed = f"const extra = [{literals}];"
+    source.write_text(source.read_text() + "\n" + seed)
+    assert any(
+        finding.name == concept_name and finding.path == path
+        for finding in audit(target, inventory)
+    )
+
+
+def test_missing_sanctioned_switch_is_reported(tmp_path: Path) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    (target / "stage/sibling.ts").write_text("// peer acceptance removed\n")
+    assert any(
+        finding.name == "stage" and finding.path == "stage/sibling.ts"
+        for finding in audit(target, load_inventory(INVENTORY))
+    )

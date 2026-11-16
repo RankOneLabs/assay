@@ -1,9 +1,10 @@
 """Inventory-driven single-source checks over a materialized TypeScript tree.
 
-This checker recognizes literal unions, arrays, enum constructors and SQL CHECK
-lists. It also checks declared state fields and SQL columns. Imports and readers
-are permitted: ownership concerns declarations, not references. SQL holders must
-be explicitly named in the inventory; they never receive a blanket exemption.
+This checker recognizes literal unions, arrays, enum constructors, SQL CHECK
+lists and consecutive switch/case labels. It also checks declared state fields
+and SQL columns. Imports and readers are permitted: ownership concerns declarations,
+not references. SQL and switch holders must be explicitly named in the inventory;
+their exemptions apply only to their respective value-list forms.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ class Concept:
     symbol: str
     members: frozenset[str]
     outside_holders: tuple[str, ...]
+    switch_holders: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,7 @@ def load_inventory(path: Path) -> Inventory:
             symbol=_text(item["symbol"]),
             members=frozenset(_strings(item["members"])),
             outside_holders=_strings(item.get("outside_holders", [])),
+            switch_holders=_strings(item.get("switch_holders", [])),
         )
         for item in _objects(data["concepts"])
     )
@@ -104,6 +107,13 @@ _LIST = re.compile(
     r"""(?:["'][^"'\n]*["']\s*\|\s*)+["'][^"'\n]*["']""",
     re.IGNORECASE,
 )
+
+# A fall-through run is one acceptance list, regardless of spacing or quote style.
+_CASE_RUN = re.compile(rf"(?:\bcase\s+{_LITERAL}\s*:\s*)+")
+
+
+def _switch_lists(source: str) -> list[frozenset[str]]:
+    return [frozenset(re.findall(_LITERAL, match.group())) for match in _CASE_RUN.finditer(source)]
 
 
 def _without_comments(source: str) -> str:
@@ -158,9 +168,15 @@ def audit(root: Path, inventory: Inventory) -> tuple[Finding, ...]:
         for holder in concept.outside_holders:
             if concept.members not in _value_lists(sources.get(holder, "")):
                 findings.append(Finding(concept.name, holder, "missing outside-code holder"))
+        for holder in concept.switch_holders:
+            if concept.members not in _switch_lists(sources.get(holder, "")):
+                findings.append(Finding(concept.name, holder, "missing sanctioned switch holder"))
         for path, source in sources.items():
             count = _value_lists(source).count(concept.members)
-            if count > (1 if path in allowed else 0):
+            switches = _switch_lists(source).count(concept.members)
+            if count > (1 if path in allowed else 0) or switches > (
+                1 if path in concept.switch_holders else 0
+            ):
                 findings.append(Finding(concept.name, path, "duplicate concept value declaration"))
     for state in inventory.states:
         if (

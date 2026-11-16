@@ -11,6 +11,10 @@
       ],
       "outside_holders": [
         "stage/001_constraint.sql"
+      ],
+      "switch_holders": [
+        "stage/edit.ts",
+        "stage/sibling.ts"
       ]
     },
     {
@@ -24,6 +28,10 @@
       ],
       "outside_holders": [
         "evidence_kind/001_constraint.sql"
+      ],
+      "switch_holders": [
+        "evidence_kind/edit.ts",
+        "evidence_kind/sibling.ts"
       ]
     },
     {
@@ -37,6 +45,10 @@
       ],
       "outside_holders": [
         "route_permission/001_constraint.sql"
+      ],
+      "switch_holders": [
+        "route_permission/edit.ts",
+        "route_permission/sibling.ts"
       ]
     }
   ],
