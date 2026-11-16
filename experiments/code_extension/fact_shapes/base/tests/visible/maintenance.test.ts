@@ -1,5 +1,6 @@
+import { DependencyRepository } from "../../src/repositories/dependencies.ts";
 import { describe, expect, test } from "bun:test";
-import { fixture, admin, reader, writer, outsider, expectError } from "./helpers.ts";
+import { fixture, seedArchives, admin, reader, writer, outsider, expectError } from "./helpers.ts";
 
 describe("maintenance operations", () => {
   test("bulk archive creates one event and revision for each job", () => {
@@ -296,4 +297,26 @@ describe("stable retention batches", () => {
     expect(f.context.maintenance.purge(admin, archived.archivedAt! + 1, 1)).toEqual(["job"]);
     expect(f.context.evidenceRepository.get(item.id)).toBeNull();
   });
+});
+
+test("purge scopes archives by project before scanning retention candidates", () => {
+  using f = fixture();
+  seedArchives(f.context, 10001, outsider.project);
+  f.create("eligible");
+  f.context.jobs.archive(admin, "eligible", { expectedRevision: 1 });
+  expect(f.context.maintenance.purge(admin, 1002, 1)).toEqual(["eligible"]);
+});
+
+test("purge advances past ten thousand archives protected by a retained dependent", () => {
+  using f = fixture();
+  seedArchives(f.context, 10000);
+  f.create("retained");
+  f.context.db.transaction(() => {
+    for (let index = 0; index < 10000; index++) {
+      new DependencyRepository(f.context.db).add("retained", `archive-project-${index}`, admin.id, 3);
+    }
+  })();
+  f.create("eligible");
+  f.context.jobs.archive(admin, "eligible", { expectedRevision: 1 });
+  expect(f.context.maintenance.purge(admin, 1003, 1)).toEqual(["eligible"]);
 });

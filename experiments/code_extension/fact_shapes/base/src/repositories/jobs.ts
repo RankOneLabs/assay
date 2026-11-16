@@ -175,10 +175,15 @@ export class JobRepository {
     };
   }
 
-  olderArchived(before: number, limit: number): string[] {
-    return this.db.query<{ id: string }, [number, number]>(`
+  allInProject(project: string): Job[] {
+    return this.list({ project, limit: -1, offset: 0 }).items;
+  }
+
+  olderArchived(before: number, limit: number, project?: string): string[] {
+    return this.db.query<{ id: string }, SQLQueryBindings[]>(`
       SELECT id FROM jobs WHERE archived_at IS NOT NULL AND archived_at < ?
+      ${project === undefined ? "" : "AND project = ?"}
       ORDER BY archived_at ASC, id ASC LIMIT ?
-    `).all(before, limit).map(row => row.id);
+    `).all(before, ...(project === undefined ? [] : [project]), limit).map(row => row.id);
   }
 }

@@ -191,9 +191,10 @@ def audit(root: Path, inventory: Inventory) -> tuple[Finding, ...]:
     for concept in inventory.concepts:
         declaring = sources.get(concept.declaring_file, "")
         declaration = re.search(
-            rf"\b(?:const|let|type|enum)\s+{re.escape(concept.symbol)}\b", declaring
+            rf"\b(?:const|let|type)\s+{re.escape(concept.symbol)}\s*"
+            r"(?::\s*[^=;]+)?=\s*([^;]+)", declaring
         )
-        if declaration is None or concept.members not in _value_lists(declaring):
+        if declaration is None or concept.members not in _value_lists(declaration.group(1)):
             findings.append(Finding(concept.name, concept.declaring_file, "missing declaration"))
         allowed = {concept.declaring_file, *concept.outside_holders}
         for holder in concept.outside_holders:
@@ -216,9 +217,11 @@ def audit(root: Path, inventory: Inventory) -> tuple[Finding, ...]:
         ):
             findings.append(Finding(state.name, state.source, "missing or repeated state source"))
         for path, source in sources.items():
-            if path != state.source and any(
+            if any(
                 _state_declarations(source, symbol, state.declaration_kind)
-                for symbol in (state.symbol, *state.aliases)
+                for symbol in (
+                    state.aliases if path == state.source else (state.symbol, *state.aliases)
+                )
             ):
                 findings.append(Finding(state.name, path, "mirrored state field or column"))
     return tuple(findings)

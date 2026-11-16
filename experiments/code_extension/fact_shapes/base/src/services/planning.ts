@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { Principal } from "../domain/models.ts";
+import type { Principal, JobFilter } from "../domain/models.ts";
 import { conflict } from "../domain/errors.ts";
 import { plan, impact } from "../domain/graph.ts";
 import { JobRepository } from "../repositories/jobs.ts";
@@ -58,14 +58,14 @@ export class PlanningService {
   }
 
   private buildPlan(project: string) {
-    const jobs = this.jobs.list({ project, limit: 10000, offset: 0 }).items;
+    const jobs = this.jobs.allInProject(project);
     const edges = this.dependencies.list(project);
     return plan(jobs.map(job => job.id), edges);
   }
 
   jobImpact(actor: Principal, id: string) {
     this.jobService.get(actor, id);
-    const jobs = this.jobs.list({ project: actor.project, limit: 10000, offset: 0 }).items;
+    const jobs = this.jobs.allInProject(actor.project);
     return impact(id, jobs.map(job => job.id), this.dependencies.list(actor.project));
   }
 
@@ -76,14 +76,15 @@ export class PlanningService {
       .filter(required => required.stage !== "complete" || required.archivedAt !== null);
   }
 
-  ready(actor: Principal, limit = 25) {
+  ready(actor: Principal, limit = 25, filter: Pick<JobFilter, "owner" | "minPriority"> = {}) {
     this.access.require(actor, "case_read");
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) conflict("invalid ready limit");
     const jobs = this.jobs.list({
       project: actor.project,
       stage: "queued",
       archived: false,
-      limit: 10000,
+      ...filter,
+      limit: -1,
       offset: 0,
     }).items;
     return jobs.filter(job => this.blockers(actor, job.id).length === 0).slice(0, limit);

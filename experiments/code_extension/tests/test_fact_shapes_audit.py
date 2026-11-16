@@ -170,3 +170,32 @@ def test_separate_switches_do_not_combine_members(tmp_path: Path) -> None:
         'switch (b) { case "active": return 2; case "complete": return 3; }'
     )
     assert audit(target, load_inventory(INVENTORY)) == ()
+
+
+def test_alias_in_canonical_state_file(tmp_path: Path) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    source = target / "stage/state.ts"
+    source.write_text(
+        source.read_text() + "\nclass Mirror { runningSessions = new Set<string>(); }"
+    )
+    assert any(
+        finding.name == "session_build" and finding.path == "stage/state.ts"
+        for finding in audit(target, load_inventory(INVENTORY))
+    )
+
+
+@pytest.mark.parametrize("concept_name", ["stage", "evidence_kind", "route_permission"])
+def test_canonical_symbol_must_own_values(tmp_path: Path, concept_name: str) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    inventory = load_inventory(INVENTORY)
+    concept = next(item for item in inventory.concepts if item.name == concept_name)
+    literals = ", ".join(f'"{member}"' for member in sorted(concept.members))
+    (target / concept.declaring_file).write_text(
+        f"export const {concept.symbol} = [] as const; const copy = [{literals}];"
+    )
+    assert any(
+        finding.name == concept_name and finding.message == "missing declaration"
+        for finding in audit(target, inventory)
+    )

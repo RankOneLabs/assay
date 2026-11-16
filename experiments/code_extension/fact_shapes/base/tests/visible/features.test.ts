@@ -10,8 +10,8 @@ import { peerGuard as permissionPrimary, operations as permissionOperations } fr
 import { peerGuard as permissionPeer } from "../../route_permission/sibling.ts";
 import { routeStage } from "../../src/routing.ts";
 import { routeFor, DEFAULT_ROUTE } from "../../stage/names.ts";
-import { validateRegisteredValue as validateKind } from "../../evidence_kind/names.ts";
-import { validateRegisteredValue as validatePermission } from "../../route_permission/names.ts";
+import { routeFor as routeKind, validateRegisteredValue as validateKind } from "../../evidence_kind/names.ts";
+import { routeFor as routePermission, validateRegisteredValue as validatePermission } from "../../route_permission/names.ts";
 import { acceptValue as acceptStage } from "../../stage/policy.ts";
 import { acceptValue as acceptKind } from "../../evidence_kind/policy.ts";
 import { acceptValue as acceptPermission } from "../../route_permission/policy.ts";
@@ -189,3 +189,11 @@ describe("independent sibling acceptance mutations", () => {
     });
   }
 });
+
+for (const lookup of [routeFor, routeKind, routePermission]) {
+  test("inherited object names use the default route", () => {
+    for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(lookup(name)).toBe(DEFAULT_ROUTE);
+    }
+  });
+}

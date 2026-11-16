@@ -45,10 +45,10 @@ export class DispatchService {
     const running = this.running(actor);
     if (running.length >= this.config.maxConcurrentBuilds) limitExceeded("concurrent build limit reached");
     if (running.some(item => item.attempt.worker === parsed.worker)) conflict("worker already has a running build");
-    const job = this.planning.ready(actor, 100).find(candidate =>
-      candidate.priority >= parsed.minimumPriority &&
-      (parsed.owner === undefined || candidate.owner === parsed.owner),
-    );
+    const job = this.planning.ready(actor, 1, {
+      owner: parsed.owner,
+      minPriority: parsed.minimumPriority,
+    })[0];
     if (!job) return null;
     const attempt = this.builds.start(actor, job.id, {
       id: parsed.id,

@@ -1,6 +1,7 @@
+import { DependencyRepository } from "../../src/repositories/dependencies.ts";
 import { describe, expect, test } from "bun:test";
 import { adjacency, ancestors, descendants, plan, impact } from "../../src/domain/graph.ts";
-import { fixture, admin, reader, writer, outsider } from "./helpers.ts";
+import { fixture, seedArchives, admin, reader, writer, outsider } from "./helpers.ts";
 
 describe("dependency graph algorithms", () => {
   test("empty plans have no artificial root", () => {
@@ -198,4 +199,16 @@ describe("planning consistency across larger graphs", () => {
     expect(f.context.planning.jobImpact(reader, "c").prerequisites).toEqual([]);
     expect(f.context.planning.ready(reader).map(job => job.id)).toEqual(["a", "c"]);
   });
+});
+
+test("plans and impact include dependency members beyond ten thousand archives", () => {
+  using f = fixture();
+  seedArchives(f.context, 10001);
+  f.create("live", { priority: 10 });
+  new DependencyRepository(f.context.db).add("archive-project-9999", "archive-project-9998", admin.id, 3);
+  expect(f.context.planning.projectPlan(reader).order).toHaveLength(10002);
+  expect(f.context.planning.jobImpact(reader, "archive-project-9998").dependents)
+    .toEqual(["archive-project-9999"]);
+  f.create("prerequisite");
+  expect(f.context.planning.add(admin, "live", "prerequisite")).toBe(true);
 });

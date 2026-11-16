@@ -64,3 +64,16 @@ export async function expectError(response: Response, status: number, code?: str
   if (code) expect(body.error).toBe(code);
   expect(body.error).toBeString();
 }
+
+/** Populate historical rows without changing the configured live-job capacity. */
+export function seedArchives(context: ServiceContext, count: number, project = admin.project) {
+  context.db.transaction(() => {
+    for (let index = 0; index < count; index++) {
+      const id = `archive-${project}-${index}`;
+      context.jobRepository.create({
+        id, title: id, description: "Historical job", owner: "owner", project, priority: 0,
+      }, "queued", 1);
+      context.jobRepository.archive(id, 1, 2);
+    }
+  })();
+}

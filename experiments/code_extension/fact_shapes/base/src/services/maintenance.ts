@@ -51,8 +51,7 @@ export class MaintenanceService {
       limitExceeded("invalid purge batch size");
     }
     return this.db.transaction(() => {
-      const eligible = new Set(this.jobs.olderArchived(before, 10000)
-        .filter(id => this.jobs.require(id).project === actor.project));
+      const eligible = new Set(this.jobs.olderArchived(before, -1, actor.project));
       // Keep prerequisites reachable from retained jobs, including through other archives.
       let changed = true;
       while (changed) {

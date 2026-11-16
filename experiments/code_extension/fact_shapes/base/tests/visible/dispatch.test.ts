@@ -127,3 +127,15 @@ describe("ready queue dispatch", () => {
     expect(await running.json()).toMatchObject([{ attempt: { sessionId: "session" } }]);
   });
 });
+
+test("dispatch finds an owner's work beyond the first hundred ready jobs", () => {
+  using f = fixture({ maxJobs: 101 });
+  for (let index = 0; index < 100; index++) {
+    f.create(`other-${index}`, { owner: "other", priority: 10 });
+  }
+  f.create("eligible", { owner: "selected", priority: 1 });
+  const result = f.context.dispatch.next(admin, {
+    id: "attempt", sessionId: "session", worker: "worker", owner: "selected",
+  });
+  expect(result?.job.id).toBe("eligible");
+});

@@ -4,7 +4,7 @@ export const descriptiveRegistry: Readonly<Record<string, string>> = Object.from
   values.map(value => [value, `/jobs/${value}`]),
 );
 export function routeFor(value: string): string {
-  return descriptiveRegistry[value] ?? DEFAULT_ROUTE;
+  return (Object.hasOwn(descriptiveRegistry, value) ? descriptiveRegistry[value] : undefined) ?? DEFAULT_ROUTE;
 }
 export function validateRegisteredValue(value: string): boolean {
   return isValue(value);
