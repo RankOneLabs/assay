@@ -1,0 +1,60 @@
+{
+  "concepts": [
+    {
+      "name": "stage",
+      "declaring_file": "stage/types.ts",
+      "symbol": "values",
+      "members": [
+        "queued",
+        "active",
+        "complete"
+      ],
+      "outside_holders": [
+        "stage/001_constraint.sql"
+      ]
+    },
+    {
+      "name": "evidence_kind",
+      "declaring_file": "evidence_kind/types.ts",
+      "symbol": "values",
+      "members": [
+        "document",
+        "image",
+        "testimony"
+      ],
+      "outside_holders": [
+        "evidence_kind/001_constraint.sql"
+      ]
+    },
+    {
+      "name": "route_permission",
+      "declaring_file": "route_permission/types.ts",
+      "symbol": "values",
+      "members": [
+        "case_read",
+        "case_write",
+        "case_admin"
+      ],
+      "outside_holders": [
+        "route_permission/001_constraint.sql"
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "session_build",
+      "source": "stage/state.ts",
+      "symbol": "buildRunning"
+    },
+    {
+      "name": "evidence_selection",
+      "source": "evidence_kind/state.ts",
+      "symbol": "evidence_kindSelections"
+    },
+    {
+      "name": "permission_selection",
+      "source": "route_permission/state.ts",
+      "symbol": "route_permissionSelections"
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+"""Duplicate seeds live only in temporary copies, never in the shipped base."""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from code_extension.fact_shapes.audit import audit, load_inventory
+
+DIRECTORY = Path(__file__).resolve().parents[1] / "fact_shapes"
+BASE = DIRECTORY / "base"
+INVENTORY = DIRECTORY / "audit_inventory.json"
+
+
+def test_clean_base() -> None:
+    assert audit(BASE, load_inventory(INVENTORY)) == ()
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [
+        'export type Copy = "queued" | "active" | "complete";',
+        'export const copy = ["queued", "active", "complete"];',
+        'export const values = ["queued", "active", "complete"] as const;',
+    ],
+)
+def test_concept_duplicates(tmp_path: Path, seed: str) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    (target / "duplicate.ts").write_text(seed)
+    findings = audit(target, load_inventory(INVENTORY))
+    assert any(finding.name == "stage" and finding.path == "duplicate.ts" for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [
+        "class Mirror { buildRunning = new Set<string>(); }",
+        "CREATE TABLE mirror (id TEXT PRIMARY KEY, build_running BOOLEAN);",
+    ],
+)
+def test_state_duplicates(tmp_path: Path, seed: str) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    suffix = ".sql" if seed.startswith("CREATE") else ".ts"
+    (target / f"duplicate{suffix}").write_text(seed)
+    assert any(
+        finding.name == "session_build" for finding in audit(target, load_inventory(INVENTORY))
+    )
+
+
+@pytest.mark.parametrize("missing_file", [False, True])
+def test_removed_declaration(tmp_path: Path, missing_file: bool) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    source = target / "stage/types.ts"
+    if missing_file:
+        source.unlink()
+    else:
+        source.write_text("// declaration intentionally removed\n")
+    assert any(finding.name == "stage" for finding in audit(target, load_inventory(INVENTORY)))
+
+
+def test_cli_and_arbitrary_root(tmp_path: Path) -> None:
+    target = tmp_path / "independent"
+    shutil.copytree(BASE, target)
+    command = [sys.executable, str(DIRECTORY / "audit.py"), str(target), str(INVENTORY)]
+    assert subprocess.run(command, capture_output=True, check=False).returncode == 0
+    (target / "duplicate.ts").write_text('type Copy = "queued" | "active" | "complete";')
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert result.returncode == 1
+    assert "stage" in result.stdout
