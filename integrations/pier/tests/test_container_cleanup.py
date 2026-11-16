@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -478,6 +479,38 @@ def test_memory_failure_is_distinct_from_storage_exhaustion(
     else:
         with pytest.raises(RuntimeError, match="exited nonzero"):
             handle.run()
+
+
+@pytest.mark.parametrize("oom_inspection", [3, 4, 5])
+def test_oom_event_can_arrive_after_process_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, oom_inspection: int,
+) -> None:
+    handle = _handle(tmp_path)
+    observed = ContainerObservation(
+        read_only_root=True, workspace_mount_read_only=True, uid=1000,
+        network_mode="none", cpu_limit=1, memory_limit_mb=256,
+        pids_limit=32, storage_limit_mb=64,
+    )
+    inspections = 0
+
+    def inspect(name: str, **_: object) -> ContainerObservation:
+        nonlocal inspections
+        inspections += 1
+        # Both the startup and first post-exit inspection precede Docker's OOM event.
+        return replace(observed, oom_killed=inspections >= oom_inspection)
+
+    def trial_run(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        if args[:4] == ["docker", "inspect", "--format", "{{.State.ExitCode}}"]:
+            return _completed(args, stdout="137\n")
+        return _fake_successful_run(args, timeout=timeout)
+
+    monkeypatch.setattr(container, "_run", trial_run)
+    monkeypatch.setattr(container, "_inspect", inspect)
+    monkeypatch.setattr(DockerTrialHandle, "_prepare_quota", lambda self, limits: None)
+    monkeypatch.setattr(DockerTrialHandle, "_assert_enforcement", lambda self, observation: None)
+    with pytest.raises(MemoryLimitExceededError):
+        handle.run()
+    assert inspections == oom_inspection
 
 
 def test_container_start_and_enforcement_have_distinct_infrastructure_causes(
