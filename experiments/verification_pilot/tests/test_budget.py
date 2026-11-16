@@ -213,6 +213,9 @@ def test_screening_route_sends_its_own_pinned_endpoint(tmp_path: Path, name: str
     assert body["provider"]["max_price"] == {
         "prompt": turn_route.max_prompt_price_per_million,
         "completion": turn_route.max_completion_price_per_million, "request": 0}
+    if name == "gemini-4-argon":
+        assert body["provider"]["max_price"] == {"prompt": 4.0, "completion": 20.0,
+                                                  "request": 0}
     assert gate.spent_usd == Decimal("0.0001")
 
 
@@ -236,3 +239,15 @@ def test_response_from_another_provider_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="provider_identity"):
         client._turn(MESSAGES, 1, None, client.tools)
     assert gate.spent_usd == Decimal("0.0001")
+
+
+def test_argon_reservation_uses_raised_ceiling() -> None:
+    from assay_pier_bridge.agent_loop import PAID_TURN_ROUTES
+
+    from verification_pilot.run import paid_model_route
+
+    route = paid_model_route("gemini-4-argon")
+    turn_route = PAID_TURN_ROUTES[(route.model, route.provider)]
+    assert request_cost_bound(turn_route, request_bytes=1000, max_output_tokens=8192) == (
+        (Decimal(1000) * Decimal("0.6") + 4096) * 4 + Decimal(8192) * 20
+    ) / 1_000_000

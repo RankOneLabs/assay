@@ -2357,3 +2357,23 @@ def test_model_request_bound_may_rise_to_its_ceiling(
     else:
         with pytest.raises(ValueError, match="invalid fixed loop bounds"):
             _client(tmp_path, handler, bounds=LoopBounds(max_turns=max_turns))
+
+
+def test_argon_ceiling_and_request(tmp_path: Path) -> None:
+    from assay_pier_bridge.agent_loop import PAID_TURN_ROUTES
+
+    route = PAID_TURN_ROUTES[("google/gemini-4-argon", "google-vertex/global")]
+    assert route.max_prompt_price_per_million == 4.0
+    assert route.max_completion_price_per_million == 20.0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["provider"]["max_price"] == {
+            "prompt": 4.0, "completion": 20.0, "request": 0,
+        }
+        return httpx.Response(200, json={
+            **_answer("submit_output", {"summary": "done"}, 1),
+            "model": route.model, "provider": route.provider_name,
+        })
+
+    client = _client(tmp_path, handler)
+    assert client._openrouter_turn([{"role": "user", "content": "hello"}], route).cost_usd == 0.001
