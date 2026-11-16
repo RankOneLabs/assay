@@ -1,0 +1,31 @@
+diff --git a/stage/edit.ts b/stage/edit.ts
+--- a/stage/edit.ts
++++ b/stage/edit.ts
+@@ -1,6 +1,6 @@
+-export type RequiredFeature = never;
++export type RequiredFeature = "triaged";
+ import { isValue, type Stage } from "./types.ts";
+-import { acceptValue, enforceLimit } from "./policy.ts";
++import { acceptValue, enforceLimit, supportsFeature } from "./policy.ts";
+ import { validateKey } from "./anchor.ts";
+ import { vocabularyStore } from "../src/vocabulary.ts";
+ export function edit(key: string, value: Stage, count = 1): { key: string; value: Stage } {
+@@ -10,5 +10,7 @@
+ export function peerGuard(value: string): boolean { return isValue(value); }
+ export const operations = vocabularyStore.record("stage", value => (key: string) => `${key}:${value}`);
+ export function requestFeature(key: string, value: RequiredFeature, count = 1): { key: string; value: Stage | RequiredFeature } {
+-  return edit(key, value as never, count);
++  enforceLimit(count, 100);
++  if (!supportsFeature(value)) throw new Error("unsupported feature");
++  return { key: validateKey(key), value };
+ }
+diff --git a/stage/policy.ts b/stage/policy.ts
+--- a/stage/policy.ts
++++ b/stage/policy.ts
+@@ -8,5 +8,5 @@
+ export function enforceLimit(count: number, limit: number): void {
+   if (!Number.isInteger(count) || count < 0 || count > limit) throw new Error("limit exceeded");
+ }
+-const featureValues: readonly string[] = ["queued"];
++const featureValues: readonly string[] = ["triaged"];
+ export function supportsFeature(value: string): boolean { return featureValues.includes(value); }

@@ -1,0 +1,31 @@
+diff --git a/evidence_kind/001_constraint.sql b/evidence_kind/001_constraint.sql
+--- a/evidence_kind/001_constraint.sql
++++ b/evidence_kind/001_constraint.sql
+@@ -4,5 +4,5 @@
+ );
+ CREATE TABLE evidence_kind_capabilities (
+   id TEXT PRIMARY KEY,
+-  value TEXT NOT NULL UNIQUE CHECK (value IN ('document'))
++  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'attestation'))
+ );
+diff --git a/evidence_kind/edit.ts b/evidence_kind/edit.ts
+--- a/evidence_kind/edit.ts
++++ b/evidence_kind/edit.ts
+@@ -1,6 +1,6 @@
+-export type RequiredFeature = never;
++export type RequiredFeature = "attestation";
+ import { isValue, type EvidenceKind } from "./types.ts";
+-import { acceptValue, enforceLimit } from "./policy.ts";
++import { acceptValue, enforceLimit, supportsFeature } from "./policy.ts";
+ import { validateKey } from "./anchor.ts";
+ import { vocabularyStore } from "../src/vocabulary.ts";
+ export function edit(key: string, value: EvidenceKind, count = 1): { key: string; value: EvidenceKind } {
+@@ -10,5 +10,7 @@
+ export function peerGuard(value: string): boolean { return isValue(value); }
+ export const operations = vocabularyStore.record("evidence_kind", value => (key: string) => `${key}:${value}`);
+ export function requestFeature(key: string, value: RequiredFeature, count = 1): { key: string; value: EvidenceKind | RequiredFeature } {
+-  return edit(key, value as never, count);
++  enforceLimit(count, 100);
++  if (!supportsFeature(value)) throw new Error("unsupported feature");
++  return { key: validateKey(key), value };
+ }

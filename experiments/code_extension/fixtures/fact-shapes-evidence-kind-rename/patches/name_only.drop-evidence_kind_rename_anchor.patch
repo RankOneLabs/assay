@@ -1,0 +1,31 @@
+diff --git a/evidence_kind/edit.ts b/evidence_kind/edit.ts
+--- a/evidence_kind/edit.ts
++++ b/evidence_kind/edit.ts
+@@ -1,6 +1,6 @@
+-export type RequiredFeature = never;
++export type RequiredFeature = "attestation";
+ import { isValue, type EvidenceKind } from "./types.ts";
+-import { acceptValue, enforceLimit } from "./policy.ts";
++import { acceptValue, enforceLimit, supportsFeature } from "./policy.ts";
+ import { validateKey } from "./anchor.ts";
+ import { vocabularyStore } from "../src/vocabulary.ts";
+ export function edit(key: string, value: EvidenceKind, count = 1): { key: string; value: EvidenceKind } {
+@@ -10,5 +10,7 @@
+ export function peerGuard(value: string): boolean { return isValue(value); }
+ export const operations = vocabularyStore.record("evidence_kind", value => (key: string) => `${key}:${value}`);
+ export function requestFeature(key: string, value: RequiredFeature, count = 1): { key: string; value: EvidenceKind | RequiredFeature } {
+-  return edit(key, value as never, count);
++  enforceLimit(count, 100);
++  if (!supportsFeature(value)) throw new Error("unsupported feature");
++  return { key: validateKey(key), value };
+ }
+diff --git a/evidence_kind/names.ts b/evidence_kind/names.ts
+--- a/evidence_kind/names.ts
++++ b/evidence_kind/names.ts
+@@ -9,5 +9,5 @@
+   return (Object.hasOwn(descriptiveRegistry, value) ? descriptiveRegistry[value] : undefined) ?? DEFAULT_ROUTE;
+ }
+ export function validateRegisteredValue(value: string): boolean { return isValue(value); }
+-const featureValues: readonly string[] = ["document"];
++const featureValues: readonly string[] = ["attestation"];
+ export function supportsFeature(value: string): boolean { return featureValues.includes(value); }

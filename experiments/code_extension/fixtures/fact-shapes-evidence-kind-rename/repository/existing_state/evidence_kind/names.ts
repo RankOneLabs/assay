@@ -9,3 +9,5 @@ export function routeFor(value: string): string {
   return (Object.hasOwn(descriptiveRegistry, value) ? descriptiveRegistry[value] : undefined) ?? DEFAULT_ROUTE;
 }
 export function validateRegisteredValue(value: string): boolean { return isValue(value); }
+const featureValues: readonly string[] = ["attestation"];
+export function supportsFeature(value: string): boolean { return featureValues.includes(value); }

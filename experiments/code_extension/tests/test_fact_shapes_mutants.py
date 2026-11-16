@@ -1,3 +1,4 @@
+import pytest
 from code_extension.fact_shapes.attempts import Fact, Group, HolderSpec
 from code_extension.fact_shapes.cells import FactId, RepositoryPath
 from code_extension.fact_shapes.mutants import Run, verdict
@@ -67,3 +68,102 @@ def test_missing_titles_do_not_prove_a_miss() -> None:
     assert not verdict(
         "reference", "drop-control", facts(), (missing, missing), FactId("control")
     ).passed
+
+
+def test_retained_mutant_evidence_covers_every_arm() -> None:
+    import json
+    from pathlib import Path
+
+    from code_extension.fact_shapes.cells import CELLS
+    from code_extension.fact_shapes.generate import scenario_name
+
+    root = Path(__file__).resolve().parents[1] / "fixtures"
+    for cell in CELLS:
+        directory = root / scenario_name(cell) / "qualification/mutants" / cell.shape
+        records = sorted(directory.glob("*.json"))
+        assert len(records) == (4 if cell.shape in {"outside_code", "existing_state"} else 3)
+        for path in records:
+            evidence = json.loads(path.read_bytes())
+            assert evidence["result"]["passed"], path
+            assert evidence["result"]["arm"] == cell.shape
+            assert evidence["patch_digest"].startswith("sha256:")
+            assert len(evidence["runs"]) == 2
+            for run in evidence["runs"]:
+                assert "passing_titles" in run and "failing_titles" in run
+
+
+@pytest.mark.asyncio
+async def test_launch_retries_do_not_retry_candidate_failures(
+    monkeypatch: "pytest.MonkeyPatch",
+) -> None:
+    from code_extension.qualify import LaunchRetryRunner
+
+    from assay.investigations.workflow_correctness import (
+        DockerWorkflowRunner,
+        WorkflowCorrectnessResult,
+        WorkflowRunnerSettings,
+    )
+
+    calls = 0
+    responses = [
+        WorkflowCorrectnessResult("unavailable", (), cause="SandboxUnavailable"),
+        WorkflowCorrectnessResult("correct", ()),
+    ]
+
+    async def fake_run(_self: DockerWorkflowRunner, **_kwargs: object) -> WorkflowCorrectnessResult:
+        nonlocal calls
+        response = responses[min(calls, len(responses) - 1)]
+        calls += 1
+        return response
+
+    monkeypatch.setattr(DockerWorkflowRunner, "run", fake_run)
+    runner = LaunchRetryRunner(WorkflowRunnerSettings(image="sha256:" + "1" * 64))
+    assert (
+        await runner.run(
+            baseline={},
+            groups=(),
+            baseline_tree_digest="tree",
+            expected_tree_digest="tree",
+            patch="",
+        )
+    ).verdict == "correct"
+    assert calls == 2
+    for cause in ("group_failure", "typecheck_nonzero_exit", "candidate_timeout"):
+        calls = 0
+        responses[:] = [WorkflowCorrectnessResult("incorrect", (), cause=cause)]
+        assert (
+            await runner.run(
+                baseline={},
+                groups=(),
+                baseline_tree_digest="tree",
+                expected_tree_digest="tree",
+                patch="",
+            )
+        ).cause == cause
+        assert calls == 1
+    calls = 0
+    responses[:] = [WorkflowCorrectnessResult("unavailable", (), cause="SandboxUnavailable")]
+    assert (
+        await runner.run(
+            baseline={},
+            groups=(),
+            baseline_tree_digest="tree",
+            expected_tree_digest="tree",
+            patch="",
+        )
+    ).verdict == "unavailable"
+    assert calls == 3
+
+
+@pytest.mark.asyncio
+async def test_gate_refuses_unknown_scenarios_before_docker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from code_extension.fact_shapes.mutants import gate_scenario
+
+    def forbidden_image_lookup(_image: str) -> str:
+        raise AssertionError("unknown scenarios must not reach Docker")
+
+    monkeypatch.setattr("code_extension.qualify.observed_image_digest", forbidden_image_lookup)
+    with pytest.raises(ValueError, match="unknown fact-shapes scenario"):
+        await gate_scenario("missing-scenario", "unused-image")

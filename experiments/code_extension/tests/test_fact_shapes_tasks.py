@@ -61,3 +61,75 @@ def test_collector_preserves_provenance(tmp_path: Path) -> None:
     assert forbidden["secret_key"] == ("holders.json:identifier",)
     assert forbidden["ExampleService"] == ("base export:service.ts",)
     assert forbidden["publicEntry"] == ("base export:service.ts",)
+
+
+def test_shared_hidden_inventory_and_patch_scope() -> None:
+    from code_extension.fact_shapes.cells import CELLS
+    from code_extension.fact_shapes.generate import scenario_name
+    from code_extension.fixtures import load_scenario
+
+    for scenario in dict.fromkeys(scenario_name(cell) for cell in CELLS):
+        cells = [cell for cell in CELLS if scenario_name(cell) == scenario]
+        root = ROOT / "fixtures" / scenario
+        files = root / "hidden/new_behavior/tests/hidden/new-behavior"
+        expected = {str(cell.fact_id) for cell in cells} | {str(cells[0].anchor_fact_id)}
+        assert {p.name.removesuffix(".test.ts") for p in files.glob("*.test.ts")} == expected
+        markdown = (ROOT / "studies/fact-shapes-2026-11/alignment.md").read_text()
+        for file in files.glob("*.test.ts"):
+            titles = fact_titles(file.read_text())
+            assert titles and all(
+                title.startswith(f"fact:{file.name.removesuffix('.test.ts')}: ") for title in titles
+            )
+            assert not check_alignment(scenario, (root / "task.md").read_text(), titles, markdown)
+        fixtures = [load_scenario(scenario, arm_id=cell.shape) for cell in cells]
+        assert len({fixture.task for fixture in fixtures}) == 1
+        assert (
+            len(
+                {tuple(group.model_dump_json() for group in fixture.groups) for fixture in fixtures}
+            )
+            == 1
+        )
+        assert len({fixture.sidecar.writable_implementation_scope for fixture in fixtures}) == 1
+        for cell, fixture in zip(cells, fixtures, strict=True):
+            patches = {path.name for path in (root / "patches").glob(f"{cell.shape}.*.patch")}
+            assert patches == {
+                f"{cell.shape}.reference.patch",
+                f"{cell.shape}.drop-{cell.fact_id}.patch",
+                f"{cell.shape}.drop-{cell.anchor_fact_id}.patch",
+            }
+            for holder in (path for sibling in cells for path in sibling.holders):
+                assert holder not in fixture.sidecar.tool_instructions
+                assert all(
+                    holder not in prefix for prefix in fixture.sidecar.writable_implementation_scope
+                )
+
+
+def test_qualified_manifests_cover_all_shapes() -> None:
+    from code_extension.fact_shapes.cells import CELLS
+    from code_extension.fact_shapes.generate import scenario_name
+
+    from assay.fixture_manifest import FixtureManifestV3
+
+    for scenario in dict.fromkeys(scenario_name(cell) for cell in CELLS):
+        manifest = FixtureManifestV3.model_validate_json(
+            (ROOT / "fixtures" / scenario / "qualification/manifest.json").read_bytes()
+        )
+        manifest.require_qualified()
+        assert manifest.arm_set.factor == "code_shape"
+        assert set(manifest.arm_set.arm_ids) == {
+            cell.shape for cell in CELLS if scenario_name(cell) == scenario
+        }
+
+
+def test_real_inventory_reports_each_named_token_once() -> None:
+    forbidden = forbidden_tokens(ROOT / "fact_shapes/holders.json", ROOT / "fact_shapes/base")
+    for token, source in (
+        ("stage/types.ts", "cells.py:path"),
+        ("queued", "holders.json:key literal"),
+        ("validateKey", "base export:"),
+        ("SessionService", "base export:"),
+    ):
+        findings = lint(token, forbidden)
+        assert len(findings) == 1
+        assert findings[0].token == token
+        assert source in findings[0].source

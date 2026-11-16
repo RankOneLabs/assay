@@ -8,3 +8,5 @@ export function acceptValue(value: string): RoutePermission {
 export function enforceLimit(count: number, limit: number): void {
   if (!Number.isInteger(count) || count < 0 || count > limit) throw new Error("limit exceeded");
 }
+const featureValues: readonly string[] = ["case_inspect"];
+export function supportsFeature(value: string): boolean { return featureValues.includes(value); }

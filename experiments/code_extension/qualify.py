@@ -83,6 +83,43 @@ def require_image(manifest: FixtureManifestV3, image: str) -> str:
     return observed
 
 
+class LaunchRetryRunner(DockerWorkflowRunner):
+    """Retry only an OS-level launch refusal, never candidate/test failures."""
+
+    async def run(
+        self,
+        *,
+        baseline: Mapping[str, str],
+        baseline_tree_digest: str,
+        expected_tree_digest: str,
+        patch: str,
+        groups: tuple[WorkflowTestGroup, ...],
+        writable_scope: tuple[str, ...] | None = None,
+        diagnostic_scope: tuple[str, ...] = (),
+    ) -> WorkflowCorrectnessResult:
+        async def one() -> WorkflowCorrectnessResult:
+            return await super(LaunchRetryRunner, self).run(
+                baseline=baseline,
+                baseline_tree_digest=baseline_tree_digest,
+                expected_tree_digest=expected_tree_digest,
+                patch=patch,
+                groups=groups,
+                writable_scope=writable_scope,
+                diagnostic_scope=diagnostic_scope,
+            )
+
+        result = await one()
+        for retry in range(2):
+            if result.cause != "SandboxUnavailable":
+                return result
+            print(
+                f"retrying unavailable sandbox launch ({retry + 1}/2)", file=sys.stderr, flush=True
+            )
+            await asyncio.sleep(0.5)
+            result = await one()
+        return result
+
+
 def make_runner(image_digest: str) -> DockerWorkflowRunner:
     result = subprocess.run(
         ["docker", "version", "--format", "{{.Client.Version}} {{.Server.Version}}"],
@@ -94,7 +131,7 @@ def make_runner(image_digest: str) -> DockerWorkflowRunner:
     versions = result.stdout.split()
     if len(versions) != 2:
         raise ValueError("Docker did not return client and server versions")
-    return DockerWorkflowRunner(
+    return LaunchRetryRunner(
         WorkflowRunnerSettings(
             image=image_digest,
             toolchain="bun",
@@ -291,9 +328,7 @@ def _arm_realization(
             or record.get("image_digest") != image_digest
             or record.get("tree_digest") != fixture.tree_digest
             or record.get("patch_digest")
-            != digest_bytes(
-                (arm.reference_patch if check == "reference_passes" else "").encode()
-            )
+            != digest_bytes((arm.reference_patch if check == "reference_passes" else "").encode())
         ):
             raise ValueError(f"stale qualification record: {arm.arm_id}/{check}")
         outcome = record.get("outcome")
@@ -396,13 +431,17 @@ def assemble_manifest(
 
 
 async def _summarize_arm(
-    fixture: ScenarioFixture, image_digest: str, directory: Path,
+    fixture: ScenarioFixture,
+    image_digest: str,
+    directory: Path,
 ) -> None:
     """Retain the start, reference and missing-integration verdicts for one arm."""
     arm = fixture.arms[0]
     runner = make_runner(image_digest)
     patches = {
-        "baseline": "", "reference": arm.reference_patch, "negative": arm.negative_patches[0],
+        "baseline": "",
+        "reference": arm.reference_patch,
+        "negative": arm.negative_patches[0],
     }
     summary: dict[str, object] = {}
     for label, patch in patches.items():
@@ -418,36 +457,42 @@ async def _summarize_arm(
             "groups": {group.name: group.status for group in result.groups},
             "verdict": result.verdict,
         }
-    summary.update({
-        "schema_version": "assay-extension-scenario-qualification/0.1.0",
-        "subject_id": fixture.subject_id,
-        "arm_id": arm.arm_id,
-        "image_digest": image_digest,
-        "tree_digest": fixture.tree_digest,
-        "group_digests": {
-            group.name: digest_bytes(canonical_json(group.model_dump(mode="json")))
-            for group in fixture.groups
-        },
-        "patch_digests": {
-            label: digest_bytes(patch.encode()) for label, patch in patches.items()
-        },
-    })
+    summary.update(
+        {
+            "schema_version": "assay-extension-scenario-qualification/0.1.0",
+            "subject_id": fixture.subject_id,
+            "arm_id": arm.arm_id,
+            "image_digest": image_digest,
+            "tree_digest": fixture.tree_digest,
+            "group_digests": {
+                group.name: digest_bytes(canonical_json(group.model_dump(mode="json")))
+                for group in fixture.groups
+            },
+            "patch_digests": {
+                label: digest_bytes(patch.encode()) for label, patch in patches.items()
+            },
+        }
+    )
     (directory / f"{arm.arm_id}.json").write_bytes(canonical_json(summary) + b"\n")
 
 
 async def build_shape_manifest(name: str, *, image: str) -> FixtureManifestV3:
-    """Qualify a new four-shape scenario's arms and bind them in one manifest."""
+    """Qualify a registered multi-arm scenario and bind its arms in one manifest."""
     root = PILOT.parent / name
     spec = ADDED_SCENARIOS[name]
     image_digest = observed_image_digest(image)
     evidence_dir = root / "qualification" / "checks"
     runner = make_runner(image_digest)
     fixtures = [load_scenario(name, arm_id=arm_id) for arm_id in spec.arm_ids]
-    arms: list[ExtensionArmRealization] = []
-    for fixture in fixtures:
-        await run_checks(fixture, runner, image_digest, evidence_dir)
-        await _summarize_arm(fixture, image_digest, root / "qualification")
-        arms.append(_arm_realization(fixture, fixture.arms[0], evidence_dir, image_digest))
+    semaphore = asyncio.Semaphore(2 if name.startswith("fact-shapes-") else 1)
+
+    async def qualify_fixture(fixture: ScenarioFixture) -> ExtensionArmRealization:
+        async with semaphore:
+            await run_checks(fixture, runner, image_digest, evidence_dir)
+            await _summarize_arm(fixture, image_digest, root / "qualification")
+            return _arm_realization(fixture, fixture.arms[0], evidence_dir, image_digest)
+
+    arms = await asyncio.gather(*(qualify_fixture(fixture) for fixture in fixtures))
     first = fixtures[0]
     if len({digest_bytes(item.task.encode()) for item in fixtures}) != 1:
         raise ValueError(f"{name}: shape arms must share one task")
@@ -458,7 +503,9 @@ async def build_shape_manifest(name: str, *, image: str) -> FixtureManifestV3:
     if len(set(pins)) != 1:
         raise ValueError(f"{name}: shape arms must share frozen test groups")
     visible, hidden_regression, new_behavior = zip(
-        (group.name for group in first.groups), pins[0], strict=True,
+        (group.name for group in first.groups),
+        pins[0],
+        strict=True,
     )
     manifest = FixtureManifestV3(
         schema_version="assay-fixture-manifest/0.3.0",
@@ -469,9 +516,11 @@ async def build_shape_manifest(name: str, *, image: str) -> FixtureManifestV3:
             ExtensionScenario(
                 subject_id=spec.subject_id,
                 checkpoint_sha=CHECKPOINT_SHA,
-                included_paths=tuple(sorted(
-                    path for file in first.repository if (path := _pin_path(file)) is not None
-                )),
+                included_paths=tuple(
+                    sorted(
+                        path for file in first.repository if (path := _pin_path(file)) is not None
+                    )
+                ),
                 excluded_paths=EXCLUDED_PATHS,
                 dependency_lock_digests=dict(first.sidecar.provenance.dependency_lock_digests),
                 feature_request=first.task.splitlines()[0].removeprefix("# "),
@@ -509,9 +558,29 @@ async def run_scenario_gates(
             patch=patch,
             groups=fixture.groups,
         )
+        preflight_diagnostics = ""
+        if (
+            fixture.subject_id.startswith("fact-shapes-")
+            and result.preflight is not None
+            and (result.preflight.cause or "").startswith("typecheck_")
+        ):
+            from code_extension.diagnose import TYPECHECK, _run
+
+            with tempfile.TemporaryDirectory() as directory:
+                target = Path(directory)
+                materialize(target, fixture.repository, patch)
+                preflight_diagnostics = _run(image_digest, target, TYPECHECK)
         return {
             "verdict": result.verdict,
             "cause": result.cause,
+            **(
+                {
+                    "preflight_cause": result.preflight.cause if result.preflight else None,
+                    "typecheck_output": preflight_diagnostics,
+                }
+                if fixture.subject_id.startswith("fact-shapes-")
+                else {}
+            ),
             "groups": {
                 group.name: {"status": group.status, "cause": group.cause}
                 for group in result.groups
@@ -566,6 +635,44 @@ async def run_scenario_gates(
                 item for item in fixture.sidecar.negative_expectations if item.patch_name == label
             )
             expected = {**declared.unrelated_results, declared.intended_group: "failed"}
+        if (
+            fixture.subject_id.startswith("fact-shapes-")
+            and fixture.arms[0].arm_id == "type_enforced"
+            and "drop-" in label
+            and "type_enforced.patch" in label
+        ):
+            from code_extension.fact_shapes.attempts import Fact, HolderSpec
+            from code_extension.fact_shapes.cells import FactId, RepositoryPath
+            from code_extension.fact_shapes.outcome import (
+                Missed,
+                Scored,
+                diagnostics,
+                preflight_status,
+            )
+
+            holders = tuple(
+                path
+                for path in fixture.repository
+                if path.endswith("/types.ts")
+                and f"{path.split('/')[0].replace('_', '-')}-" in fixture.subject_id
+            )
+            errors = diagnostics(str(results[0]["typecheck_output"]))
+            fact = Fact(
+                FactId(label.removeprefix("type_enforced.drop-").removesuffix(".patch")),
+                (),
+                "type_enforced",
+                HolderSpec(tuple(RepositoryPath(p) for p in holders), ()),
+            )
+            classified = preflight_status(str(results[0]["preflight_cause"]), errors, (fact,))
+            if (
+                not errors
+                or any(error.file.removeprefix("./") not in holders for error in errors)
+                or not isinstance(classified, Scored)
+                or not isinstance(classified.facts.get(fact.id), Missed)
+            ):
+                raise ValueError(f"control {label} did not reproduce a holder-only typecheck miss")
+            repetitions[label] = results
+            continue
         if statuses != expected or (label == "reference" and results[0]["verdict"] != "correct"):
             raise ValueError(f"control {label} did not match its declared check result")
         repetitions[label] = results
@@ -645,7 +752,11 @@ async def qualify(
 
 
 async def qualify_shape_scenario(
-    name: str, *, image: str, evidence_dir: Path, verify: bool,
+    name: str,
+    *,
+    image: str,
+    evidence_dir: Path,
+    verify: bool,
 ) -> FixtureManifestV3:
     """Replay a frozen manifest and add the same full-path gates per arm."""
     root = PILOT.parent / name
@@ -655,35 +766,46 @@ async def qualify_shape_scenario(
     manifest.require_qualified()
     image_digest = require_image(manifest, image)
     scenario = manifest.scenarios[0]
-    for arm in scenario.arms:
-        print(f"qualifying {name}/{arm.arm_id}", file=sys.stderr, flush=True)
-        fixture = load_scenario(name, arm_id=arm.arm_id)
-        if (
-            fixture.tree_digest != arm.tree_digest
-            or fixture.task != arm.task_prompt
-            or digest_bytes(fixture.arms[0].reference_patch.encode()) != arm.reference_patch
-            or not set(arm.negative_patches).issubset({
-                digest_bytes(p.encode()) for p in fixture.arms[0].negative_patches
-            })
-        ):
-            raise ValueError(f"{name}/{arm.arm_id}: frozen fixture differs")
-        for group, pin in zip(
-            fixture.groups, (*scenario.visible_tests, *scenario.hidden_tests), strict=True,
-        ):
-            if digest_bytes(canonical_json(group.model_dump(mode="json"))) != pin.digest:
-                raise ValueError(f"{name}/{arm.arm_id}: frozen test group differs")
-        await run_checks(fixture, make_runner(image_digest), image_digest, evidence_dir)
-        for check in CHECKS:
-            _, digest = read_evidence(evidence_dir, arm.arm_id, check)
-            if digest != getattr(arm.qualification, check).evidence:
-                raise ValueError(f"{name}/{arm.arm_id}: frozen qualification differs: {check}")
-        qualification_dir = evidence_dir.parent
-        if manifest.arm_set.factor == "code_shape":
-            qualification_dir = qualification_dir / "arms" / arm.arm_id
-        await run_scenario_gates(
-            fixture, manifest, image, qualification_dir, verify=verify,
-        )
-        print(f"qualified {name}/{arm.arm_id}", file=sys.stderr, flush=True)
+    semaphore = asyncio.Semaphore(2 if name.startswith("fact-shapes-") else 1)
+
+    async def qualify_arm(arm: ExtensionArmRealization) -> None:
+        async with semaphore:
+            print(f"qualifying {name}/{arm.arm_id}", file=sys.stderr, flush=True)
+            fixture = load_scenario(name, arm_id=arm.arm_id)
+            if (
+                fixture.tree_digest != arm.tree_digest
+                or fixture.task != arm.task_prompt
+                or digest_bytes(fixture.arms[0].reference_patch.encode()) != arm.reference_patch
+                or not set(arm.negative_patches).issubset(
+                    {digest_bytes(p.encode()) for p in fixture.arms[0].negative_patches}
+                )
+            ):
+                raise ValueError(f"{name}/{arm.arm_id}: frozen fixture differs")
+            for group, pin in zip(
+                fixture.groups,
+                (*scenario.visible_tests, *scenario.hidden_tests),
+                strict=True,
+            ):
+                if digest_bytes(canonical_json(group.model_dump(mode="json"))) != pin.digest:
+                    raise ValueError(f"{name}/{arm.arm_id}: frozen test group differs")
+            await run_checks(fixture, make_runner(image_digest), image_digest, evidence_dir)
+            for check in CHECKS:
+                _, digest = read_evidence(evidence_dir, arm.arm_id, check)
+                if digest != getattr(arm.qualification, check).evidence:
+                    raise ValueError(f"{name}/{arm.arm_id}: frozen qualification differs: {check}")
+            qualification_dir = evidence_dir.parent
+            if manifest.arm_set.factor == "code_shape":
+                qualification_dir = qualification_dir / "arms" / arm.arm_id
+            await run_scenario_gates(
+                fixture,
+                manifest,
+                image,
+                qualification_dir,
+                verify=verify,
+            )
+            print(f"qualified {name}/{arm.arm_id}", file=sys.stderr, flush=True)
+
+    await asyncio.gather(*(qualify_arm(arm) for arm in scenario.arms))
     return manifest
 
 
@@ -706,7 +828,8 @@ def main() -> None:
     declared_path = root / "qualification" / "manifest.json"
     declared = (
         FixtureManifestV3.model_validate_json(declared_path.read_bytes())
-        if declared_path.is_file() else None
+        if declared_path.is_file()
+        else None
     )
     if declared is None and len(getattr(ADDED_SCENARIOS.get(args.scenario), "arm_ids", ())) > 1:
         declared = asyncio.run(build_shape_manifest(args.scenario, image=args.image))
@@ -718,10 +841,14 @@ def main() -> None:
             raise ValueError("shape qualification is offline and takes no routing configuration")
         if args.evidence_dir is None and (root / "qualification" / "checks").is_dir():
             evidence_dir = root / "qualification" / "checks"
-        manifest = asyncio.run(qualify_shape_scenario(
-            args.scenario, image=args.image, evidence_dir=evidence_dir,
-            verify=args.verify_committed,
-        ))
+        manifest = asyncio.run(
+            qualify_shape_scenario(
+                args.scenario,
+                image=args.image,
+                evidence_dir=evidence_dir,
+                verify=args.verify_committed,
+            )
+        )
         if args.verify_committed:
             if FixtureManifestV3.model_validate_json(manifest_path.read_bytes()) != manifest:
                 raise ValueError("requalified shape manifest differs from requested manifest")

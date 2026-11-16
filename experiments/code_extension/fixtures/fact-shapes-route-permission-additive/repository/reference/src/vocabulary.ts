@@ -28,7 +28,7 @@ function record<T>(feature: string, make: (value: string, index: number) => T): 
   });
 }
 function constraint(feature: string, sql: string): void {
-  const clause = /CHECK\s*\(\s*value\s+IN\s*\(([^)]*)\)/i.exec(sql);
+  const clause = /CHECK\s*\(\s*value\s+IN\s*\(([^)]*)\)/i.exec(sql.split(";")[0]);
   if (!clause) return;
   define(feature, [...clause[1].matchAll(/'((?:[^']|'')*)'/g)].map(match => match[1].replaceAll("''", "'")));
 }

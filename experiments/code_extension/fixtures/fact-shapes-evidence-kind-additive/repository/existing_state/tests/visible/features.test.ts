@@ -116,7 +116,7 @@ describe("type-enforced owner controls", () => {
   for (const [feature, typeName] of [["stage", "Stage"], ["evidence_kind", "EvidenceKind"], ["route_permission", "RoutePermission"]]) {
     test(`${feature} type is closed exactly when types.ts owns the vocabulary`, async () => {
       const directory = `/tmp/type-control-${crypto.randomUUID()}`;
-      const original = await Bun.file(`${import.meta.dir}/../../${feature}/types.ts`).text();
+      const original = (await Bun.file(`${import.meta.dir}/../../${feature}/types.ts`).text()).split('import type { RequiredFeature }')[0];
       const closed = original.includes("vocabularyStore.define");
       try {
         await Bun.write(`${directory}/${feature}/types.ts`, original);

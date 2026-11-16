@@ -1,3 +1,4 @@
+export type RequiredFeature = never;
 import { isValue, type Stage } from "./types.ts";
 import { acceptValue, enforceLimit } from "./policy.ts";
 import { validateKey } from "./anchor.ts";
@@ -8,3 +9,6 @@ export function edit(key: string, value: Stage, count = 1): { key: string; value
 }
 export function peerGuard(value: string): boolean { return isValue(value); }
 export const operations = vocabularyStore.record("stage", value => (key: string) => `${key}:${value}`);
+export function requestFeature(key: string, value: RequiredFeature, count = 1): { key: string; value: Stage | RequiredFeature } {
+  return edit(key, value as never, count);
+}

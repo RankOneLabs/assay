@@ -1,4 +1,6 @@
 import { vocabularyStore } from "../src/vocabulary.ts";
 import { isValue } from "./types.ts";
-vocabularyStore.define("evidence_kind", ["document", "image", "testimony"]);
+vocabularyStore.values("evidence_kind");
 export function peerGuard(value: string): boolean { return isValue(value); }
+const featureValues: readonly string[] = ["document"];
+export function supportsFeature(value: string): boolean { return featureValues.includes(value); }

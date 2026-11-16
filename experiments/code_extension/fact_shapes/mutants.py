@@ -1,13 +1,14 @@
-"""Pure two-replay mutant verdicts, using the study scoring parser.
+"""Per-fact qualification controls with pure verdicts and fresh Docker replays.
 
-Docker execution and evidence publication must supply retained outputs from two
-fresh sandboxes; this module never substitutes invented outputs for a replay.
+Retained evidence contains actual group statuses, parsed fact titles and replayed
+typecheck diagnostics. Missing output never counts as a proven omission.
 """
 
 from dataclasses import dataclass
+from typing import cast
 
 from code_extension.fact_shapes.attempts import Fact, Group
-from code_extension.fact_shapes.cells import FactId
+from code_extension.fact_shapes.cells import Cell, FactId, Shape
 from code_extension.fact_shapes.outcome import (
     _TITLE,
     Held,
@@ -17,6 +18,7 @@ from code_extension.fact_shapes.outcome import (
     fact_titles,
     preflight_status,
 )
+from code_extension.fixtures import ScenarioFixture
 
 
 @dataclass(frozen=True)
@@ -100,3 +102,255 @@ def verdict(
     if signatures[0] != signatures[1]:
         return refuse("fresh sandbox runs disagree")
     return Result(arm, patch, dropped, True, "both replays satisfy the expected fact outcomes")
+
+
+def alternative_control(
+    cell: Cell,
+    before: dict[str, str],
+    complete: dict[str, str],
+) -> tuple[str, str]:
+    """Construct a follow-up migration or a deliberately stale state copy."""
+    import difflib
+
+    after = dict(complete)
+    if cell.shape == "outside_code":
+        path: str = cell.holders[0]
+        after[path] = before[path]
+        table = f"{cell.feature}_capabilities"
+        after[f"{cell.feature}/002_allow.sql"] = (
+            f"ALTER TABLE {table} RENAME TO previous_values;\n"
+            + f"CREATE TABLE {table}"
+            + complete[path].split(f"CREATE TABLE {table}", 1)[1]
+            + f"INSERT INTO {table} SELECT * FROM previous_values;\n"
+            + "DROP TABLE previous_values;\n"
+        )
+        label = "follow-up-migration.patch"
+    else:
+        path = cell.holders[0]
+        source = after[path]
+        if cell.feature == "stage":
+            source = source.replace(
+                "private readonly buildRunning",
+                "private readonly featureCopy = new Set<string>();\n"
+                "  private readonly buildRunning",
+            )
+            source = source.replace(
+                "this.buildRunning.add(sessionId);",
+                "this.buildRunning.add(sessionId); this.featureCopy.add(sessionId);",
+            )
+            source = source.replace("this.isBuildRunning(key)", "this.featureCopy.has(key)")
+        else:
+            source = source.replace(
+                "private readonly",
+                "private readonly featureCopy = new Map<string, string>();\n  private readonly",
+                1,
+            )
+            source = source.replace(
+                ".set(key, value);", ".set(key, value); this.featureCopy.set(key, value);"
+            )
+            source = source.replace(
+                "this.get(key) === value", "this.featureCopy.get(key) === value"
+            )
+        after[path] = source
+        label = "duplicate-state.patch"
+    result = ""
+    for file_path in sorted(before.keys() | after.keys()):
+        path = file_path
+        if before.get(path) != after.get(path):
+            result += f"diff --git a/{path} b/{path}\n"
+            if path not in before:
+                result += "new file mode 100644\n"
+            result += "".join(
+                difflib.unified_diff(
+                    before.get(path, "").splitlines(True),
+                    after.get(path, "").splitlines(True),
+                    fromfile=f"a/{path}" if path in before else "/dev/null",
+                    tofile=f"b/{path}",
+                )
+            )
+    return label, result
+
+
+async def run_control(fixture: "ScenarioFixture", image: str, patch: str) -> Run:
+    """Run a control in a fresh Docker sandbox, replaying typecheck if necessary."""
+    import tempfile
+    from pathlib import Path
+
+    from code_extension.diagnose import TYPECHECK, _run
+    from code_extension.fixture import materialize
+    from code_extension.qualify import _patched_digest, make_runner
+
+    result = await make_runner(image).run(
+        baseline=fixture.repository,
+        baseline_tree_digest=fixture.tree_digest,
+        expected_tree_digest=_patched_digest(fixture, patch),
+        patch=patch,
+        groups=fixture.groups,
+    )
+    cause = None
+    output = ""
+    if result.preflight is None or result.preflight.status != "passed":
+        cause = (
+            result.preflight.cause if result.preflight else (result.cause or "missing_preflight")
+        )
+        cause = cause or "unavailable_preflight"
+        if cause.startswith("typecheck_"):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                materialize(root, fixture.repository, patch)
+                output = _run(image, root, TYPECHECK)
+    return Run(
+        {
+            group.name: Group(status=group.status, stdout=group.stdout, stderr=group.stderr)
+            for group in result.groups
+        },
+        cause,
+        output,
+    )
+
+
+async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
+    """Retain both actual replays for every reference, omission and alternative control."""
+    import json
+    from dataclasses import asdict
+    from pathlib import Path
+
+    from assay.canonical import canonical_json, digest_bytes
+    from code_extension.fact_shapes.alignment import fact_titles as source_titles
+    from code_extension.fact_shapes.attempts import HolderSpec
+    from code_extension.fact_shapes.cells import CELLS, RepositoryPath
+    from code_extension.fact_shapes.generate import scenario_name
+    from code_extension.fixture import PILOT, materialize, read_tree
+    from code_extension.fixtures import load_scenario
+    from code_extension.qualify import observed_image_digest
+
+    cells = tuple(cell for cell in CELLS if scenario_name(cell) == name)
+    if not cells:
+        raise ValueError(f"unknown fact-shapes scenario: {name}")
+    image = observed_image_digest(image)
+    root = PILOT.parent / name
+    import asyncio
+
+    semaphore = asyncio.Semaphore(2)
+
+    async def gate_cell(cell: Cell) -> None:
+        async with semaphore:
+            fixture = load_scenario(name, arm_id=cell.shape)
+            facts = tuple(
+                Fact(
+                    fact_id,
+                    source_titles(
+                        (
+                            root
+                            / "hidden/new_behavior/tests/hidden/new-behavior"
+                            / f"{fact_id}.test.ts"
+                        ).read_text()
+                    ),
+                    cast(Shape, shape),
+                    HolderSpec(tuple(RepositoryPath(p) for p in paths), ()),
+                )
+                for fact_id, shape, paths in (
+                    (cell.fact_id, cell.shape, cell.holders),
+                    (cell.anchor_fact_id, "reference", (f"{cell.feature}/anchor.ts",)),
+                )
+            )
+            # Require every shared fact title, even facts held by other arms.
+            for other in (c for c in CELLS if scenario_name(c) == name and c != cell):
+                facts += (
+                    Fact(
+                        other.fact_id,
+                        source_titles(
+                            (
+                                root
+                                / "hidden/new_behavior/tests/hidden/new-behavior"
+                                / f"{other.fact_id}.test.ts"
+                            ).read_text()
+                        ),
+                        other.shape,
+                        HolderSpec(other.holders, ()),
+                    ),
+                )
+            controls: list[tuple[str, str, FactId | None]] = [
+                (f"{cell.shape}.reference.patch", fixture.arms[0].reference_patch, None)
+            ]
+            controls.extend(
+                (
+                    f"{cell.shape}.drop-{fact}.patch",
+                    (root / "patches" / f"{cell.shape}.drop-{fact}.patch").read_text(),
+                    fact,
+                )
+                for fact in (cell.fact_id, cell.anchor_fact_id)
+            )
+            if cell.shape in {"outside_code", "existing_state"}:
+                import tempfile
+
+                with tempfile.TemporaryDirectory() as directory:
+                    target = Path(directory)
+                    materialize(target, fixture.repository, fixture.arms[0].reference_patch)
+                    complete = read_tree(target)
+                label, alternative = alternative_control(cell, fixture.repository, complete)
+                controls.append(
+                    (label, alternative, cell.fact_id if cell.shape == "existing_state" else None)
+                )
+            for label, patch, dropped in controls:
+                runs = (
+                    await run_control(fixture, image, patch),
+                    await run_control(fixture, image, patch),
+                )
+                result = verdict(cell.shape, label, facts, runs, dropped)
+                path = root / "qualification/mutants" / cell.shape / f"{label}.json"
+                value = {
+                    "image_digest": image,
+                    "patch_digest": digest_bytes(patch.encode()),
+                    "result": asdict(result),
+                    "runs": [
+                        {
+                            "groups": {
+                                key: {"status": value.status} for key, value in run.groups.items()
+                            },
+                            "preflight_cause": run.preflight_cause,
+                            "typecheck_output": run.typecheck_output,
+                            "passing_titles": [
+                                title
+                                for group in run.groups.values()
+                                for status, title in _TITLE.findall(
+                                    group.stdout + "\n" + group.stderr
+                                )
+                                if status == "pass" and title.startswith("fact:")
+                            ],
+                            "failing_titles": [
+                                title
+                                for group in run.groups.values()
+                                for status, title in _TITLE.findall(
+                                    group.stdout + "\n" + group.stderr
+                                )
+                                if status == "fail" and title.startswith("fact:")
+                            ],
+                        }
+                        for run in runs
+                    ],
+                }
+                data = canonical_json(value) + b"\n"
+                if verify:
+                    if json.loads(path.read_bytes()) != json.loads(data):
+                        raise ValueError(f"{cell.shape}/{label}: retained mutant evidence differs")
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
+                if not result.passed:
+                    raise ValueError(f"{result.arm}/{result.patch}/{result.fact}: {result.reason}")
+                print(f"passed {name}/{cell.shape}/{label}", flush=True)
+
+    await asyncio.gather(*(gate_cell(cell) for cell in cells))
+
+
+if __name__ == "__main__":
+    import argparse
+    import asyncio
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--scenario", required=True)
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--verify-committed", action="store_true")
+    args = parser.parse_args()
+    asyncio.run(gate_scenario(args.scenario, args.image, verify=args.verify_committed))

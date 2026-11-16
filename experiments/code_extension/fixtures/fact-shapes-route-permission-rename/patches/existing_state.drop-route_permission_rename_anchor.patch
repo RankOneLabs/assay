@@ -1,0 +1,30 @@
+diff --git a/route_permission/edit.ts b/route_permission/edit.ts
+--- a/route_permission/edit.ts
++++ b/route_permission/edit.ts
+@@ -1,6 +1,6 @@
+-export type RequiredFeature = never;
++export type RequiredFeature = "case_inspect";
+ import { isValue, type RoutePermission } from "./types.ts";
+-import { acceptValue, enforceLimit } from "./policy.ts";
++import { acceptValue, enforceLimit, supportsFeature } from "./policy.ts";
+ import { validateKey } from "./anchor.ts";
+ import { vocabularyStore } from "../src/vocabulary.ts";
+ export function edit(key: string, value: RoutePermission, count = 1): { key: string; value: RoutePermission } {
+@@ -10,5 +10,7 @@
+ export function peerGuard(value: string): boolean { return isValue(value); }
+ export const operations = vocabularyStore.record("route_permission", value => (key: string) => `${key}:${value}`);
+ export function requestFeature(key: string, value: RequiredFeature, count = 1): { key: string; value: RoutePermission | RequiredFeature } {
+-  return edit(key, value as never, count);
++  enforceLimit(count, 100);
++  if (!supportsFeature(value)) throw new Error("unsupported feature");
++  return { key: validateKey(key), value };
+ }
+diff --git a/route_permission/state.ts b/route_permission/state.ts
+--- a/route_permission/state.ts
++++ b/route_permission/state.ts
+@@ -1,4 +1,4 @@
+-const featureValues: readonly string[] = ["case_read"];
++const featureValues: readonly string[] = ["case_inspect"];
+ import { vocabularyStore } from "../src/vocabulary.ts";
+ vocabularyStore.values("route_permission");
+ import type { RoutePermission } from "./types.ts";

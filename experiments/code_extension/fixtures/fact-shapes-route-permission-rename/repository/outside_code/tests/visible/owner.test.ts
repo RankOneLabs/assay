@@ -19,7 +19,7 @@ for (const feature of ["stage", "evidence_kind", "route_permission"]) {
         const owners: string[] = [];
         for (const candidate of candidates) {
           const source = await Bun.file(`${target}/${feature}/${candidate}`).text();
-          if (source.includes("vocabularyStore.define(") || /value IN \(/.test(source)) owners.push(candidate);
+          if (source.includes("vocabularyStore.define(") || /value IN \(/.test(source.split(";")[0])) owners.push(candidate);
         }
         expect(owners.length).toBe(1);
         const path = `${target}/${feature}/${owners[0]}`;

@@ -10,6 +10,8 @@ from code_extension.fact_shapes.cells import CELLS
 
 # Exact, case-sensitive matches only; these words describe the requested feature.
 ALLOWLIST: dict[str, str] = {
+    "triaged": "Ordinary user-facing workflow stage requested by the issue.",
+    "attestation": "Ordinary user-facing evidence category requested by the issue.",
     "stage": "Ordinary workflow noun required to describe the feature.",
     "operations": "Ordinary plural noun describing public service behavior.",
     "length": "Ordinary measurement word describing record label limits.",
@@ -69,14 +71,25 @@ def forbidden_tokens(holders: Path, base: Path) -> dict[str, tuple[str, ...]]:
 
 
 def lint(text: str, forbidden: Mapping[str, tuple[str, ...]]) -> tuple[Finding, ...]:
-    """Return each matched token and source once; never mutate inputs."""
-    return tuple(
-        Finding(token, source)
-        for token, sources in sorted(forbidden.items())
-        if token not in ALLOWLIST
-        and re.search(r"(?<![\w$])" + re.escape(token) + r"(?![\w$])", text)
-        for source in sources
-    )
+    """Report each named token once, preferring a path over overlapping basenames."""
+    candidates: list[tuple[int, int, str]] = []
+    for token in forbidden:
+        if not token or token in ALLOWLIST:
+            continue
+        pattern = r"(?<![\w$])" + re.escape(token) + r"(?![\w$])"
+        candidates.extend(
+            (match.start(), match.end(), token) for match in re.finditer(pattern, text)
+        )
+    occupied: list[tuple[int, int]] = []
+    matched: set[str] = set()
+    for start, end, token in sorted(
+        candidates, key=lambda item: (item[0] - item[1], item[0], item[2])
+    ):
+        if any(start < stop and end > begin for begin, stop in occupied):
+            continue
+        occupied.append((start, end))
+        matched.add(token)
+    return tuple(Finding(token, "; ".join(forbidden[token])) for token in sorted(matched))
 
 
 def fact_titles(source: str) -> tuple[str, ...]:

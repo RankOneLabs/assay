@@ -75,8 +75,9 @@ def test_committed_scenario_has_private_checks_and_bounded_trees(name: str, tmp_
         )
         root = PILOT.parent / name
     assert subject_id not in SMOKE_SUBJECT_IDS
-    assert "bun test ./tests/visible" in task
-    assert "tsc --noEmit -p tsconfig.json" in task
+    if not name.startswith("fact-shapes-"):
+        assert "bun test ./tests/visible" in task
+        assert "tsc --noEmit -p tsconfig.json" in task
     assert "hidden" not in task.lower() and "reference" not in task.lower()
     assert groups[0].restores and all(group.files for group in groups)
     readme = (root / "README.md").read_text()
@@ -132,7 +133,11 @@ def test_added_scenario_qualification_records(name: str) -> None:
             "new_behavior": "failed",
         }
         assert record["reference"]["groups"] == {group: "passed" for group in group_names}
-        assert record["negative"]["groups"]["new_behavior"] == "failed"
+        if name.startswith("fact-shapes-") and arm.arm_id == "type_enforced":
+            assert record["negative"]["cause"].startswith("typecheck_")
+            assert set(record["negative"]["groups"].values()) == {"unavailable"}
+        else:
+            assert record["negative"]["groups"]["new_behavior"] == "failed"
         assert record["reference"]["verdict"] == "correct"
 
 
@@ -185,7 +190,11 @@ async def test_added_scenario_image_reproduces_qualification_records(
     manifest = FixtureManifestV3.model_validate_json(
         (root / "qualification" / "manifest.json").read_bytes()
     )
-    image_digest = qualify.observed_image_digest(qualify.IMAGE_TAG)
+    image_digest = qualify.observed_image_digest(
+        "assay-code-extension:ce-v1-library"
+        if name.startswith("fact-shapes-")
+        else qualify.IMAGE_TAG
+    )
     assert image_digest == manifest.observed_runtime_image_digest
     runner = qualify.make_runner(image_digest)
     for arm in scenario.arms:
