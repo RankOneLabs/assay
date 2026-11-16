@@ -29,6 +29,9 @@ SERVED_CONTEXT_BY_MODEL = {
 }
 
 
+type BoundEnvelope = Literal["library-v1", "fact-shapes-v1"]
+
+
 class UnauthorizedExtensionRoute(ValueError):
     """The named model has no authorized, qualified extension envelope."""
 
@@ -87,10 +90,21 @@ class ExtensionAgentSettings(BaseModel):
 
     @classmethod
     def for_model(
-        cls, model: str, *, per_cell_tool_call_ceiling: int | None = None,
+        cls, model: str, *, envelope: BoundEnvelope = "library-v1",
+        per_cell_tool_call_ceiling: int | None = None,
     ) -> Self:
         if per_cell_tool_call_ceiling is not None:
             raise UnsupportedExtensionBound(TOOL_CALL_CEILING_REASON)
+        if envelope not in ("library-v1", "fact-shapes-v1"):
+            raise ValueError(f"unknown extension bound envelope: {envelope}")
+        if envelope == "fact-shapes-v1":
+            if model not in {key[0] for key in PAID_TURN_ROUTES}:
+                raise UnauthorizedExtensionRoute(f"fact-shapes-v1 requires a hosted model: {model}")
+            return cls(
+                served_context_tokens=None, model_context_limit_tokens=None,
+                max_turns=80, timeout_s=1800.0,
+                max_conversation_bytes=3_670_016, max_request_bytes=3_932_160,
+            )
         if model == "qwen-coder-32b":
             return cls(
                 served_context_tokens=SERVED_CONTEXT_BY_MODEL[model],

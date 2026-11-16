@@ -50,7 +50,7 @@ from code_extension.dispatch import cell_idempotency_key
 from code_extension.fixture import ADDED_SCENARIOS, AGENT_TEST_PREFIX, SUBJECT_ID
 from code_extension.fixtures import ExtensionScenarioSidecar, sidecar_for_subject
 from code_extension.prompts import render_arm_prompts
-from code_extension.settings import ExtensionAgentSettings
+from code_extension.settings import BoundEnvelope, ExtensionAgentSettings
 from code_extension.settings import TOOL_CALL_CEILING_REASON
 from code_extension.budget import AttemptJournal, JournaledAgentClient
 from verification_pilot.budget import SpendGate
@@ -167,6 +167,7 @@ class ExtensionBridgeClient:
         endpoint="http://willie:8900", model="qwen-coder-32b", provider="smithers-local"
     )
     settings: ExtensionAgentSettings | None = None
+    envelope: BoundEnvelope = "library-v1"
     codeintel_delivery: CodeIntelDeliveryConfig | None = None
     repository_snapshot: Mapping[str, str] | None = None
     hidden_check_paths: frozenset[str] = frozenset()
@@ -257,7 +258,7 @@ class ExtensionBridgeClient:
         )
 
     def _settings(self) -> ExtensionAgentSettings:
-        expected = ExtensionAgentSettings.for_model(self.route.model)
+        expected = ExtensionAgentSettings.for_model(self.route.model, envelope=self.envelope)
         if self.settings is not None and self.settings != expected:
             raise ValueError("extension ceilings differ from the authorized served context")
         return self.settings or expected

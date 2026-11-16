@@ -20,7 +20,11 @@ from code_extension.protocol import (
     SYSTEM_PROMPT_SHA256,
     surface_digests,
 )
-from code_extension.settings import ExtensionAgentSettings, UnauthorizedExtensionRoute
+from code_extension.settings import (
+    BoundEnvelope,
+    ExtensionAgentSettings,
+    UnauthorizedExtensionRoute,
+)
 
 
 class RunConfigurationError(ValueError):
@@ -73,6 +77,7 @@ class RunConfiguration(BaseModel):
     system_prompt_digest: str
     tool_schemas_digest: str
     image_digest: str
+    envelope: BoundEnvelope = "library-v1"
     bounds: ExtensionAgentSettings
     repeats: int = Field(ge=1, strict=True)
     randomization_seed: int = Field(strict=True)
@@ -131,7 +136,9 @@ class RunConfiguration(BaseModel):
         route = (self.route.endpoint, self.route.model, self.route.provider)
         if route not in AUTHORIZED_MODEL_ROUTES:
             raise UnauthorizedExtensionRoute(f"unauthorized extension model route: {route}")
-        if self.bounds != ExtensionAgentSettings.for_model(self.route.model):
+        if self.bounds != ExtensionAgentSettings.for_model(
+            self.route.model, envelope=self.envelope,
+        ):
             raise RunConfigurationError("bounds differ from qualified model envelope")
         if self.concurrency != 1:
             raise RunConfigurationError("extension concurrency must be one")
@@ -174,7 +181,10 @@ class RunConfiguration(BaseModel):
         return cls.model_validate_json(path.read_bytes())
 
     def canonical_bytes(self) -> bytes:
-        return canonical_json(self.model_dump(mode="json"))
+        data = self.model_dump(mode="json")
+        if self.envelope == "library-v1":
+            data.pop("envelope")
+        return canonical_json(data)
 
     def digest(self) -> str:
         return digest_bytes(self.canonical_bytes())
