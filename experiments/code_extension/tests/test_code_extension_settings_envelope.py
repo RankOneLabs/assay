@@ -117,3 +117,28 @@ def test_bridge_selects_study_envelope(tmp_path: Path) -> None:
     bridge.envelope = "library-v1"
     with pytest.raises(ValueError, match="extension ceilings differ"):
         bridge._settings()
+
+
+@pytest.mark.usefixtures("qualified_runner")
+def test_run_forwards_envelope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from code_extension.run import _build
+
+    from assay.store import ObjectStore
+
+    root = Path(__file__).resolve().parents[3]
+    config = RunConfiguration.load(
+        root / 'experiments/code_extension/studies/scenario-library/study-sol.json'
+    )
+    data = config.model_dump(mode="json")
+    data.update(envelope="fact-shapes-v1", bounds=ExtensionAgentSettings.for_model(
+        config.route.model, envelope="fact-shapes-v1",
+    ).model_dump(mode="json"))
+    config = RunConfiguration.model_validate(data)
+    monkeypatch.setattr(
+        "code_extension.bridge.observed_image_digest", lambda _: config.image_digest,
+    )
+    prepared = _build(config, ObjectStore(tmp_path), live=False)
+    for worker in prepared.workers.values():
+        for bridge in worker.bridges.values():
+            assert bridge.envelope == "fact-shapes-v1"
+            assert bridge._settings() == config.bounds

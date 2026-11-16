@@ -278,6 +278,7 @@ def _build(
                 arm_set=fixture.manifest.arm_set,
                 arm_id=arm_id,
                 settings=config.bounds,
+                envelope=config.envelope,
                 completion_for=completion_for if live and not route.paid_route_reachable else None,
                 api_key=api_key,
                 spend_gate=gate,
