@@ -112,7 +112,8 @@ def test_real_switch_coverage_and_paths() -> None:
         assert anchor_edits(cell) == SWITCHES[cell.fact_id][-1:]
         for edit in SWITCHES[cell.fact_id]:
             assert edit.path in base, (cell.fact_id, edit.path)
-            assert edit.path in {*cell.holders, f'{cell.feature}/anchor.ts'}
+            assert edit.path in {*cell.holders, f'{cell.feature}/types.ts',
+                                 f'{cell.feature}/anchor.ts'}
     # Every declared count is exercised; there is no fallback on base drift.
     generated = generate_trees(base)
     assert generated == {cell.fact_id: read_tree(arm_path(cell)) for cell in CELLS}
@@ -229,3 +230,20 @@ def test_holder_spec_validation() -> None:
             'anchor': {'fact_id': 'anchor', 'holder_paths': ['b.ts'],
                        'fact_lines': {'b.ts': ['existing line']}},
         }])
+
+
+@pytest.mark.parametrize('cell', CELLS, ids=lambda cell: cell.fact_id)
+def test_only_selected_holder_explicitly_owns_fact(
+    cell: Cell, committed: dict[FactId, dict[str, str]],
+) -> None:
+    from code_extension.fact_shapes.audit import explicit_fact_count
+
+    inventory = load_inventory(DIRECTORY / 'audit_inventory.json')
+    for concept in inventory.concepts:
+        owners = {
+            path: count for path, source in committed[cell.fact_id].items()
+            if path.endswith(('.ts', '.sql'))
+            and (count := explicit_fact_count(source, concept.members))
+        }
+        expected = cell.holders[0] if concept.name == cell.feature else concept.declaring_file
+        assert owners == {expected: 1}, (cell.fact_id, concept.name, owners)

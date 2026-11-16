@@ -1,3 +1,5 @@
+import { vocabularyStore } from "../src/vocabulary.ts";
+vocabularyStore.values("evidence_kind");
 import type { EvidenceKind } from "./types.ts";
 export class StoredEvidenceKind {
   private readonly evidence_kindSelections = new Map<string, EvidenceKind>();

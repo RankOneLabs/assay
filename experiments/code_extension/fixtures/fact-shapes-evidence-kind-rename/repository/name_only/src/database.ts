@@ -1,3 +1,4 @@
+import "./bootstrap.ts";
 import { Database } from "bun:sqlite";
 import { values as stages } from "../stage/types.ts";
 import { values as kinds } from "../evidence_kind/types.ts";

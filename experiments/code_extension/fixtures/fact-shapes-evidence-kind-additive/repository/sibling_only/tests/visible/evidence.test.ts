@@ -437,7 +437,9 @@ describe("evidence HTTP representation", () => {
   test("each kind has a distinct media policy and a content digest ETag", async () => {
     using f = fixture();
     f.create();
-    const expected = { document: "text/plain", image: "image/png", testimony: "text/markdown" };
+    const expected = Object.fromEntries(kinds.map((kind, index) =>
+      [kind, ["text/plain", "image/png", "text/markdown"][index]],
+    ));
     for (const kind of kinds) {
       const item = f.attach(kind, "job", { kind });
       const content = await f.request("GET", `/jobs/job/evidence/${kind}/content`, undefined, reader);

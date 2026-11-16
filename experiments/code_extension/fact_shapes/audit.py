@@ -1,10 +1,11 @@
 """Inventory-driven single-source checks over a materialized TypeScript tree.
 
 This checker recognizes literal unions, arrays, enum constructors, SQL CHECK
-lists and switch-block case labels. It also checks declared state fields
-and SQL columns. Imports and readers are permitted: ownership concerns declarations,
-not references. SQL and switch holders must be explicitly named in the inventory;
-their exemptions apply only to their respective value-list forms.
+lists, switch-block case labels and object/record keys. Concepts with candidate
+holders require exactly one explicit declaration across the tree: a candidate
+path is not an exemption for a second copy. Imports and derived views are readers,
+not declarations. Legacy inventories retain their form-specific exemptions.
+Inventoried state fields and SQL tables must still have one canonical source.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ class Concept:
     members: frozenset[str]
     outside_holders: tuple[str, ...]
     switch_holders: tuple[str, ...] = ()
+    candidate_holders: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,7 @@ def load_inventory(path: Path) -> Inventory:
             members=frozenset(_strings(item["members"])),
             outside_holders=_strings(item.get("outside_holders", [])),
             switch_holders=_strings(item.get("switch_holders", [])),
+            candidate_holders=_strings(item.get("candidate_holders", [])),
         )
         for item in _objects(data["concepts"])
     )
@@ -159,6 +162,27 @@ def _value_lists(source: str) -> list[frozenset[str]]:
     return [frozenset(re.findall(_LITERAL, match.group())) for match in _LIST.finditer(source)]
 
 
+def explicit_fact_count(source: str, members: frozenset[str]) -> int:
+    """Count independent full enumerations, including object/record keys."""
+    source = _without_comments(source)
+    blocks: list[set[str]] = []
+    objects = 0
+    tokens = _SWITCH_TOKEN.findall(source)
+    for index, token in enumerate(tokens):
+        if token == "{":
+            blocks.append(set())
+        elif token == "}" and blocks:
+            if blocks.pop() == members:
+                objects += 1
+        elif blocks and index + 1 < len(tokens) and tokens[index + 1] == ":":
+            literal = re.fullmatch(_LITERAL, token)
+            if literal and (index == 0 or tokens[index - 1] != "case"):
+                blocks[-1].add(literal.group(1))
+            elif re.fullmatch(r"[A-Za-z_$][\w$]*", token):
+                blocks[-1].add(token)
+    return _value_lists(source).count(members) + _switch_lists(source).count(members) + objects
+
+
 def _state_declarations(source: str, symbol: str, kind: str = "field") -> int:
     if kind == "table":
         return len(
@@ -189,6 +213,31 @@ def audit(root: Path, inventory: Inventory) -> tuple[Finding, ...]:
     }
     findings: list[Finding] = []
     for concept in inventory.concepts:
+        if concept.candidate_holders:
+            counts = {path: explicit_fact_count(source, concept.members)
+                      for path, source in sources.items()}
+            owners = [path for path, count in counts.items() if count]
+            if not owners:
+                findings.append(Finding(
+                    concept.name, concept.declaring_file, "missing declaration"
+                ))
+            for path in owners:
+                if (path not in concept.candidate_holders or counts[path] != 1
+                        or len(owners) != 1):
+                    findings.append(Finding(
+                        concept.name, path, "duplicate concept value declaration"
+                    ))
+            if owners == [concept.declaring_file]:
+                declaration = re.search(
+                    rf"\b(?:const|let|type)\s+{re.escape(concept.symbol)}\s*"
+                    r"(?::\s*[^=;]+)?=\s*([^;]+)", sources[concept.declaring_file]
+                )
+                if declaration is None or not explicit_fact_count(
+                    declaration.group(1), concept.members
+                ):
+                    findings.append(Finding(concept.name, concept.declaring_file,
+                                            "missing declaration"))
+            continue
         declaring = sources.get(concept.declaring_file, "")
         declaration = re.search(
             rf"\b(?:const|let|type)\s+{re.escape(concept.symbol)}\s*"

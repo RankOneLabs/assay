@@ -1,3 +1,5 @@
+import { vocabularyStore } from "../src/vocabulary.ts";
+vocabularyStore.values("stage");
 /**
  * Session lifecycle owns the only running-build store.
  * An active job stage or an unfinished attempt is historical workflow data;

@@ -1,6 +1,8 @@
+import { vocabularyStore } from "../src/vocabulary.ts";
 import { isValue, type RoutePermission } from "./types.ts";
+vocabularyStore.define("route_permission", ["case_read", "case_write", "case_admin"]);
 export function acceptValue(value: string): RoutePermission {
-  if (!isValue(value) || !["case_read", "case_write", "case_admin"].includes(value)) throw new Error("unsupported route_permission");
+  if (!isValue(value)) throw new Error("unsupported route_permission");
   return value;
 }
 export function enforceLimit(count: number, limit: number): void {

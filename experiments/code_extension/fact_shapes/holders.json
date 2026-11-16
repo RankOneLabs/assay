@@ -9,9 +9,7 @@
       ],
       "fact_lines": {
         "stage/types.ts": [
-          "  \"queued\",",
-          "  \"active\",",
-          "  \"complete\""
+          "export const values = vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"] as const);"
         ]
       }
     },
@@ -37,7 +35,7 @@
       ],
       "fact_lines": {
         "stage/policy.ts": [
-          "  if (!isValue(value) || ![\"queued\", \"active\", \"complete\"].includes(value)) throw new Error(\"unsupported stage\");"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -63,9 +61,7 @@
       ],
       "fact_lines": {
         "stage/names.ts": [
-          "  \"queued\": \"/jobs/queued\",",
-          "  \"active\": \"/jobs/active\",",
-          "  \"complete\": \"/jobs/complete\","
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -91,9 +87,7 @@
       ],
       "fact_lines": {
         "stage/sibling.ts": [
-          "    case \"queued\": return true;",
-          "    case \"active\": return true;",
-          "    case \"complete\": return true;"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -119,9 +113,7 @@
       ],
       "fact_lines": {
         "stage/001_constraint.sql": [
-          "    'queued',",
-          "    'active',",
-          "    'complete'"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued', 'active', 'complete'))"
         ]
       }
     },
@@ -147,11 +139,7 @@
       ],
       "fact_lines": {
         "stage/state.ts": [
-          "  private readonly buildRunning: Set<string> = new Set<string>();",
-          "    if (this.buildRunning.has(sessionId)) throw new Error(\"build already running\");",
-          "    this.buildRunning.add(sessionId);",
-          "  isBuildRunning(sessionId: string): boolean { return this.buildRunning.has(sessionId); }",
-          "  endSession(sessionId: string): void { this.buildRunning.delete(sessionId); }"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -177,9 +165,7 @@
       ],
       "fact_lines": {
         "stage/types.ts": [
-          "  \"queued\",",
-          "  \"active\",",
-          "  \"complete\""
+          "export const values = vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"] as const);"
         ]
       }
     },
@@ -205,7 +191,7 @@
       ],
       "fact_lines": {
         "stage/policy.ts": [
-          "  if (!isValue(value) || ![\"queued\", \"active\", \"complete\"].includes(value)) throw new Error(\"unsupported stage\");"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -231,9 +217,7 @@
       ],
       "fact_lines": {
         "stage/names.ts": [
-          "  \"queued\": \"/jobs/queued\",",
-          "  \"active\": \"/jobs/active\",",
-          "  \"complete\": \"/jobs/complete\","
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -259,9 +243,7 @@
       ],
       "fact_lines": {
         "stage/sibling.ts": [
-          "    case \"queued\": return true;",
-          "    case \"active\": return true;",
-          "    case \"complete\": return true;"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -287,9 +269,7 @@
       ],
       "fact_lines": {
         "stage/001_constraint.sql": [
-          "    'queued',",
-          "    'active',",
-          "    'complete'"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued', 'active', 'complete'))"
         ]
       }
     },
@@ -315,11 +295,7 @@
       ],
       "fact_lines": {
         "stage/state.ts": [
-          "  private readonly buildRunning: Set<string> = new Set<string>();",
-          "    if (this.buildRunning.has(sessionId)) throw new Error(\"build already running\");",
-          "    this.buildRunning.add(sessionId);",
-          "  isBuildRunning(sessionId: string): boolean { return this.buildRunning.has(sessionId); }",
-          "  endSession(sessionId: string): void { this.buildRunning.delete(sessionId); }"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -345,9 +321,7 @@
       ],
       "fact_lines": {
         "evidence_kind/types.ts": [
-          "  \"document\",",
-          "  \"image\",",
-          "  \"testimony\""
+          "export const values = vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"] as const);"
         ]
       }
     },
@@ -373,7 +347,7 @@
       ],
       "fact_lines": {
         "evidence_kind/policy.ts": [
-          "  if (!isValue(value) || ![\"document\", \"image\", \"testimony\"].includes(value)) throw new Error(\"unsupported evidence_kind\");"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -399,9 +373,7 @@
       ],
       "fact_lines": {
         "evidence_kind/names.ts": [
-          "  \"document\": \"/jobs/document\",",
-          "  \"image\": \"/jobs/image\",",
-          "  \"testimony\": \"/jobs/testimony\","
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -427,9 +399,7 @@
       ],
       "fact_lines": {
         "evidence_kind/sibling.ts": [
-          "    case \"document\": return true;",
-          "    case \"image\": return true;",
-          "    case \"testimony\": return true;"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -455,9 +425,7 @@
       ],
       "fact_lines": {
         "evidence_kind/001_constraint.sql": [
-          "    'document',",
-          "    'image',",
-          "    'testimony'"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'image', 'testimony'))"
         ]
       }
     },
@@ -483,10 +451,7 @@
       ],
       "fact_lines": {
         "evidence_kind/state.ts": [
-          "  private readonly evidence_kindSelections: Map<string, EvidenceKind> = new Map<string, EvidenceKind>();",
-          "  set(key: string, value: EvidenceKind): void { this.evidence_kindSelections.set(key, value); }",
-          "  get(key: string): EvidenceKind | undefined { return this.evidence_kindSelections.get(key); }",
-          "  remove(key: string): void { this.evidence_kindSelections.delete(key); }"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -512,9 +477,7 @@
       ],
       "fact_lines": {
         "evidence_kind/types.ts": [
-          "  \"document\",",
-          "  \"image\",",
-          "  \"testimony\""
+          "export const values = vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"] as const);"
         ]
       }
     },
@@ -540,7 +503,7 @@
       ],
       "fact_lines": {
         "evidence_kind/policy.ts": [
-          "  if (!isValue(value) || ![\"document\", \"image\", \"testimony\"].includes(value)) throw new Error(\"unsupported evidence_kind\");"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -566,9 +529,7 @@
       ],
       "fact_lines": {
         "evidence_kind/names.ts": [
-          "  \"document\": \"/jobs/document\",",
-          "  \"image\": \"/jobs/image\",",
-          "  \"testimony\": \"/jobs/testimony\","
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -594,9 +555,7 @@
       ],
       "fact_lines": {
         "evidence_kind/sibling.ts": [
-          "    case \"document\": return true;",
-          "    case \"image\": return true;",
-          "    case \"testimony\": return true;"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -622,9 +581,7 @@
       ],
       "fact_lines": {
         "evidence_kind/001_constraint.sql": [
-          "    'document',",
-          "    'image',",
-          "    'testimony'"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'image', 'testimony'))"
         ]
       }
     },
@@ -650,10 +607,7 @@
       ],
       "fact_lines": {
         "evidence_kind/state.ts": [
-          "  private readonly evidence_kindSelections: Map<string, EvidenceKind> = new Map<string, EvidenceKind>();",
-          "  set(key: string, value: EvidenceKind): void { this.evidence_kindSelections.set(key, value); }",
-          "  get(key: string): EvidenceKind | undefined { return this.evidence_kindSelections.get(key); }",
-          "  remove(key: string): void { this.evidence_kindSelections.delete(key); }"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -679,9 +633,7 @@
       ],
       "fact_lines": {
         "route_permission/types.ts": [
-          "  \"case_read\",",
-          "  \"case_write\",",
-          "  \"case_admin\""
+          "export const values = vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"] as const);"
         ]
       }
     },
@@ -707,7 +659,7 @@
       ],
       "fact_lines": {
         "route_permission/policy.ts": [
-          "  if (!isValue(value) || ![\"case_read\", \"case_write\", \"case_admin\"].includes(value)) throw new Error(\"unsupported route_permission\");"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -733,9 +685,7 @@
       ],
       "fact_lines": {
         "route_permission/names.ts": [
-          "  \"case_read\": \"/jobs/case_read\",",
-          "  \"case_write\": \"/jobs/case_write\",",
-          "  \"case_admin\": \"/jobs/case_admin\","
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -761,9 +711,7 @@
       ],
       "fact_lines": {
         "route_permission/sibling.ts": [
-          "    case \"case_read\": return true;",
-          "    case \"case_write\": return true;",
-          "    case \"case_admin\": return true;"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -789,9 +737,7 @@
       ],
       "fact_lines": {
         "route_permission/001_constraint.sql": [
-          "    'case_read',",
-          "    'case_write',",
-          "    'case_admin'"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
         ]
       }
     },
@@ -817,10 +763,7 @@
       ],
       "fact_lines": {
         "route_permission/state.ts": [
-          "  private readonly route_permissionSelections: Map<string, RoutePermission> = new Map<string, RoutePermission>();",
-          "  set(key: string, value: RoutePermission): void { this.route_permissionSelections.set(key, value); }",
-          "  get(key: string): RoutePermission | undefined { return this.route_permissionSelections.get(key); }",
-          "  remove(key: string): void { this.route_permissionSelections.delete(key); }"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -846,9 +789,7 @@
       ],
       "fact_lines": {
         "route_permission/types.ts": [
-          "  \"case_read\",",
-          "  \"case_write\",",
-          "  \"case_admin\""
+          "export const values = vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"] as const);"
         ]
       }
     },
@@ -874,7 +815,7 @@
       ],
       "fact_lines": {
         "route_permission/policy.ts": [
-          "  if (!isValue(value) || ![\"case_read\", \"case_write\", \"case_admin\"].includes(value)) throw new Error(\"unsupported route_permission\");"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -900,9 +841,7 @@
       ],
       "fact_lines": {
         "route_permission/names.ts": [
-          "  \"case_read\": \"/jobs/case_read\",",
-          "  \"case_write\": \"/jobs/case_write\",",
-          "  \"case_admin\": \"/jobs/case_admin\","
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -928,9 +867,7 @@
       ],
       "fact_lines": {
         "route_permission/sibling.ts": [
-          "    case \"case_read\": return true;",
-          "    case \"case_write\": return true;",
-          "    case \"case_admin\": return true;"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -956,9 +893,7 @@
       ],
       "fact_lines": {
         "route_permission/001_constraint.sql": [
-          "    'case_read',",
-          "    'case_write',",
-          "    'case_admin'"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
         ]
       }
     },
@@ -984,10 +919,7 @@
       ],
       "fact_lines": {
         "route_permission/state.ts": [
-          "  private readonly route_permissionSelections: Map<string, RoutePermission> = new Map<string, RoutePermission>();",
-          "  set(key: string, value: RoutePermission): void { this.route_permissionSelections.set(key, value); }",
-          "  get(key: string): RoutePermission | undefined { return this.route_permissionSelections.get(key); }",
-          "  remove(key: string): void { this.route_permissionSelections.delete(key); }"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },

@@ -111,84 +111,39 @@ describe("feature-specific independent peer switch points", () => {
   });
 });
 
-/** Prove that each feature's control actually fails compilation when extended alone. */
-describe("type-enforced mutation controls", () => {
-  for (const feature of ["stage", "evidence_kind", "route_permission"]) {
-    test(`${feature} requires the exhaustive operation record to be extended`, async () => {
+/** Only a literal owner in types.ts provides a closed compile-time vocabulary. */
+describe("type-enforced owner controls", () => {
+  for (const [feature, typeName] of [["stage", "Stage"], ["evidence_kind", "EvidenceKind"], ["route_permission", "RoutePermission"]]) {
+    test(`${feature} type is closed exactly when types.ts owns the vocabulary`, async () => {
       const directory = `/tmp/type-control-${crypto.randomUUID()}`;
-      const files = ["types.ts", "edit.ts", "policy.ts", "anchor.ts", "tsconfig.json"];
       const original = await Bun.file(`${import.meta.dir}/../../${feature}/types.ts`).text();
-      const environment = { ...process.env };
-      delete environment.BUN_INSPECT;
+      const closed = original.includes("vocabularyStore.define");
       try {
-        for (const file of files.slice(0, -1)) {
-          const source = await Bun.file(`${import.meta.dir}/../../${feature}/${file}`).text();
-          await Bun.write(`${directory}/${file}`, source);
+        await Bun.write(`${directory}/${feature}/types.ts`, original);
+        await Bun.write(`${directory}/src/vocabulary.ts`, await Bun.file(`${import.meta.dir}/../../src/vocabulary.ts`).text());
+        await Bun.write(`${directory}/consumer.ts`, `import type { ${typeName} } from "./${feature}/types.ts"; const future: ${typeName} = "future_value"; void future;`);
+        await Bun.write(`${directory}/tsconfig.json`, JSON.stringify({ compilerOptions: { target: "ESNext", module: "ESNext", moduleResolution: "bundler", strict: true, types: [], skipLibCheck: true, noEmit: true, allowImportingTsExtensions: true }, include: ["**/*.ts"] }));
+        const command = [process.execPath, Bun.resolveSync("typescript/bin/tsc", import.meta.dir), "--noEmit", "-p", `${directory}/tsconfig.json`];
+        const checked = Bun.spawnSync(command);
+        expect(checked.exitCode === 0).toBe(!closed);
+        if (closed) {
+          expect(new TextDecoder().decode(checked.stdout)).toContain("future_value");
+          await Bun.write(`${directory}/${feature}/types.ts`, original.replace("] as const", ', "future_value"] as const'));
+          expect(Bun.spawnSync(command).exitCode).toBe(0);
         }
-        await Bun.write(`${directory}/tsconfig.json`, JSON.stringify({
-          compilerOptions: {
-            target: "ESNext",
-            module: "ESNext",
-            moduleResolution: "bundler",
-            strict: true,
-            types: [],
-            skipLibCheck: true,
-            noEmit: true,
-            allowImportingTsExtensions: true,
-          },
-          include: ["*.ts"],
-        }));
-        const command = [
-          process.execPath,
-          Bun.resolveSync("typescript/bin/tsc", import.meta.dir),
-          "--noEmit", "-p", `${directory}/tsconfig.json`,
-        ];
-        const clean = Bun.spawnSync(command, { env: environment });
-        expect(new TextDecoder().decode(clean.stdout)).toBe("");
-        expect(clean.exitCode).toBe(0);
-        expect(original).toContain("] as const");
-        await Bun.write(`${directory}/types.ts`, original.replace("] as const", ', "future_value"] as const'));
-        const changed = Bun.spawnSync(command, { env: environment });
-        expect(changed.exitCode).not.toBe(0);
-        const diagnostics = new TextDecoder().decode(changed.stdout);
-        expect(diagnostics).toContain("future_value");
-        expect(diagnostics).toContain("missing");
-        expect(diagnostics).toContain("edit.ts");
-      } finally {
-        for (const file of files) {
-          const path = Bun.file(`${directory}/${file}`);
-          if (await path.exists()) await path.delete();
-        }
-      }
+      } finally { await import("node:fs/promises").then(fs => fs.rm(directory, { recursive: true, force: true })); }
     }, 20000);
   }
 });
 
-describe("independent sibling acceptance mutations", () => {
-  for (const [feature, future, primary] of [
-    ["stage", "triaged", stagePrimary],
-    ["evidence_kind", "attestation", evidencePrimary],
-    ["route_permission", "case_inspect", permissionPrimary],
-  ] as const) {
-    test(`${feature}: changing only the sibling changes only its acceptance`, async () => {
-      const path = `/tmp/sibling-control-${crypto.randomUUID()}.ts`;
-      const original = await Bun.file(`${import.meta.dir}/../../${feature}/sibling.ts`).text();
-      expect(primary(future)).toBe(false);
-      expect(original).toContain("switch (value)");
-      const extended = original.replace("switch (value) {", `switch (value) {\n    case "${future}":`);
-      try {
-        await Bun.write(path, extended);
-        const changed = await import(path) as { peerGuard: (value: string) => boolean };
-        expect(changed.peerGuard(future)).toBe(true);
-        expect(primary(future)).toBe(false);
-        expect(changed.peerGuard("invalid-value")).toBe(false);
-        expect(await Bun.file(`${import.meta.dir}/../../${feature}/sibling.ts`).text()).toBe(original);
-      } finally {
-        if (await Bun.file(path).exists()) await Bun.file(path).delete();
-      }
-    });
-  }
-});
+for (const [feature, primary] of [["stage", stagePrimary], ["evidence_kind", evidencePrimary], ["route_permission", permissionPrimary]] as const) {
+  test(`${feature} sibling derives the current owner vocabulary`, async () => {
+    const peer = await import(`../../${feature}/sibling.ts`) as { peerGuard(value: string): boolean };
+    const types = await import(`../../${feature}/types.ts`) as { values: readonly string[] };
+    for (const value of types.values) expect(peer.peerGuard(value)).toBe(primary(value));
+    expect(peer.peerGuard("future_value")).toBe(false);
+  });
+}
 
 for (const lookup of [routeFor, routeKind, routePermission]) {
   test("inherited object names use the default route", () => {

@@ -1,3 +1,5 @@
+import { vocabularyStore } from "../src/vocabulary.ts";
+vocabularyStore.values("route_permission");
 import type { RoutePermission } from "./types.ts";
 export class StoredRoutePermission {
   private readonly route_permissionSelections = new Map<string, RoutePermission>();

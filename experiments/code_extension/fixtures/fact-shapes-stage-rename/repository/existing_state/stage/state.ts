@@ -1,10 +1,12 @@
+import { vocabularyStore } from "../src/vocabulary.ts";
+vocabularyStore.define("stage", ["queued", "active", "complete"]);
 /**
  * Session lifecycle owns the only running-build store.
  * An active job stage or an unfinished attempt is historical workflow data;
  * neither jobs.stage nor attempts.finished_at determines whether a build is running.
  */
 export class SessionService {
-  private readonly buildRunning: Set<string> = new Set<string>();
+  private readonly buildRunning = new Set<string>();
   startBuild(sessionId: string): void {
     if (!sessionId.trim()) throw new Error("empty session");
     if (this.buildRunning.has(sessionId)) throw new Error("build already running");

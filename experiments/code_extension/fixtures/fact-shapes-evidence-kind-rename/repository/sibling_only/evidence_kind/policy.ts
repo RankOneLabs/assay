@@ -1,4 +1,6 @@
+import { vocabularyStore } from "../src/vocabulary.ts";
 import { isValue, type EvidenceKind } from "./types.ts";
+vocabularyStore.values("evidence_kind");
 export function acceptValue(value: string): EvidenceKind {
   if (!isValue(value)) throw new Error("unsupported evidence_kind");
   return value;

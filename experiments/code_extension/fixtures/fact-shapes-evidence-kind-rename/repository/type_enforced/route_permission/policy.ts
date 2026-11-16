@@ -1,4 +1,6 @@
+import { vocabularyStore } from "../src/vocabulary.ts";
 import { isValue, type RoutePermission } from "./types.ts";
+vocabularyStore.values("route_permission");
 export function acceptValue(value: string): RoutePermission {
   if (!isValue(value)) throw new Error("unsupported route_permission");
   return value;

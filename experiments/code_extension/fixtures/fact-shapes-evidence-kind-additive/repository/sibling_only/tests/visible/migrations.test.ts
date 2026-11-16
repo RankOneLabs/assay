@@ -41,15 +41,16 @@ describe("ordered SQLite migrations", () => {
     }
   });
 
-  test("CHECK constraints reject undeclared values in every feature", async () => {
+  test("CHECK constraints enforce the selected SQL holder when present", async () => {
     using db = new Database(":memory:");
-    applyMigrations(db, await discoverMigrations(root));
-    expect(() => db.query("INSERT INTO stage_values VALUES (?, ?)")
-      .run("future", "triaged")).toThrow(/CHECK constraint failed/);
-    expect(() => db.query("INSERT INTO evidence_kind_values VALUES (?, ?)")
-      .run("future", "attestation")).toThrow(/CHECK constraint failed/);
-    expect(() => db.query("INSERT INTO route_permission_values VALUES (?, ?)")
-      .run("future", "case_inspect")).toThrow(/CHECK constraint failed/);
+    const migrations = await discoverMigrations(root);
+    applyMigrations(db, migrations);
+    for (const migration of migrations) {
+      const feature = migration.id.split("/")[0];
+      const insert = () => db.query(`INSERT INTO ${feature}_values VALUES (?, ?)`).run("future", "future_value");
+      if (/value IN/.test(migration.sql)) expect(insert).toThrow(/CHECK constraint failed/);
+      else { insert(); expect(db.query(`SELECT value FROM ${feature}_values WHERE id = 'future'`).get()).toEqual({ value: "future_value" }); }
+    }
   });
 
   test("migrations are applied once even when requested in reverse order", async () => {

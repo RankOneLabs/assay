@@ -1,4 +1,6 @@
+import { vocabularyStore } from "../src/vocabulary.ts";
 import { isValue, type Stage } from "./types.ts";
+vocabularyStore.values("stage");
 export function acceptValue(value: string): Stage {
   if (!isValue(value)) throw new Error("unsupported stage");
   return value;

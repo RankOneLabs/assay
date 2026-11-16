@@ -1,5 +1,5 @@
-/** Canonical stage vocabulary. All typed readers derive from this tuple. */
-export const values = ["queued", "active", "complete"] as const;
+import { vocabularyStore } from "../src/vocabulary.ts";
+export const values = vocabularyStore.define("stage", ["queued", "active", "complete"] as const);
 export type Stage = (typeof values)[number];
 export function isValue(value: string): value is Stage {
   return (values as readonly string[]).includes(value);
