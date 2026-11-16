@@ -4,14 +4,15 @@ from decimal import Decimal
 from code_extension.fact_shapes.budget import (
     DEFAULT_COMPONENTS,
     Component,
+    Err,
     ModelPrice,
+    Ok,
     PilotCharge,
     Plan,
     budget,
     measured_mean,
 )
 from code_extension.fact_shapes.settings import PerAttemptCaps
-from oakridge_history.config import Err, Ok
 
 CAPS = PerAttemptCaps(sol=Decimal(1), argon=Decimal(2), midtier=Decimal(3))
 

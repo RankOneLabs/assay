@@ -4,9 +4,20 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
 
-from oakridge_history.config import Err, Ok, Result
-
 from code_extension.fact_shapes.settings import PerAttemptCaps, StudyModelName
+
+
+@dataclass(frozen=True)
+class Ok[T]:
+    value: T
+
+
+@dataclass(frozen=True)
+class Err[E]:
+    error: E
+
+
+type Result[T, E] = Ok[T] | Err[E]
 
 
 @dataclass(frozen=True)
