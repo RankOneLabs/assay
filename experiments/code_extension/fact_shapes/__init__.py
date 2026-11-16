@@ -1,1 +1,1 @@
-"""Fixture definitions for the fact-shapes-2026-11 study."""
+"""Fact-shapes fixture definitions, study settings and library qualification rule."""

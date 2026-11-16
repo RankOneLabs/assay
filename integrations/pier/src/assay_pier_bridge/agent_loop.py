@@ -226,7 +226,9 @@ PAID_TURN_ROUTES: dict[tuple[str, str], OpenRouterTurnRoute] = {
         # The same model on Azure's EU capacity, for when azure/us refuses large
         # requests at peak load. A separate route, since the endpoint is identity.
         _screening_route("openai/gpt-6.1-sol", "azure/eu", "Azure", 2.2, 11.0),
-        _screening_route("google/gemini-4-argon", "google-vertex/global", "Google", 2.0, 10.0),
+        # Ceiling raised 2026-11-15 to $4 input / $20 output per million tokens
+        # ahead of Argon's Dec 1, 2026 price change.
+        _screening_route("google/gemini-4-argon", "google-vertex/global", "Google", 4.0, 20.0),
         _screening_route("qwen/qwen3.8-2.4t-a95b", "siliconflow/fp8", "SiliconFlow", 2.0, 6.0),
         _screening_route("deepseek/deepseek-v4-pro", "siliconflow/fp8", "SiliconFlow",
                          1.502, 3.135),

@@ -5,7 +5,7 @@
 Hosted launches use the shared repository-agent OpenRouter backend and its
 existing pinned model/provider catalogue. Set `route` to that exact endpoint,
 model and provider, `profile` to `openrouter`, `bounds` to
-`ExtensionAgentSettings.for_model(model)`, and pricing to
+`ExtensionAgentSettings.for_model(model, envelope=envelope)`, and pricing to
 `{"basis":"openrouter-pinned-price-ceilings","conservative_request_bound_usd":null}`.
 `prepare` needs no credential or Smithers routing file. For `execute`, provide
 `OPENROUTER_API_KEY` through the environment. Both the route probe and every
@@ -31,7 +31,7 @@ code_extension.qualify` retains its full argument surface, including
 scripted worker and independent evaluator. `python -m code_extension.diagnose`
 remains the separate replay diagnostic and cannot write a verdict.
 
-`run-config.json` is a closed JSON object. Every field is required:
+`run-config.json` is a closed JSON object. Fields are required except where a default is documented:
 
 | Field | Meaning and source |
 | --- | --- |
@@ -41,11 +41,52 @@ remains the separate replay diagnostic and cannot write a verdict.
 | `profile` | `openrouter` for hosted models; the qualified machine name for Smithers. |
 | `system_prompt_digest`, `tool_schemas_digest` | Literal ce-v1 pins in `protocol.py`. |
 | `image_digest` | Observed sha256 image digest in every chosen manifest. |
-| `bounds` | Complete `ExtensionAgentSettings.for_model(model)` envelope. |
+| `envelope` | `library-v1` by default; omitted from canonical bytes when default to preserve existing configuration digests. `fact-shapes-v1` selects the hosted study bounds. |
+| `bounds` | Complete `ExtensionAgentSettings.for_model(model, envelope=envelope)` envelope. |
 | `repeats`, `randomization_seed`, `concurrency` | Full-grid repeats, a recorded metadata seed, and concurrency 1. The seed does not randomize dispatch. |
 | `dispatch_schedule` | `subject-rotated-v1`, the existing shared planner schedule; also the default for older configurations. |
 | `pricing` | Hosted: pinned provider price ceilings and inline billed cost. Local Smithers: a positive explicit conservative request bound. |
 | `per_attempt_cap_usd`, `total_cap_usd` | Positive dollar caps chosen by the operator; neither has a default. |
+
+The `library-v1` envelope retains each route's qualified bounds (60 requests,
+900 seconds). The hosted-only `fact-shapes-v1` envelope uses:
+
+| Bound | fact-shapes-v1 |
+| --- | --- |
+| Model requests | 80 |
+| Wall time | 1800 s |
+| Per-request timeout | 120 s |
+| Output tokens | 8192 |
+| Tool output bytes | 32768 |
+| Concurrency / attempts | 1 / 1 |
+| Provider / SDK retries | 0 / 0 |
+| Conversation / request bytes | 3670016 / 3932160 |
+| Tool schema / response bytes | 16384 / 131072 |
+| Storage | 512 MB |
+| Served / model context tokens | unavailable |
+| Per-cell tool-call ceiling | unavailable |
+
+The fact-shapes study uses GPT-6.1 Sol on `azure/us`, Gemini 4 Argon on
+`google-vertex/global`, and the operator-selected GPT-6 Luna on `azure`.
+`fact_shapes.settings` declares these routes and the 24-attempt additive pilot:
+two attempts per shape for Sol, one per shape for Argon and Luna. The approved per-attempt caps are $2 for Sol, $4 for Argon and $1 for Luna;
+the pilot total cap is $15.
+
+The mid-tier library rerun covers the eleven qualified scenario-library tasks,
+once each under `fact-shapes-v1`. The cohort file is
+`studies/fact-shapes-2026-11/library-rerun.json`, naming only
+`library-rerun-midtier.json`, with a $1 per-attempt cap and $5 total cap
+(including its route probe). These caps can stop work before the request or time
+limits; they are spending ceilings, not expected costs.
+Its mechanical qualification rule is
+`fact_shapes.library_rerun.verdict(reachability.plan_rows(store, plan))`: pass
+only when all eleven attempts have settled and at most one ended on a request,
+turn, output-token, conversation, wall-time or per-request timeout limit. Two
+limit stops fail immediately; fewer than eleven settled attempts with fewer
+than two limit stops are incomplete. Ordinary semantic failures do not count
+as limit stops. Reachability rows preserve per-request timeout identity from
+the final `transport_failure` event's exact HTTPX timeout class in the retained
+trajectory; other provider errors keep their existing classification.
 
 Money values in JSON are decimal strings. Secrets are supplied through the
 transport environment, never through this configuration or its archive.
