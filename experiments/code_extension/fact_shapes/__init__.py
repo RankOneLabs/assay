@@ -1,1 +1,1 @@
-"""Fact-shapes study settings and library qualification rule."""
+"""Fact-shapes fixture definitions, study settings and library qualification rule."""

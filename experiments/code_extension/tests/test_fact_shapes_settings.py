@@ -159,3 +159,13 @@ def test_library_rerun_matches_qualified_manifests_and_cohort() -> None:
     assert len(cohort.plans) == 1
     assert cohort.plans[0].config == Path("library-rerun-midtier.json")
     assert cohort.combined_cap_usd == config.total_cap_usd
+
+
+def test_pilot_reuses_cell_table_shapes() -> None:
+    from typing import get_args
+
+    from code_extension.fact_shapes.cells import Shape
+    from code_extension.fact_shapes.settings import FACT_SHAPES, PILOT_ALLOCATION
+
+    assert get_args(Shape) == FACT_SHAPES
+    assert {cell.shape for cell in PILOT_ALLOCATION} == set(get_args(Shape))

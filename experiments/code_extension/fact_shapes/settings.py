@@ -2,22 +2,17 @@
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from code_extension.config import ModelRoute
+from code_extension.fact_shapes.cells import Shape as FactShape
 from code_extension.settings import BoundEnvelope
 
 type StudyModelName = Literal["sol", "argon", "midtier"]
-type FactShape = Literal[
-    "type-enforced", "reference", "name-only", "sibling-only", "outside-the-code", "existing-state",
-]
-
 STUDY_ENVELOPE: BoundEnvelope = "fact-shapes-v1"
-FACT_SHAPES: tuple[FactShape, ...] = (
-    "type-enforced", "reference", "name-only", "sibling-only", "outside-the-code", "existing-state",
-)
+FACT_SHAPES: tuple[FactShape, ...] = get_args(FactShape)
 
 
 @dataclass(frozen=True)
