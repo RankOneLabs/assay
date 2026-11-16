@@ -47,7 +47,7 @@ def imports(tree: Mapping[str, str], path: str) -> tuple[str, ...]:
         stem = posixpath.normpath(posixpath.join(posixpath.dirname(path), specifier))
         candidates = (
             (stem,) if stem.endswith(('.ts', '.tsx'))
-            else (stem + '.ts', stem + '.tsx', stem + '/index.ts')
+            else (stem + '.ts', stem + '.tsx', stem + '/index.ts', stem + '/index.tsx')
         )
         for candidate in candidates:
             if candidate in tree:

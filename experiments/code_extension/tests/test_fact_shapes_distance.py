@@ -28,6 +28,12 @@ def test_directory_distances() -> None:
     assert directory_hops('src/a/x.ts', ['src/b/y.ts', 'src/a/z.ts']) == 0
 
 
+def test_tsx_directory_import() -> None:
+    tree = {'src/a.ts': 'import "./view";', 'src/view/index.tsx': ''}
+    assert imports(tree, 'src/a.ts') == ('src/view/index.tsx',)
+    assert import_hops(tree, 'src/a.ts', ['src/view/index.tsx']) == 1
+
+
 def test_base_planned_distances() -> None:
     root = Path(__file__).resolve().parents[1] / 'fact_shapes/base'
     tree = read_tree(root)
