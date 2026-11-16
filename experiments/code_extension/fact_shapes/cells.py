@@ -10,6 +10,11 @@ The outside_code holder is always a SQLite CHECK constraint plus the migration
 that sets it. Hidden tests apply all migrations to a fresh in-memory bun:sqlite
 database and insert the new or renamed value. Both a new migration and an edit
 to the base migration pass.
+
+The migration set is every feature/*.sql path, sorted lexicographically by its
+base-relative POSIX path and applied once to the same database. Each feature owns
+an independent table, so no cross-feature ordering dependency is permitted.
+Follow-up migrations use increasing numeric filename prefixes in that feature.
 """
 
 from dataclasses import dataclass
@@ -54,7 +59,7 @@ class Cell:
 _HOLDERS: dict[Shape, tuple[str, int | None]] = {
     'type_enforced': ('types.ts', 1),
     'reference': ('policy.ts', 1),
-    'name_only': ('names.ts', 1),
+    'name_only': ('names.ts', None),
     'sibling_only': ('sibling.ts', None),
     'outside_code': ('001_constraint.sql', None),
     'existing_state': ('state.ts', None),
@@ -85,8 +90,16 @@ def _cell(feature: Feature, task_type: TaskType, shape: Shape) -> Cell:
             statement = f'{action} updates every reader to follow the renamed stored source.'
     elif shape == 'outside_code':
         statement = f'{action} permits inserting {new} after applying all migrations.'
+    elif shape == 'type_enforced':
+        statement = f'{action} extends the enforced type so typed service operations accept {new}.'
+    elif shape == 'reference':
+        statement = f'{action} updates the policy called from the edit site to accept {new}.'
+    elif shape == 'name_only':
+        statement = (
+            f'{action} updates the descriptively named registry so its validation accepts {new}.'
+        )
     else:
-        statement = f'{action} updates the holder so the service accepts {new}.'
+        statement = f'{action} updates the sibling operation so it also accepts {new}.'
     filename, import_hops = _HOLDERS[shape]
     fact_id = FactId(f'{feature}_{task_type}_{shape}')
     return Cell(
@@ -123,6 +136,14 @@ Paths are relative to `experiments/code_extension/fact_shapes/base/`.
 Each feature directory contains edit.ts and the candidate holders listed below;
 anchor.ts holds the scenario's fixed reference-shape anchor in every arm.
 
+The four in-code holder_update shapes have distinct checks: enforced types,
+the policy called by edit.ts, a descriptively named registry's validation, and
+a sibling operation's acceptance. The name_only registry is used by a separate
+validation entry point, with no import path from edit.ts; its descriptive name
+is the discovery cue. The sibling_only holder is found through the adjacent
+operation's analogous code, rather than a descriptive registry name. Neither
+has an import path from edit.ts; reference deliberately has one import hop.
+
 Directory hops are steps up from the edit-site directory to the deepest common
 ancestor and down to the holder directory (0 for a shared directory). Import hops
 are the shortest directed import path's edge count; none means no path. For
@@ -130,7 +151,12 @@ multiple holders, both distances use the nearest holder (the minimum).
 The outside_code holder is a SQLite CHECK constraint plus its migration. Tests
 apply all migrations to a fresh in-memory bun:sqlite database and insert the new
 or renamed value; a new migration and an edit to the base migration both pass.
-
+Apply every `feature/*.sql` migration once to the same database in lexicographic
+base-relative POSIX path order (initially evidence_kind/001_constraint.sql,
+route_permission/001_constraint.sql, then stage/001_constraint.sql). Each feature
+owns an independent table with no cross-feature ordering dependency. Follow-up
+migrations use increasing numeric filename prefixes within the feature directory;
+the full path identifies a migration, so repeated basenames do not collide.
 
 """
     header = header.rstrip() + "\n\n" + (

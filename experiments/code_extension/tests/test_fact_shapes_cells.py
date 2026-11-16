@@ -80,12 +80,31 @@ def test_kinds_and_import_distances() -> None:
             assert cell.import_hops != 1
         else:
             assert cell.fact_kind == 'holder_update'
-        if cell.shape in ('sibling_only', 'outside_code'):
+        if cell.shape in ('name_only', 'sibling_only', 'outside_code'):
             assert cell.import_hops is None
         if cell.shape == 'reference':
             assert isinstance(cell.import_hops, int) and cell.import_hops >= 1
         if cell.shape == 'outside_code':
             assert all(p.endswith('.sql') for p in cell.holders)
+
+
+def test_holder_update_checks_and_migration_plan() -> None:
+    for feature, task_type in product(get_args(Feature), get_args(TaskType)):
+        statements = {
+            c.fact_statement for c in CELLS
+            if (c.feature, c.task_type) == (feature, task_type)
+            and c.shape in ('type_enforced', 'reference', 'name_only', 'sibling_only')
+        }
+        assert len(statements) == 4
+    migrations = sorted({c.holders[0] for c in CELLS if c.shape == 'outside_code'})
+    assert migrations == [
+        'evidence_kind/001_constraint.sql',
+        'route_permission/001_constraint.sql',
+        'stage/001_constraint.sql',
+    ]
+    rendered = render_cell_table()
+    assert 'lexicographic' in rendered
+    assert 'no cross-feature ordering dependency' in rendered
 
 
 def test_paths_and_directory_distances() -> None:
