@@ -66,6 +66,23 @@ The `library-v1` envelope retains each route's qualified bounds (60 requests,
 | Served / model context tokens | unavailable |
 | Per-cell tool-call ceiling | unavailable |
 
+The fact-shapes study uses GPT-6.1 Sol on `azure/us`, Gemini 4 Argon on
+`google-vertex/global`, and the operator-selected GPT-6 Luna on `azure`.
+`fact_shapes.settings` declares these routes and the 24-attempt additive pilot:
+two attempts per shape for Sol, one per shape for Argon and Luna. Spending caps
+remain explicit operator inputs.
+
+The mid-tier library rerun covers the eleven qualified scenario-library tasks,
+once each under `fact-shapes-v1`. Its mechanical qualification rule is
+`fact_shapes.library_rerun.verdict(reachability.plan_rows(store, plan))`: pass
+only when all eleven attempts have settled and at most one ended on a request,
+turn, output-token, conversation, wall-time or per-request timeout limit. Two
+limit stops fail immediately; fewer than eleven settled attempts with fewer
+than two limit stops are incomplete. Ordinary semantic failures do not count
+as limit stops. Reachability rows preserve per-request timeout identity from
+the final `transport_failure` event's exact HTTPX timeout class in the retained
+trajectory; other provider errors keep their existing classification.
+
 Money values in JSON are decimal strings. Secrets are supplied through the
 transport environment, never through this configuration or its archive.
 Credential-like keys or values in the configuration are refused.

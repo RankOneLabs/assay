@@ -161,6 +161,24 @@ def _terminal(outcome: ExecutionOutcome, store: ObjectStore) -> str:
     return "unknown" if bridge is None else terminal_cause(bridge.kind, bridge.cause, bridge.detail)
 
 
+def _request_timeout(outcome: ExecutionOutcome, store: ObjectStore) -> bool:
+    """Read the final HTTPX transport stop from the retained agent trajectory."""
+    if outcome.trace_ref is None:
+        return False
+    trace = _Trace.model_validate_json(store.read_bytes(outcome.trace_ref))
+    reference = (trace.artifact_refs.get("trajectory.json")
+                 or trace.artifact_refs.get("stopped/trajectory.json"))
+    if reference is None:
+        return False
+    trajectory = json.loads(artifact_bytes(store, reference))
+    stops = [event for event in trajectory.get("events", []) if event.get("kind") == "stopped"]
+    return bool(stops and stops[-1].get("cause") == "transport_failure"
+                and stops[-1].get("error") in {
+                    "TimeoutException", "ConnectTimeout", "ReadTimeout",
+                    "WriteTimeout", "PoolTimeout",
+                })
+
+
 def _settled_row(
     cell: str, reference: str, store: ObjectStore, manifest: RunManifest,
 ) -> dict[str, Any]:
@@ -185,6 +203,7 @@ def _settled_row(
     return {
         "stop": getattr(stop, "cause", stop.kind),
         "terminal": terminal,
+        "request_timeout": _request_timeout(outcome, store),
         "verdict": verdict.value if verdict else None,
         "feature_failure": failure,
         "outcome": attempt_outcome(stop, verdict, terminal, failure),
@@ -208,7 +227,7 @@ def plan_rows(store_path: Path, plan_digest: str) -> list[dict[str, Any]]:
     for cell in claimed_cells(records):
         row: dict[str, Any] = {
             "stop": "unsettled", "terminal": "unknown", "verdict": None, "feature_failure": None,
-            "outcome": "unsettled",
+            "outcome": "unsettled", "request_timeout": False,
         }
         if found is not None and cell in settled and cell in found[1].execution_records:
             row = _settled_row(cell, found[1].execution_records[cell], store, found[1])
