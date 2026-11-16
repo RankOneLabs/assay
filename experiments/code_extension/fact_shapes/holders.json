@@ -1,0 +1,1006 @@
+[
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "stage_additive_type_enforced",
+      "holder_paths": [
+        "stage/types.ts"
+      ],
+      "fact_lines": {
+        "stage/types.ts": [
+          "  \"queued\",",
+          "  \"active\",",
+          "  \"complete\""
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "stage_additive_reference",
+      "holder_paths": [
+        "stage/policy.ts"
+      ],
+      "fact_lines": {
+        "stage/policy.ts": [
+          "  if (!isValue(value) || ![\"queued\", \"active\", \"complete\"].includes(value)) throw new Error(\"unsupported stage\");"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "stage_additive_name_only",
+      "holder_paths": [
+        "stage/names.ts"
+      ],
+      "fact_lines": {
+        "stage/names.ts": [
+          "  \"queued\": \"/jobs/queued\",",
+          "  \"active\": \"/jobs/active\",",
+          "  \"complete\": \"/jobs/complete\","
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "stage_additive_sibling_only",
+      "holder_paths": [
+        "stage/sibling.ts"
+      ],
+      "fact_lines": {
+        "stage/sibling.ts": [
+          "    case \"queued\": return true;",
+          "    case \"active\": return true;",
+          "    case \"complete\": return true;"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "stage_additive_outside_code",
+      "holder_paths": [
+        "stage/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "stage/001_constraint.sql": [
+          "    'queued',",
+          "    'active',",
+          "    'complete'"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-additive",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "stage_additive_existing_state",
+      "holder_paths": [
+        "stage/state.ts"
+      ],
+      "fact_lines": {
+        "stage/state.ts": [
+          "  private readonly buildRunning: Set<string> = new Set<string>();",
+          "    if (this.buildRunning.has(sessionId)) throw new Error(\"build already running\");",
+          "    this.buildRunning.add(sessionId);",
+          "  isBuildRunning(sessionId: string): boolean { return this.buildRunning.has(sessionId); }",
+          "  endSession(sessionId: string): void { this.buildRunning.delete(sessionId); }"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_additive_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "stage_rename_type_enforced",
+      "holder_paths": [
+        "stage/types.ts"
+      ],
+      "fact_lines": {
+        "stage/types.ts": [
+          "  \"queued\",",
+          "  \"active\",",
+          "  \"complete\""
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "stage_rename_reference",
+      "holder_paths": [
+        "stage/policy.ts"
+      ],
+      "fact_lines": {
+        "stage/policy.ts": [
+          "  if (!isValue(value) || ![\"queued\", \"active\", \"complete\"].includes(value)) throw new Error(\"unsupported stage\");"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "stage_rename_name_only",
+      "holder_paths": [
+        "stage/names.ts"
+      ],
+      "fact_lines": {
+        "stage/names.ts": [
+          "  \"queued\": \"/jobs/queued\",",
+          "  \"active\": \"/jobs/active\",",
+          "  \"complete\": \"/jobs/complete\","
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "stage_rename_sibling_only",
+      "holder_paths": [
+        "stage/sibling.ts"
+      ],
+      "fact_lines": {
+        "stage/sibling.ts": [
+          "    case \"queued\": return true;",
+          "    case \"active\": return true;",
+          "    case \"complete\": return true;"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "stage_rename_outside_code",
+      "holder_paths": [
+        "stage/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "stage/001_constraint.sql": [
+          "    'queued',",
+          "    'active',",
+          "    'complete'"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-stage-rename",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "stage_rename_existing_state",
+      "holder_paths": [
+        "stage/state.ts"
+      ],
+      "fact_lines": {
+        "stage/state.ts": [
+          "  private readonly buildRunning: Set<string> = new Set<string>();",
+          "    if (this.buildRunning.has(sessionId)) throw new Error(\"build already running\");",
+          "    this.buildRunning.add(sessionId);",
+          "  isBuildRunning(sessionId: string): boolean { return this.buildRunning.has(sessionId); }",
+          "  endSession(sessionId: string): void { this.buildRunning.delete(sessionId); }"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "stage_rename_anchor",
+      "holder_paths": [
+        "stage/anchor.ts"
+      ],
+      "fact_lines": {
+        "stage/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_type_enforced",
+      "holder_paths": [
+        "evidence_kind/types.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/types.ts": [
+          "  \"document\",",
+          "  \"image\",",
+          "  \"testimony\""
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_reference",
+      "holder_paths": [
+        "evidence_kind/policy.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/policy.ts": [
+          "  if (!isValue(value) || ![\"document\", \"image\", \"testimony\"].includes(value)) throw new Error(\"unsupported evidence_kind\");"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_name_only",
+      "holder_paths": [
+        "evidence_kind/names.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/names.ts": [
+          "  \"document\": \"/jobs/document\",",
+          "  \"image\": \"/jobs/image\",",
+          "  \"testimony\": \"/jobs/testimony\","
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_sibling_only",
+      "holder_paths": [
+        "evidence_kind/sibling.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/sibling.ts": [
+          "    case \"document\": return true;",
+          "    case \"image\": return true;",
+          "    case \"testimony\": return true;"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_outside_code",
+      "holder_paths": [
+        "evidence_kind/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "evidence_kind/001_constraint.sql": [
+          "    'document',",
+          "    'image',",
+          "    'testimony'"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-additive",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "evidence_kind_additive_existing_state",
+      "holder_paths": [
+        "evidence_kind/state.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/state.ts": [
+          "  private readonly evidence_kindSelections: Map<string, EvidenceKind> = new Map<string, EvidenceKind>();",
+          "  set(key: string, value: EvidenceKind): void { this.evidence_kindSelections.set(key, value); }",
+          "  get(key: string): EvidenceKind | undefined { return this.evidence_kindSelections.get(key); }",
+          "  remove(key: string): void { this.evidence_kindSelections.delete(key); }"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_additive_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_type_enforced",
+      "holder_paths": [
+        "evidence_kind/types.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/types.ts": [
+          "  \"document\",",
+          "  \"image\",",
+          "  \"testimony\""
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_reference",
+      "holder_paths": [
+        "evidence_kind/policy.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/policy.ts": [
+          "  if (!isValue(value) || ![\"document\", \"image\", \"testimony\"].includes(value)) throw new Error(\"unsupported evidence_kind\");"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_name_only",
+      "holder_paths": [
+        "evidence_kind/names.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/names.ts": [
+          "  \"document\": \"/jobs/document\",",
+          "  \"image\": \"/jobs/image\",",
+          "  \"testimony\": \"/jobs/testimony\","
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_sibling_only",
+      "holder_paths": [
+        "evidence_kind/sibling.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/sibling.ts": [
+          "    case \"document\": return true;",
+          "    case \"image\": return true;",
+          "    case \"testimony\": return true;"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_outside_code",
+      "holder_paths": [
+        "evidence_kind/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "evidence_kind/001_constraint.sql": [
+          "    'document',",
+          "    'image',",
+          "    'testimony'"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-evidence-kind-rename",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "evidence_kind_rename_existing_state",
+      "holder_paths": [
+        "evidence_kind/state.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/state.ts": [
+          "  private readonly evidence_kindSelections: Map<string, EvidenceKind> = new Map<string, EvidenceKind>();",
+          "  set(key: string, value: EvidenceKind): void { this.evidence_kindSelections.set(key, value); }",
+          "  get(key: string): EvidenceKind | undefined { return this.evidence_kindSelections.get(key); }",
+          "  remove(key: string): void { this.evidence_kindSelections.delete(key); }"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "evidence_kind_rename_anchor",
+      "holder_paths": [
+        "evidence_kind/anchor.ts"
+      ],
+      "fact_lines": {
+        "evidence_kind/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "route_permission_additive_type_enforced",
+      "holder_paths": [
+        "route_permission/types.ts"
+      ],
+      "fact_lines": {
+        "route_permission/types.ts": [
+          "  \"case_read\",",
+          "  \"case_write\",",
+          "  \"case_admin\""
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "route_permission_additive_reference",
+      "holder_paths": [
+        "route_permission/policy.ts"
+      ],
+      "fact_lines": {
+        "route_permission/policy.ts": [
+          "  if (!isValue(value) || ![\"case_read\", \"case_write\", \"case_admin\"].includes(value)) throw new Error(\"unsupported route_permission\");"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "route_permission_additive_name_only",
+      "holder_paths": [
+        "route_permission/names.ts"
+      ],
+      "fact_lines": {
+        "route_permission/names.ts": [
+          "  \"case_read\": \"/jobs/case_read\",",
+          "  \"case_write\": \"/jobs/case_write\",",
+          "  \"case_admin\": \"/jobs/case_admin\","
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "route_permission_additive_sibling_only",
+      "holder_paths": [
+        "route_permission/sibling.ts"
+      ],
+      "fact_lines": {
+        "route_permission/sibling.ts": [
+          "    case \"case_read\": return true;",
+          "    case \"case_write\": return true;",
+          "    case \"case_admin\": return true;"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "route_permission_additive_outside_code",
+      "holder_paths": [
+        "route_permission/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "route_permission/001_constraint.sql": [
+          "    'case_read',",
+          "    'case_write',",
+          "    'case_admin'"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-additive",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "route_permission_additive_existing_state",
+      "holder_paths": [
+        "route_permission/state.ts"
+      ],
+      "fact_lines": {
+        "route_permission/state.ts": [
+          "  private readonly route_permissionSelections: Map<string, RoutePermission> = new Map<string, RoutePermission>();",
+          "  set(key: string, value: RoutePermission): void { this.route_permissionSelections.set(key, value); }",
+          "  get(key: string): RoutePermission | undefined { return this.route_permissionSelections.get(key); }",
+          "  remove(key: string): void { this.route_permissionSelections.delete(key); }"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_additive_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "type_enforced",
+    "manipulated": {
+      "fact_id": "route_permission_rename_type_enforced",
+      "holder_paths": [
+        "route_permission/types.ts"
+      ],
+      "fact_lines": {
+        "route_permission/types.ts": [
+          "  \"case_read\",",
+          "  \"case_write\",",
+          "  \"case_admin\""
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "reference",
+    "manipulated": {
+      "fact_id": "route_permission_rename_reference",
+      "holder_paths": [
+        "route_permission/policy.ts"
+      ],
+      "fact_lines": {
+        "route_permission/policy.ts": [
+          "  if (!isValue(value) || ![\"case_read\", \"case_write\", \"case_admin\"].includes(value)) throw new Error(\"unsupported route_permission\");"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "name_only",
+    "manipulated": {
+      "fact_id": "route_permission_rename_name_only",
+      "holder_paths": [
+        "route_permission/names.ts"
+      ],
+      "fact_lines": {
+        "route_permission/names.ts": [
+          "  \"case_read\": \"/jobs/case_read\",",
+          "  \"case_write\": \"/jobs/case_write\",",
+          "  \"case_admin\": \"/jobs/case_admin\","
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "sibling_only",
+    "manipulated": {
+      "fact_id": "route_permission_rename_sibling_only",
+      "holder_paths": [
+        "route_permission/sibling.ts"
+      ],
+      "fact_lines": {
+        "route_permission/sibling.ts": [
+          "    case \"case_read\": return true;",
+          "    case \"case_write\": return true;",
+          "    case \"case_admin\": return true;"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "outside_code",
+    "manipulated": {
+      "fact_id": "route_permission_rename_outside_code",
+      "holder_paths": [
+        "route_permission/001_constraint.sql"
+      ],
+      "fact_lines": {
+        "route_permission/001_constraint.sql": [
+          "    'case_read',",
+          "    'case_write',",
+          "    'case_admin'"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  },
+  {
+    "scenario": "fact-shapes-route-permission-rename",
+    "shape": "existing_state",
+    "manipulated": {
+      "fact_id": "route_permission_rename_existing_state",
+      "holder_paths": [
+        "route_permission/state.ts"
+      ],
+      "fact_lines": {
+        "route_permission/state.ts": [
+          "  private readonly route_permissionSelections: Map<string, RoutePermission> = new Map<string, RoutePermission>();",
+          "  set(key: string, value: RoutePermission): void { this.route_permissionSelections.set(key, value); }",
+          "  get(key: string): RoutePermission | undefined { return this.route_permissionSelections.get(key); }",
+          "  remove(key: string): void { this.route_permissionSelections.delete(key); }"
+        ]
+      }
+    },
+    "anchor": {
+      "fact_id": "route_permission_rename_anchor",
+      "holder_paths": [
+        "route_permission/anchor.ts"
+      ],
+      "fact_lines": {
+        "route_permission/anchor.ts": [
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error(\"invalid key\");"
+        ]
+      }
+    }
+  }
+]

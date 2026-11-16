@@ -1,0 +1,145 @@
+import type { Stage } from "../../stage/types.ts";
+import type { EvidenceKind } from "../../evidence_kind/types.ts";
+import type { RoutePermission } from "../../route_permission/types.ts";
+
+export interface Job {
+  id: string;
+  title: string;
+  description: string;
+  stage: Stage;
+  priority: number;
+  owner: string;
+  project: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt: number | null;
+}
+
+export interface Evidence {
+  id: string;
+  jobId: string;
+  kind: EvidenceKind;
+  title: string;
+  content: string;
+  checksum: string;
+  author: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface Grant {
+  principal: string;
+  permission: RoutePermission;
+  project: string;
+  grantedBy: string;
+  createdAt: number;
+}
+
+export interface JobEvent {
+  sequence: number;
+  jobId: string;
+  action: string;
+  actor: string;
+  detail: string;
+  createdAt: number;
+}
+
+export interface Attempt {
+  id: string;
+  jobId: string;
+  sessionId: string;
+  worker: string;
+  startedAt: number;
+  finishedAt: number | null;
+  exitCode: number | null;
+  output: string;
+}
+
+export interface JobFilter {
+  stage?: Stage;
+  owner?: string;
+  project?: string;
+  query?: string;
+  archived?: boolean;
+  minPriority?: number;
+  limit: number;
+  offset: number;
+}
+
+export interface Page<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+}
+
+export interface JobCreate {
+  id: string;
+  title: string;
+  description: string;
+  priority: number;
+  owner: string;
+  project: string;
+}
+
+export interface JobPatch {
+  title?: string;
+  description?: string;
+  priority?: number;
+  owner?: string;
+  expectedRevision: number;
+}
+
+export interface EvidenceCreate {
+  id: string;
+  kind: EvidenceKind;
+  title: string;
+  content: string;
+  author: string;
+}
+
+export interface EvidencePatch {
+  title?: string;
+  content?: string;
+  expectedRevision: number;
+}
+
+export interface JobBundle {
+  job: Job;
+  evidence: Evidence[];
+  events: JobEvent[];
+  attempts: Attempt[];
+}
+
+export interface Principal {
+  id: string;
+  project: string;
+}
+
+export interface StageCount {
+  stage: Stage;
+  count: number;
+}
+
+export interface EvidenceCount {
+  kind: EvidenceKind;
+  count: number;
+  bytes: number;
+}
+
+export interface Workload {
+  owner: string;
+  jobs: number;
+  priority: number;
+}
+
+export interface Summary {
+  total: number;
+  archived: number;
+  stages: StageCount[];
+  evidence: EvidenceCount[];
+  workloads: Workload[];
+}

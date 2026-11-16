@@ -6,15 +6,42 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 
-_SPECIFIER = re.compile(
-    r'''\b(?:import|export)\s+(?:[^;'"]*?\bfrom\s*)?["']([^"']+)["']'''
+# Quoted strings and comments are opaque, so examples in documentation cannot
+# create graph edges. Only static import/re-export statements are considered.
+_TOKEN = re.compile(
+    r'''//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[\w$]+|[^\s]''',
+    re.S,
 )
+
+
+def _specifiers(source: str) -> tuple[str, ...]:
+    tokens = [token for token in _TOKEN.findall(source)
+              if not token.startswith(('//', '/*'))]
+    result = []
+    for index, token in enumerate(tokens[:-1]):
+        if token not in ('import', 'export'):
+            continue
+        following = tokens[index + 1]
+        if token == 'import' and following.startswith(('"', "'")):
+            result.append(following[1:-1])
+            continue
+        if following in ('(', '.'):
+            continue
+        if token == 'export' and following not in ('{', '*', 'type'):
+            continue
+        for cursor in range(index + 1, len(tokens) - 1):
+            if tokens[cursor] in (';', 'import', 'export', 'const', 'let', 'function'):
+                break
+            if tokens[cursor] == 'from' and tokens[cursor + 1].startswith(('"', "'")):
+                result.append(tokens[cursor + 1][1:-1])
+                break
+    return tuple(result)
 
 
 def imports(tree: Mapping[str, str], path: str) -> tuple[str, ...]:
     """Resolve static relative imports and re-exports to existing tree paths."""
     result: list[str] = []
-    for specifier in _SPECIFIER.findall(tree[path]):
+    for specifier in _specifiers(tree[path]):
         if not specifier.startswith('.'):
             continue
         stem = posixpath.normpath(posixpath.join(posixpath.dirname(path), specifier))
