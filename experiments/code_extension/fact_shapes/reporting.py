@@ -27,8 +27,12 @@ def completion_claim(status: AttemptStatus, verdict: Assessment | None) -> Compl
 # Scope openers are tokens themselves so field-like expressions elsewhere never
 # enter a declaration body. Parentheses and nested value braces mask members too.
 _IDENTIFIER = r"[A-Za-z_$][\w$-]*"
+_QUOTED = r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`"
+_COMMENT = r"/\*[\s\S]*?(?:\*/|$)|//[^\n]*|--[^\n]*"
+_LEXICAL = re.compile(f"(?P<quoted>{_QUOTED})|(?P<comment>{_COMMENT})")
 _TOKEN = re.compile(
-    r"(?P<type_body>\b(?:interface\s+[^{;]+|type\s+(?P<type_name>"
+    f"(?P<quoted>{_QUOTED})"
+    r"|(?P<type_body>\b(?:interface\s+[^{;]+|type\s+(?P<type_name>"
     + _IDENTIFIER
     + r")\s*(?:<[^>]*>)?\s*=\s*)\{)"
     r"|(?P<table>\bCREATE\s+TABLE\s+[^;(]+\()"
@@ -42,52 +46,87 @@ _TOKEN = re.compile(
 )
 
 
+def _count_declarations(source: str, added: list[bool], names: set[str]) -> int:
+    # Mask comments before matching headers, which can span whitespace. Keep
+    # offsets and newlines intact so added-line attribution remains exact;
+    # quoted tokens protect comment-like text inside strings.
+    source = _LEXICAL.sub(
+        lambda match: re.sub(r"[^\n]", " ", match[0]) if match["comment"] else match[0], source
+    )
+    scopes: list[str] = []
+    count = 0
+    boundary = True
+    end = 0
+    for match in _TOKEN.finditer(source):
+        boundary = boundary or "\n" in source[end : match.start()]
+        end = match.end()
+        name: str | None = None
+        offset = match.start()
+        if match["type_body"]:
+            scopes.append("type")
+            name = match["type_name"]
+            if name is not None:
+                offset = match.start("type_name")
+        elif match["table"]:
+            scopes.append("table")
+        elif match["alias"] or match["alter"]:
+            group = "alias" if match["alias"] else "alter"
+            name = match[group]
+            offset = match.start(group)
+        elif match["field"] and scopes and scopes[-1] == "type" and boundary:
+            name = match["field"]
+            offset = match.start("field")
+        elif match["quoted"] and scopes and boundary:
+            # Quoted member/column names are declarations; their contents are
+            # never scanned as code. Backticks are template values, not names.
+            quoted = match["quoted"]
+            is_member = scopes[-1] == "type" and re.match(r"\s*\??:", source[end:])
+            is_column = scopes[-1] == "table" and re.match(r"\s+[A-Za-z]+\b", source[end:])
+            if not quoted.startswith("`") and (is_member or is_column):
+                name = quoted[1:-1]
+        elif match["column"] and scopes and scopes[-1] == "table" and boundary:
+            if re.match(r"\s+[A-Za-z]+\b", source[end:]):
+                name = match["column"]
+            if name is not None and name.upper() in {
+                "PRIMARY",
+                "FOREIGN",
+                "UNIQUE",
+                "CONSTRAINT",
+                "CHECK",
+            }:
+                name = None
+        elif match["punct"] in {"{", "("}:
+            # An object nested in a type body is another object type. Function
+            # parameter parentheses and ordinary expression braces mask fields.
+            scopes.append(
+                "type" if match["punct"] == "{" and scopes and scopes[-1] == "type" else "other"
+            )
+        elif match["punct"] in {"}", ")"} and scopes:
+            scopes.pop()
+        if name is not None and added[offset] and _spelling(name) in names:
+            count += 1
+        boundary = bool(match["type_body"] or match["table"] or match["punct"] in {";", ",", "{"})
+    return count
+
+
 def mirrored_state_count(patch: str, state_source_fields: Iterable[str]) -> int:
     """Count added type members, aliases and SQL columns matching the inventory.
 
-    Context lines establish scope but never contribute declarations. Each hunk
-    starts a fresh scope; absent declaration context cannot imply a type body.
+    Parse each hunk's candidate text together so multiline type headers, nested
+    types, strings and block comments preserve their scope. Context establishes
+    scope but only declaration names on added lines contribute to the count.
     """
     names = {_spelling(name) for name in state_source_fields}
     count = 0
-    scopes: list[str] = []
+    source: list[str] = []
+    added: list[bool] = []
     for line in patch.splitlines():
-        if line.startswith("@@"):
-            scopes.clear()
-        if not line.startswith(("+", " ")) or line.startswith("+++"):
-            continue
-        added = line.startswith("+")
-        source = line[1:].split("//", 1)[0]
-        boundary = True
-        for match in _TOKEN.finditer(source):
-            name: str | None = None
-            if match["type_body"]:
-                scopes.append("type")
-                name = match["type_name"]
-            elif match["table"]:
-                scopes.append("table")
-            elif match["alias"] or match["alter"]:
-                name = match["alias"] or match["alter"]
-            elif match["field"] and scopes and scopes[-1] == "type" and boundary:
-                name = match["field"]
-            elif match["column"] and scopes and scopes[-1] == "table" and boundary:
-                if re.match(r"\s+[A-Za-z]+\b", source[match.end() :]):
-                    name = match["column"]
-                if name is not None and name.upper() in {
-                    "PRIMARY",
-                    "FOREIGN",
-                    "UNIQUE",
-                    "CONSTRAINT",
-                    "CHECK",
-                }:
-                    name = None
-            elif match["punct"] in {"{", "("}:
-                scopes.append("other")
-            elif match["punct"] in {"}", ")"} and scopes:
-                scopes.pop()
-            if added and name is not None and _spelling(name) in names:
-                count += 1
-            boundary = bool(
-                match["type_body"] or match["table"] or match["punct"] in {";", ",", "{"}
-            )
-    return count
+        if line.startswith(("@@", "diff --git", "+++")):
+            count += _count_declarations("".join(source), added, names)
+            source.clear()
+            added.clear()
+        elif line.startswith(("+", " ")):
+            text = line[1:] + "\n"
+            source.append(text)
+            added.extend([line.startswith("+")] * len(text))
+    return count + _count_declarations("".join(source), added, names)

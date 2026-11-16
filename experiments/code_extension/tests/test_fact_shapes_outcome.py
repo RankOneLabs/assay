@@ -82,7 +82,7 @@ def test_assembly() -> None:
                     ToolCall(
                         name="read_file", arguments={"path": "src/x.ts"}, returned_text="text"
                     ),
-                    ToolCall(name="submit_output"),
+                    ToolCall(name="submit_output", returned_text="submitted"),
                     ToolCall(name="run_command"),
                 ),
                 submission=Submission(self_assessed_verdict="complete"),
@@ -274,3 +274,103 @@ def test_undeclared_failure_with_fact_prefix() -> None:
         FactId("a"): Missed(),
         FactId("b"): Held(),
     }
+
+
+def test_rejected_submission_keeps_later_work() -> None:
+    from code_extension.fact_shapes.mechanism import holder_opened_with_read_file, holder_seen
+
+    attempt = sample()
+    rejected = ToolCall(
+        name="submit_output", returned_text="error: submit_output must be the last call"
+    )
+    read = ToolCall(name="read_file", arguments={"path": "src/x.ts"}, returned_text="a line b line")
+    trace = Trajectory(
+        turns=(
+            Turn(tool_calls=(rejected, read)),
+            Turn(
+                tool_calls=(
+                    ToolCall(name="submit_output", returned_text="error: invalid arguments"),
+                )
+            ),
+            Turn(
+                tool_calls=(ToolCall(name="submit_output", returned_text="submitted"),),
+                submission=Submission(self_assessed_verdict="incomplete"),
+            ),
+            Turn(tool_calls=(ToolCall(name="run_command", returned_text="after submission"),)),
+        )
+    )
+    row = assemble(
+        {
+            "cell": "c",
+            "stop": "submitted",
+            "terminal": "normal_submission",
+            "verdict": "incorrect",
+            "outcome": "semantic",
+        },
+        attempt.variant,
+        attempt.evaluator,
+        "",
+        trace,
+        attempt.image_digest,
+    )
+    assert row.calls == (rejected, read, trace.turns[1].tool_calls[0])
+    assert row.self_assessed_verdict == "incomplete"
+    assert holder_seen(row, attempt.variant.facts[0].holder)
+    assert holder_opened_with_read_file(row, attempt.variant.facts[0].holder)
+
+
+def test_rejected_submission_without_success_retains_evidence() -> None:
+    attempt = sample()
+    calls = (
+        ToolCall(name="submit_output", returned_text="error: invalid arguments"),
+        ToolCall(name="run_command", returned_text="later"),
+    )
+    row = assemble(
+        {
+            "cell": "c",
+            "stop": "no_submission",
+            "terminal": "request_limit",
+            "outcome": "limit_stop",
+        },
+        attempt.variant,
+        None,
+        "",
+        Trajectory(turns=(Turn(tool_calls=calls),)),
+        attempt.image_digest,
+    )
+    assert row.calls == calls
+    assert row.self_assessed_verdict is None
+
+
+def test_rejected_and_successful_submissions_in_same_turn() -> None:
+    attempt = sample()
+    rejected = ToolCall(
+        name="submit_output", returned_text="error: submit_output must be the last call"
+    )
+    read = ToolCall(name="read_file", returned_text="before accepted submission")
+    accepted = ToolCall(name="submit_output", returned_text="submitted")
+    trace = Trajectory(
+        turns=(
+            Turn(
+                tool_calls=(rejected, read, accepted),
+                submission=Submission(self_assessed_verdict="complete"),
+            ),
+            Turn(tool_calls=(ToolCall(name="run_command"),)),
+        )
+    )
+    row = assemble(
+        {
+            "cell": "c",
+            "stop": "submitted",
+            "terminal": "normal_submission",
+            "verdict": "incorrect",
+            "outcome": "semantic",
+        },
+        attempt.variant,
+        attempt.evaluator,
+        "",
+        trace,
+        attempt.image_digest,
+    )
+    assert row.calls == (rejected, read)
+    assert row.self_assessed_verdict == "complete"

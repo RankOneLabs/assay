@@ -29,7 +29,7 @@ def test_discovery() -> None:
     row = replace(
         attempt,
         calls=(
-            ToolCall(name="submit_output"),
+            ToolCall(name="submit_output", returned_text="submitted"),
             ToolCall(
                 name="read_file", arguments={"path": "src/x.ts"}, returned_text="a line b line"
             ),

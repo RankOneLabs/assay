@@ -13,7 +13,7 @@ def normalized(text: str) -> str:
 
 def holder_seen(attempt: Attempt, holder: HolderSpec) -> bool:
     for call in attempt.calls:
-        if call.name == "submit_output":
+        if call.name == "submit_output" and call.returned_text == "submitted":
             break
         if (
             call.name in {"read_file", "run_command"}
@@ -29,7 +29,7 @@ def holder_seen(attempt: Attempt, holder: HolderSpec) -> bool:
 
 def holder_opened_with_read_file(attempt: Attempt, holder: HolderSpec) -> bool:
     for call in attempt.calls:
-        if call.name == "submit_output":
+        if call.name == "submit_output" and call.returned_text == "submitted":
             break
         if call.name == "read_file" and call.arguments is not None:
             path = call.arguments.get("path")

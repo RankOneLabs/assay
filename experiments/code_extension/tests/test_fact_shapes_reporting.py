@@ -77,3 +77,44 @@ def test_migration_columns() -> None:
         " CREATE TABLE existing (\n+  build_running INTEGER\n );\n"
     )
     assert mirrored_state_count(patch, ["buildRunning"]) == 4
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "type X = { nested: { build_running: boolean } };",
+        "interface X\n{\n build_running: boolean\n}",
+        "type X =\n{ nested: {\n build_running: boolean\n} };",
+    ],
+)
+def test_nested_and_multiline_type_bodies(source: str) -> None:
+    patch = "\n".join("+" + line for line in source.splitlines())
+    assert mirrored_state_count(patch, ["buildRunning"]) == 1
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'const note = "type X = { build_running: boolean }";',
+        "const note = 'interface X { build_running: boolean }';",
+        "const note = `interface X {\n build_running: boolean\n}`;",
+        "/* type X = { build_running: boolean }; */",
+        "/*\n interface X {\n build_running: boolean\n}\n*/",
+        "// interface X { build_running: boolean }",
+        "-- CREATE TABLE x (build_running INTEGER);",
+    ],
+)
+def test_text_and_comments_are_not_declarations(source: str) -> None:
+    patch = "\n".join("+" + line for line in source.splitlines())
+    assert mirrored_state_count(patch, ["buildRunning"]) == 0
+
+
+def test_quoted_members_and_comment_context() -> None:
+    patch = (
+        " /* existing comment\n+interface Fake { build_running: boolean }\n */\n"
+        '+interface Real { "build_running": boolean; }\n'
+        "+interface Header /* { build_running: boolean } */\n+{\n+ build_running: boolean;\n+}\n"
+        '+CREATE TABLE x ("build_running" INTEGER);\n'
+        '+const note = "escaped \\" type X = { build_running: boolean }";\n'
+    )
+    assert mirrored_state_count(patch, ["buildRunning"]) == 3

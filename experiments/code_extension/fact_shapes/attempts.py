@@ -147,7 +147,11 @@ def assemble(
         if turn.submission is not None:
             assessment = turn.submission.self_assessed_verdict
         for call in turn.tool_calls:
-            if call.name == "submit_output":
+            if (
+                call.name == "submit_output"
+                and call.returned_text == "submitted"
+                and turn.submission is not None
+            ):
                 submitted = True
                 break
             calls.append(call)
