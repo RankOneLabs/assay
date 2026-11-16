@@ -3,6 +3,7 @@ import subprocess
 import sys
 from dataclasses import replace
 
+import pytest
 from code_extension.fact_shapes.cells import CELLS
 from code_extension.fact_shapes.outcome import Held, Missed, Scored, Stopped, Unavailable, Unscored
 from code_extension.fact_shapes.tally import (
@@ -118,7 +119,8 @@ def test_help():
     assert "--store" in result.stdout and "--cohort" in result.stdout
 
 
-def test_entry_reads_typed_variants(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("inventory", [None, [], ["stage"]])
+def test_entry_reads_typed_variants(tmp_path, monkeypatch, capsys, inventory):
     import json
     from dataclasses import asdict
     from decimal import Decimal
@@ -127,14 +129,15 @@ def test_entry_reads_typed_variants(tmp_path, monkeypatch, capsys):
     from code_extension.fact_shapes.attempts import Fact, HolderSpec, Ok, Variant, VariantId
     from code_extension.tests.test_fact_shapes_outcome import sample
 
+    cell = next(c for c in CELLS if c.shape == "existing_state" and c.task_type == "additive")
     variant = Variant(
         VariantId("variant"),
         (
             Fact(
-                CELL.fact_id,
+                cell.fact_id,
                 ("fact:test: accepts",),
-                CELL.shape,
-                HolderSpec(CELL.holders, ("holder line",)),
+                cell.shape,
+                HolderSpec(cell.holders, ("holder line",)),
             ),
         ),
     )
@@ -155,7 +158,7 @@ def test_entry_reads_typed_variants(tmp_path, monkeypatch, capsys):
                         "attempts": 1,
                         "cap_usd": "1",
                         "variants": {"cell": asdict(variant)},
-                        "state_fields": ["stage"],
+                        **({"state_fields": inventory} if inventory is not None else {}),
                     }
                 ],
             }
@@ -168,8 +171,18 @@ def test_entry_reads_typed_variants(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(tally, "read_attempts", read)
     monkeypatch.setattr(sys, "argv", ["tally", "--store", str(tmp_path), "--cohort", str(path)])
-    tally.main()
-    assert INTERVAL_LABEL in capsys.readouterr().out
+    if inventory:
+        tally.main()
+        assert INTERVAL_LABEL in capsys.readouterr().out
+    else:
+        with pytest.raises(SystemExit) as error:
+            tally.main()
+        assert error.value.code == 1
+        output = capsys.readouterr()
+        assert "requires a nonempty state_fields inventory" in output.err
+        assert not output.out
+        with pytest.raises(ValueError, match="requires a nonempty state_fields inventory"):
+            tally.from_attempt("sol", cell, attempt, Scored({cell.fact_id: Held()}))
 
 
 def test_exclusion_denominator_is_scored_attempts():

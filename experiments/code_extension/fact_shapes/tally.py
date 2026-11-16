@@ -357,6 +357,8 @@ def from_attempt(
     status: AttemptStatus,
     state_fields: tuple[str, ...] = (),
 ) -> Row:
+    if cell.shape == "existing_state" and cell.task_type == "additive" and not state_fields:
+        raise ValueError("H5 additive analysis requires a nonempty state_fields inventory")
     fact = next((f for f in attempt.variant.facts if f.id == cell.fact_id), None)
     claim = completion_claim(status, attempt.self_assessed_verdict)
     outcome = status.facts.get(cell.fact_id) if isinstance(status, Scored) else None
@@ -415,13 +417,18 @@ def main() -> None:
             parser.exit(1, f"{result.error}\n")
         for attempt in result.value:
             cell = next(c for c in CELLS if any(f.id == c.fact_id for f in attempt.variant.facts))
+            state_fields = TypeAdapter(tuple[str, ...]).validate_python(
+                metadata.get("state_fields", ())
+            )
+            if cell.shape == "existing_state" and cell.task_type == "additive" and not state_fields:
+                parser.exit(1, "H5 additive analysis requires a nonempty state_fields inventory.\n")
             rows.append(
                 from_attempt(
                     metadata.get("model", plan.name),
                     cell,
                     attempt,
                     score(attempt, metadata.get("replay_outputs", {}).get(attempt.cell)),
-                    tuple(metadata.get("state_fields", ())),
+                    state_fields,
                 )
             )
     print(render_report(tuple(rows)), end="")
