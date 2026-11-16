@@ -1,0 +1,71 @@
+{
+  "scenario_qualifications": [
+    {
+      "scenario": "fact-shapes-stage-additive",
+      "manifest_digest": "sha256:13317285841dd0683788d9e42aa368b15b05e6dfd154bd731476308566fdcd08"
+    },
+    {
+      "scenario": "fact-shapes-stage-rename",
+      "manifest_digest": "sha256:e40de4035b3ee02383bdd10a855bd53d579672627390f0f1a303c77947f39419"
+    },
+    {
+      "scenario": "fact-shapes-evidence-kind-additive",
+      "manifest_digest": "sha256:0dfa51e9acd080cca30ece392489a49873298ec1b66456d83c838eeeb51d8f97"
+    },
+    {
+      "scenario": "fact-shapes-evidence-kind-rename",
+      "manifest_digest": "sha256:d308c370fa91d2c9a897c4b97ad0f481b37edb5a893e9043c19f8995c4b5b6d4"
+    },
+    {
+      "scenario": "fact-shapes-route-permission-additive",
+      "manifest_digest": "sha256:acbbb1d47d72a6f4a6c2cf7049620016b24e3f9ac7224f264c4a5101555d1696"
+    },
+    {
+      "scenario": "fact-shapes-route-permission-rename",
+      "manifest_digest": "sha256:59bcf1f0a38b8f2e05719f4d76bc380498b52018f3b85f9d508f229ea96e2ff8"
+    }
+  ],
+  "cohort": "fact-shapes-2026-11-study-sol",
+  "route": {
+    "endpoint": "https://openrouter.ai/api/v1",
+    "model": "openai/gpt-6.1-sol",
+    "provider": "azure/us"
+  },
+  "profile": "openrouter",
+  "system_prompt_digest": "sha256:d6f2f100a9a362ddae1d201fd96de86b24ad47b7449ff863d42c64ed71607cfb",
+  "tool_schemas_digest": "sha256:698286ad88a625d2ebdccb8c5f1fffc7d7831692f09eac7b146123fd2f8c8c9c",
+  "image_digest": "sha256:b48e43d170e6c0eb0d7e70364c2e385488c07f93ef8ea38f9942dc573cfba0da",
+  "envelope": "fact-shapes-v1",
+  "bounds": {
+    "served_context_tokens": null,
+    "model_context_limit_tokens": null,
+    "request_timeout_s": 120.0,
+    "max_turns": 80,
+    "timeout_s": 1800.0,
+    "attempts": 1,
+    "concurrency": 1,
+    "provider_retries": 0,
+    "sdk_retries": 0,
+    "max_tool_schema_bytes": 16384,
+    "max_tool_output_bytes": 32768,
+    "max_conversation_bytes": 3670016,
+    "max_request_bytes": 3932160,
+    "max_response_bytes": 131072,
+    "max_output_tokens": 8192,
+    "max_storage_mb": 512,
+    "per_cell_tool_call_ceiling": "unavailable",
+    "per_cell_tool_call_ceiling_reason": "extension_mode cannot enforce a per-cell tool-call ceiling: the repository-agent loop honors max_tool_calls_per_cell and max_tool_calls_per_turn only under pilot_mode",
+    "requested_sampling": null,
+    "provider_reported_sampling": null
+  },
+  "repeats": 5,
+  "randomization_seed": 20261115,
+  "dispatch_schedule": "subject-rotated-v1",
+  "concurrency": 1,
+  "pricing": {
+    "basis": "operator-confirmed caps, including one probe per plan",
+    "conservative_request_bound_usd": null
+  },
+  "per_attempt_cap_usd": "2.00",
+  "total_cap_usd": "362.00"
+}

@@ -22,12 +22,26 @@ class StudyModel:
 
 
 STUDY_MODELS: tuple[StudyModel, ...] = (
-    StudyModel("sol", ModelRoute(endpoint="https://openrouter.ai/api/v1",
-                                model="openai/gpt-6.1-sol", provider="azure/us")),
-    StudyModel("argon", ModelRoute(endpoint="https://openrouter.ai/api/v1",
-                                  model="google/gemini-4-argon", provider="google-vertex/global")),
-    StudyModel("midtier", ModelRoute(endpoint="https://openrouter.ai/api/v1",
-                                    model="openai/gpt-6-luna", provider="azure")),
+    StudyModel(
+        "sol",
+        ModelRoute(
+            endpoint="https://openrouter.ai/api/v1", model="openai/gpt-6.1-sol", provider="azure/us"
+        ),
+    ),
+    StudyModel(
+        "argon",
+        ModelRoute(
+            endpoint="https://openrouter.ai/api/v1",
+            model="google/gemini-4-argon",
+            provider="google-vertex/global",
+        ),
+    ),
+    StudyModel(
+        "midtier",
+        ModelRoute(
+            endpoint="https://openrouter.ai/api/v1", model="openai/gpt-6-luna", provider="azure"
+        ),
+    ),
 )
 
 
@@ -40,9 +54,10 @@ class PerAttemptCaps(BaseModel):
     midtier: Decimal = Field(gt=0)
 
 
-PER_ATTEMPT_CAPS = PerAttemptCaps(sol=Decimal("2.00"), argon=Decimal("4.00"),
-                                  midtier=Decimal("1.00"))
-PILOT_TOTAL_CAP_USD = Decimal("15.00")
+PER_ATTEMPT_CAPS = PerAttemptCaps(
+    sol=Decimal("2.00"), argon=Decimal("4.00"), midtier=Decimal("1.00")
+)
+PILOT_TOTAL_CAP_USD = Decimal("61.00")  # Operator confirmed, including one probe per plan.
 LIBRARY_RERUN_TOTAL_CAP_USD = Decimal("5.00")
 # Original 30–45 s observation was supplied in the Oakridge cohort brief.
 # Its receipt has not been located; the related retained rerun below measures
@@ -65,5 +80,6 @@ class PilotAllocation:
 
 PILOT_ALLOCATION: tuple[PilotAllocation, ...] = tuple(
     PilotAllocation(model.name, shape, 2 if model.name == "sol" else 1)
-    for model in STUDY_MODELS for shape in FACT_SHAPES
+    for model in STUDY_MODELS
+    for shape in FACT_SHAPES
 )

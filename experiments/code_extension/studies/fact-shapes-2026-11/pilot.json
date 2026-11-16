@@ -1,0 +1,18 @@
+{
+  "cohort": "fact-shapes-2026-11-pilot",
+  "combined_cap_usd": "61.00",
+  "plans": [
+    {
+      "name": "sol",
+      "config": "pilot-sol.json"
+    },
+    {
+      "name": "argon",
+      "config": "pilot-argon.json"
+    },
+    {
+      "name": "midtier",
+      "config": "pilot-midtier.json"
+    }
+  ]
+}
