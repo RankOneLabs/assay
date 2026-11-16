@@ -6,6 +6,7 @@ No tree is written until every declared edit and holder line has been validated.
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from shutil import rmtree
 
 from pydantic import TypeAdapter
 
@@ -90,6 +91,8 @@ def write_variants(destination: Path) -> None:
     metadata = holders_json(trees)
     for cell in CELLS:
         root = destination / 'fixtures' / scenario_name(cell) / 'repository' / cell.shape
+        if root.exists():
+            rmtree(root)
         materialize(root, trees[cell.fact_id])
     holder_path = destination / 'fact_shapes/holders.json'
     holder_path.parent.mkdir(parents=True, exist_ok=True)

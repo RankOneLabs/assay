@@ -247,3 +247,26 @@ def test_only_selected_holder_explicitly_owns_fact(
         }
         expected = cell.holders[0] if concept.name == cell.feature else concept.declaring_file
         assert owners == {expected: 1}, (cell.fact_id, concept.name, owners)
+
+
+def test_regeneration_removes_obsolete_files(tmp_path: Path) -> None:
+    write_variants(tmp_path)
+    for cell in CELLS:
+        scenario = tmp_path / 'fixtures' / scenario_name(cell)
+        arm = scenario / 'repository' / cell.shape
+        (arm / 'removed.ts').write_text('obsolete')
+        (arm / 'old').mkdir()
+        (arm / 'old/index.ts').write_text('renamed source')
+        (arm / cell.edit_site).write_text('stale bytes')
+        (scenario / 'task.md').write_text('preserve shared task')
+        (scenario / 'hidden').mkdir(exist_ok=True)
+        (scenario / 'hidden/check.ts').write_text('preserve shared tests')
+    write_variants(tmp_path)
+    for cell in CELLS:
+        scenario = tmp_path / 'fixtures' / scenario_name(cell)
+        arm = scenario / 'repository' / cell.shape
+        assert not (arm / 'removed.ts').exists()
+        assert not (arm / 'old').exists()
+        assert read_tree(arm) == read_tree(arm_path(cell))
+        assert (scenario / 'task.md').read_text() == 'preserve shared task'
+        assert (scenario / 'hidden/check.ts').read_text() == 'preserve shared tests'
