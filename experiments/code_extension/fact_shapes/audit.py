@@ -30,6 +30,8 @@ class State:
     name: str
     source: str
     symbol: str
+    aliases: tuple[str, ...] = ()
+    declaration_kind: str = "field"
 
 
 @dataclass(frozen=True)
@@ -81,7 +83,13 @@ def load_inventory(path: Path) -> Inventory:
         for item in _objects(data["concepts"])
     )
     states = tuple(
-        State(_text(item["name"]), _text(item["source"]), _text(item["symbol"]))
+        State(
+            _text(item["name"]),
+            _text(item["source"]),
+            _text(item["symbol"]),
+            _strings(item.get("aliases", [])),
+            _text(item.get("declaration_kind", "field")),
+        )
         for item in _objects(data["states"])
     )
     names = [item.name for item in concepts] + [item.name for item in states]
@@ -110,7 +118,17 @@ def _value_lists(source: str) -> list[frozenset[str]]:
     return [frozenset(re.findall(_LITERAL, match.group())) for match in _LIST.finditer(source)]
 
 
-def _state_declarations(source: str, symbol: str) -> int:
+def _state_declarations(source: str, symbol: str, kind: str = "field") -> int:
+    if kind == "table":
+        return len(
+            re.findall(
+                rf"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?{re.escape(symbol)}\s*\(",
+                source,
+                re.IGNORECASE,
+            )
+        )
+    if kind != "field":
+        raise ValueError(f"unknown state declaration kind: {kind}")
     # Camel and SQL snake spellings identify the same inventoried storage slot.
     snake = re.sub(r"(?<!^)([A-Z])", r"_\1", symbol).lower()
     names = "|".join(re.escape(name) for name in {symbol, snake})
@@ -145,10 +163,16 @@ def audit(root: Path, inventory: Inventory) -> tuple[Finding, ...]:
             if count > (1 if path in allowed else 0):
                 findings.append(Finding(concept.name, path, "duplicate concept value declaration"))
     for state in inventory.states:
-        if _state_declarations(sources.get(state.source, ""), state.symbol) != 1:
+        if (
+            _state_declarations(sources.get(state.source, ""), state.symbol, state.declaration_kind)
+            != 1
+        ):
             findings.append(Finding(state.name, state.source, "missing or repeated state source"))
         for path, source in sources.items():
-            if path != state.source and _state_declarations(source, state.symbol):
+            if path != state.source and any(
+                _state_declarations(source, symbol, state.declaration_kind)
+                for symbol in (state.symbol, *state.aliases)
+            ):
                 findings.append(Finding(state.name, path, "mirrored state field or column"))
     return tuple(findings)
 

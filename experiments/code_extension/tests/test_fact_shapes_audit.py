@@ -39,6 +39,7 @@ def test_concept_duplicates(tmp_path: Path, seed: str) -> None:
     "seed",
     [
         "class Mirror { buildRunning = new Set<string>(); }",
+        "class Mirror { runningSessions = new Set<string>(); }",
         "CREATE TABLE mirror (id TEXT PRIMARY KEY, build_running BOOLEAN);",
     ],
 )
@@ -73,3 +74,15 @@ def test_cli_and_arbitrary_root(tmp_path: Path) -> None:
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     assert result.returncode == 1
     assert "stage" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("name", "table"),
+    [("job_records", "jobs"), ("evidence_records", "evidence"), ("attempt_history", "attempts")],
+)
+def test_duplicate_state_tables(tmp_path: Path, name: str, table: str) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    (target / "mirror.sql").write_text(f"CREATE TABLE {table} (id TEXT PRIMARY KEY);")
+    findings = audit(target, load_inventory(INVENTORY))
+    assert any(finding.name == name and finding.path == "mirror.sql" for finding in findings)

@@ -44,7 +44,12 @@
     {
       "name": "session_build",
       "source": "stage/state.ts",
-      "symbol": "buildRunning"
+      "symbol": "buildRunning",
+      "aliases": [
+        "runningSessions",
+        "sessionBuildFlags",
+        "activeSessionBuilds"
+      ]
     },
     {
       "name": "evidence_selection",
@@ -55,6 +60,48 @@
       "name": "permission_selection",
       "source": "route_permission/state.ts",
       "symbol": "route_permissionSelections"
+    },
+    {
+      "name": "job_records",
+      "source": "src/schema.ts",
+      "symbol": "jobs",
+      "declaration_kind": "table"
+    },
+    {
+      "name": "evidence_records",
+      "source": "src/schema.ts",
+      "symbol": "evidence",
+      "declaration_kind": "table"
+    },
+    {
+      "name": "permission_grants",
+      "source": "src/schema.ts",
+      "symbol": "grants",
+      "declaration_kind": "table"
+    },
+    {
+      "name": "job_history",
+      "source": "src/schema.ts",
+      "symbol": "job_events",
+      "declaration_kind": "table"
+    },
+    {
+      "name": "attempt_history",
+      "source": "src/schema.ts",
+      "symbol": "attempts",
+      "declaration_kind": "table"
+    },
+    {
+      "name": "job_dependencies",
+      "source": "src/schema.ts",
+      "symbol": "job_dependencies",
+      "declaration_kind": "table"
+    },
+    {
+      "name": "migration_journal",
+      "source": "src/migrations.ts",
+      "symbol": "schema_migrations",
+      "declaration_kind": "table"
     }
   ]
 }
