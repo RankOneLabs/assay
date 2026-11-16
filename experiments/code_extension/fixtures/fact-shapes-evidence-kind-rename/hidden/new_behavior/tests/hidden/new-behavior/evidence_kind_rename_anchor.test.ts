@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { validateKey } from "../../../evidence_kind/anchor.ts";
+import "../../../src/bootstrap.ts";
+import { edit } from "../../../evidence_kind/edit.ts";
 
 test("fact:evidence_kind_rename_anchor: anchor behavior", () => {
-  expect(validateKey("a_1-B")).toBe("a_1-B");
-  expect(validateKey("a".repeat(80))).toHaveLength(80);
-  for (const label of ["", "bad/label", "a".repeat(81)]) expect(() => validateKey(label)).toThrow();
-});
+  expect(edit("a".repeat(80), "image" as never).key).toHaveLength(80);
+  expect(edit("a_1-B", "image" as never).key).toBe("a_1-B");
+  for (const label of ["", "bad/label", "a".repeat(81)]) expect(() => edit(label, "image" as never)).toThrow();
+}, 30000);

@@ -2,7 +2,7 @@
   "scenario_qualifications": [
     {
       "scenario": "fact-shapes-stage-additive",
-      "manifest_digest": "sha256:13317285841dd0683788d9e42aa368b15b05e6dfd154bd731476308566fdcd08"
+      "manifest_digest": "sha256:2249f2072bdbdc884a02a3976115bb46056f7192a56bfb4f253ab1a7eb913d79"
     }
   ],
   "cohort": "fact-shapes-2026-11-pilot-argon",

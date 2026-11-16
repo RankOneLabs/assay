@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import { fixture, admin, reader, writer, outsider, expectError } from "./helpers.ts";
 import { createApp } from "../../src/app.ts";
@@ -17,7 +19,7 @@ describe("job service through Hono", () => {
     expect(created.status).toBe(201);
     expect(created.headers.get("location")).toBe("/jobs/first");
     expect(await created.json()).toMatchObject({
-      id: "first", title: "First job", stage: "queued", revision: 1,
+      id: "first", title: "First job", stage: canonical("stage"), revision: 1,
     });
     const read = await f.request("GET", "/jobs/first", undefined, reader);
     expect(read.status).toBe(200);
@@ -339,7 +341,7 @@ const routePermissions: PermissionCase[] = [
     title: "primary grant operation",
     method: "POST",
     path: "/grants",
-    body: { principal: "new-user", project: "project", permission: "case_read" },
+    body: { principal: "new-user", project: "project", permission: canonical("route_permission") },
     required: "admin",
     accepted: 201,
   },
@@ -347,7 +349,7 @@ const routePermissions: PermissionCase[] = [
     title: "peer grant operation",
     method: "POST",
     path: "/grants/peer",
-    body: { principal: "new-user", project: "project", permission: "case_read" },
+    body: { principal: "new-user", project: "project", permission: canonical("route_permission") },
     required: "admin",
     accepted: 201,
   },
@@ -355,7 +357,7 @@ const routePermissions: PermissionCase[] = [
     title: "grant revocation",
     method: "DELETE",
     path: "/grants",
-    body: { principal: "reader", project: "project", permission: "case_read" },
+    body: { principal: "reader", project: "project", permission: canonical("route_permission") },
     required: "admin",
     accepted: 200,
   },
@@ -547,7 +549,7 @@ const routePermissions: PermissionCase[] = [
     title: "bulk grant",
     method: "POST",
     path: "/grants/bulk",
-    body: [{ principal: "new-user", permission: "case_read" }],
+    body: [{ principal: "new-user", permission: canonical("route_permission") }],
     required: "admin",
     accepted: 201,
   },
@@ -555,7 +557,7 @@ const routePermissions: PermissionCase[] = [
     title: "bulk revoke",
     method: "DELETE",
     path: "/grants/bulk",
-    body: [{ principal: "reader", permission: "case_read" }],
+    body: [{ principal: "reader", permission: canonical("route_permission") }],
     required: "admin",
     accepted: 200,
   },
@@ -592,7 +594,7 @@ const routePermissions: PermissionCase[] = [
     title: "permission preference selection",
     method: "PUT",
     path: "/preferences/permission",
-    body: { permission: "case_read" },
+    body: { permission: canonical("route_permission") },
     required: "admin",
     accepted: 204,
   },
@@ -719,7 +721,7 @@ describe("HTTP error boundaries", () => {
     await expectError(await f.request("GET", "/jobs/job/events?after=-1"), 400);
     await expectError(await f.request("GET", "/jobs/job/events?limit=101"), 400);
     await expectError(await f.request("GET", "/jobs?limit=0"), 400);
-    await expectError(await f.request("GET", "/jobs?stage=triaged"), 400);
+    await expectError(await f.request("GET", "/jobs?stage=unsupported_future"), 400);
     await expectError(await f.request("GET", "/jobs?unexpected=value"), 400);
     expect(f.context.eventRepository.count("job")).toBe(1);
   });
@@ -728,7 +730,7 @@ describe("HTTP error boundaries", () => {
     using f = fixture({ maxEvidenceBytes: 3 });
     f.create();
     const response = await f.request("POST", "/jobs/job/evidence", {
-      id: "oversized", kind: "document", title: "Proof", content: "éé", author: "author",
+      id: "oversized", kind: canonical("evidence_kind"), title: "Proof", content: "éé", author: "author",
     });
     await expectError(response, 413, "limit_exceeded");
     expect(f.context.evidenceRepository.count("job")).toBe(0);

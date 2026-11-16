@@ -2,27 +2,27 @@
   "scenario_qualifications": [
     {
       "scenario": "fact-shapes-stage-additive",
-      "manifest_digest": "sha256:13317285841dd0683788d9e42aa368b15b05e6dfd154bd731476308566fdcd08"
+      "manifest_digest": "sha256:2249f2072bdbdc884a02a3976115bb46056f7192a56bfb4f253ab1a7eb913d79"
     },
     {
       "scenario": "fact-shapes-stage-rename",
-      "manifest_digest": "sha256:e40de4035b3ee02383bdd10a855bd53d579672627390f0f1a303c77947f39419"
+      "manifest_digest": "sha256:e33fb690fa037a8d9836907bd10cb77648ea5d57d0b414fecaa0947de16db01c"
     },
     {
       "scenario": "fact-shapes-evidence-kind-additive",
-      "manifest_digest": "sha256:0dfa51e9acd080cca30ece392489a49873298ec1b66456d83c838eeeb51d8f97"
+      "manifest_digest": "sha256:698a1a936dc085098ccc81a132baed463776329f648f9db62f2f67954fb9f685"
     },
     {
       "scenario": "fact-shapes-evidence-kind-rename",
-      "manifest_digest": "sha256:d308c370fa91d2c9a897c4b97ad0f481b37edb5a893e9043c19f8995c4b5b6d4"
+      "manifest_digest": "sha256:411a2923610ccfd8ea33eb04cf2724d1eec6facafd8c1bc0adcf308f8c45dd55"
     },
     {
       "scenario": "fact-shapes-route-permission-additive",
-      "manifest_digest": "sha256:acbbb1d47d72a6f4a6c2cf7049620016b24e3f9ac7224f264c4a5101555d1696"
+      "manifest_digest": "sha256:6e2fa7b8d9a8dd1281732287a6db20cc586aca4aeeb29629dadfef9ab9571201"
     },
     {
       "scenario": "fact-shapes-route-permission-rename",
-      "manifest_digest": "sha256:59bcf1f0a38b8f2e05719f4d76bc380498b52018f3b85f9d508f229ea96e2ff8"
+      "manifest_digest": "sha256:b73c1618b3db105da25d210880aa58bc470bb2dcb6843eb11b3fcb0fc1c00f26"
     }
   ],
   "cohort": "fact-shapes-2026-11-study-midtier",

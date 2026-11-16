@@ -1,6 +1,5 @@
-const featureValues: readonly string[] = ["queued"];
 import { vocabularyStore } from "../src/vocabulary.ts";
-vocabularyStore.values("stage");
+vocabularyStore.define("stage", ["queued", "active", "complete"]);
 /**
  * Session lifecycle owns the only running-build store.
  * An active job stage or an unfinished attempt is historical workflow data;
@@ -15,5 +14,4 @@ export class SessionService {
   }
   isBuildRunning(sessionId: string): boolean { return this.buildRunning.has(sessionId); }
   endSession(sessionId: string): void { this.buildRunning.delete(sessionId); }
-  supportsFeature(value: string, key: string): boolean { return featureValues.includes(value) && this.isBuildRunning(key); }
 }

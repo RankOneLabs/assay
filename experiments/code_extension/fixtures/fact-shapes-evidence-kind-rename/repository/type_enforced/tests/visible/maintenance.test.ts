@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { DependencyRepository } from "../../src/repositories/dependencies.ts";
 import { describe, expect, test } from "bun:test";
 import { fixture, seedArchives, admin, reader, writer, outsider, expectError } from "./helpers.ts";
@@ -275,13 +277,13 @@ describe("stable retention batches", () => {
     using f = fixture();
     f.create();
     f.context.evidence.setDefaultKind(admin, "image");
-    f.context.access.setDefaultPermission(admin, "case_read");
+    f.context.access.setDefaultPermission(admin, canonical("route_permission"));
     const archived = f.context.jobs.archive(admin, "job", { expectedRevision: 1 });
     expect(f.context.maintenance.purge(admin, archived.archivedAt! + 1, 1)).toEqual(["job"]);
     expect(f.context.evidence.getDefaultKind(admin)).toBe("image");
-    expect(f.context.access.getDefaultPermission(admin)).toBe("case_read");
+    expect(f.context.access.getDefaultPermission(admin)).toBe(canonical("route_permission"));
     expect(f.context.access.list(admin, reader.id)).toHaveLength(1);
-    expect(f.context.grantRepository.has(reader, "case_read")).toBe(true);
+    expect(f.context.grantRepository.has(reader, canonical("route_permission"))).toBe(true);
   });
 
   test("completed evidence is retained unchanged until administrative retention removes the job", () => {

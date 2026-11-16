@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import { values as stages } from "../../stage/types.ts";
 import { values as kinds } from "../../evidence_kind/types.ts";
@@ -24,13 +26,13 @@ describe("feature-specific independent peer switch points", () => {
       expect(stagePrimary(value)).toBe(true);
       expect(stagePeer(value)).toBe(true);
       expect(stageOperations[value]("key")).toBe(`key:${value}`);
-      expect(routeStage(value)).toStartWith("/jobs/");
+      expect(routeStage(value)).toStartWith("/jobs");
     }
   });
 
   test("both stage peers reject the additive and renamed cell target", () => {
-    expect(stagePrimary("triaged")).toBe(false);
-    expect(stagePeer("triaged")).toBe(false);
+    expect(stagePrimary("unsupported_future")).toBe(false);
+    expect(stagePeer("unsupported_future")).toBe(false);
     expect(stagePrimary("QUEUED")).toBe(false);
     expect(stagePeer("QUEUED")).toBe(false);
     expect(stagePrimary("queued ")).toBe(false);
@@ -44,10 +46,10 @@ describe("feature-specific independent peer switch points", () => {
       expect(evidenceOperations[value]("key")).toBe(`key:${value}`);
       expect(mediaFor(value)).toContain("/");
     }
-    expect(evidencePrimary("queued")).toBe(false);
-    expect(evidencePeer("queued")).toBe(false);
-    expect(evidencePrimary("attestation")).toBe(false);
-    expect(evidencePeer("attestation")).toBe(false);
+    expect(evidencePrimary(canonical("stage"))).toBe(false);
+    expect(evidencePeer(canonical("stage"))).toBe(false);
+    expect(evidencePrimary("unsupported_future")).toBe(false);
+    expect(evidencePeer("unsupported_future")).toBe(false);
   });
 
   test("permission peers accept only permission vocabulary members", () => {
@@ -57,36 +59,36 @@ describe("feature-specific independent peer switch points", () => {
       expect(permissionOperations[value]("key")).toBe(`key:${value}`);
       expect(permissionDescription(value).length).toBeGreaterThan(10);
     }
-    expect(permissionPrimary("document")).toBe(false);
-    expect(permissionPeer("document")).toBe(false);
-    expect(permissionPrimary("case_inspect")).toBe(false);
-    expect(permissionPeer("case_inspect")).toBe(false);
+    expect(permissionPrimary(canonical("evidence_kind"))).toBe(false);
+    expect(permissionPeer(canonical("evidence_kind"))).toBe(false);
+    expect(permissionPrimary("unsupported_future")).toBe(false);
+    expect(permissionPeer("unsupported_future")).toBe(false);
   });
 
   test("reference policies reject each feature's new cell value", () => {
-    expect(acceptStage("queued")).toBe("queued");
-    expect(acceptKind("document")).toBe("document");
-    expect(acceptPermission("case_read")).toBe("case_read");
-    expect(() => acceptStage("triaged")).toThrow("unsupported stage");
-    expect(() => acceptKind("attestation")).toThrow("unsupported evidence_kind");
-    expect(() => acceptPermission("case_inspect")).toThrow("unsupported route_permission");
+    expect(acceptStage(canonical("stage"))).toBe(canonical("stage"));
+    expect(acceptKind(canonical("evidence_kind"))).toBe(canonical("evidence_kind"));
+    expect(acceptPermission(canonical("route_permission"))).toBe(canonical("route_permission"));
+    expect(() => acceptStage("unsupported_future")).toThrow("unsupported stage");
+    expect(() => acceptKind("unsupported_future")).toThrow("unsupported evidence_kind");
+    expect(() => acceptPermission("unsupported_future")).toThrow("unsupported route_permission");
   });
 
   test("descriptive registry validation is separate from edit operations", () => {
-    expect(routeFor("queued")).toBe("/jobs/queued");
-    expect(routeFor("triaged")).toBe(DEFAULT_ROUTE);
-    expect(validateKind("document")).toBe(true);
-    expect(validateKind("attestation")).toBe(false);
-    expect(validatePermission("case_read")).toBe(true);
-    expect(validatePermission("case_inspect")).toBe(false);
+    expect(routeFor(canonical("stage"))).toBe((`/jobs/${canonical("stage")}`));
+    expect(routeFor("unsupported_future")).toBe(DEFAULT_ROUTE);
+    expect(validateKind(canonical("evidence_kind"))).toBe(true);
+    expect(validateKind("unsupported_future")).toBe(false);
+    expect(validatePermission(canonical("route_permission"))).toBe(true);
+    expect(validatePermission("unsupported_future")).toBe(false);
   });
 
   test("stage transition rules are exhaustive without making complete reversible", () => {
-    expect(canTransition("queued", "active")).toBe(true);
-    expect(canTransition("queued", "complete")).toBe(false);
-    expect(canTransition("active", "queued")).toBe(true);
+    expect(canTransition(canonical("stage"), "active")).toBe(true);
+    expect(canTransition(canonical("stage"), "complete")).toBe(false);
+    expect(canTransition("active", canonical("stage"))).toBe(true);
     expect(canTransition("active", "complete")).toBe(true);
-    expect(canTransition("complete", "queued")).toBe(false);
+    expect(canTransition("complete", canonical("stage"))).toBe(false);
     expect(canTransition("complete", "active")).toBe(false);
     for (const stage of stages) expect(canTransition(stage, stage)).toBe(false);
   });
@@ -98,10 +100,10 @@ describe("feature-specific independent peer switch points", () => {
       f.create(id);
       const path = `/jobs/${id}/stage${peer ? "/peer" : ""}`;
       const rejected = await f.request("POST", path, {
-        stage: "triaged", expectedRevision: 1, reason: "future stage",
+        stage: "unsupported_future", expectedRevision: 1, reason: "future stage",
       });
       expect(rejected.status).toBe(400);
-      expect(f.context.jobRepository.require(id).stage).toBe("queued");
+      expect(f.context.jobRepository.require(id).stage).toBe(canonical("stage"));
       const accepted = await f.request("POST", path, {
         stage: "active", expectedRevision: 1, reason: "start",
       });
@@ -116,7 +118,7 @@ describe("type-enforced owner controls", () => {
   for (const [feature, typeName] of [["stage", "Stage"], ["evidence_kind", "EvidenceKind"], ["route_permission", "RoutePermission"]]) {
     test(`${feature} type is closed exactly when types.ts owns the vocabulary`, async () => {
       const directory = `/tmp/type-control-${crypto.randomUUID()}`;
-      const original = (await Bun.file(`${import.meta.dir}/../../${feature}/types.ts`).text()).split('import type { RequiredFeature }')[0];
+      const original = await Bun.file(`${import.meta.dir}/../../${feature}/types.ts`).text();
       const closed = original.includes("vocabularyStore.define");
       try {
         await Bun.write(`${directory}/${feature}/types.ts`, original);

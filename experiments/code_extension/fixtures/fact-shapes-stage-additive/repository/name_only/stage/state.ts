@@ -1,4 +1,3 @@
-const featureValues: readonly string[] = ["queued", "triaged"];
 import { vocabularyStore } from "../src/vocabulary.ts";
 vocabularyStore.values("stage");
 /**
@@ -15,5 +14,4 @@ export class SessionService {
   }
   isBuildRunning(sessionId: string): boolean { return this.buildRunning.has(sessionId); }
   endSession(sessionId: string): void { this.buildRunning.delete(sessionId); }
-  supportsFeature(value: string, key: string): boolean { return featureValues.includes(value) && this.isBuildRunning(key); }
 }

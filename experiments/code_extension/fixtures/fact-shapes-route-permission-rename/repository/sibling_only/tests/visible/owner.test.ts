@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, rm, readdir } from "node:fs/promises";
 
 /** A change to the sole owner must reach every derived consumer, without edits elsewhere. */
 for (const feature of ["stage", "evidence_kind", "route_permission"]) {
@@ -15,11 +15,12 @@ for (const feature of ["stage", "evidence_kind", "route_permission"]) {
         for (const name of ["bootstrap.ts", "vocabulary.ts"]) {
           await cp(`${root}/src/${name}`, `${target}/src/${name}`);
         }
-        const candidates = ["types.ts", "policy.ts", "names.ts", "sibling.ts", "state.ts", "001_constraint.sql"];
+        const migrations = (await readdir(`${target}/${feature}`)).filter(name => name.endsWith(".sql")).sort();
+        const candidates = ["types.ts", "policy.ts", "names.ts", "sibling.ts", "state.ts", migrations.at(-1)!];
         const owners: string[] = [];
         for (const candidate of candidates) {
           const source = await Bun.file(`${target}/${feature}/${candidate}`).text();
-          if (source.includes("vocabularyStore.define(") || /value IN \(/.test(source.split(";")[0])) owners.push(candidate);
+          if (source.includes("vocabularyStore.define(") || /value IN \(/.test(source)) owners.push(candidate);
         }
         expect(owners.length).toBe(1);
         const path = `${target}/${feature}/${owners[0]}`;
@@ -51,7 +52,7 @@ for (const feature of ["stage", "evidence_kind", "route_permission"]) {
               || peer(${JSON.stringify(first)}) || validateRegisteredValue(${JSON.stringify(first)})))
             throw new Error("stale renamed value");
           using db = new Database(":memory:");
-          db.exec(await Bun.file(import.meta.dir + "/${feature}/001_constraint.sql").text());
+          for (const file of ${JSON.stringify(migrations)}) db.exec(await Bun.file(import.meta.dir + "/${feature}/" + file).text());
           db.query("INSERT INTO ${feature}_values VALUES (?, ?)").run("new", "study_future");
           console.log("owner mutation propagated");
         `);

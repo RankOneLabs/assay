@@ -9,7 +9,7 @@
       ],
       "fact_lines": {
         "stage/types.ts": [
-          "export const featureTypes: Record<RequiredFeature, true> & Record<string, true> = {\"queued\": true};"
+          "export const values = vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"] as const);"
         ]
       }
     },
@@ -20,7 +20,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -35,7 +35,7 @@
       ],
       "fact_lines": {
         "stage/policy.ts": [
-          "const featureValues: readonly string[] = [\"queued\"];"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -46,7 +46,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -61,7 +61,7 @@
       ],
       "fact_lines": {
         "stage/names.ts": [
-          "const featureValues: readonly string[] = [\"queued\"];"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -72,7 +72,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -87,7 +87,7 @@
       ],
       "fact_lines": {
         "stage/sibling.ts": [
-          "const featureValues: readonly string[] = [\"queued\"];"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -98,7 +98,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -113,7 +113,7 @@
       ],
       "fact_lines": {
         "stage/001_constraint.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued'))"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued', 'active', 'complete'))"
         ]
       }
     },
@@ -124,7 +124,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -139,9 +139,7 @@
       ],
       "fact_lines": {
         "stage/state.ts": [
-          "const featureValues: readonly string[] = [\"queued\"];",
-          "  private readonly buildRunning = new Set<string>();",
-          "  supportsFeature(value: string, key: string): boolean { return featureValues.includes(value) && this.isBuildRunning(key); }"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -152,7 +150,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -167,7 +165,7 @@
       ],
       "fact_lines": {
         "stage/types.ts": [
-          "export const featureTypes: Record<RequiredFeature, true> & Record<string, true> = {\"queued\": true};"
+          "export const values = vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"] as const);"
         ]
       }
     },
@@ -178,7 +176,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -193,7 +191,7 @@
       ],
       "fact_lines": {
         "stage/policy.ts": [
-          "const featureValues: readonly string[] = [\"queued\"];"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -204,7 +202,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -219,7 +217,7 @@
       ],
       "fact_lines": {
         "stage/names.ts": [
-          "const featureValues: readonly string[] = [\"queued\"];"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -230,7 +228,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -245,7 +243,7 @@
       ],
       "fact_lines": {
         "stage/sibling.ts": [
-          "const featureValues: readonly string[] = [\"queued\"];"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -256,7 +254,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -271,7 +269,7 @@
       ],
       "fact_lines": {
         "stage/001_constraint.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued'))"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued', 'active', 'complete'))"
         ]
       }
     },
@@ -282,7 +280,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -297,9 +295,7 @@
       ],
       "fact_lines": {
         "stage/state.ts": [
-          "const featureValues: readonly string[] = [\"queued\"];",
-          "  private readonly buildRunning = new Set<string>();",
-          "  supportsFeature(value: string, key: string): boolean { return featureValues.includes(value) && this.isBuildRunning(key); }"
+          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
         ]
       }
     },
@@ -310,7 +306,7 @@
       ],
       "fact_lines": {
         "stage/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -325,7 +321,7 @@
       ],
       "fact_lines": {
         "evidence_kind/types.ts": [
-          "export const featureTypes: Record<RequiredFeature, true> & Record<string, true> = {\"document\": true};"
+          "export const values = vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"] as const);"
         ]
       }
     },
@@ -336,7 +332,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -351,7 +347,7 @@
       ],
       "fact_lines": {
         "evidence_kind/policy.ts": [
-          "const featureValues: readonly string[] = [\"document\"];"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -362,7 +358,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -377,7 +373,7 @@
       ],
       "fact_lines": {
         "evidence_kind/names.ts": [
-          "const featureValues: readonly string[] = [\"document\"];"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -388,7 +384,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -403,7 +399,7 @@
       ],
       "fact_lines": {
         "evidence_kind/sibling.ts": [
-          "const featureValues: readonly string[] = [\"document\"];"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -414,7 +410,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -429,7 +425,7 @@
       ],
       "fact_lines": {
         "evidence_kind/001_constraint.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document'))"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'image', 'testimony'))"
         ]
       }
     },
@@ -440,7 +436,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -455,9 +451,7 @@
       ],
       "fact_lines": {
         "evidence_kind/state.ts": [
-          "const featureValues: readonly string[] = [\"document\"];",
-          "  private readonly evidence_kindSelections = new Map<string, EvidenceKind>();",
-          "  supportsFeature(value: string, key: string): boolean { return featureValues.includes(value) && this.get(key) === value; }"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -468,7 +462,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -483,7 +477,7 @@
       ],
       "fact_lines": {
         "evidence_kind/types.ts": [
-          "export const featureTypes: Record<RequiredFeature, true> & Record<string, true> = {\"document\": true};"
+          "export const values = vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"] as const);"
         ]
       }
     },
@@ -494,7 +488,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -509,7 +503,7 @@
       ],
       "fact_lines": {
         "evidence_kind/policy.ts": [
-          "const featureValues: readonly string[] = [\"document\"];"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -520,7 +514,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -535,7 +529,7 @@
       ],
       "fact_lines": {
         "evidence_kind/names.ts": [
-          "const featureValues: readonly string[] = [\"document\"];"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -546,7 +540,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -561,7 +555,7 @@
       ],
       "fact_lines": {
         "evidence_kind/sibling.ts": [
-          "const featureValues: readonly string[] = [\"document\"];"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -572,7 +566,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -587,7 +581,7 @@
       ],
       "fact_lines": {
         "evidence_kind/001_constraint.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document'))"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'image', 'testimony'))"
         ]
       }
     },
@@ -598,7 +592,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -613,9 +607,7 @@
       ],
       "fact_lines": {
         "evidence_kind/state.ts": [
-          "const featureValues: readonly string[] = [\"document\"];",
-          "  private readonly evidence_kindSelections = new Map<string, EvidenceKind>();",
-          "  supportsFeature(value: string, key: string): boolean { return featureValues.includes(value) && this.get(key) === value; }"
+          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
         ]
       }
     },
@@ -626,7 +618,7 @@
       ],
       "fact_lines": {
         "evidence_kind/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -641,7 +633,7 @@
       ],
       "fact_lines": {
         "route_permission/types.ts": [
-          "export const featureTypes: Record<RequiredFeature, true> & Record<string, true> = {\"case_read\": true};"
+          "export const values = vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"] as const);"
         ]
       }
     },
@@ -652,7 +644,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -667,7 +659,7 @@
       ],
       "fact_lines": {
         "route_permission/policy.ts": [
-          "const featureValues: readonly string[] = [\"case_read\"];"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -678,7 +670,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -693,7 +685,7 @@
       ],
       "fact_lines": {
         "route_permission/names.ts": [
-          "const featureValues: readonly string[] = [\"case_read\"];"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -704,7 +696,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -719,7 +711,7 @@
       ],
       "fact_lines": {
         "route_permission/sibling.ts": [
-          "const featureValues: readonly string[] = [\"case_read\"];"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -730,7 +722,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -745,7 +737,7 @@
       ],
       "fact_lines": {
         "route_permission/001_constraint.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read'))"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
         ]
       }
     },
@@ -756,7 +748,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -771,9 +763,7 @@
       ],
       "fact_lines": {
         "route_permission/state.ts": [
-          "const featureValues: readonly string[] = [\"case_read\"];",
-          "  private readonly route_permissionSelections = new Map<string, RoutePermission>();",
-          "  supportsFeature(value: string, key: string): boolean { return featureValues.includes(value) && this.get(key) === value; }"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -784,7 +774,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -799,7 +789,7 @@
       ],
       "fact_lines": {
         "route_permission/types.ts": [
-          "export const featureTypes: Record<RequiredFeature, true> & Record<string, true> = {\"case_read\": true};"
+          "export const values = vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"] as const);"
         ]
       }
     },
@@ -810,7 +800,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -825,7 +815,7 @@
       ],
       "fact_lines": {
         "route_permission/policy.ts": [
-          "const featureValues: readonly string[] = [\"case_read\"];"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -836,7 +826,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -851,7 +841,7 @@
       ],
       "fact_lines": {
         "route_permission/names.ts": [
-          "const featureValues: readonly string[] = [\"case_read\"];"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -862,7 +852,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -877,7 +867,7 @@
       ],
       "fact_lines": {
         "route_permission/sibling.ts": [
-          "const featureValues: readonly string[] = [\"case_read\"];"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -888,7 +878,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -903,7 +893,7 @@
       ],
       "fact_lines": {
         "route_permission/001_constraint.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read'))"
+          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
         ]
       }
     },
@@ -914,7 +904,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }
@@ -929,9 +919,7 @@
       ],
       "fact_lines": {
         "route_permission/state.ts": [
-          "const featureValues: readonly string[] = [\"case_read\"];",
-          "  private readonly route_permissionSelections = new Map<string, RoutePermission>();",
-          "  supportsFeature(value: string, key: string): boolean { return featureValues.includes(value) && this.get(key) === value; }"
+          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
         ]
       }
     },
@@ -942,7 +930,7 @@
       ],
       "fact_lines": {
         "route_permission/anchor.ts": [
-          "  if (!/^[a-zA-Z0-9_-]{1,79}$/.test(key)) throw new Error(\"invalid key\");"
+          "  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error(\"invalid key\");"
         ]
       }
     }

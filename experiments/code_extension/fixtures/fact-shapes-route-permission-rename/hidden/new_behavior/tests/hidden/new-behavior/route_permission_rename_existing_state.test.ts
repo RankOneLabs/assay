@@ -1,12 +1,15 @@
 import { expect, test } from "bun:test";
-import { StoredRoutePermission } from "../../../route_permission/state.ts";
+import "../../../src/bootstrap.ts";
+import { ServiceContext } from "../../../src/context.ts";
 
 test("fact:route_permission_rename_existing_state: existing_state behavior", () => {
-  const source = new StoredRoutePermission();
-  source.set("record", "case_inspect" as never);
-  expect(source.supportsFeature("case_inspect", "record")).toBe(true);
-  source.remove("record");
-  expect(source.supportsFeature("case_inspect", "record")).toBe(false);
-  source.set("old-record", "case_read" as never);
-  expect(source.supportsFeature("case_read", "old-record")).toBe(false);
-});
+  using context = new ServiceContext();
+  const actor = { id: "admin", project: "project" };
+  for (const permission of ["case_write", "case_admin", "case_inspect"]) context.grantRepository.grant(actor, permission as never, "bootstrap", 0);
+  context.access.setDefaultPermission(actor, "case_write");
+  context.access.setDefaultPermission(actor, "case_inspect");
+  expect(context.access.grantDefault(actor, "first").permission).toBe("case_inspect");
+  context.access.clearDefaultPermission(actor);
+  expect(() => context.access.grantDefault(actor, "second")).toThrow();
+  expect(() => context.access.setDefaultPermission(actor, "case_read")).toThrow();
+}, 30000);

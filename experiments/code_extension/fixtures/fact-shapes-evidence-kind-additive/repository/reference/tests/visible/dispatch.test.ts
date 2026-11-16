@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import { fixture, admin, reader, writer, outsider } from "./helpers.ts";
 
@@ -20,7 +22,7 @@ describe("ready queue dispatch", () => {
     expect(result.job.stage).toBe("active");
     expect(result.attempt.jobId).toBe("high");
     expect(result.attempt.sessionId).toBe("session");
-    expect(f.context.jobRepository.require("low").stage).toBe("queued");
+    expect(f.context.jobRepository.require("low").stage).toBe(canonical("stage"));
     expect(f.context.sessions.isBuildRunning("session")).toBe(true);
   });
 
@@ -31,7 +33,7 @@ describe("ready queue dispatch", () => {
     f.context.planning.add(admin, "blocked", "dependency");
     const result = f.context.dispatch.next(admin, request)!;
     expect(result.job.id).toBe("dependency");
-    expect(f.context.jobRepository.require("blocked").stage).toBe("queued");
+    expect(f.context.jobRepository.require("blocked").stage).toBe(canonical("stage"));
   });
 
   test("owner and minimum priority filters combine before selection", () => {
@@ -43,8 +45,8 @@ describe("ready queue dispatch", () => {
       ...request, owner: "selected", minimumPriority: 5,
     })!;
     expect(result.job.id).toBe("match");
-    expect(f.context.jobRepository.require("wrong-owner").stage).toBe("queued");
-    expect(f.context.jobRepository.require("too-low").stage).toBe("queued");
+    expect(f.context.jobRepository.require("wrong-owner").stage).toBe(canonical("stage"));
+    expect(f.context.jobRepository.require("too-low").stage).toBe(canonical("stage"));
   });
 
   test("configured concurrent build capacity is enforced from the session owner", () => {
@@ -56,7 +58,7 @@ describe("ready queue dispatch", () => {
     expect(() => f.context.dispatch.next(admin, {
       id: "another", sessionId: "another-session", worker: "another-worker",
     })).toThrow("concurrent build limit");
-    expect(f.context.jobRepository.require("second").stage).toBe("queued");
+    expect(f.context.jobRepository.require("second").stage).toBe(canonical("stage"));
   });
 
   test("ending live session ownership frees capacity without guessing from job stage", () => {
@@ -89,7 +91,7 @@ describe("ready queue dispatch", () => {
     f.create();
     expect(f.context.dispatch.next(outsider, request)).toBeNull();
     expect(f.context.dispatch.running(outsider)).toEqual([]);
-    expect(f.context.jobRepository.require("job").stage).toBe("queued");
+    expect(f.context.jobRepository.require("job").stage).toBe(canonical("stage"));
   });
 
   test("archived and completed jobs are never selected", () => {

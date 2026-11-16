@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import { fixture, admin } from "./helpers.ts";
 
@@ -204,7 +206,7 @@ describe("compound workflow rollback", () => {
       WHEN NEW.principal = 'blocked' BEGIN SELECT RAISE(ABORT, 'grant failure'); END;
     `);
     expect(() => f.context.access.bulkGrant(admin, [
-      { principal: "first", permission: "case_read" },
+      { principal: "first", permission: canonical("route_permission") },
       { principal: "blocked", permission: "case_write" },
     ])).toThrow("grant failure");
     expect(f.context.access.list(admin, "first")).toEqual([]);

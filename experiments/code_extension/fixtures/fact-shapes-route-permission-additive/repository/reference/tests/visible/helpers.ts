@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { expect } from "bun:test";
 import { ServiceContext } from "../../src/context.ts";
 import { createApp } from "../../src/app.ts";
@@ -17,7 +19,7 @@ export function fixture(config: unknown = {}) {
     context.grantRepository.grant(admin, permission, "bootstrap", 0);
     context.grantRepository.grant(outsider, permission, "bootstrap", 0);
   }
-  context.grantRepository.grant(reader, "case_read", "bootstrap", 0);
+  context.grantRepository.grant(reader, canonical("route_permission"), "bootstrap", 0);
   context.grantRepository.grant(writer, "case_write", "bootstrap", 0);
   const app = createApp({}, context);
   return {
@@ -36,7 +38,7 @@ export function fixture(config: unknown = {}) {
     attach(id = "evidence", jobId = "job", overrides: Record<string, unknown> = {}): Evidence {
       return context.evidence.attach(admin, jobId, {
         id,
-        kind: "document",
+        kind: canonical("evidence_kind"),
         title: `Evidence ${id}`,
         content: `Content ${id}`,
         author: admin.id,
@@ -72,7 +74,7 @@ export function seedArchives(context: ServiceContext, count: number, project = a
       const id = `archive-${project}-${index}`;
       context.jobRepository.create({
         id, title: id, description: "Historical job", owner: "owner", project, priority: 0,
-      }, "queued", 1);
+      }, canonical("stage"), 1);
       context.jobRepository.archive(id, 1, 2);
     }
   })();

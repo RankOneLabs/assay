@@ -1,6 +1,4 @@
 import { vocabularyStore } from "../src/vocabulary.ts";
 import { isValue } from "./types.ts";
-vocabularyStore.values("stage");
+vocabularyStore.define("stage", ["queued", "active", "complete"]);
 export function peerGuard(value: string): boolean { return isValue(value); }
-const featureValues: readonly string[] = ["queued"];
-export function supportsFeature(value: string): boolean { return featureValues.includes(value); }

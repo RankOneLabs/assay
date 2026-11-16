@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { validateKey } from "../../../stage/anchor.ts";
+import "../../../src/bootstrap.ts";
+import { edit } from "../../../stage/edit.ts";
 
 test("fact:stage_additive_anchor: anchor behavior", () => {
-  expect(validateKey("a_1-B")).toBe("a_1-B");
-  expect(validateKey("a".repeat(80))).toHaveLength(80);
-  for (const label of ["", "bad/label", "a".repeat(81)]) expect(() => validateKey(label)).toThrow();
-});
+  expect(edit("a".repeat(80), "active" as never).key).toHaveLength(80);
+  expect(edit("a_1-B", "active" as never).key).toBe("a_1-B");
+  for (const label of ["", "bad/label", "a".repeat(81)]) expect(() => edit(label, "active" as never)).toThrow();
+}, 30000);

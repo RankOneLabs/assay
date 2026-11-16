@@ -484,7 +484,8 @@ async def build_shape_manifest(name: str, *, image: str) -> FixtureManifestV3:
     evidence_dir = root / "qualification" / "checks"
     runner = make_runner(image_digest)
     fixtures = [load_scenario(name, arm_id=arm_id) for arm_id in spec.arm_ids]
-    semaphore = asyncio.Semaphore(2 if name.startswith("fact-shapes-") else 1)
+    # Keep full-path replays serial within a scenario, as in the library qualifier.
+    semaphore = asyncio.Semaphore(1)
 
     async def qualify_fixture(fixture: ScenarioFixture) -> ExtensionArmRealization:
         async with semaphore:
@@ -558,6 +559,18 @@ async def run_scenario_gates(
             patch=patch,
             groups=fixture.groups,
         )
+        for group in result.groups:
+            if (
+                group.name in {"visible_regression", "hidden_regression"}
+                and group.status != "passed"
+            ):
+                print(
+                    f"qualification diagnostic {fixture.subject_id}/{fixture.arms[0].arm_id} "
+                    f"{group.name}: {group.status} {group.cause}\n"
+                    f"{group.stdout}\n{group.stderr}",
+                    file=sys.stderr,
+                    flush=True,
+                )
         preflight_diagnostics = ""
         if (
             fixture.subject_id.startswith("fact-shapes-")
@@ -619,7 +632,7 @@ async def run_scenario_gates(
     for label, patch in controls.items():
         results = [await one(patch), await one(patch)]
         if results[0] != results[1]:
-            raise ValueError(f"control {label} did not reproduce")
+            raise ValueError(f"control {label} did not reproduce: {results!r}")
         result_groups = cast(dict[str, dict[str, object]], results[0]["groups"])
         statuses = {name: item["status"] for name, item in result_groups.items()}
         if label == "reference":
@@ -766,7 +779,8 @@ async def qualify_shape_scenario(
     manifest.require_qualified()
     image_digest = require_image(manifest, image)
     scenario = manifest.scenarios[0]
-    semaphore = asyncio.Semaphore(2 if name.startswith("fact-shapes-") else 1)
+    # Keep full-path replays serial within a scenario, as in the library qualifier.
+    semaphore = asyncio.Semaphore(1)
 
     async def qualify_arm(arm: ExtensionArmRealization) -> None:
         async with semaphore:

@@ -81,10 +81,16 @@ def test_retained_mutant_evidence_covers_every_arm() -> None:
     for cell in CELLS:
         directory = root / scenario_name(cell) / "qualification/mutants" / cell.shape
         records = sorted(directory.glob("*.json"))
-        assert len(records) == (4 if cell.shape in {"outside_code", "existing_state"} else 3)
+        assert len(records) == (
+            4
+            if cell.shape == "outside_code"
+            or (cell.shape == "existing_state" and cell.task_type == "additive")
+            else 3
+        )
         for path in records:
             evidence = json.loads(path.read_bytes())
             assert evidence["result"]["passed"], path
+            assert set(evidence["scored_facts"]) == {cell.fact_id, cell.anchor_fact_id}
             assert evidence["result"]["arm"] == cell.shape
             assert evidence["patch_digest"].startswith("sha256:")
             assert len(evidence["runs"]) == 2
@@ -167,3 +173,27 @@ async def test_gate_refuses_unknown_scenarios_before_docker(
     monkeypatch.setattr("code_extension.qualify.observed_image_digest", forbidden_image_lookup)
     with pytest.raises(ValueError, match="unknown fact-shapes scenario"):
         await gate_scenario("missing-scenario", "unused-image")
+
+
+def test_other_arms_titles_are_not_scored() -> None:
+    good = replay()
+    group = good.groups["new_behavior"]
+    groups = dict(good.groups)
+    groups["new_behavior"] = Group(
+        status="failed", stdout=group.stdout + "(fail) fact:another_arm: accepts\n"
+    )
+    run = Run(groups)
+    assert verdict("reference", "drop-control", facts(), (run, run), FactId("control")).passed
+    bad = replay(anchor="fail")
+    assert not verdict("reference", "drop-control", facts(), (bad, bad), FactId("control")).passed
+
+
+def test_reference_ignores_other_arms_failed_titles() -> None:
+    good = replay(control="pass")
+    groups = dict(good.groups)
+    groups["new_behavior"] = Group(
+        status="failed",
+        stdout=good.groups["new_behavior"].stdout + "(fail) fact:another_arm: accepts\n",
+    )
+    run = Run(groups)
+    assert verdict("reference", "reference", facts(), (run, run)).passed

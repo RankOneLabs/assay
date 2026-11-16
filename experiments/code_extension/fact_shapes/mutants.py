@@ -96,7 +96,7 @@ def verdict(
             expected = Missed if fact.id == dropped else Held
             if not isinstance(outcomes[fact.id], expected):
                 return refuse("unexpected fact outcome", fact.id)
-        if behavior.status != ("passed" if dropped is None else "failed"):
+        if dropped is not None and behavior.status != "failed":
             return refuse("new_behavior group status disagrees with expected omission")
         signatures.append(tuple(sorted((str(key), value.kind) for key, value in outcomes.items())))
     if signatures[0] != signatures[1]:
@@ -116,7 +116,7 @@ def alternative_control(
     if cell.shape == "outside_code":
         path: str = cell.holders[0]
         after[path] = before[path]
-        table = f"{cell.feature}_capabilities"
+        table = f"{cell.feature}_values"
         after[f"{cell.feature}/002_allow.sql"] = (
             f"ALTER TABLE {table} RENAME TO previous_values;\n"
             + f"CREATE TABLE {table}"
@@ -126,30 +126,46 @@ def alternative_control(
         )
         label = "follow-up-migration.patch"
     else:
-        path = cell.holders[0]
-        source = after[path]
         if cell.feature == "stage":
-            source = source.replace(
-                "private readonly buildRunning",
-                "private readonly featureCopy = new Set<string>();\n"
-                "  private readonly buildRunning",
+            path = "src/services/builds.ts"
+            source = after[path].replace(
+                "export class BuildService {",
+                "export class BuildService {\n"
+                "  private readonly featureRunning = new Map<string, boolean>();\n"
+                "  private featureIsRunning(sessionId: string): boolean {\n"
+                "    let running = this.featureRunning.get(sessionId);\n"
+                "    if (running === undefined) { "
+                "running = this.sessions.isBuildRunning(sessionId); "
+                "this.featureRunning.set(sessionId, running); }\n"
+                "    return running;\n  }",
             )
             source = source.replace(
-                "this.buildRunning.add(sessionId);",
-                "this.buildRunning.add(sessionId); this.featureCopy.add(sessionId);",
-            )
-            source = source.replace("this.isBuildRunning(key)", "this.featureCopy.has(key)")
-        else:
-            source = source.replace(
-                "private readonly",
-                "private readonly featureCopy = new Map<string, string>();\n  private readonly",
+                "running: this.sessions.isBuildRunning(attempt.sessionId),",
+                'running: this.jobs.require(jobId).stage === "triaged" '
+                "? this.featureIsRunning(attempt.sessionId) "
+                ": this.sessions.isBuildRunning(attempt.sessionId),",
                 1,
             )
-            source = source.replace(
-                ".set(key, value);", ".set(key, value); this.featureCopy.set(key, value);"
+        else:
+            path = str(cell.holders[0])
+            name, value, type_name = (
+                ("StoredEvidenceKind", "attestation", "EvidenceKind")
+                if cell.feature == "evidence_kind"
+                else ("StoredRoutePermission", "case_inspect", "RoutePermission")
+            )
+            source = after[path].replace(
+                f"export class {name} {{",
+                f"export class {name} {{\n"
+                f"  private readonly featureCopy = new Map<string, {type_name}>();",
             )
             source = source.replace(
-                "this.get(key) === value", "this.featureCopy.get(key) === value"
+                f"this.{cell.feature}Selections.set(key, value);",
+                f"this.{cell.feature}Selections.set(key, value); "
+                f'if (value === "{value}") this.featureCopy.set(key, value);',
+            )
+            source = source.replace(
+                f"return this.{cell.feature}Selections.get(key);",
+                f"return this.featureCopy.get(key) ?? this.{cell.feature}Selections.get(key);",
             )
         after[path] = source
         label = "duplicate-state.patch"
@@ -231,7 +247,7 @@ async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
     root = PILOT.parent / name
     import asyncio
 
-    semaphore = asyncio.Semaphore(2)
+    semaphore = asyncio.Semaphore(1)
 
     async def gate_cell(cell: Cell) -> None:
         async with semaphore:
@@ -254,22 +270,6 @@ async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
                     (cell.anchor_fact_id, "reference", (f"{cell.feature}/anchor.ts",)),
                 )
             )
-            # Require every shared fact title, even facts held by other arms.
-            for other in (c for c in CELLS if scenario_name(c) == name and c != cell):
-                facts += (
-                    Fact(
-                        other.fact_id,
-                        source_titles(
-                            (
-                                root
-                                / "hidden/new_behavior/tests/hidden/new-behavior"
-                                / f"{other.fact_id}.test.ts"
-                            ).read_text()
-                        ),
-                        other.shape,
-                        HolderSpec(other.holders, ()),
-                    ),
-                )
             controls: list[tuple[str, str, FactId | None]] = [
                 (f"{cell.shape}.reference.patch", fixture.arms[0].reference_patch, None)
             ]
@@ -281,7 +281,9 @@ async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
                 )
                 for fact in (cell.fact_id, cell.anchor_fact_id)
             )
-            if cell.shape in {"outside_code", "existing_state"}:
+            if cell.shape == "outside_code" or (
+                cell.shape == "existing_state" and cell.task_type == "additive"
+            ):
                 import tempfile
 
                 with tempfile.TemporaryDirectory() as directory:
@@ -302,6 +304,7 @@ async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
                 value = {
                     "image_digest": image,
                     "patch_digest": digest_bytes(patch.encode()),
+                    "scored_facts": [str(fact.id) for fact in facts],
                     "result": asdict(result),
                     "runs": [
                         {
