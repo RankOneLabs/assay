@@ -33,7 +33,11 @@ def test_only_locked_imports() -> None:
     lock = json.loads((LIBRARY / "package-lock.json").read_text())
     packages = {key.removeprefix("node_modules/") for key in lock["packages"] if key}
     for path in BASE.rglob("*.ts"):
-        for specifier in re.findall(r"""(?:from\s*|import\s*)["']([^"']+)["']""", path.read_text()):
+        for specifier in re.findall(
+            r"""(?:\bfrom\s+|^\s*import\s*)["']([^"']+)["']""",
+            path.read_text(),
+            flags=re.MULTILINE,
+        ):
             if specifier.startswith(".") or specifier in {"bun:test", "bun:sqlite"}:
                 continue
             assert any(specifier == name or specifier.startswith(name + "/") for name in packages)
@@ -100,3 +104,21 @@ def test_size_and_repository_loader() -> None:
             "oakridge",
         )
     )
+
+
+def test_feature_switch_points_are_specific_and_exhaustive() -> None:
+    values = {
+        "stage": ("queued", "triaged", "Stage"),
+        "evidence_kind": ("document", "attestation", "EvidenceKind"),
+        "route_permission": ("case_read", "case_inspect", "RoutePermission"),
+    }
+    for feature, (old, new, type_name) in values.items():
+        edit = (BASE / feature / "edit.ts").read_text()
+        sibling = (BASE / feature / "sibling.ts").read_text()
+        assert f"Record<{type_name}," in edit
+        for source in (edit, sibling):
+            assert f'case "{old}":' in source
+            assert f'case "{new}":' not in source
+            assert "switch (value)" in source
+        assert 'from "./edit.ts"' not in sibling
+        assert 'from "./sibling.ts"' not in edit
