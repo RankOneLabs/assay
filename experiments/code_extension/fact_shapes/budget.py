@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
 
+from oakridge_history.config import Err, Ok, Result
+
 from code_extension.fact_shapes.settings import PerAttemptCaps, StudyModelName
 
 
@@ -83,34 +85,44 @@ class Budget:
 @dataclass(frozen=True)
 class BudgetError:
     message: str
+    component: ComponentName | None = None
+    model: StudyModelName | None = None
 
 
 def budget(
     caps: PerAttemptCaps,
     prices: tuple[ModelPrice, ...] = (),
     components: tuple[Component, ...] = DEFAULT_COMPONENTS,
-) -> Budget | BudgetError:
+) -> Result[Budget, BudgetError]:
     expected = {"main": 540, "pilot": 24, "validation": 60, "library_rerun": 11}
     if len(components) != 4 or {c.name for c in components} != set(expected):
-        return BudgetError("Exactly the four study components are required")
+        return Err(BudgetError("Exactly the four study components are required"))
     means = {p.model: p.measured for p in prices}
     if len(means) != len(prices):
-        return BudgetError("Duplicate model price")
+        duplicate = next(
+            p.model for i, p in enumerate(prices) if p.model in {q.model for q in prices[:i]}
+        )
+        return Err(BudgetError("Duplicate model price", model=duplicate))
     items: list[Item] = []
     for component in components:
         if sum(p.attempts for p in component.plans) != expected[component.name] or any(
             p.attempts < 0 for p in component.plans
         ):
-            return BudgetError(f"Invalid attempt count for {component.name}")
-        if component.name == "library_rerun" and any(p.model != "midtier" for p in component.plans):
-            return BudgetError("Library rerun requires midtier")
+            return Err(BudgetError("Invalid component attempt count", component.name))
+        expected_plans = next(c.plans for c in DEFAULT_COMPONENTS if c.name == component.name)
+        allocations = {p.model: p.attempts for p in expected_plans}
+        for model in sorted(set(allocations) | {p.model for p in component.plans}):
+            if sum(p.attempts for p in component.plans if p.model == model) != allocations.get(
+                model, 0
+            ):
+                return Err(BudgetError("Invalid model attempt count", component.name, model))
         for model in sorted({p.model for p in component.plans}):
             plans = tuple(p for p in component.plans if p.model == model)
             cap: Decimal = getattr(caps, model)
             mean = means.get(model)
             price = cap if mean is None else mean
             if not price.is_finite() or price < 0:
-                return BudgetError("Invalid measured cost")
+                return Err(BudgetError("Invalid measured cost", component.name, model))
             attempts = sum(p.attempts for p in plans)
             items.append(
                 Item(
@@ -124,4 +136,6 @@ def budget(
                     len(plans) * cap,
                 )
             )
-    return Budget(tuple(items), sum((i.attempt_subtotal + i.probe_cost for i in items), Decimal(0)))
+    return Ok(
+        Budget(tuple(items), sum((i.attempt_subtotal + i.probe_cost for i in items), Decimal(0)))
+    )

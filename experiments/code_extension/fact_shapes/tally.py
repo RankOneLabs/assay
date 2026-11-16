@@ -85,8 +85,8 @@ class Exclusion:
     @property
     def excluded(self) -> bool:
         return (
-            5 * self.control.missed > self.control.scored
-            or 5 * self.anchor.missed > self.anchor.scored
+            100 * self.control.missed > CONTROL_THRESHOLD * self.control.scored
+            or 100 * self.anchor.missed > ANCHOR_THRESHOLD * self.anchor.scored
         )
 
 
@@ -224,23 +224,36 @@ def import_distance_counts(rows: tuple[Row, ...]) -> dict[tuple[str, str, str, i
 
 
 def h5_counts(rows: tuple[Row, ...]) -> dict[str, tuple[int, int]]:
+    """Mirrored declarations and attempts, restricted to scored additive work."""
+    selected = tuple(
+        r
+        for r in rows
+        if r.cell.shape == "existing_state"
+        and r.cell.task_type == "additive"
+        and isinstance(r.status, Scored)
+    )
     return {
         model: (
-            sum(
-                r.mirrored_state_count
-                for r in rows
-                if r.model == model
-                and r.cell.shape == "existing_state"
-                and r.cell.task_type == "additive"
-            ),
-            sum(
-                r.model == model
-                and r.cell.shape == "existing_state"
-                and r.cell.task_type == "additive"
-                for r in rows
-            ),
+            sum(r.mirrored_state_count for r in selected if r.model == model),
+            sum(r.model == model for r in selected),
         )
         for model in sorted({r.model for r in rows})
+    }
+
+
+def reader_update_counts(rows: tuple[Row, ...]) -> dict[tuple[str, str], Count]:
+    """Aggregate rename facts per model and fixed feature across repeats."""
+    return {
+        (model, feature): count(
+            r
+            for r in rows
+            if r.model == model
+            and r.cell.feature == feature
+            and r.cell.shape == "existing_state"
+            and r.cell.task_type == "rename"
+        )
+        for model in sorted({r.model for r in rows})
+        for feature in get_args(Feature)
     }
 
 
@@ -289,12 +302,13 @@ def render_report(rows: tuple[Row, ...]) -> str:
         )
     )
     sections.append(
-        "## H5 duplicate count\n\nMirrored-state count (lower bound).\n\n"
+        "## H5 duplicate count\n\n"
+        "Mirrored-state count (lower bound), over scored additive attempts only.\n\n"
         + table(
             (
                 "Model",
                 "Mirrored declarations",
-                "Additive attempts",
+                "Scored additive attempts",
                 "Existing-state additive result",
             ),
             (
@@ -315,11 +329,7 @@ def render_report(rows: tuple[Row, ...]) -> str:
         + "\n\n"
         + table(
             ("Model", "Feature", "Fact", "x of n (95%)"),
-            (
-                (r.model, r.cell.feature, "reader-update", count((r,)))
-                for r in rows
-                if r.cell.shape == "existing_state" and r.cell.task_type == "rename"
-            ),
+            ((*key, "reader-update", value) for key, value in reader_update_counts(rows).items()),
         )
     )
     sections.append(

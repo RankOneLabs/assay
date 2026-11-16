@@ -15,6 +15,7 @@ from code_extension.fact_shapes.tally import (
     import_distance_counts,
     miss_counts,
     planned_comparisons,
+    reader_update_counts,
     render_report,
     stop_table,
     unscored_table,
@@ -176,3 +177,68 @@ def test_exclusion_denominator_is_scored_attempts():
     assert count(rows) == Count(1, 1)
     assert exclusions(rows)[0].control == Count(1, 5)
     assert not exclusions(rows)[0].excluded
+
+
+def test_pool_all_three_features():
+    cells = [c for c in CELLS if c.shape == "reference" and c.task_type == "additive"]
+    rows = tuple(
+        row(Missed() if attempt < index else Held(), cell=cell)
+        for index, cell in enumerate(cells, 1)
+        for attempt in range(index + 1)
+    )
+    for anchor in (False, True):
+        counts = miss_counts(rows, anchor=anchor)
+        parts = [counts["sol", "reference", "additive", c.feature] for c in cells]
+        assert all(p.scored > 0 for p in parts)
+        assert counts["sol", "reference", "additive", "pooled"] == Count(
+            sum(p.missed for p in parts), sum(p.scored for p in parts)
+        )
+    assert count(rows) == Count(6, 9)
+
+
+def test_rendered_holder_seen_comparison():
+    cells = {c.shape: c for c in CELLS if c.feature == "stage" and c.task_type == "additive"}
+    rows = tuple(
+        row(outcome, cell=cells[shape], holder_seen=seen)
+        for shape, outcomes in (
+            ("name_only", ((Missed(), True), (Missed(), False), (Held(), True))),
+            ("sibling_only", ((Missed(), True), (Held(), True), (Unavailable(), True))),
+            ("outside_code", ((Missed(), False), (Missed(), False), (Held(), True))),
+        )
+        for outcome, seen in outcomes
+    )
+    rows += (Row("sol", cells["sibling_only"], Unscored("broken"), holder_seen=True),)
+    rows += (Row("sol", cells["outside_code"], Stopped("wall_time"), holder_seen=True),)
+    rendered = planned_comparisons(rows).split("### 4.")[1]
+    for feature in ("stage", "pooled"):
+        for shape, expected in (("sibling_only", Count(1, 1)), ("outside_code", Count(0, 2))):
+            assert (
+                f"| sol | additive | {feature} | {shape} | {expected} | name_only | {Count(1, 2)} |"
+            ) in rendered
+
+
+def test_h5_aggregates_repeats_and_excludes_unscored_duplicates():
+    rename = next(c for c in CELLS if c.shape == "existing_state" and c.task_type == "rename")
+    additive = replace(rename, task_type="additive")
+    rows = (row(Missed(), cell=rename), row(cell=rename), row(Unavailable(), cell=rename))
+    rows += (Row("sol", rename, Stopped("wall_time")),)
+    assert reader_update_counts(rows)["sol", rename.feature] == Count(1, 2)
+    rendered = render_report(rows).split("## H5 duplicate count")[1].split("## Exploratory")[0]
+    assert rendered.count(f"| sol | {rename.feature} | reader-update |") == 1
+    assert f"| sol | {rename.feature} | reader-update | {Count(1, 2)} |" in rendered
+    rows += (row(cell=additive, mirrored_state_count=3),)
+    rows += (Row("sol", additive, Unscored("broken"), mirrored_state_count=99),)
+    rows += (Row("sol", additive, Stopped("wall_time"), mirrored_state_count=99),)
+    assert h5_counts(rows)["sol"] == (3, 1)
+
+
+def test_exclusion_uses_declared_thresholds(monkeypatch):
+    from code_extension.fact_shapes import tally
+
+    control = tally.Exclusion("sol", Count(1, 4), Count(0, 4))
+    anchor = tally.Exclusion("sol", Count(0, 4), Count(1, 4))
+    assert control.excluded and anchor.excluded
+    monkeypatch.setattr(tally, "CONTROL_THRESHOLD", 25)
+    assert not control.excluded and anchor.excluded
+    monkeypatch.setattr(tally, "ANCHOR_THRESHOLD", 25)
+    assert not anchor.excluded
