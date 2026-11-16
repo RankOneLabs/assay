@@ -1,7 +1,7 @@
 """Inventory-driven single-source checks over a materialized TypeScript tree.
 
 This checker recognizes literal unions, arrays, enum constructors, SQL CHECK
-lists and consecutive switch/case labels. It also checks declared state fields
+lists and switch-block case labels. It also checks declared state fields
 and SQL columns. Imports and readers are permitted: ownership concerns declarations,
 not references. SQL and switch holders must be explicitly named in the inventory;
 their exemptions apply only to their respective value-list forms.
@@ -108,12 +108,43 @@ _LIST = re.compile(
     re.IGNORECASE,
 )
 
-# A fall-through run is one acceptance list, regardless of spacing or quote style.
-_CASE_RUN = re.compile(rf"(?:\bcase\s+{_LITERAL}\s*:\s*)+")
+# Quoted text is opaque: braces and keywords inside it cannot delimit a switch.
+_SWITCH_TOKEN = re.compile(r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\w+|[^\s]''')
 
 
 def _switch_lists(source: str) -> list[frozenset[str]]:
-    return [frozenset(re.findall(_LITERAL, match.group())) for match in _CASE_RUN.finditer(source)]
+    tokens = _SWITCH_TOKEN.findall(source)
+    bodies: set[int] = set()
+    for index, token in enumerate(tokens[:-1]):
+        if token != "switch" or tokens[index + 1] != "(":
+            continue
+        depth = 0
+        for cursor in range(index + 1, len(tokens)):
+            if tokens[cursor] == "(":
+                depth += 1
+            elif tokens[cursor] == ")":
+                depth -= 1
+                if depth == 0:
+                    if cursor + 1 < len(tokens) and tokens[cursor + 1] == "{":
+                        bodies.add(cursor + 1)
+                    break
+    result: list[frozenset[str]] = []
+    blocks: list[set[str] | None] = []
+    for index, token in enumerate(tokens):
+        if token == "{":
+            blocks.append(set() if index in bodies else None)
+        elif token == "}" and blocks:
+            members = blocks.pop()
+            if members is not None:
+                result.append(frozenset(members))
+        elif token == "case" and index + 2 < len(tokens) and tokens[index + 2] == ":":
+            literal = re.fullmatch(_LITERAL, tokens[index + 1])
+            if literal:
+                for members in reversed(blocks):
+                    if members is not None:
+                        members.add(literal.group(1))
+                        break
+    return result
 
 
 def _without_comments(source: str) -> str:

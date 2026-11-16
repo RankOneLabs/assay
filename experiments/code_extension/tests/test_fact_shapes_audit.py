@@ -139,3 +139,34 @@ def test_missing_sanctioned_switch_is_reported(tmp_path: Path) -> None:
         finding.name == "stage" and finding.path == "stage/sibling.ts"
         for finding in audit(target, load_inventory(INVENTORY))
     )
+
+
+@pytest.mark.parametrize("concept_name", ["stage", "evidence_kind", "route_permission"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_separate_return_switch_copy(tmp_path: Path, concept_name: str, nested: bool) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    inventory = load_inventory(INVENTORY)
+    concept = next(item for item in inventory.concepts if item.name == concept_name)
+    labels = "\n".join(
+        f'case "{member}": {{ return "case fake: {{ }}"; }}'
+        for member in sorted(concept.members)
+    )
+    seed = f"switch ((value)) {{ {labels} default: return false; }}"
+    if nested:
+        seed = f'switch (other) {{ case "outer": {{ {seed} }} }}'
+    (target / "duplicate.ts").write_text(f"function copy(value: string) {{ {seed} }}")
+    assert any(
+        finding.name == concept_name and finding.path == "duplicate.ts"
+        for finding in audit(target, inventory)
+    )
+
+
+def test_separate_switches_do_not_combine_members(tmp_path: Path) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    (target / "independent.ts").write_text(
+        'switch (a) { case "queued": return 1; } '
+        'switch (b) { case "active": return 2; case "complete": return 3; }'
+    )
+    assert audit(target, load_inventory(INVENTORY)) == ()
