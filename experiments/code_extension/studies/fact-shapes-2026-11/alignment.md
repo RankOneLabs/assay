@@ -118,3 +118,15 @@ Full-path arm replays use serial arm scheduling. Earlier concurrent replays of
 a preliminary helper-based version disagreed; logs were retained and diagnostic
 output was added to qualify.py. The final existing-public-API material is fully
 requalified and verified with unchanged acceptance rules and fresh-run counts.
+
+## Independent typed-fact control
+
+Each type-enforced arm also replays `type-without-required-feature.patch` twice.
+This control starts from the manipulated-fact drop and restores the original
+holder verbatim, removing the added `requiredFeature` assertion. The anchor fix
+remains. The gate requires preflight to pass, both regression groups to pass,
+the typed public-operation fact title to fail, and the anchor title to pass.
+Preflight classification cannot satisfy this independent control. Its evidence
+includes the complete control patch and both runs, demonstrating that detection
+does not depend on the added assertion or on accepting it as an exhaustive record.
+The original holder-only preflight control remains as a separate check.

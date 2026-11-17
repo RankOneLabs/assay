@@ -43,6 +43,8 @@ def verdict(
     facts: tuple[Fact, ...],
     runs: tuple[Run, ...],
     dropped: FactId | None = None,
+    *,
+    allow_preflight: bool = True,
 ) -> Result:
     """Accept exactly the declared omission twice, including holder-only preflight."""
 
@@ -58,6 +60,8 @@ def verdict(
     signatures: list[tuple[tuple[str, str], ...]] = []
     for run in runs:
         if run.preflight_cause is not None:
+            if not allow_preflight:
+                return refuse("this control requires fact title outcomes, not preflight")
             control = next(
                 (f for f in facts if f.id == dropped and f.shape == "type_enforced"), None
             )
@@ -109,11 +113,16 @@ def alternative_control(
     before: dict[str, str],
     complete: dict[str, str],
 ) -> tuple[str, str]:
-    """Construct a follow-up migration or a deliberately stale state copy."""
+    """Construct an independent type drop, follow-up migration or stale state copy."""
     import difflib
 
     after = dict(complete)
-    if cell.shape == "outside_code":
+    if cell.shape == "type_enforced":
+        # Start from the ordinary drop, then remove its artificial type assertion.
+        # The public caller in the hidden fact test must detect the missing value.
+        after[str(cell.holders[0])] = before[str(cell.holders[0])]
+        label = "type-without-required-feature.patch"
+    elif cell.shape == "outside_code":
         path: str = cell.holders[0]
         after[path] = before[path]
         table = f"{cell.feature}_values"
@@ -281,25 +290,33 @@ async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
                 )
                 for fact in (cell.fact_id, cell.anchor_fact_id)
             )
-            if cell.shape == "outside_code" or (
+            if cell.shape in {"outside_code", "type_enforced"} or (
                 cell.shape == "existing_state" and cell.task_type == "additive"
             ):
                 import tempfile
 
                 with tempfile.TemporaryDirectory() as directory:
                     target = Path(directory)
-                    materialize(target, fixture.repository, fixture.arms[0].reference_patch)
+                    source_patch = (
+                        controls[1][1]
+                        if cell.shape == "type_enforced"
+                        else fixture.arms[0].reference_patch
+                    )
+                    materialize(target, fixture.repository, source_patch)
                     complete = read_tree(target)
                 label, alternative = alternative_control(cell, fixture.repository, complete)
                 controls.append(
-                    (label, alternative, cell.fact_id if cell.shape == "existing_state" else None)
+                    (label, alternative, cell.fact_id if cell.shape != "outside_code" else None)
                 )
             for label, patch, dropped in controls:
                 runs = (
                     await run_control(fixture, image, patch),
                     await run_control(fixture, image, patch),
                 )
-                result = verdict(cell.shape, label, facts, runs, dropped)
+                title_only = label == "type-without-required-feature.patch"
+                result = verdict(
+                    cell.shape, label, facts, runs, dropped, allow_preflight=not title_only
+                )
                 path = root / "qualification/mutants" / cell.shape / f"{label}.json"
                 value = {
                     "image_digest": image,
@@ -333,6 +350,8 @@ async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
                         for run in runs
                     ],
                 }
+                if title_only:
+                    value["control_patch"] = patch
                 data = canonical_json(value) + b"\n"
                 if verify:
                     if json.loads(path.read_bytes()) != json.loads(data):
