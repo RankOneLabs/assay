@@ -61,10 +61,15 @@ def diagnostics(output: str) -> tuple[Diagnostic, ...]:
     return tuple(Diagnostic(*match) for match in _TS.findall(output))
 
 
+def parse_titles(stdout: str, stderr: str = "") -> tuple[tuple[str, str], ...]:
+    """Read Bun pass/fail titles from both streams, preserving order and duplicates."""
+    return tuple((status, title) for status, title in _TITLE.findall(stdout + "\n" + stderr))
+
+
 def fact_titles(
     facts: tuple[Fact, ...], stdout: str, stderr: str, *, ran: bool
 ) -> dict[FactId, FactOutcome]:
-    titles = _TITLE.findall(stdout + "\n" + stderr)
+    titles = parse_titles(stdout, stderr)
     results: dict[FactId, FactOutcome] = {}
     for fact in facts:
         expected = set(fact.titles)

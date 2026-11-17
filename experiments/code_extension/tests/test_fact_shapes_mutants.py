@@ -1,5 +1,6 @@
 import pytest
 from code_extension.fact_shapes.attempts import Fact, Group, HolderSpec
+from code_extension.fact_shapes.budget import Err, Ok
 from code_extension.fact_shapes.cells import FactId, RepositoryPath
 from code_extension.fact_shapes.mutants import Run, verdict
 
@@ -31,33 +32,37 @@ def replay(control: str = "fail", anchor: str = "pass", regression: str = "passe
 
 def test_drop_requires_only_its_own_miss() -> None:
     good = replay()
-    assert verdict("reference", "drop-control", facts(), (good, good), FactId("control")).passed
+    assert isinstance(
+        verdict("reference", "drop-control", facts(), (good, good), FactId("control")), Ok
+    )
     for bad in (replay(anchor="fail"), replay(regression="failed"), replay(control="pass")):
         result = verdict("reference", "drop-control", facts(), (bad, bad), FactId("control"))
-        assert not result.passed
-        assert result.arm == "reference" and result.patch == "drop-control" and result.fact
+        assert isinstance(result, Err)
+        assert result.error.arm == "reference"
+        assert result.error.patch == "drop-control"
+        assert result.error.fact
 
 
 def test_reference_and_reproduction() -> None:
     good = replay(control="pass")
-    assert verdict("reference", "reference", facts(), (good, good)).passed
-    assert not verdict("reference", "reference", facts(), (good, replay())).passed
-    assert not verdict("reference", "reference", facts(), (good,)).passed
+    assert isinstance(verdict("reference", "reference", facts(), (good, good)), Ok)
+    assert isinstance(verdict("reference", "reference", facts(), (good, replay())), Err)
+    assert isinstance(verdict("reference", "reference", facts(), (good,)), Err)
 
 
 def test_holder_only_typecheck() -> None:
     control, anchor = facts()
     control = Fact(control.id, control.titles, "type_enforced", control.holder)
     good = Run({}, "typecheck_failed", "policy.ts(1,1): error TS2322: missing value")
-    assert verdict(
+    assert isinstance(verdict(
         "type_enforced", "drop-control", (control, anchor), (good, good), control.id
-    ).passed
+    ), Ok)
     bad = Run(
         {}, "typecheck_failed", good.typecheck_output + "\nother.ts(2,1): error TS2322: broken"
     )
-    assert not verdict(
+    assert isinstance(verdict(
         "type_enforced", "drop-control", (control, anchor), (bad, bad), control.id
-    ).passed
+    ), Err)
 
 
 def test_missing_titles_do_not_prove_a_miss() -> None:
@@ -65,16 +70,19 @@ def test_missing_titles_do_not_prove_a_miss() -> None:
     groups = dict(good.groups)
     groups["new_behavior"] = Group(status="failed", stdout="(pass) fact:anchor: accepts")
     missing = Run(groups)
-    assert not verdict(
+    assert isinstance(verdict(
         "reference", "drop-control", facts(), (missing, missing), FactId("control")
-    ).passed
+    ), Err)
 
 
 def test_retained_mutant_evidence_covers_every_arm() -> None:
     import json
+    from dataclasses import asdict
     from pathlib import Path
+    from typing import cast
 
-    from code_extension.fact_shapes.cells import CELLS
+    from code_extension.fact_shapes.alignment import fact_titles as source_titles
+    from code_extension.fact_shapes.cells import CELLS, Shape
     from code_extension.fact_shapes.generate import scenario_name
 
     root = Path(__file__).resolve().parents[1] / "fixtures"
@@ -94,6 +102,37 @@ def test_retained_mutant_evidence_covers_every_arm() -> None:
             assert evidence["result"]["arm"] == cell.shape
             assert evidence["patch_digest"].startswith("sha256:")
             assert len(evidence["runs"]) == 2
+            scored = tuple(
+                Fact(
+                    fact_id,
+                    source_titles((root / scenario_name(cell)
+                                   / "hidden/new_behavior/tests/hidden/new-behavior"
+                                   / f"{fact_id}.test.ts").read_text()),
+                    cast(Shape, shape),
+                    HolderSpec(tuple(RepositoryPath(p) for p in paths), ()),
+                )
+                for fact_id, shape, paths in (
+                    (cell.fact_id, cell.shape, cell.holders),
+                    (cell.anchor_fact_id, "reference", (f"{cell.feature}/anchor.ts",)),
+                )
+            )
+            replays = tuple(
+                Run(
+                    {name: Group(status=group["status"], stdout="\n".join(
+                        [f"(pass) {title}" for title in run["passing_titles"]]
+                        + [f"(fail) {title}" for title in run["failing_titles"]]
+                    ) if name == "new_behavior" else "")
+                     for name, group in run["groups"].items()},
+                    run["preflight_cause"], run["typecheck_output"],
+                ) for run in evidence["runs"]
+            )
+            result = verdict(
+                cell.shape, evidence["result"]["patch"], scored, replays,
+                evidence["result"]["fact"],
+                allow_preflight=path.name != "type-without-required-feature.patch.json",
+            )
+            assert isinstance(result, Ok), path
+            assert asdict(result.value) == evidence["result"]
             for run in evidence["runs"]:
                 assert "passing_titles" in run and "failing_titles" in run
 
@@ -183,9 +222,13 @@ def test_other_arms_titles_are_not_scored() -> None:
         status="failed", stdout=group.stdout + "(fail) fact:another_arm: accepts\n"
     )
     run = Run(groups)
-    assert verdict("reference", "drop-control", facts(), (run, run), FactId("control")).passed
+    assert isinstance(
+        verdict("reference", "drop-control", facts(), (run, run), FactId("control")), Ok
+    )
     bad = replay(anchor="fail")
-    assert not verdict("reference", "drop-control", facts(), (bad, bad), FactId("control")).passed
+    assert isinstance(
+        verdict("reference", "drop-control", facts(), (bad, bad), FactId("control")), Err
+    )
 
 
 def test_reference_ignores_other_arms_failed_titles() -> None:
@@ -196,27 +239,27 @@ def test_reference_ignores_other_arms_failed_titles() -> None:
         stdout=good.groups["new_behavior"].stdout + "(fail) fact:another_arm: accepts\n",
     )
     run = Run(groups)
-    assert verdict("reference", "reference", facts(), (run, run)).passed
+    assert isinstance(verdict("reference", "reference", facts(), (run, run)), Ok)
 
 
 def test_independent_type_drop_requires_titles() -> None:
     control, anchor = facts()
     control = Fact(control.id, control.titles, "type_enforced", control.holder)
     good = replay()
-    assert verdict(
+    assert isinstance(verdict(
         "type_enforced", "independent-drop", (control, anchor), (good, good), control.id,
         allow_preflight=False,
-    ).passed
+    ), Ok)
     for bad in (replay(anchor="fail"), replay(control="pass"), replay(regression="failed")):
-        assert not verdict(
+        assert isinstance(verdict(
             "type_enforced", "independent-drop", (control, anchor), (bad, bad), control.id,
             allow_preflight=False,
-        ).passed
+        ), Err)
     preflight = Run({}, "typecheck_failed", "policy.ts(1,1): error TS2322: missing value")
-    assert not verdict(
+    assert isinstance(verdict(
         "type_enforced", "independent-drop", (control, anchor), (preflight, preflight), control.id,
         allow_preflight=False,
-    ).passed
+    ), Err)
 
 
 def test_independent_type_controls_have_no_required_feature_line() -> None:

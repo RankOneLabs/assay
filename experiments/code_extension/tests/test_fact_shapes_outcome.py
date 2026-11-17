@@ -374,3 +374,18 @@ def test_rejected_and_successful_submissions_in_same_turn() -> None:
     )
     assert row.calls == (rejected, read)
     assert row.self_assessed_verdict == "complete"
+
+
+def test_public_title_parser_reads_both_streams_and_preserves_duplicates() -> None:
+    from code_extension.fact_shapes.outcome import parse_titles
+
+    assert parse_titles(
+        "noise\n(pass) fact:control: accepts [1.25ms]\n(pass) ordinary title\n",
+        "(fail) fact:control: accepts\n(pass) fact:control: accepts [0.01ms]\n",
+    ) == (
+        ("pass", "fact:control: accepts"),
+        ("pass", "ordinary title"),
+        ("fail", "fact:control: accepts"),
+        ("pass", "fact:control: accepts"),
+    )
+    assert parse_titles("no test outcomes") == ()

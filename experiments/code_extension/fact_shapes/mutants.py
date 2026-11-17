@@ -8,14 +8,15 @@ from dataclasses import dataclass
 from typing import cast
 
 from code_extension.fact_shapes.attempts import Fact, Group
+from code_extension.fact_shapes.budget import Err, Ok, Result
 from code_extension.fact_shapes.cells import Cell, FactId, Shape
 from code_extension.fact_shapes.outcome import (
-    _TITLE,
     Held,
     Missed,
     Scored,
     diagnostics,
     fact_titles,
+    parse_titles,
     preflight_status,
 )
 from code_extension.fixtures import ScenarioFixture
@@ -29,7 +30,7 @@ class Run:
 
 
 @dataclass(frozen=True)
-class Result:
+class Verdict:
     arm: str
     patch: str
     fact: FactId | None
@@ -45,11 +46,11 @@ def verdict(
     dropped: FactId | None = None,
     *,
     allow_preflight: bool = True,
-) -> Result:
+) -> Result[Verdict, Verdict]:
     """Accept exactly the declared omission twice, including holder-only preflight."""
 
-    def refuse(reason: str, fact: FactId | None = dropped) -> Result:
-        return Result(arm, patch, fact, False, reason)
+    def refuse(reason: str, fact: FactId | None = dropped) -> Err[Verdict]:
+        return Err(Verdict(arm, patch, fact, False, reason))
 
     if len(runs) != 2:
         return refuse("exactly two fresh sandbox runs are required")
@@ -88,7 +89,7 @@ def verdict(
         behavior = run.groups.get("new_behavior")
         if behavior is None or behavior.status not in {"passed", "failed"}:
             return refuse("new_behavior did not run")
-        observed = _TITLE.findall(behavior.stdout + "\n" + behavior.stderr)
+        observed = parse_titles(behavior.stdout, behavior.stderr)
         for fact in facts:
             expected_status = "fail" if fact.id == dropped else "pass"
             for title in fact.titles:
@@ -105,7 +106,7 @@ def verdict(
         signatures.append(tuple(sorted((str(key), value.kind) for key, value in outcomes.items())))
     if signatures[0] != signatures[1]:
         return refuse("fresh sandbox runs disagree")
-    return Result(arm, patch, dropped, True, "both replays satisfy the expected fact outcomes")
+    return Ok(Verdict(arm, patch, dropped, True, "both replays satisfy the expected fact outcomes"))
 
 
 def alternative_control(
@@ -317,12 +318,13 @@ async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
                 result = verdict(
                     cell.shape, label, facts, runs, dropped, allow_preflight=not title_only
                 )
+                record = result.error if isinstance(result, Err) else result.value
                 path = root / "qualification/mutants" / cell.shape / f"{label}.json"
                 value = {
                     "image_digest": image,
                     "patch_digest": digest_bytes(patch.encode()),
                     "scored_facts": [str(fact.id) for fact in facts],
-                    "result": asdict(result),
+                    "result": asdict(record),
                     "runs": [
                         {
                             "groups": {
@@ -333,17 +335,13 @@ async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
                             "passing_titles": [
                                 title
                                 for group in run.groups.values()
-                                for status, title in _TITLE.findall(
-                                    group.stdout + "\n" + group.stderr
-                                )
+                                for status, title in parse_titles(group.stdout, group.stderr)
                                 if status == "pass" and title.startswith("fact:")
                             ],
                             "failing_titles": [
                                 title
                                 for group in run.groups.values()
-                                for status, title in _TITLE.findall(
-                                    group.stdout + "\n" + group.stderr
-                                )
+                                for status, title in parse_titles(group.stdout, group.stderr)
                                 if status == "fail" and title.startswith("fact:")
                             ],
                         }
@@ -359,8 +357,8 @@ async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
                 else:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(data)
-                if not result.passed:
-                    raise ValueError(f"{result.arm}/{result.patch}/{result.fact}: {result.reason}")
+                if isinstance(result, Err):
+                    raise ValueError(f"{record.arm}/{record.patch}/{record.fact}: {record.reason}")
                 print(f"passed {name}/{cell.shape}/{label}", flush=True)
 
     await asyncio.gather(*(gate_cell(cell) for cell in cells))
