@@ -304,3 +304,26 @@ def test_independent_type_controls_have_no_required_feature_line() -> None:
             assert any(t.startswith(f"fact:{cell.anchor_fact_id}: ") for t in run["passing_titles"])
             assert not any(t.startswith(f"fact:{cell.anchor_fact_id}: ")
                            for t in run["failing_titles"])
+
+
+def test_follow_up_migration_control_includes_a_later_index() -> None:
+    import tempfile
+    from pathlib import Path
+
+    from code_extension.fact_shapes.cells import CELLS
+    from code_extension.fact_shapes.generate import scenario_name
+    from code_extension.fact_shapes.mutants import alternative_control
+    from code_extension.fixture import materialize, read_tree
+    from code_extension.fixtures import load_scenario
+
+    for cell in CELLS:
+        if cell.shape != "outside_code":
+            continue
+        fixture = load_scenario(scenario_name(cell), arm_id=cell.shape)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            materialize(target, fixture.repository, fixture.arms[0].reference_patch)
+            _, patch = alternative_control(cell, fixture.repository, read_tree(target))
+        assert f"{cell.feature}/002_allow.sql" in patch
+        assert f"{cell.feature}/003_index.sql" in patch
+        assert "CREATE INDEX" in patch

@@ -134,6 +134,9 @@ def alternative_control(
             + f"INSERT INTO {table} SELECT * FROM previous_values;\n"
             + "DROP TABLE previous_values;\n"
         )
+        after[f"{cell.feature}/003_index.sql"] = (
+            f"CREATE INDEX {cell.feature}_value_index ON {table}(value);\n"
+        )
         label = "follow-up-migration.patch"
     else:
         if cell.feature == "stage":
@@ -348,7 +351,7 @@ async def gate_scenario(name: str, image: str, *, verify: bool = False) -> None:
                         for run in runs
                     ],
                 }
-                if title_only:
+                if title_only or label == "follow-up-migration.patch":
                     value["control_patch"] = patch
                 data = canonical_json(value) + b"\n"
                 if verify:

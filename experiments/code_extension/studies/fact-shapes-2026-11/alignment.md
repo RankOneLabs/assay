@@ -130,3 +130,14 @@ Preflight classification cannot satisfy this independent control. Its evidence
 includes the complete control patch and both runs, demonstrating that detection
 does not depend on the added assertion or on accepting it as an exhaustive record.
 The original holder-only preflight control remains as a separate check.
+
+## Follow-up migration compatibility
+
+The outside-code positive controls widen the vocabulary in a second migration
+and create an index in a third migration. Owner propagation selects the latest
+constraint-bearing migration, rather than the last SQL file. Migration discovery
+checks the initial table definitions without requiring later migrations to repeat
+those definitions, and constraint assertions inspect each feature's effective
+constraint once. Frozen fixture copies, qualification evidence and cohort pins
+must be regenerated before this source change is used for a study run. The
+interrupted partial refresh is excluded from this commit.
