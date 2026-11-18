@@ -126,8 +126,105 @@ jobs:
             exit 1
           fi
 
-  experiments:
+  # The experiments suite runs as parallel shards. experiments-plan names the
+  # shards once, fails if any test directory is in no shard, and drops the
+  # finished-studies shard from pull requests that cannot affect it.
+  experiments-plan:
     runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, tomllib
+          from pathlib import Path
+
+          # code_extension is the active study. shared holds the code other
+          # experiments import (code_extension imports verification_pilot and
+          # workflow_edit; consistency_pilot imports code_metrics).
+          # finished holds completed studies that nothing else imports.
+          shards = {
+              "code_extension": ["code_extension"],
+              "shared": ["verification_pilot", "workflow_edit", "code_metrics", "pier_qualification"],
+              "finished": ["consistency_pilot", "typesafe_relevance", "oakridge_history"],
+          }
+          assigned = [d for dirs in shards.values() for d in dirs]
+          # Compare whole paths: every configured testpath and every <study>/tests
+          # directory must be exactly a path some shard runs, or its tests would be
+          # silently skipped (a new code_extension/smoke_tests entry, say).
+          emitted = {f"{d}/tests" for d in assigned}
+          on_disk = {f"{p.parent.name}/tests" for p in Path("experiments").glob("*/tests")}
+          config = tomllib.loads(Path("experiments/pyproject.toml").read_text())
+          testpaths = {p.rstrip("/") for p in config["tool"]["pytest"]["ini_options"]["testpaths"]}
+          missing = sorted((on_disk | testpaths) - emitted)
+          duplicated = sorted({d for d in assigned if assigned.count(d) > 1})
+          if missing or duplicated:
+              raise SystemExit(
+                  f"experiments shards out of date: unassigned {missing}, in two shards {duplicated};"
+                  " edit experiments-plan in .github/workflows/ci.yml"
+              )
+
+          run_finished = True
+          if os.environ["EVENT"] == "pull_request":
+              changed = subprocess.run(
+                  # --no-renames: a file moved out of a finished study must
+                  # count as a change there, not only at its destination.
+                  ["git", "diff", "--name-only", "--no-renames", os.environ["BASE"], "HEAD"],
+                  check=True, capture_output=True, text=True,
+              ).stdout.split()
+              gate = re.compile(
+                  r"^(experiments/(consistency_pilot|typesafe_relevance|oakridge_history|code_metrics)/"
+                  r"|experiments/(pyproject\.toml|uv\.lock|conftest\.py)$"
+                  r"|src/|pyproject\.toml$|uv\.lock$|\.github/workflows/ci\.yml$"
+                  # code_metrics runs the Node tools pinned here.
+                  r"|vendor/node-tools/)"
+              )
+              run_finished = any(gate.match(path) for path in changed)
+              print("finished studies:", "run" if run_finished else "skipped (no relevant change)")
+          matrix = [
+              {"name": name, "paths": " ".join(f"{d}/tests" for d in dirs)}
+              for name, dirs in shards.items()
+              if name != "finished" or run_finished
+          ]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"shards={json.dumps(matrix)}\n")
+          PY
+
+  experiments-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.10.2"
+          python-version: '3.13'
+      - name: Lint experiments with the root Ruff configuration
+        run: uv run ruff check experiments
+      - name: Sync the standalone experiments project
+        working-directory: experiments
+        run: uv sync --locked --group dev
+      - name: Type-check experiments
+        working-directory: experiments
+        run: uv run mypy .
+
+  experiments-tests:
+    needs: experiments-plan
+    runs-on: ubuntu-latest
+    name: experiments-tests (${{ matrix.shard.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.experiments-plan.outputs.shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -150,19 +247,30 @@ jobs:
           bun-version: "1.3.10"
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: vendor/node-tools
-      - name: Lint experiments with the root Ruff configuration
-        run: uv run ruff check experiments
       - name: Sync the standalone experiments project
         working-directory: experiments
         run: uv sync --locked --group dev
-      - name: Type-check experiments
-        working-directory: experiments
-        run: uv run mypy .
-      - name: Test experiments
+      - name: Test ${{ matrix.shard.name }}
         working-directory: experiments
         env:
           ASSAY_REQUIRE_DOCKER: "1"
-        run: uv run pytest -q
+          SHARD_PATHS: ${{ matrix.shard.paths }}
+        run: uv run pytest -q --durations=25 $SHARD_PATHS
+
+  # Keeps one "experiments" status that is green only when lint and every
+  # planned shard passed.
+  experiments:
+    if: always()
+    needs: [experiments-plan, experiments-lint, experiments-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          PLAN: ${{ needs.experiments-plan.result }}
+          LINT: ${{ needs.experiments-lint.result }}
+          TESTS: ${{ needs.experiments-tests.result }}
+        run: |
+          echo "plan=$PLAN lint=$LINT tests=$TESTS"
+          [ "$PLAN" = success ] && [ "$LINT" = success ] && [ "$TESTS" = success ]
 
   pier-qualification:
     # Deterministic offline, local-Docker, and fake-HTTP coverage only -- this
