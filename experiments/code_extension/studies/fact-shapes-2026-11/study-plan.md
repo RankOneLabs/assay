@@ -1,7 +1,7 @@
 # Fact-shapes study: plan (draft)
 
-Status: draft, 2026-11-17. Not confirmed. The decision rule below is proposed and needs
-the operator's decision before the main study is authorized. No attempt has run.
+Status: draft, 2026-11-18. The operator agreed the reading rules on 2026-11-18, with
+miss counts as a guide rather than a threshold. No attempt has run.
 
 ## Question
 
@@ -169,26 +169,35 @@ Also reported:
 
 `uv run python -m code_extension.fact_shapes.tally` prints all of these.
 
-## Decision rule (proposed, needs a decision)
+## Reading the results
 
-The rule reads only mechanical outcomes.
-
-**A shape shows misses** for one model when, pooled over the 3 features, it has at least
-4 misses in 15 scored attempts in either task type, and the type-enforced control has at
-most 1 miss in 15 in that task type.
+The study is descriptive. No miss count passes or fails a shape by itself. Two kinds of
+rule apply: hard stops about whether the data can be read at all, and a guide for which
+shapes to look at first.
 
 **Readable:** a model has at least 10 scored attempts in each shape and task type.
 
-Apply the first row that matches:
+**Hard stops.** Apply the first row that matches:
 
 | Result | Next step |
 |---|---|
 | Any model and version has fewer than 5 dispatched attempts | Incomplete. Review the plan's halt first. |
 | No model is readable, or every readable model is excluded | Stop and review. |
 | Every readable model misses nothing outside the control | Stop. Report a ceiling, with the pilot's third-fact result. |
-| At least 2 readable models show misses on the same shape | Review every counted miss against its patch and hidden tests, then write up the shape result. |
-| Exactly 1 readable model shows misses | Review those misses before saying anything about shapes in general. |
-| Otherwise | Stop and review. Report the counts. |
+
+Otherwise the results are read, not scored.
+
+**Guide, not a threshold.** A shape is worth a close look for one model when, pooled
+over the 3 features, it has clearly more misses than the type-enforced control in the
+same task type. About 4 misses in 15 scored attempts against at most 1 in 15 for the
+control is the rough level meant. At 15 attempts the 95% intervals of 4/15 (11% to 52%)
+and 1/15 (1% to 30%) still overlap, so no count is a clean line. A shape at 3/15 is not
+passed: it is reported with its interval and read the same way.
+
+Every counted miss, in every shape, is read against its patch and hidden tests before
+anything is written about it. A pattern is written up as a shape result only when at
+least 2 readable models miss on the same shape. A pattern in 1 model is reported as that
+model's result.
 
 ## Limits every report must state
 

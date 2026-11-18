@@ -16,6 +16,12 @@ Per-scenario counts:
 
 | Scenario | Attempted | Completed | Passed |
 |---|---|---|---|
+| fact-shapes-evidence-kind-additive | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-rename | 0 | 0 | 0 |
+| fact-shapes-route-permission-additive | 0 | 0 | 0 |
+| fact-shapes-route-permission-rename | 0 | 0 | 0 |
+| fact-shapes-stage-additive | 0 | 0 | 0 |
+| fact-shapes-stage-rename | 0 | 0 | 0 |
 | oakridge-dbos-context-defaults | 0 | 0 | 0 |
 | oakridge-dbos-dispatch-handler | 0 | 0 | 0 |
 | oakridge-dbos-operations-route | 0 | 0 | 0 |
@@ -41,13 +47,55 @@ Per-arm counts:
 | baseline | 0 | 0 | 0 |
 | central | 0 | 0 | 0 |
 | cross_module | 0 | 0 | 0 |
+| existing_state | 0 | 0 | 0 |
 | modular | 0 | 0 | 0 |
+| name_only | 0 | 0 | 0 |
+| outside_code | 0 | 0 | 0 |
 | plugin | 0 | 0 | 0 |
+| reference | 0 | 0 | 0 |
+| sibling_only | 0 | 0 | 0 |
+| type_enforced | 0 | 0 | 0 |
 
 Scenario/arm cells, including cells with no completed attempt:
 
 | Scenario | Arm | Attempted | Completed | Passed |
 |---|---|---|---|---|
+| fact-shapes-evidence-kind-additive | existing_state | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-additive | name_only | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-additive | outside_code | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-additive | reference | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-additive | sibling_only | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-additive | type_enforced | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-rename | existing_state | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-rename | name_only | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-rename | outside_code | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-rename | reference | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-rename | sibling_only | 0 | 0 | 0 |
+| fact-shapes-evidence-kind-rename | type_enforced | 0 | 0 | 0 |
+| fact-shapes-route-permission-additive | existing_state | 0 | 0 | 0 |
+| fact-shapes-route-permission-additive | name_only | 0 | 0 | 0 |
+| fact-shapes-route-permission-additive | outside_code | 0 | 0 | 0 |
+| fact-shapes-route-permission-additive | reference | 0 | 0 | 0 |
+| fact-shapes-route-permission-additive | sibling_only | 0 | 0 | 0 |
+| fact-shapes-route-permission-additive | type_enforced | 0 | 0 | 0 |
+| fact-shapes-route-permission-rename | existing_state | 0 | 0 | 0 |
+| fact-shapes-route-permission-rename | name_only | 0 | 0 | 0 |
+| fact-shapes-route-permission-rename | outside_code | 0 | 0 | 0 |
+| fact-shapes-route-permission-rename | reference | 0 | 0 | 0 |
+| fact-shapes-route-permission-rename | sibling_only | 0 | 0 | 0 |
+| fact-shapes-route-permission-rename | type_enforced | 0 | 0 | 0 |
+| fact-shapes-stage-additive | existing_state | 0 | 0 | 0 |
+| fact-shapes-stage-additive | name_only | 0 | 0 | 0 |
+| fact-shapes-stage-additive | outside_code | 0 | 0 | 0 |
+| fact-shapes-stage-additive | reference | 0 | 0 | 0 |
+| fact-shapes-stage-additive | sibling_only | 0 | 0 | 0 |
+| fact-shapes-stage-additive | type_enforced | 0 | 0 | 0 |
+| fact-shapes-stage-rename | existing_state | 0 | 0 | 0 |
+| fact-shapes-stage-rename | name_only | 0 | 0 | 0 |
+| fact-shapes-stage-rename | outside_code | 0 | 0 | 0 |
+| fact-shapes-stage-rename | reference | 0 | 0 | 0 |
+| fact-shapes-stage-rename | sibling_only | 0 | 0 | 0 |
+| fact-shapes-stage-rename | type_enforced | 0 | 0 | 0 |
 | oakridge-dbos-context-defaults | baseline | 0 | 0 | 0 |
 | oakridge-dbos-dispatch-handler | baseline | 0 | 0 | 0 |
 | oakridge-dbos-operations-route | baseline | 0 | 0 | 0 |
@@ -89,8 +137,14 @@ Declared `index_agent_readable` is operator policy, not an enforced access bound
 | baseline | undeclared | 0 |
 | central | undeclared | 0 |
 | cross_module | undeclared | 0 |
+| existing_state | undeclared | 0 |
 | modular | undeclared | 0 |
+| name_only | undeclared | 0 |
+| outside_code | undeclared | 0 |
 | plugin | undeclared | 0 |
+| reference | undeclared | 0 |
+| sibling_only | undeclared | 0 |
+| type_enforced | undeclared | 0 |
 
 ## Operational failures
 
@@ -104,8 +158,14 @@ Cost coverage is reported separately from implementation effects. Unpriced local
 | baseline | 0 | 0 | 0 | unpriced |
 | central | 0 | 0 | 0 | unpriced |
 | cross_module | 0 | 0 | 0 | unpriced |
+| existing_state | 0 | 0 | 0 | unpriced |
 | modular | 0 | 0 | 0 | unpriced |
+| name_only | 0 | 0 | 0 | unpriced |
+| outside_code | 0 | 0 | 0 | unpriced |
 | plugin | 0 | 0 | 0 | unpriced |
+| reference | 0 | 0 | 0 | unpriced |
+| sibling_only | 0 | 0 | 0 | unpriced |
+| type_enforced | 0 | 0 | 0 | unpriced |
 
 ## Secondary measures
 
@@ -118,10 +178,16 @@ Scope of diff and unnecessary changed paths come from offline `assay code-metric
 
 This table counts primary attempts only, including invalid and unevaluable primary attempts. Other tables count all retained attempts. In the CSV and JSON ledgers, `retry_of` is `none` for a primary attempt and names the original attempt for a retry.
 
-Intervals use the Wilson score method at alpha 0.05. They describe execution variability on a fixed task, rather than sampling error over tasks. The fixture roster shown here lists 17 qualified scenarios; the planned pilot has fifteen attempts, five repeats on each of three fixed tasks. Only retained planned coordinates count as attempts. The repeats are not fifteen independently sampled tasks.
+Intervals use the Wilson score method at alpha 0.05. They describe execution variability on a fixed task, rather than sampling error over tasks. The fixture roster shown here lists 23 qualified scenarios; the planned pilot has fifteen attempts, five repeats on each of three fixed tasks. Only retained planned coordinates count as attempts. The repeats are not fifteen independently sampled tasks.
 
 | Scenario | Planned | Missing | No candidate | Operational yield | Primary task success | Conditional correctness | Invalid | Unevaluable |
 |---|---|---|---|---|---|---|---|---|
+| fact-shapes-evidence-kind-additive | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| fact-shapes-evidence-kind-rename | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| fact-shapes-route-permission-additive | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| fact-shapes-route-permission-rename | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| fact-shapes-stage-additive | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
+| fact-shapes-stage-rename | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-context-defaults | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-dispatch-handler | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
 | oakridge-dbos-operations-route | 0 | 0 | 0 | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0/0 (unavailable; 95% interval unavailable) | 0 | 0 |
@@ -144,6 +210,12 @@ Intervals use the Wilson score method at alpha 0.05. They describe execution var
 
 | Scenario | Terminal causes | Duration measured | Tool use measured | Tokens measured | Cost priced |
 |---|---|---|---|---|---|
+| fact-shapes-evidence-kind-additive | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| fact-shapes-evidence-kind-rename | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| fact-shapes-route-permission-additive | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| fact-shapes-route-permission-rename | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| fact-shapes-stage-additive | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
+| fact-shapes-stage-rename | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-context-defaults | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-dispatch-handler | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
 | oakridge-dbos-operations-route | unavailable | 0/0 | 0/0 | 0/0 | 0/0 |
