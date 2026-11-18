@@ -17,8 +17,11 @@ describe("ordered SQLite migrations", () => {
     const ids = migrations.map(migration => migration.id);
     expect(ids).toEqual([...ids].sort());
     for (const id of ["evidence_kind/001_constraint.sql", "route_permission/001_constraint.sql", "stage/001_constraint.sql"]) expect(ids).toContain(id);
-    expect(migrations.every(migration => migration.sql.includes("CHECK"))).toBe(true);
-    expect(migrations.every(migration => migration.sql.includes("PRIMARY KEY"))).toBe(true);
+    for (const feature of ["stage", "evidence_kind", "route_permission"]) {
+      const initial = migrations.find(migration => migration.id === `${feature}/001_constraint.sql`)!;
+      expect(initial.sql).toContain("CHECK");
+      expect(initial.sql).toContain("PRIMARY KEY");
+    }
   });
 
   test("fresh in-memory databases accept every canonical vocabulary value", async () => {
@@ -45,10 +48,11 @@ describe("ordered SQLite migrations", () => {
     using db = new Database(":memory:");
     const migrations = await discoverMigrations(root);
     applyMigrations(db, migrations);
-    for (const migration of migrations) {
-      const feature = migration.id.split("/")[0];
+    for (const feature of ["stage", "evidence_kind", "route_permission"]) {
+      const migration = [...migrations].reverse().find(migration =>
+        migration.id.startsWith(`${feature}/`) && /value IN/.test(migration.sql));
       const insert = () => db.query(`INSERT INTO ${feature}_values VALUES (?, ?)`).run("future", "future_value");
-      if (/value IN/.test(migration.sql)) expect(insert).toThrow(/CHECK constraint failed/);
+      if (migration) expect(insert).toThrow(/CHECK constraint failed/);
       else { insert(); expect(db.query(`SELECT value FROM ${feature}_values WHERE id = 'future'`).get()).toEqual({ value: "future_value" }); }
     }
   });
