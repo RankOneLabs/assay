@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { StoredRoutePermission } from "../../route_permission/state.ts";
+import { StoredRoutePermission } from "../preferences/route_permission_defaults.ts";
 import { peerGuard as primaryPermission } from "../../route_permission/edit.ts";
 import type { Database } from "bun:sqlite";
 import type { RoutePermission } from "../../route_permission/types.ts";
@@ -7,7 +7,7 @@ import type { Principal, Job } from "../domain/models.ts";
 import { forbidden, conflict } from "../domain/errors.ts";
 import { permissionSchema, keySchema } from "../domain/validation.ts";
 import { edit as editPermission } from "../../route_permission/edit.ts";
-import { peerGuard as peerPermission } from "../../route_permission/sibling.ts";
+import { peerGuard as peerPermission } from "./route_permission_peer.ts";
 import { GrantRepository } from "../repositories/grants.ts";
 
 /** All permission checks consult persisted grants; headers identify a principal only. */
@@ -22,7 +22,7 @@ export class AccessService {
   require(principal: Principal, permission: RoutePermission): void {
     keySchema.parse(principal.id);
     keySchema.parse(principal.project);
-    editPermission(principal.id, permission);
+    if (!primaryPermission(permission)) forbidden("unsupported permission");
     if (!this.grants.has(principal, permission)) forbidden();
   }
 
@@ -36,6 +36,7 @@ export class AccessService {
     keySchema.parse(target);
     const permission = permissionSchema.parse(value);
     if (!primaryPermission(permission)) forbidden("unsupported permission");
+    editPermission(target, permission);
     return this.grants.grant(
       { id: target, project: actor.project }, permission, actor.id, this.now(),
     );

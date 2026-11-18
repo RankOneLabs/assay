@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { fixture, admin, reader, writer, outsider, expectError } from "./helpers.ts";
 import { createApp } from "../../src/app.ts";
 import { loadConfig } from "../../src/config.ts";
-import { SessionService } from "../../stage/state.ts";
+import { SessionService } from "../../src/sessions/session_service.ts";
 
 
 describe("job service through Hono", () => {
@@ -341,7 +341,7 @@ const routePermissions: PermissionCase[] = [
     title: "primary grant operation",
     method: "POST",
     path: "/grants",
-    body: { principal: "new-user", project: "project", permission: canonical("route_permission") },
+    body: { principal: "new-user", project: "project", permission: "case_write" },
     required: "admin",
     accepted: 201,
   },
@@ -349,7 +349,7 @@ const routePermissions: PermissionCase[] = [
     title: "peer grant operation",
     method: "POST",
     path: "/grants/peer",
-    body: { principal: "new-user", project: "project", permission: canonical("route_permission") },
+    body: { principal: "new-user", project: "project", permission: "case_write" },
     required: "admin",
     accepted: 201,
   },
@@ -549,7 +549,7 @@ const routePermissions: PermissionCase[] = [
     title: "bulk grant",
     method: "POST",
     path: "/grants/bulk",
-    body: [{ principal: "new-user", permission: canonical("route_permission") }],
+    body: [{ principal: "new-user", permission: "case_write" }],
     required: "admin",
     accepted: 201,
   },
@@ -594,7 +594,7 @@ const routePermissions: PermissionCase[] = [
     title: "permission preference selection",
     method: "PUT",
     path: "/preferences/permission",
-    body: { permission: canonical("route_permission") },
+    body: { permission: "case_write" },
     required: "admin",
     accepted: 204,
   },
@@ -730,7 +730,7 @@ describe("HTTP error boundaries", () => {
     using f = fixture({ maxEvidenceBytes: 3 });
     f.create();
     const response = await f.request("POST", "/jobs/job/evidence", {
-      id: "oversized", kind: canonical("evidence_kind"), title: "Proof", content: "éé", author: "author",
+      id: "oversized", kind: "testimony", title: "Proof", content: "éé", author: "author",
     });
     await expectError(response, 413, "limit_exceeded");
     expect(f.context.evidenceRepository.count("job")).toBe(0);

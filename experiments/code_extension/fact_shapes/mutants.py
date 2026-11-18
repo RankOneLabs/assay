@@ -114,27 +114,43 @@ def alternative_control(
     before: dict[str, str],
     complete: dict[str, str],
 ) -> tuple[str, str]:
-    """Construct an independent type drop, follow-up migration or stale state copy."""
+    """Construct an independent type drop, follow-up migration or stale state copy.
+
+    ``complete`` is the type-enforced omission tree for that shape, and the
+    reference tree otherwise.
+    """
     import difflib
+
+    from code_extension.fact_shapes.switches import LABEL_MAPS, TYPE_NAMES
 
     after = dict(complete)
     if cell.shape == "type_enforced":
-        # Start from the ordinary drop, then remove its artificial type assertion.
-        # The public caller in the hidden fact test must detect the missing value.
-        after[str(cell.holders[0])] = before[str(cell.holders[0])]
+        # Start from the ordinary omission, whose label map lacks the new key, and
+        # cast that unchanged literal so the repository type-checks. The hidden
+        # fact test must then detect the missing label at run time.
+        path: str = cell.holders[0]
+        labels, type_name = LABEL_MAPS[cell.feature], TYPE_NAMES[cell.feature]
+        declaration = f"export const {labels}: Record<{type_name}, string> = {{"
+        if after[path].count(declaration) != 1 or after[path].count(" };\n") != 1:
+            raise ValueError(f"{path}: label map literal not found")
+        after[path] = after[path].replace(declaration, f"export const {labels} = {{").replace(
+            " };\n", f" }} as unknown as Record<{type_name}, string>;\n"
+        )
         label = "type-without-required-feature.patch"
     elif cell.shape == "outside_code":
-        path: str = cell.holders[0]
+        path = cell.holders[0]
         after[path] = before[path]
         table = f"{cell.feature}_values"
-        after[f"{cell.feature}/002_allow.sql"] = (
+        directory = path.rsplit("/", 1)[0]
+        count = sum(1 for name in before if name.startswith(directory + "/"))
+        after[f"{directory}/{count + 1:03d}_allow_{cell.feature}_values.sql"] = (
             f"ALTER TABLE {table} RENAME TO previous_values;\n"
             + f"CREATE TABLE {table}"
             + complete[path].split(f"CREATE TABLE {table}", 1)[1]
             + f"INSERT INTO {table} SELECT * FROM previous_values;\n"
             + "DROP TABLE previous_values;\n"
         )
-        after[f"{cell.feature}/003_index.sql"] = (
+        after[f"{directory}/{count + 2:03d}_index_{cell.feature}_values.sql"] = (
             f"CREATE INDEX {cell.feature}_value_index ON {table}(value);\n"
         )
         label = "follow-up-migration.patch"
@@ -153,10 +169,10 @@ def alternative_control(
                 "    return running;\n  }",
             )
             source = source.replace(
-                "running: this.sessions.isBuildRunning(attempt.sessionId),",
-                'running: this.jobs.require(jobId).stage === "triaged" '
+                "running: buildRunning(this.sessions, job.stage, attempt),",
+                'running: job.stage === "triaged" '
                 "? this.featureIsRunning(attempt.sessionId) "
-                ": this.sessions.isBuildRunning(attempt.sessionId),",
+                ": buildRunning(this.sessions, job.stage, attempt),",
                 1,
             )
         else:
@@ -172,13 +188,14 @@ def alternative_control(
                 f"  private readonly featureCopy = new Map<string, {type_name}>();",
             )
             source = source.replace(
-                f"this.{cell.feature}Selections.set(key, value);",
-                f"this.{cell.feature}Selections.set(key, value); "
-                f'if (value === "{value}") this.featureCopy.set(key, value);',
+                f"    this.{cell.feature}Selections.set(key, value);\n",
+                f"    this.{cell.feature}Selections.set(key, value);\n"
+                f'    if (value === "{value}") this.featureCopy.set(key, value);\n',
             )
             source = source.replace(
-                f"return this.{cell.feature}Selections.get(key);",
-                f"return this.featureCopy.get(key) ?? this.{cell.feature}Selections.get(key);",
+                f"return this.pinnedSelections.get(key) ?? this.{cell.feature}Selections.get(key);",
+                "return this.featureCopy.get(key) ?? this.pinnedSelections.get(key) "
+                f"?? this.{cell.feature}Selections.get(key);",
             )
         after[path] = source
         label = "duplicate-state.patch"

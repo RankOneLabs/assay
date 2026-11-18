@@ -17,8 +17,8 @@ describe("project permission ownership", () => {
 
   test("granting is idempotent and preserves original provenance", () => {
     using f = fixture();
-    const first = f.context.access.grant(admin, "new-user", canonical("route_permission"));
-    const second = f.context.access.grant(admin, "new-user", canonical("route_permission"));
+    const first = f.context.access.grant(admin, "new-user", "case_write");
+    const second = f.context.access.grant(admin, "new-user", "case_write");
     expect(second).toEqual(first);
     expect(first.grantedBy).toBe(admin.id);
     expect(first.project).toBe(admin.project);
@@ -72,7 +72,7 @@ describe("project permission ownership", () => {
 
   test("the independent peer permission operation rejects the future cell value", () => {
     using f = fixture();
-    expect(f.context.access.grantPeer(admin, "new-user", canonical("route_permission")).permission).toBe(canonical("route_permission"));
+    expect(f.context.access.grantPeer(admin, "new-user", "case_write").permission).toBe("case_write");
     expect(() => f.context.access.grantPeer(admin, "new-user", "unsupported_future")).toThrow("unsupported peer");
     expect(f.context.access.list(admin, "new-user")).toHaveLength(1);
   });
@@ -82,10 +82,10 @@ describe("project permission ownership", () => {
     for (const path of ["/grants", "/grants/peer"]) {
       const target = path.endsWith("peer") ? "peer-user" : "primary-user";
       const valid = await f.request("POST", path, {
-        principal: target, project: "project", permission: canonical("route_permission"),
+        principal: target, project: "project", permission: "case_write",
       });
       expect(valid.status).toBe(201);
-      expect(await valid.json()).toMatchObject({ principal: target, permission: canonical("route_permission") });
+      expect(await valid.json()).toMatchObject({ principal: target, permission: "case_write" });
       await expectError(await f.request("POST", path, {
         principal: target, project: "project", permission: "unsupported_future",
       }), 400);
@@ -114,38 +114,38 @@ describe("permission preferences and compound grants", () => {
     using f = fixture();
     expect(f.context.access.getDefaultPermission(admin)).toBeNull();
     expect(() => f.context.access.grantDefault(admin, "new-user")).toThrow("no default");
-    f.context.access.setDefaultPermission(admin, canonical("route_permission"));
-    expect(f.context.access.getDefaultPermission(admin)).toBe(canonical("route_permission"));
-    expect(f.context.access.grantDefault(admin, "new-user").permission).toBe(canonical("route_permission"));
+    f.context.access.setDefaultPermission(admin, "case_write");
+    expect(f.context.access.getDefaultPermission(admin)).toBe("case_write");
+    expect(f.context.access.grantDefault(admin, "new-user").permission).toBe("case_write");
     f.context.access.setDefaultPermission(admin, "case_write");
     expect(f.context.access.grantDefault(admin, "another-user").permission).toBe("case_write");
     f.context.access.clearDefaultPermission(admin);
     expect(f.context.access.getDefaultPermission(admin)).toBeNull();
-    expect(f.context.grantRepository.has({ id: "new-user", project: "project" }, canonical("route_permission"))).toBe(true);
+    expect(f.context.grantRepository.has({ id: "new-user", project: "project" }, "case_write")).toBe(true);
   });
 
   test("permission preferences are principal-scoped and do not grant privileges", () => {
     using f = fixture();
-    f.context.access.setDefaultPermission(admin, canonical("route_permission"));
+    f.context.access.setDefaultPermission(admin, "case_write");
     expect(f.context.access.getDefaultPermission(outsider)).toBeNull();
     f.context.access.setDefaultPermission(outsider, "case_admin");
-    expect(f.context.access.getDefaultPermission(admin)).toBe(canonical("route_permission"));
+    expect(f.context.access.getDefaultPermission(admin)).toBe("case_write");
     expect(() => f.context.access.setDefaultPermission(reader, "case_admin")).toThrow("permission");
     expect(() => f.context.access.setDefaultPermission(admin, "unsupported_future")).toThrow();
-    expect(f.context.access.getDefaultPermission(admin)).toBe(canonical("route_permission"));
+    expect(f.context.access.getDefaultPermission(admin)).toBe("case_write");
   });
 
   test("bulk grants preserve individual provenance and idempotency", () => {
     using f = fixture();
     const grants = f.context.access.bulkGrant(admin, [
-      { principal: "new-user", permission: canonical("route_permission") },
+      { principal: "new-user", permission: "case_admin" },
       { principal: "new-user", permission: "case_write" },
-      { principal: "other-user", permission: canonical("route_permission") },
+      { principal: "other-user", permission: "case_write" },
     ]);
     expect(grants).toHaveLength(3);
     expect(grants.every(grant => grant.grantedBy === admin.id)).toBe(true);
     expect(f.context.access.list(admin, "new-user")).toHaveLength(2);
-    f.context.access.bulkGrant(admin, [{ principal: "new-user", permission: canonical("route_permission") }]);
+    f.context.access.bulkGrant(admin, [{ principal: "new-user", permission: "case_write" }]);
     expect(f.context.access.list(admin, "new-user")).toHaveLength(2);
   });
 
@@ -174,13 +174,13 @@ describe("permission preferences and compound grants", () => {
 
   test("HTTP defaults remain a selection rather than a hidden grant", async () => {
     using f = fixture();
-    const selected = await f.request("PUT", "/preferences/permission", { permission: canonical("route_permission") });
+    const selected = await f.request("PUT", "/preferences/permission", { permission: "case_write" });
     expect(selected.status).toBe(204);
     const current = await f.request("GET", "/preferences/permission");
-    expect(await current.json()).toEqual({ permission: canonical("route_permission") });
+    expect(await current.json()).toEqual({ permission: "case_write" });
     const granted = await f.request("POST", "/grants/default/new-user");
     expect(granted.status).toBe(201);
-    expect(await granted.json()).toMatchObject({ principal: "new-user", permission: canonical("route_permission") });
+    expect(await granted.json()).toMatchObject({ principal: "new-user", permission: "case_write" });
     const cleared = await f.request("DELETE", "/preferences/permission");
     expect(cleared.status).toBe(204);
     const absent = await f.request("GET", "/preferences/permission");

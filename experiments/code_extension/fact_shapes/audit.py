@@ -2,9 +2,10 @@
 
 This checker recognizes literal unions, arrays, enum constructors, SQL CHECK
 lists, switch-block case labels and object/record keys. Concepts with candidate
-holders require exactly one explicit declaration across the tree: a candidate
-path is not an exemption for a second copy. Imports and derived views are readers,
-not declarations. Legacy inventories retain their form-specific exemptions.
+holders require exactly one explicit declaration in the declaring file, plus at
+most one independent copy, declared once, in one candidate holder: the arm's
+manipulated holder. Any other copy is a duplicate. Imports and derived views are
+readers, not declarations. Legacy inventories retain their form-specific exemptions.
 Inventoried state fields and SQL tables must still have one canonical source.
 """
 
@@ -217,17 +218,23 @@ def audit(root: Path, inventory: Inventory) -> tuple[Finding, ...]:
             counts = {path: explicit_fact_count(source, concept.members)
                       for path, source in sources.items()}
             owners = [path for path, count in counts.items() if count]
-            if not owners:
+            declared = counts.get(concept.declaring_file, 0)
+            if not declared:
                 findings.append(Finding(
                     concept.name, concept.declaring_file, "missing declaration"
                 ))
-            for path in owners:
+            elif declared != 1:
+                findings.append(Finding(
+                    concept.name, concept.declaring_file, "duplicate concept value declaration"
+                ))
+            copies = [path for path in owners if path != concept.declaring_file]
+            for path in copies:
                 if (path not in concept.candidate_holders or counts[path] != 1
-                        or len(owners) != 1):
+                        or len(copies) != 1):
                     findings.append(Finding(
                         concept.name, path, "duplicate concept value declaration"
                     ))
-            if owners == [concept.declaring_file]:
+            if declared:
                 declaration = re.search(
                     rf"\b(?:const|let|type)\s+{re.escape(concept.symbol)}\s*"
                     r"(?::\s*[^=;]+)?=\s*([^;]+)", sources[concept.declaring_file]

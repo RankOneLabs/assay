@@ -7,7 +7,7 @@ import { createJobSchema, patchJobSchema, transitionSchema, filterSchema, revisi
 import { conflict, forbidden, limitExceeded } from "../domain/errors.ts";
 import { requireTransition } from "../domain/transitions.ts";
 import { edit, peerGuard } from "../../stage/edit.ts";
-import { peerGuard as siblingAccepts } from "../../stage/sibling.ts";
+import { peerGuard as siblingAccepts } from "./stage_peer.ts";
 import { enforceLimit } from "../../stage/policy.ts";
 import { JobRepository } from "../repositories/jobs.ts";
 import { EventRepository } from "../repositories/events.ts";

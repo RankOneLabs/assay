@@ -1,7 +1,8 @@
 # Fact-shapes study: plan (draft)
 
 Status: draft, 2026-11-18. The operator agreed the reading rules on 2026-11-18, with
-miss counts as a guide rather than a threshold. No attempt has run.
+miss counts as a guide rather than a threshold. The first pilot ran on 2026-11-18; the
+tasks are being rebuilt with independent holders (second change in `plan-change.md`).
 
 ## Question
 

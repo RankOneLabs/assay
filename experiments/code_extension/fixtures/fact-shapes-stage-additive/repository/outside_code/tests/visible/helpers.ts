@@ -38,7 +38,7 @@ export function fixture(config: unknown = {}) {
     attach(id = "evidence", jobId = "job", overrides: Record<string, unknown> = {}): Evidence {
       return context.evidence.attach(admin, jobId, {
         id,
-        kind: canonical("evidence_kind"),
+        kind: "testimony",
         title: `Evidence ${id}`,
         content: `Content ${id}`,
         author: admin.id,

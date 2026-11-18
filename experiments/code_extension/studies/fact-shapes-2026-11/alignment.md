@@ -1,101 +1,110 @@
 # Fact test alignment
 
-Each row quotes the exact sentence in the shared task text.
+Each row quotes the exact sentence in the shared task text. Each task states one
+requirement over the whole service, so every manipulated fact traces to that
+sentence; the anchor traces to its own sentence.
 
 ## fact-shapes-stage-additive
 
 | Scenario | Fact test title | Task sentence |
 | --- | --- | --- |
-| fact-shapes-stage-additive | fact:stage_additive_type_enforced: type_enforced behavior | Typed service operations must recognize triaged. |
-| fact-shapes-stage-additive | fact:stage_additive_reference: reference behavior | The primary operation must accept triaged under its normal validation rules. |
-| fact-shapes-stage-additive | fact:stage_additive_name_only: name_only behavior | The independent validation operation must recognize triaged. |
-| fact-shapes-stage-additive | fact:stage_additive_sibling_only: sibling_only behavior | The adjacent operation must also recognize triaged. |
-| fact-shapes-stage-additive | fact:stage_additive_outside_code: outside_code behavior | After all database migrations have been applied in order, storing triaged must succeed. |
-| fact-shapes-stage-additive | fact:stage_additive_existing_state: existing_state behavior | Build status for a job in the new stage must follow whether its original session is running, including after that session ends, without retaining a separate copy. |
+| fact-shapes-stage-additive | fact:stage_additive_type_enforced: type_enforced behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
+| fact-shapes-stage-additive | fact:stage_additive_reference: reference behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
+| fact-shapes-stage-additive | fact:stage_additive_name_only: name_only behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
+| fact-shapes-stage-additive | fact:stage_additive_sibling_only: sibling_only behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
+| fact-shapes-stage-additive | fact:stage_additive_outside_code: outside_code behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
+| fact-shapes-stage-additive | fact:stage_additive_existing_state: existing_state behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
 | fact-shapes-stage-additive | fact:stage_additive_anchor: anchor behavior | Labels containing letters, digits, underscores or hyphens must be accepted up to a length of 80 characters, and longer or otherwise malformed labels must be rejected. |
 
 ## fact-shapes-stage-rename
 
 | Scenario | Fact test title | Task sentence |
 | --- | --- | --- |
-| fact-shapes-stage-rename | fact:stage_rename_type_enforced: type_enforced behavior | Typed service operations must recognize triaged, and new requests must reject the former spelling. |
-| fact-shapes-stage-rename | fact:stage_rename_reference: reference behavior | The primary operation must accept triaged under its normal validation rules, and new requests must reject the former spelling. |
-| fact-shapes-stage-rename | fact:stage_rename_name_only: name_only behavior | The independent validation operation must recognize triaged, and new requests must reject the former spelling. |
-| fact-shapes-stage-rename | fact:stage_rename_sibling_only: sibling_only behavior | The adjacent operation must also recognize triaged, and new requests must reject the former spelling. |
-| fact-shapes-stage-rename | fact:stage_rename_outside_code: outside_code behavior | After all database migrations have been applied in order, storing triaged must succeed. |
-| fact-shapes-stage-rename | fact:stage_rename_existing_state: existing_state behavior | Build status for a job in the new stage must follow whether its original session is running, including after that session ends, without retaining a separate copy, and new requests must reject the former spelling. |
+| fact-shapes-stage-rename | fact:stage_rename_type_enforced: type_enforced behavior | Everything in the service that accepts the former stage name must accept triaged instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-stage-rename | fact:stage_rename_reference: reference behavior | Everything in the service that accepts the former stage name must accept triaged instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-stage-rename | fact:stage_rename_name_only: name_only behavior | Everything in the service that accepts the former stage name must accept triaged instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-stage-rename | fact:stage_rename_sibling_only: sibling_only behavior | Everything in the service that accepts the former stage name must accept triaged instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-stage-rename | fact:stage_rename_outside_code: outside_code behavior | Everything in the service that accepts the former stage name must accept triaged instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-stage-rename | fact:stage_rename_existing_state: existing_state behavior | Everything in the service that accepts the former stage name must accept triaged instead, stored data included, and new requests must reject the former spelling. |
 | fact-shapes-stage-rename | fact:stage_rename_anchor: anchor behavior | Labels containing letters, digits, underscores or hyphens must be accepted up to a length of 80 characters, and longer or otherwise malformed labels must be rejected. |
 
 ## fact-shapes-evidence-kind-additive
 
 | Scenario | Fact test title | Task sentence |
 | --- | --- | --- |
-| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_type_enforced: type_enforced behavior | Typed service operations must recognize attestation. |
-| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_reference: reference behavior | The primary operation must accept attestation under its normal validation rules. |
-| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_name_only: name_only behavior | The independent validation operation must recognize attestation. |
-| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_sibling_only: sibling_only behavior | The adjacent operation must also recognize attestation. |
-| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_outside_code: outside_code behavior | After all database migrations have been applied in order, storing attestation must succeed. |
-| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_existing_state: existing_state behavior | Attachments that omit a category must use the current saved category, and clearing that selection must make such attachments fail without retaining a separate copy. |
+| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_type_enforced: type_enforced behavior | The new evidence kind must work everywhere in the service that the existing kinds work, stored data included. |
+| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_reference: reference behavior | The new evidence kind must work everywhere in the service that the existing kinds work, stored data included. |
+| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_name_only: name_only behavior | The new evidence kind must work everywhere in the service that the existing kinds work, stored data included. |
+| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_sibling_only: sibling_only behavior | The new evidence kind must work everywhere in the service that the existing kinds work, stored data included. |
+| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_outside_code: outside_code behavior | The new evidence kind must work everywhere in the service that the existing kinds work, stored data included. |
+| fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_existing_state: existing_state behavior | The new evidence kind must work everywhere in the service that the existing kinds work, stored data included. |
 | fact-shapes-evidence-kind-additive | fact:evidence_kind_additive_anchor: anchor behavior | Labels containing letters, digits, underscores or hyphens must be accepted up to a length of 80 characters, and longer or otherwise malformed labels must be rejected. |
 
 ## fact-shapes-evidence-kind-rename
 
 | Scenario | Fact test title | Task sentence |
 | --- | --- | --- |
-| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_type_enforced: type_enforced behavior | Typed service operations must recognize attestation, and new requests must reject the former spelling. |
-| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_reference: reference behavior | The primary operation must accept attestation under its normal validation rules, and new requests must reject the former spelling. |
-| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_name_only: name_only behavior | The independent validation operation must recognize attestation, and new requests must reject the former spelling. |
-| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_sibling_only: sibling_only behavior | The adjacent operation must also recognize attestation, and new requests must reject the former spelling. |
-| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_outside_code: outside_code behavior | After all database migrations have been applied in order, storing attestation must succeed. |
-| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_existing_state: existing_state behavior | Attachments that omit a category must use the current saved category, and clearing that selection must make such attachments fail without retaining a separate copy, and new requests must reject the former spelling. |
+| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_type_enforced: type_enforced behavior | Everything in the service that accepts the former category name must accept attestation instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_reference: reference behavior | Everything in the service that accepts the former category name must accept attestation instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_name_only: name_only behavior | Everything in the service that accepts the former category name must accept attestation instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_sibling_only: sibling_only behavior | Everything in the service that accepts the former category name must accept attestation instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_outside_code: outside_code behavior | Everything in the service that accepts the former category name must accept attestation instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_existing_state: existing_state behavior | Everything in the service that accepts the former category name must accept attestation instead, stored data included, and new requests must reject the former spelling. |
 | fact-shapes-evidence-kind-rename | fact:evidence_kind_rename_anchor: anchor behavior | Labels containing letters, digits, underscores or hyphens must be accepted up to a length of 80 characters, and longer or otherwise malformed labels must be rejected. |
 
 ## fact-shapes-route-permission-additive
 
 | Scenario | Fact test title | Task sentence |
 | --- | --- | --- |
-| fact-shapes-route-permission-additive | fact:route_permission_additive_type_enforced: type_enforced behavior | Typed service operations must recognize case inspect. |
-| fact-shapes-route-permission-additive | fact:route_permission_additive_reference: reference behavior | The primary operation must accept case inspect under its normal validation rules. |
-| fact-shapes-route-permission-additive | fact:route_permission_additive_name_only: name_only behavior | The independent validation operation must recognize case inspect. |
-| fact-shapes-route-permission-additive | fact:route_permission_additive_sibling_only: sibling_only behavior | The adjacent operation must also recognize case inspect. |
-| fact-shapes-route-permission-additive | fact:route_permission_additive_outside_code: outside_code behavior | After all database migrations have been applied in order, storing case inspect must succeed. |
-| fact-shapes-route-permission-additive | fact:route_permission_additive_existing_state: existing_state behavior | Grants that omit a permission must use the current saved permission, and clearing that selection must make such grants fail without retaining a separate copy. |
+| fact-shapes-route-permission-additive | fact:route_permission_additive_type_enforced: type_enforced behavior | The new permission must work everywhere in the service that the existing permissions work, stored data included. |
+| fact-shapes-route-permission-additive | fact:route_permission_additive_reference: reference behavior | The new permission must work everywhere in the service that the existing permissions work, stored data included. |
+| fact-shapes-route-permission-additive | fact:route_permission_additive_name_only: name_only behavior | The new permission must work everywhere in the service that the existing permissions work, stored data included. |
+| fact-shapes-route-permission-additive | fact:route_permission_additive_sibling_only: sibling_only behavior | The new permission must work everywhere in the service that the existing permissions work, stored data included. |
+| fact-shapes-route-permission-additive | fact:route_permission_additive_outside_code: outside_code behavior | The new permission must work everywhere in the service that the existing permissions work, stored data included. |
+| fact-shapes-route-permission-additive | fact:route_permission_additive_existing_state: existing_state behavior | The new permission must work everywhere in the service that the existing permissions work, stored data included. |
 | fact-shapes-route-permission-additive | fact:route_permission_additive_anchor: anchor behavior | Labels containing letters, digits, underscores or hyphens must be accepted up to a length of 80 characters, and longer or otherwise malformed labels must be rejected. |
 
 ## fact-shapes-route-permission-rename
 
 | Scenario | Fact test title | Task sentence |
 | --- | --- | --- |
-| fact-shapes-route-permission-rename | fact:route_permission_rename_type_enforced: type_enforced behavior | Typed service operations must recognize case inspect, and new requests must reject the former spelling. |
-| fact-shapes-route-permission-rename | fact:route_permission_rename_reference: reference behavior | The primary operation must accept case inspect under its normal validation rules, and new requests must reject the former spelling. |
-| fact-shapes-route-permission-rename | fact:route_permission_rename_name_only: name_only behavior | The independent validation operation must recognize case inspect, and new requests must reject the former spelling. |
-| fact-shapes-route-permission-rename | fact:route_permission_rename_sibling_only: sibling_only behavior | The adjacent operation must also recognize case inspect, and new requests must reject the former spelling. |
-| fact-shapes-route-permission-rename | fact:route_permission_rename_outside_code: outside_code behavior | After all database migrations have been applied in order, storing case inspect must succeed. |
-| fact-shapes-route-permission-rename | fact:route_permission_rename_existing_state: existing_state behavior | Grants that omit a permission must use the current saved permission, and clearing that selection must make such grants fail without retaining a separate copy, and new requests must reject the former spelling. |
+| fact-shapes-route-permission-rename | fact:route_permission_rename_type_enforced: type_enforced behavior | Everything in the service that accepts the former permission name must accept case inspect instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-route-permission-rename | fact:route_permission_rename_reference: reference behavior | Everything in the service that accepts the former permission name must accept case inspect instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-route-permission-rename | fact:route_permission_rename_name_only: name_only behavior | Everything in the service that accepts the former permission name must accept case inspect instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-route-permission-rename | fact:route_permission_rename_sibling_only: sibling_only behavior | Everything in the service that accepts the former permission name must accept case inspect instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-route-permission-rename | fact:route_permission_rename_outside_code: outside_code behavior | Everything in the service that accepts the former permission name must accept case inspect instead, stored data included, and new requests must reject the former spelling. |
+| fact-shapes-route-permission-rename | fact:route_permission_rename_existing_state: existing_state behavior | Everything in the service that accepts the former permission name must accept case inspect instead, stored data included, and new requests must reject the former spelling. |
 | fact-shapes-route-permission-rename | fact:route_permission_rename_anchor: anchor behavior | Labels containing letters, digits, underscores or hyphens must be accepted up to a length of 80 characters, and longer or otherwise malformed labels must be rejected. |
 
-## Amended mutant_gate rule (option A)
+## Independent-holder mutant_gate rule
 
-Each arm has one vocabulary owner, restored from variant-generator checkpoint
-3df416a (7598ac3). The shared hidden group runs in full. The mutant gate scores
-only the arm's manipulated fact and the scenario anchor: the reference must pass
-both, and each drop must fail only its own scored fact. Both regression groups
-must pass. Other arms' titles in the shared group are not scored for that arm.
-The type-enforced control drop is accepted only through holder-confined preflight
-classification; its reference must first pass both regression groups. Every
-control is replayed twice in fresh sandboxes. This supersedes the previous
-requirement to score every shared title for every arm.
+Replaces the single-owner rule (option A), withdrawn by the second change in
+`plan-change.md` (2026-11-18). In every arm `<feature>/types.ts` declares the value
+list and the edit site uses it. The arm's holder keeps its own independent copy of
+the list, read only by that holder's behavior; in the other arms the same holder
+derives from the type. The arms differ only in that one file.
 
-The baseline restores the original consumers and owner placement. The approved
-anchor omission lowers the label limit from 80 to 79; references restore 80.
-Visible regressions still reject unsupported values, using an unreserved sentinel
-rather than the task target. Tests of the canonical value derive it from the
-current owner so that a rename does not require retaining the former spelling.
-Migration discovery assertions admit follow-up migrations. No behavior assertions
-are skipped. Lifecycle tests use the existing build, evidence-default, and permission-default
-service operations; no new helper export is required. Additive duplicate-state
-controls cache a second copy that stops following changes to the original source.
-Typed fact tests also compile a caller of the existing public edit operation.
+The reference patch updates the type, the holder, every service literal a rename
+touches, and the anchor. An omission patch is the reference with only one fact's
+file left unchanged, so missing the holder still updates the type. The shared
+hidden group runs in full. The mutant gate scores the arm's manipulated fact and the
+scenario anchor: the reference must pass both, and each omission must fail only its
+own scored fact. Both regression groups must pass. Other arms' titles are not scored
+for an arm. They pass on every reference and on every omission except the direct-import
+one: that policy sits on the primary path, so hidden checks that call the edit
+operation with the new value fail with it. The type-enforced omission fails type-checking, confined to the label-map
+holder, and is accepted only through holder-confined preflight classification. Every
+control is replayed twice in fresh sandboxes.
+
+The baseline omits the requested change and the 80-character label boundary; the
+anchor omission keeps the limit at 79. Visible checks that pass through a holder use
+values every arm keeps under the same spelling (for example `active`, `image`,
+`case_write`) and an unreserved sentinel for unsupported values, so a missed holder
+never fails a visible check. Lifecycle tests use the existing build,
+evidence-default and permission-default service operations. Additive
+duplicate-state controls cache a second copy that stops following changes to the
+original source. Typed fact tests also compile a caller of the existing public edit
+operation and of the label map.
 
 ## Operator approvals
 
@@ -122,22 +131,21 @@ requalified and verified with unchanged acceptance rules and fresh-run counts.
 ## Independent typed-fact control
 
 Each type-enforced arm also replays `type-without-required-feature.patch` twice.
-This control starts from the manipulated-fact drop and restores the original
-holder verbatim, removing the added `requiredFeature` assertion. The anchor fix
-remains. The gate requires preflight to pass, both regression groups to pass,
-the typed public-operation fact title to fail, and the anchor title to pass.
-Preflight classification cannot satisfy this independent control. Its evidence
-includes the complete control patch and both runs, demonstrating that detection
-does not depend on the added assertion or on accepting it as an exhaustive record.
-The original holder-only preflight control remains as a separate check.
+This control starts from the manipulated-fact omission and casts the label map's
+unchanged literal (`as unknown as Record<...>`), so the repository type-checks while
+the new value still has no label. The anchor fix remains. The gate requires preflight
+to pass, both regression groups to pass, the typed fact title to fail, and the anchor
+title to pass. Preflight classification cannot satisfy this independent control. Its
+evidence includes the complete control patch and both runs, demonstrating that the
+hidden check detects the missing label at run time and not only through the
+compiler. The holder-only preflight omission remains as a separate check.
 
 ## Follow-up migration compatibility
 
-The outside-code positive controls widen the vocabulary in a second migration
-and create an index in a third migration. Owner propagation selects the latest
-constraint-bearing migration, rather than the last SQL file. Migration discovery
-checks the initial table definitions without requiring later migrations to repeat
-those definitions, and constraint assertions inspect each feature's effective
-constraint once. Frozen fixture copies, qualification evidence and cohort pins
-must be regenerated before this source change is used for a study run. The
-interrupted partial refresh is excluded from this commit.
+The outside-code positive controls restore the base migration, widen the vocabulary
+in a follow-up migration (`db/migrations/004_...`) and create an index in a later one
+(`005_...`). The service and the hidden check apply every file in `db/migrations/`
+in filename order, so a new migration and an edit to the base migration both pass.
+Migration discovery checks the initial table definitions without requiring later
+migrations to repeat those definitions. Frozen fixture copies, qualification evidence
+and cohort pins must be regenerated before this source change is used for a study run.

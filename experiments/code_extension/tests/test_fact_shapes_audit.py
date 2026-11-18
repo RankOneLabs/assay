@@ -115,8 +115,6 @@ def test_candidate_switch_copies_are_rejected(tmp_path: Path, concept_name: str,
     shutil.copytree(BASE, target)
     inventory = load_inventory(INVENTORY)
     concept = next(item for item in inventory.concepts if item.name == concept_name)
-    path = concept.candidate_holders[3]
-    source = target / path
     members = sorted(concept.members)
     if form == "switch":
         labels = " ".join(f'case "{member}":' for member in members)
@@ -124,9 +122,29 @@ def test_candidate_switch_copies_are_rejected(tmp_path: Path, concept_name: str,
     else:
         literals = ", ".join(f'"{member}"' for member in members)
         seed = f"const extra = [{literals}];"
-    source.write_text(source.read_text() + "\n" + seed)
+    # One independent copy is the arm's manipulated holder; a second is a duplicate.
+    for path in (concept.candidate_holders[2], concept.candidate_holders[3]):
+        source = target / path
+        source.write_text(source.read_text() + "\n" + seed)
     assert any(
-        finding.name == concept_name and finding.path == path
+        finding.name == concept_name and finding.path == concept.candidate_holders[3]
+        for finding in audit(target, inventory)
+    )
+
+
+@pytest.mark.parametrize("concept_name", ["stage", "evidence_kind", "route_permission"])
+def test_one_independent_holder_copy_is_allowed(tmp_path: Path, concept_name: str) -> None:
+    target = tmp_path / "copy"
+    shutil.copytree(BASE, target)
+    inventory = load_inventory(INVENTORY)
+    concept = next(item for item in inventory.concepts if item.name == concept_name)
+    source = target / concept.candidate_holders[3]
+    literals = ", ".join(f'"{member}"' for member in sorted(concept.members))
+    source.write_text(source.read_text() + f"\nconst extra = [{literals}];")
+    assert audit(target, inventory) == ()
+    source.write_text(source.read_text() + f"\nconst again = [{literals}];")
+    assert any(
+        finding.path == concept.candidate_holders[3] and "duplicate" in finding.message
         for finding in audit(target, inventory)
     )
 
@@ -134,8 +152,8 @@ def test_candidate_switch_copies_are_rejected(tmp_path: Path, concept_name: str,
 def test_derived_sibling_has_no_second_declaration(tmp_path: Path) -> None:
     target = tmp_path / "copy"
     shutil.copytree(BASE, target)
-    source = target / "stage/sibling.ts"
-    assert "vocabularyStore.values" in source.read_text()
+    source = target / "src/services/stage_peer.ts"
+    assert "readonly string[] = values;" in source.read_text()
     assert 'case "queued"' not in source.read_text()
     assert audit(target, load_inventory(INVENTORY)) == ()
 
@@ -174,12 +192,12 @@ def test_separate_switches_do_not_combine_members(tmp_path: Path) -> None:
 def test_alias_in_canonical_state_file(tmp_path: Path) -> None:
     target = tmp_path / "copy"
     shutil.copytree(BASE, target)
-    source = target / "stage/state.ts"
+    source = target / "src/sessions/session_service.ts"
     source.write_text(
         source.read_text() + "\nclass Mirror { runningSessions = new Set<string>(); }"
     )
     assert any(
-        finding.name == "session_build" and finding.path == "stage/state.ts"
+        finding.name == "session_build" and finding.path == "src/sessions/session_service.ts"
         for finding in audit(target, load_inventory(INVENTORY))
     )
 
@@ -210,7 +228,10 @@ def test_candidate_is_not_a_duplicate_exemption(tmp_path: Path, form: str) -> No
         'switch': 'switch (v) { case "queued": case "active": case "complete": break; }',
         'sql': "CREATE TABLE copy (value TEXT CHECK (value IN ('queued', 'active', 'complete')));",
     }
-    path = 'stage/001_constraint.sql' if form == 'sql' else 'stage/sibling.ts'
+    path = 'db/migrations/001_stage_values.sql' if form == 'sql' else 'src/services/stage_peer.ts'
+    # The registry already holds the arm's one independent copy.
+    registry = target / 'src/validation/registered_stages.ts'
+    registry.write_text(registry.read_text() + '\nconst copy = ["queued", "active", "complete"];')
     source = target / path
     source.write_text(source.read_text() + '\n' + seeds[form])
     assert any(finding.path == path and 'duplicate' in finding.message

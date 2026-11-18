@@ -16,7 +16,7 @@ import {
 import { fixture, admin } from "./helpers.ts";
 
 const job = { id: "job", title: "Title", owner: "owner", project: "project" };
-const evidence = { id: "proof", kind: canonical("evidence_kind"), title: "Proof", content: "Content", author: "author" };
+const evidence = { id: "proof", kind: "testimony" as const, title: "Proof", content: "Content", author: "author" };
 
 describe("job-specific payload contracts", () => {
   test("creation normalizes titles and fills service defaults", () => {

@@ -203,10 +203,12 @@ def test_out_of_holder_mutation_is_reported(committed: dict[FactId, dict[str, st
                          ids=lambda cell: cell.fact_id)
 def test_state_source_is_not_imported(cell: Cell, committed: dict[FactId, dict[str, str]]) -> None:
     inventory = load_inventory(DIRECTORY / 'audit_inventory.json')
-    sources = [state.source for state in inventory.states
-               if state.source.startswith(f'{cell.feature}/')]
+    name = {'stage': 'session_build', 'evidence_kind': 'evidence_selection',
+            'route_permission': 'permission_selection'}[cell.feature]
+    sources = [state.source for state in inventory.states if state.name == name]
     assert len(sources) == 1
     assert_state_unimported(committed[cell.fact_id], cell.edit_site, sources[0])
+    assert_state_unimported(committed[cell.fact_id], cell.edit_site, cell.holders[0])
 
 
 @pytest.mark.parametrize('indirect', [False, True])
@@ -255,8 +257,10 @@ def test_only_selected_holder_explicitly_owns_fact(
             if path.endswith(('.ts', '.sql'))
             and (count := explicit_fact_count(source, concept.members))
         }
-        expected = cell.holders[0] if concept.name == cell.feature else concept.declaring_file
-        assert owners == {expected: 1}, (cell.fact_id, concept.name, owners)
+        expected = {concept.declaring_file: 1}
+        if concept.name == cell.feature:
+            expected[cell.holders[0]] = 1
+        assert owners == expected, (cell.fact_id, concept.name, owners)
 
 
 def test_regeneration_removes_obsolete_files(tmp_path: Path) -> None:

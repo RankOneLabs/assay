@@ -7,7 +7,8 @@ import { conflict, missing, revisionMatches } from "../domain/errors.ts";
 import { JobRepository } from "../repositories/jobs.ts";
 import { AttemptRepository } from "../repositories/attempts.ts";
 import { EventRepository } from "../repositories/events.ts";
-import { SessionService } from "../../stage/state.ts";
+import { SessionService } from "../sessions/session_service.ts";
+import { buildRunning } from "../sessions/build_status.ts";
 import { AccessService } from "./access.ts";
 
 export class BuildService {
@@ -71,10 +72,11 @@ export class BuildService {
   }
 
   list(actor: Principal, jobId: string) {
-    this.access.requireJob(actor, "case_read", this.jobs.require(jobId));
+    const job = this.jobs.require(jobId);
+    this.access.requireJob(actor, "case_read", job);
     return this.attempts.list(jobId).map(attempt => ({
       ...attempt,
-      running: this.sessions.isBuildRunning(attempt.sessionId),
+      running: buildRunning(this.sessions, job.stage, attempt),
     }));
   }
 

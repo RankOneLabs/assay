@@ -1,12 +1,13 @@
 import "./bootstrap.ts";
 import { Database } from "bun:sqlite";
+import { readdirSync, readFileSync } from "node:fs";
 import { values as stages } from "../stage/types.ts";
 import { values as kinds } from "../evidence_kind/types.ts";
 import { values as permissions } from "../route_permission/types.ts";
 import { businessSchema } from "./schema.ts";
 import { applyMigrations, type Migration } from "./migrations.ts";
 
-/** No duplicate CHECK lists: initialization always reads the declared SQL holders. */
+/** Apply migrations, then seed each lookup table from the declared types; reopening is idempotent. */
 export function initializeDatabase(db: Database, migrations: readonly Migration[]): void {
   db.exec("PRAGMA foreign_keys = ON");
   applyMigrations(db, [
@@ -26,15 +27,11 @@ export function initializeDatabase(db: Database, migrations: readonly Migration[
   })();
 }
 
-/** Read the three base migrations synchronously for synchronous app construction. */
+/** Read every migration in db/migrations synchronously, in filename order. */
 export function baseMigrations(): Migration[] {
-  return [
-    { id: "evidence_kind/001_constraint.sql", sql: evidenceMigration },
-    { id: "route_permission/001_constraint.sql", sql: permissionMigration },
-    { id: "stage/001_constraint.sql", sql: stageMigration },
-  ];
+  const directory = new URL("../db/migrations/", import.meta.url);
+  return readdirSync(directory)
+    .filter(name => /^[0-9][^/]*\.sql$/.test(name))
+    .sort()
+    .map(name => ({ id: `db/migrations/${name}`, sql: readFileSync(new URL(name, directory), "utf8") }));
 }
-
-import evidenceMigration from "../evidence_kind/001_constraint.sql" with { type: "text" };
-import permissionMigration from "../route_permission/001_constraint.sql" with { type: "text" };
-import stageMigration from "../stage/001_constraint.sql" with { type: "text" };

@@ -1,9 +1,9 @@
-import { vocabularyStore } from "../src/vocabulary.ts";
-import { isValue, type Stage } from "./types.ts";
-vocabularyStore.define("stage", ["queued", "active", "complete"]);
+import type { Stage } from "./types.ts";
+/** Stages that edit() accepts. */
+const acceptedStages: readonly string[] = ["queued", "active", "complete"];
 export function acceptValue(value: string): Stage {
-  if (!isValue(value)) throw new Error("unsupported stage");
-  return value;
+  if (!acceptedStages.includes(value)) throw new Error("unsupported stage");
+  return value as Stage;
 }
 export function enforceLimit(count: number, limit: number): void {
   if (!Number.isInteger(count) || count < 0 || count > limit) throw new Error("limit exceeded");

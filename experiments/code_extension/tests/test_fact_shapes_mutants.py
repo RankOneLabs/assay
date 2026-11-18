@@ -262,7 +262,7 @@ def test_independent_type_drop_requires_titles() -> None:
     ), Err)
 
 
-def test_independent_type_controls_have_no_required_feature_line() -> None:
+def test_independent_type_controls_cast_the_unchanged_label_map() -> None:
     import json
     import tempfile
     from pathlib import Path
@@ -270,6 +270,7 @@ def test_independent_type_controls_have_no_required_feature_line() -> None:
     from code_extension.fact_shapes.cells import CELLS
     from code_extension.fact_shapes.generate import scenario_name
     from code_extension.fact_shapes.mutants import alternative_control
+    from code_extension.fact_shapes.switches import LABEL_MAPS, TYPE_NAMES
     from code_extension.fixture import materialize, read_tree
     from code_extension.fixtures import load_scenario
 
@@ -293,8 +294,14 @@ def test_independent_type_controls_have_no_required_feature_line() -> None:
             assert patch == evidence["control_patch"]
             assert evidence["patch_digest"] == digest_bytes(patch.encode())
             materialize(target, fixture.repository, patch)
-            assert (target / cell.holders[0]).read_text() == fixture.repository[cell.holders[0]]
-        assert "requiredFeature" not in evidence["control_patch"]
+            labels, type_name = LABEL_MAPS[cell.feature], TYPE_NAMES[cell.feature]
+            # The holder's literal is unchanged; only its declared type becomes a cast.
+            assert (target / cell.holders[0]).read_text() == fixture.repository[
+                cell.holders[0]
+            ].replace(f"{labels}: Record<{type_name}, string> = {{", f"{labels} = {{").replace(
+                " };\n", f" }} as unknown as Record<{type_name}, string>;\n"
+            )
+        assert evidence["control_patch"] == patch
         assert evidence["result"]["passed"]
         for run in evidence["runs"]:
             assert run["preflight_cause"] is None
@@ -324,6 +331,6 @@ def test_follow_up_migration_control_includes_a_later_index() -> None:
             target = Path(directory)
             materialize(target, fixture.repository, fixture.arms[0].reference_patch)
             _, patch = alternative_control(cell, fixture.repository, read_tree(target))
-        assert f"{cell.feature}/002_allow.sql" in patch
-        assert f"{cell.feature}/003_index.sql" in patch
+        assert f"db/migrations/004_allow_{cell.feature}_values.sql" in patch
+        assert f"db/migrations/005_index_{cell.feature}_values.sql" in patch
         assert "CREATE INDEX" in patch

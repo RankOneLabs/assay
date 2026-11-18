@@ -12,12 +12,12 @@
       "outside_holders": [],
       "switch_holders": [],
       "candidate_holders": [
-        "stage/types.ts",
+        "src/presentation/stage_labels.ts",
         "stage/policy.ts",
-        "stage/names.ts",
-        "stage/sibling.ts",
-        "stage/001_constraint.sql",
-        "stage/state.ts"
+        "src/validation/registered_stages.ts",
+        "src/services/stage_peer.ts",
+        "db/migrations/001_stage_values.sql",
+        "src/sessions/build_status.ts"
       ]
     },
     {
@@ -32,12 +32,12 @@
       "outside_holders": [],
       "switch_holders": [],
       "candidate_holders": [
-        "evidence_kind/types.ts",
+        "src/presentation/evidence_kind_labels.ts",
         "evidence_kind/policy.ts",
-        "evidence_kind/names.ts",
-        "evidence_kind/sibling.ts",
-        "evidence_kind/001_constraint.sql",
-        "evidence_kind/state.ts"
+        "src/validation/registered_evidence_kinds.ts",
+        "src/services/evidence_kind_peer.ts",
+        "db/migrations/002_evidence_kind_values.sql",
+        "src/preferences/evidence_kind_defaults.ts"
       ]
     },
     {
@@ -52,19 +52,19 @@
       "outside_holders": [],
       "switch_holders": [],
       "candidate_holders": [
-        "route_permission/types.ts",
+        "src/presentation/route_permission_labels.ts",
         "route_permission/policy.ts",
-        "route_permission/names.ts",
-        "route_permission/sibling.ts",
-        "route_permission/001_constraint.sql",
-        "route_permission/state.ts"
+        "src/validation/registered_route_permissions.ts",
+        "src/services/route_permission_peer.ts",
+        "db/migrations/003_route_permission_values.sql",
+        "src/preferences/route_permission_defaults.ts"
       ]
     }
   ],
   "states": [
     {
       "name": "session_build",
-      "source": "stage/state.ts",
+      "source": "src/sessions/session_service.ts",
       "symbol": "buildRunning",
       "aliases": [
         "runningSessions",
@@ -74,12 +74,12 @@
     },
     {
       "name": "evidence_selection",
-      "source": "evidence_kind/state.ts",
+      "source": "src/preferences/evidence_kind_defaults.ts",
       "symbol": "evidence_kindSelections"
     },
     {
       "name": "permission_selection",
-      "source": "route_permission/state.ts",
+      "source": "src/preferences/route_permission_defaults.ts",
       "symbol": "route_permissionSelections"
     },
     {

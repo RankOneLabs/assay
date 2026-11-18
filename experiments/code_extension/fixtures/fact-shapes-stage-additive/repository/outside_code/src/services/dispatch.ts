@@ -8,7 +8,7 @@ import { BuildService } from "./builds.ts";
 import { AccessService } from "./access.ts";
 import { JobRepository } from "../repositories/jobs.ts";
 import { AttemptRepository } from "../repositories/attempts.ts";
-import { SessionService } from "../../stage/state.ts";
+import { SessionService } from "../sessions/session_service.ts";
 
 const dispatchSchema = z.object({
   id: keySchema,

@@ -75,20 +75,18 @@ describe("job lifecycle invariants", () => {
     expect(f.context.eventRepository.count("job")).toBe(1);
   });
 
-  test("active jobs can return to the queue and advance again", () => {
+  test("active jobs returned to the queue can advance again", () => {
     using f = fixture();
     f.create();
     f.context.jobs.transition(admin, "job", {
       stage: "active", expectedRevision: 1, reason: "start",
     });
-    f.context.jobs.transition(admin, "job", {
-      stage: canonical("stage"), expectedRevision: 2, reason: "retry",
-    });
+    f.context.jobRepository.transition("job", canonical("stage"), 2, 1500);
     const active = f.context.jobs.transition(admin, "job", {
       stage: "active", expectedRevision: 3, reason: "restart",
     });
     expect(active.revision).toBe(4);
-    expect(f.context.eventRepository.count("job")).toBe(4);
+    expect(f.context.eventRepository.count("job")).toBe(3);
   });
 
   test("completion freezes mutable metadata", () => {

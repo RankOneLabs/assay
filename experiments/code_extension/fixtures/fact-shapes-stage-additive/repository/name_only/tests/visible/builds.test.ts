@@ -188,7 +188,7 @@ describe("build cancellation and recovery", () => {
     f.create();
     f.context.builds.start(admin, "job", start);
     expect(() => f.context.jobs.transition(admin, "job", {
-      stage: canonical("stage"), expectedRevision: 2, reason: "bypass cancel",
+      stage: "complete", expectedRevision: 2, reason: "bypass cancel",
     })).toThrow("live build owns");
     expect(f.context.jobRepository.require("job").stage).toBe("active");
     expect(f.context.sessions.isBuildRunning("session")).toBe(true);

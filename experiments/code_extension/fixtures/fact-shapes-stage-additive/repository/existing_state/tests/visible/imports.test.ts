@@ -9,7 +9,7 @@ function input() {
     entries: [
       {
         job: { id: "first", title: "First", owner: "owner", project: "project" },
-        evidence: [{ id: "proof", title: "Proof", kind: canonical("evidence_kind"), content: "First proof", author: "author" }],
+        evidence: [{ id: "proof", title: "Proof", kind: "testimony", content: "First proof", author: "author" }],
       },
       {
         job: { id: "second", title: "Second", owner: "owner", project: "project" },
@@ -39,7 +39,7 @@ describe("atomic job and evidence import", () => {
     const created = f.context.imports.commit(admin, source, preview.digest);
     expect(created.map(job => job.id)).toEqual(["first", "second"]);
     expect(created.every(job => job.stage === canonical("stage") && job.revision === 1)).toBe(true);
-    expect(f.context.evidenceRepository.require("proof").kind).toBe(canonical("evidence_kind"));
+    expect(f.context.evidenceRepository.require("proof").kind).toBe("testimony");
     expect(f.context.evidenceRepository.require("image").kind).toBe("image");
     expect(f.context.eventRepository.count("first")).toBe(2);
     expect(f.context.eventRepository.count("second")).toBe(2);
@@ -81,7 +81,7 @@ describe("atomic job and evidence import", () => {
     using f = fixture();
     const source = input();
     source.entries[0]!.evidence.push({
-      id: "duplicate", title: "Copy", kind: canonical("evidence_kind"), content: "First proof", author: "author",
+      id: "duplicate", title: "Copy", kind: "testimony", content: "First proof", author: "author",
     });
     const preview = f.context.imports.preview(admin, source);
     expect(preview.issues.some(issue => issue.message === "duplicate evidence content in job")).toBe(true);
@@ -104,7 +104,7 @@ describe("atomic job and evidence import", () => {
     using f = fixture({ maxJobs: 1, maxEvidence: 1, maxEvidenceBytes: 3 });
     const source = input();
     source.entries[0]!.evidence.push({
-      id: "another", title: "Another", kind: canonical("evidence_kind"), content: "Long proof", author: "author",
+      id: "another", title: "Another", kind: "testimony", content: "Long proof", author: "author",
     });
     const preview = f.context.imports.preview(admin, source);
     expect(preview.issues.some(issue => issue.message === "project job limit reached")).toBe(true);

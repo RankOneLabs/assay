@@ -33,7 +33,8 @@ def forbidden_tokens(holders: Path, base: Path) -> dict[str, tuple[str, ...]]:
             result.setdefault(token, set()).add(source)
 
     for cell in CELLS:
-        for path in (cell.edit_site, *cell.holders):
+        # The type is a required place in every arm, though no cell manipulates it.
+        for path in (cell.edit_site, f"{cell.feature}/types.ts", *cell.holders):
             add(path, "cells.py:path")
             add(Path(path).name, "cells.py:basename")
     specs = json.loads(holders.read_text(encoding="utf-8"))

@@ -60,7 +60,7 @@ def test_resolution_forms() -> None:
 def test_committed_arm_distances() -> None:
     from code_extension.fact_shapes.generate import DIRECTORY, scenario_name
 
-    scenarios: dict[str, set[int]] = {}
+    shapes: dict[str, set[int]] = {}
     for cell in CELLS:
         scenario = scenario_name(cell)
         root = DIRECTORY.parent / 'fixtures' / scenario / 'repository' / cell.shape
@@ -68,9 +68,9 @@ def test_committed_arm_distances() -> None:
         assert import_hops(tree, cell.edit_site, cell.holders) == cell.import_hops, cell.fact_id
         distance = directory_hops(cell.edit_site, cell.holders)
         assert distance == cell.directory_hops, cell.fact_id
-        scenarios.setdefault(scenario, set()).add(distance)
-    assert len(scenarios) == 6
-    assert all(len(distances) == 1 for distances in scenarios.values())
+        shapes.setdefault(cell.shape, set()).add(distance)
+    assert len(shapes) == 6
+    assert all(len(distances) == 1 for distances in shapes.values())
 
 
 def test_documentation_and_dynamic_imports_are_not_edges() -> None:

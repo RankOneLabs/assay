@@ -121,13 +121,21 @@ export interface Principal {
 
 export interface StageCount {
   stage: Stage;
+  label: string;
   count: number;
 }
 
 export interface EvidenceCount {
   kind: EvidenceKind;
+  label: string;
   count: number;
   bytes: number;
+}
+
+export interface PermissionCount {
+  permission: RoutePermission;
+  label: string;
+  grants: number;
 }
 
 export interface Workload {
@@ -141,5 +149,6 @@ export interface Summary {
   archived: number;
   stages: StageCount[];
   evidence: EvidenceCount[];
+  permissions: PermissionCount[];
   workloads: Workload[];
 }

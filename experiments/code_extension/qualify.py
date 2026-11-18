@@ -686,7 +686,8 @@ async def run_scenario_gates(
             and "type_enforced.patch" in label
         ):
             from code_extension.fact_shapes.attempts import Fact, HolderSpec
-            from code_extension.fact_shapes.cells import FactId, RepositoryPath
+            from code_extension.fact_shapes.cells import CELLS, FactId, RepositoryPath
+            from code_extension.fact_shapes.generate import scenario_name
             from code_extension.fact_shapes.outcome import (
                 Missed,
                 Scored,
@@ -694,11 +695,10 @@ async def run_scenario_gates(
                 preflight_status,
             )
 
-            holders = tuple(
-                path
-                for path in fixture.repository
-                if path.endswith("/types.ts")
-                and f"{path.split('/')[0].replace('_', '-')}-" in fixture.subject_id
+            holders = next(
+                cell.holders
+                for cell in CELLS
+                if scenario_name(cell) == fixture.subject_id and cell.shape == "type_enforced"
             )
             errors = diagnostics(str(results[0]["typecheck_output"]))
             fact = Fact(

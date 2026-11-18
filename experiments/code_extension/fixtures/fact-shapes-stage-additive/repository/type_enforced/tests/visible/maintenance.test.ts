@@ -277,11 +277,11 @@ describe("stable retention batches", () => {
     using f = fixture();
     f.create();
     f.context.evidence.setDefaultKind(admin, "image");
-    f.context.access.setDefaultPermission(admin, canonical("route_permission"));
+    f.context.access.setDefaultPermission(admin, "case_write");
     const archived = f.context.jobs.archive(admin, "job", { expectedRevision: 1 });
     expect(f.context.maintenance.purge(admin, archived.archivedAt! + 1, 1)).toEqual(["job"]);
     expect(f.context.evidence.getDefaultKind(admin)).toBe("image");
-    expect(f.context.access.getDefaultPermission(admin)).toBe(canonical("route_permission"));
+    expect(f.context.access.getDefaultPermission(admin)).toBe("case_write");
     expect(f.context.access.list(admin, reader.id)).toHaveLength(1);
     expect(f.context.grantRepository.has(reader, canonical("route_permission"))).toBe(true);
   });

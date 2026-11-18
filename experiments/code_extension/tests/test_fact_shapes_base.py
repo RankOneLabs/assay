@@ -39,7 +39,7 @@ def test_only_locked_imports() -> None:
             flags=re.MULTILINE,
         ):
             if specifier.startswith(".") or specifier in {
-                "bun:test", "bun:sqlite", "node:fs/promises",
+                "bun:test", "bun:sqlite", "node:fs", "node:fs/promises",
             }:
                 continue
             assert any(
@@ -62,8 +62,8 @@ def test_all_cells_have_files_and_planned_distances() -> None:
                     break
                 common += 1
             assert len(left) + len(right) - 2 * common == cell.directory_hops
-        if cell.shape == "existing_state":
-            assert "state.ts" not in edit.read_text()
+        if cell.shape != "reference":
+            assert all(Path(holder).name not in edit.read_text() for holder in cell.holders)
     for feature in {cell.feature for cell in CELLS}:
         combinations = {(cell.shape, cell.task_type) for cell in CELLS if cell.feature == feature}
         assert len(combinations) == 12
@@ -119,18 +119,26 @@ def test_feature_switch_points_are_specific_and_exhaustive() -> None:
     }
     for feature, (old, new, type_name) in values.items():
         edit = (BASE / feature / "edit.ts").read_text()
-        sibling = (BASE / feature / "sibling.ts").read_text()
         types = (BASE / feature / "types.ts").read_text()
-        assert f'vocabularyStore.define("{feature}", [' in types
+        assert types.startswith("export const values = [")
         assert f'"{old}"' in types
         assert f'"{new}"' not in types
         assert f"export type {type_name} = (typeof values)[number];" in types
         assert f"value: {type_name}" in edit
         assert f'vocabularyStore.record("{feature}",' in edit
-        assert f'vocabularyStore.values("{feature}")' in sibling
-        for source in (edit, sibling):
-            assert "return isValue(value);" in source
-            assert f'"{old}"' not in source
-            assert f'"{new}"' not in source
-        assert 'from "./edit.ts"' not in sibling
-        assert 'from "./sibling.ts"' not in edit
+        assert "return isValue(value);" in edit
+        holders = [cell.holders[0] for cell in CELLS
+                   if cell.feature == feature and cell.task_type == "additive"]
+        for holder in holders:
+            source = (BASE / holder).read_text()
+            # In the base every holder derives from the type; no holder lists a value.
+            assert f"'{old}'" not in source and f'"{old}"' not in source, holder
+            assert f'"{new}"' not in source, holder
+            if holder.endswith(".ts"):
+                assert f"/{feature}/types.ts" in source or holder.startswith(f"{feature}/")
+                assert "values" in source, holder
+            assert 'from "./edit.ts"' not in source
+        sibling = next(BASE / cell.holders[0] for cell in CELLS
+                       if cell.feature == feature and cell.shape == "sibling_only")
+        assert "peerGuard" in sibling.read_text()
+        assert sibling.name not in edit

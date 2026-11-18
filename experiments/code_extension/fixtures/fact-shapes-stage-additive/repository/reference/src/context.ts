@@ -1,5 +1,5 @@
-import { StoredEvidenceKind } from "../evidence_kind/state.ts";
-import { StoredRoutePermission } from "../route_permission/state.ts";
+import { StoredEvidenceKind } from "./preferences/evidence_kind_defaults.ts";
+import { StoredRoutePermission } from "./preferences/route_permission_defaults.ts";
 import { Database } from "bun:sqlite";
 import type { Config } from "./config.ts";
 import { loadConfig } from "./config.ts";
@@ -9,7 +9,7 @@ import { EvidenceRepository } from "./repositories/evidence.ts";
 import { EventRepository } from "./repositories/events.ts";
 import { GrantRepository } from "./repositories/grants.ts";
 import { AttemptRepository } from "./repositories/attempts.ts";
-import { SessionService } from "../stage/state.ts";
+import { SessionService } from "./sessions/session_service.ts";
 import { AccessService } from "./services/access.ts";
 import { JobService } from "./services/jobs.ts";
 import { EvidenceService } from "./services/evidence.ts";

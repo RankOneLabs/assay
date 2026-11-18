@@ -1,16 +1,17 @@
-import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
-function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import { fixture, admin, reader, writer, outsider, expectError } from "./helpers.ts";
 import { checksum, byteLength } from "../../src/domain/checksum.ts";
 import { values as kinds } from "../../evidence_kind/types.ts";
+
+/** Kinds every version of the service keeps under the same spelling. */
+const attachable = ["image", "testimony"] as const;
 
 
 describe("evidence service", () => {
   test("attaches each kind to the same job without losing its vocabulary", () => {
     using f = fixture();
     f.create();
-    for (const kind of kinds) {
+    for (const kind of attachable) {
       const item = f.attach(`item-${kind}`, "job", { kind });
       expect(item.kind).toBe(kind);
       expect(item.jobId).toBe("job");
@@ -18,8 +19,8 @@ describe("evidence service", () => {
       expect(item.checksum).toBe(checksum(item.content));
     }
     const items = f.context.evidence.list(reader, "job");
-    expect(items).toHaveLength(kinds.length);
-    for (const kind of kinds) {
+    expect(items).toHaveLength(attachable.length);
+    for (const kind of attachable) {
       expect(f.context.evidence.list(reader, "job", kind)).toHaveLength(1);
     }
   });
@@ -154,7 +155,7 @@ describe("evidence service", () => {
     f.create();
     f.attach();
     expect(() => f.context.evidence.attach(reader, "job", {
-      id: "another", kind: canonical("evidence_kind"), title: "No", content: "No", author: "reader",
+      id: "another", kind: "testimony", title: "No", content: "No", author: "reader",
     })).toThrow("permission");
     expect(() => f.context.evidence.patch(reader, "job", "evidence", {
       title: "No", expectedRevision: 1,
@@ -186,10 +187,10 @@ describe("evidence service", () => {
     for (const path of ["/jobs/job/evidence", "/jobs/job/evidence/peer"]) {
       const id = path.endsWith("peer") ? "peer" : "primary";
       const response = await f.request("POST", path, {
-        id, kind: canonical("evidence_kind"), title: "Proof", content: `Proof ${id}`, author: "writer",
+        id, kind: "testimony", title: "Proof", content: `Proof ${id}`, author: "writer",
       }, writer);
       expect(response.status).toBe(201);
-      expect(await response.json()).toMatchObject({ kind: canonical("evidence_kind"), jobId: "job" });
+      expect(await response.json()).toMatchObject({ kind: "testimony", jobId: "job" });
       await expectError(await f.request("POST", path, {
         id: `new-${id}`, kind: "unsupported_future", title: "Future", content: "Future", author: "writer",
       }, writer), 400);
@@ -204,7 +205,7 @@ describe("evidence service", () => {
     await expectError(await f.request("GET", "/jobs/job/evidence/evidence/content", undefined, outsider), 403);
     const allowed = await f.request("GET", "/jobs/job/evidence/evidence/content", undefined, reader);
     expect(allowed.status).toBe(200);
-    expect(allowed.headers.get("content-type")).toContain("text/plain");
+    expect(allowed.headers.get("content-type")).toContain("text/markdown");
     expect(allowed.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await allowed.text()).toBe("Content evidence");
   });
@@ -220,7 +221,7 @@ describe("evidence content workflows", () => {
     expect(manifest.count).toBe(1);
     expect(manifest.bytes).toBe(4);
     expect(manifest.items[0]).toEqual({
-      id: "proof", kind: canonical("evidence_kind"), title: item.title,
+      id: "proof", kind: "testimony", title: item.title,
       checksum: item.checksum, revision: 1, bytes: 4, author: admin.id,
     });
     expect(Object.hasOwn(manifest.items[0]!, "content")).toBe(false);
@@ -276,12 +277,12 @@ describe("evidence content workflows", () => {
     using f = fixture();
     f.create();
     const attached = f.context.evidence.bulkAttach(admin, "job", [
-      { id: "a", kind: canonical("evidence_kind"), title: "A", content: "A", author: "author" },
+      { id: "a", kind: "testimony", title: "A", content: "A", author: "author" },
       { id: "b", kind: "image", title: "B", content: "B", author: "author" },
       { id: "c", kind: "testimony", title: "C", content: "C", author: "witness" },
     ], true);
     expect(attached.map(item => item.id)).toEqual(["a", "b", "c"]);
-    expect(attached.map(item => item.kind)).toEqual([canonical("evidence_kind"), "image", "testimony"]);
+    expect(attached.map(item => item.kind)).toEqual(["testimony", "image", "testimony"]);
     expect(f.context.evidenceRepository.count("job")).toBe(3);
     expect(f.context.eventRepository.count("job")).toBe(4);
   });
@@ -290,7 +291,7 @@ describe("evidence content workflows", () => {
     using f = fixture();
     f.create();
     expect(() => f.context.evidence.bulkAttach(admin, "job", [
-      { id: "a", kind: canonical("evidence_kind"), title: "A", content: "same", author: "author" },
+      { id: "a", kind: "testimony", title: "A", content: "same", author: "author" },
       { id: "b", kind: "image", title: "B", content: "same", author: "author" },
     ])).toThrow("already attached");
     expect(f.context.evidenceRepository.count("job")).toBe(0);
@@ -339,7 +340,7 @@ describe("evidence content workflows", () => {
     f.attach("wrong-author", "job", { title: "Invoice", author: "pat" });
     f.attach("wrong-query", "job", { title: "Unrelated", author: "sam" });
     const found = f.context.evidence.search(reader, "job", {
-      query: "  INVOICE  ", kind: canonical("evidence_kind"), author: "sam",
+      query: "  INVOICE  ", kind: "testimony", author: "sam",
     });
     expect(found.map(item => item.id)).toEqual(["matching"]);
     expect(f.context.evidence.search(reader, "job", { query: "invoice", limit: 1 })).toHaveLength(1);
@@ -360,7 +361,7 @@ describe("evidence content workflows", () => {
     using f = fixture();
     f.create();
     const attached = await f.request("POST", "/jobs/job/evidence/bulk", [
-      { id: "a", kind: canonical("evidence_kind"), title: "Invoice", content: "Data", author: "author" },
+      { id: "a", kind: "testimony", title: "Invoice", content: "Data", author: "author" },
     ]);
     expect(attached.status).toBe(201);
     const manifest = await f.request("GET", "/jobs/job/evidence/manifest", undefined, reader);
@@ -385,9 +386,9 @@ describe("saved evidence-kind source", () => {
     });
     expect(item.kind).toBe("image");
     const explicit = f.context.evidence.attach(admin, "job", {
-      id: "explicit", kind: canonical("evidence_kind"), title: "Explicit", content: "Document data", author: "author",
+      id: "explicit", kind: "testimony", title: "Explicit", content: "Document data", author: "author",
     });
-    expect(explicit.kind).toBe(canonical("evidence_kind"));
+    expect(explicit.kind).toBe("testimony");
     expect(f.context.evidence.getDefaultKind(admin)).toBe("image");
     f.context.evidence.clearDefaultKind(admin);
     expect(f.context.evidence.getDefaultKind(admin)).toBeNull();
@@ -396,7 +397,7 @@ describe("saved evidence-kind source", () => {
   test("changing the saved source affects future attachments without changing old ones", () => {
     using f = fixture();
     f.create();
-    f.context.evidence.setDefaultKind(admin, canonical("evidence_kind"));
+    f.context.evidence.setDefaultKind(admin, "testimony");
     f.context.evidence.attach(admin, "job", {
       id: "first", title: "First", content: "First", author: "author",
     });
@@ -404,7 +405,7 @@ describe("saved evidence-kind source", () => {
     f.context.evidence.attach(admin, "job", {
       id: "second", title: "Second", content: "Second", author: "author",
     });
-    expect(f.context.evidenceRepository.require("first").kind).toBe(canonical("evidence_kind"));
+    expect(f.context.evidenceRepository.require("first").kind).toBe("testimony");
     expect(f.context.evidenceRepository.require("second").kind).toBe("testimony");
   });
 
@@ -439,10 +440,10 @@ describe("evidence HTTP representation", () => {
   test("each kind has a distinct media policy and a content digest ETag", async () => {
     using f = fixture();
     f.create();
-    const expected = Object.fromEntries(kinds.map((kind, index) =>
-      [kind, ["text/plain", "image/png", "text/markdown"][index] ?? "application/octet-stream"],
+    const expected = Object.fromEntries(attachable.map(kind =>
+      [kind, ["text/plain", "image/png", "text/markdown"][kinds.indexOf(kind)] ?? "application/octet-stream"],
     ));
-    for (const kind of kinds) {
+    for (const kind of attachable) {
       const item = f.attach(kind, "job", { kind });
       const content = await f.request("GET", `/jobs/job/evidence/${kind}/content`, undefined, reader);
       expect(content.status).toBe(200);
@@ -474,7 +475,7 @@ describe("evidence HTTP representation", () => {
     using f = fixture();
     f.create();
     f.attach();
-    const valid = await f.request("GET", `/jobs/job/evidence?kind=${canonical("evidence_kind")}`, undefined, reader);
+    const valid = await f.request("GET", `/jobs/job/evidence?kind=${"testimony"}`, undefined, reader);
     expect(await valid.json()).toMatchObject([{ id: "evidence" }]);
     await expectError(await f.request("GET", "/jobs/job/evidence?kind=unsupported_future", undefined, reader), 400);
     expect(f.context.evidenceRepository.count("job")).toBe(1);
@@ -500,7 +501,7 @@ describe("default-kind validation boundaries", () => {
   test("clearing the only default source makes omitted kind invalid again", () => {
     using f = fixture();
     f.create();
-    f.context.evidence.setDefaultKind(admin, canonical("evidence_kind"));
+    f.context.evidence.setDefaultKind(admin, "testimony");
     f.context.evidence.clearDefaultKind(admin);
     expect(() => f.context.evidence.attach(admin, "job", {
       id: "missing-kind", title: "Missing", content: "Missing", author: "author",
@@ -516,11 +517,11 @@ describe("default-kind validation boundaries", () => {
     expect(() => f.context.evidence.attach(writer, "job", {
       id: "missing", title: "Missing", content: "Missing", author: writer.id,
     })).toThrow();
-    f.context.evidence.setDefaultKind(writer, canonical("evidence_kind"));
+    f.context.evidence.setDefaultKind(writer, "testimony");
     const attached = f.context.evidence.attach(writer, "job", {
       id: "selected", title: "Selected", content: "Selected", author: writer.id,
     });
-    expect(attached.kind).toBe(canonical("evidence_kind"));
+    expect(attached.kind).toBe("testimony");
     expect(f.context.evidence.getDefaultKind(admin)).toBe("testimony");
   });
 });

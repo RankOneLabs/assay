@@ -1,18 +1,16 @@
-/** Shared derived views. Exactly one holder defines each feature vocabulary. */
-const entries = new Map<string, string[]>();
-const owners = new Set<string>();
-function values(feature: string): string[] {
-  let result = entries.get(feature);
-  if (!result) { result = []; entries.set(feature, result); }
-  return result;
+import { values as stages } from "../stage/types.ts";
+import { values as kinds } from "../evidence_kind/types.ts";
+import { values as permissions } from "../route_permission/types.ts";
+/** Read-only views over each feature's declared values. */
+const declared: Readonly<Record<string, readonly string[]>> = {
+  stage: stages,
+  evidence_kind: kinds,
+  route_permission: permissions,
+};
+function values(feature: string): readonly string[] {
+  return Object.hasOwn(declared, feature) ? declared[feature]! : [];
 }
-function define<const T extends readonly string[]>(feature: string, source: T): T {
-  if (owners.has(feature)) throw new Error(`duplicate vocabulary owner: ${feature}`);
-  owners.add(feature);
-  values(feature).push(...source);
-  return source;
-}
-/** Lazy views avoid snapshots before application bootstrap loads the owner. */
+/** Lazy keyed views; inherited object names are never members. */
 function record<T>(feature: string, make: (value: string, index: number) => T): Record<string, T> {
   return new Proxy(Object.create(null) as Record<string, T>, {
     get(_target, key) {
@@ -27,9 +25,4 @@ function record<T>(feature: string, make: (value: string, index: number) => T): 
     },
   });
 }
-function constraint(feature: string, sql: string): void {
-  const clause = /CHECK\s*\(\s*value\s+IN\s*\(([^)]*)\)/i.exec(sql);
-  if (!clause) return;
-  define(feature, [...clause[1].matchAll(/'((?:[^']|'')*)'/g)].map(match => match[1].replaceAll("''", "'")));
-}
-export const vocabularyStore = { values, define, record, constraint };
+export const vocabularyStore = { values, record };

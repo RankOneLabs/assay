@@ -2,6 +2,10 @@ import type { Database } from "bun:sqlite";
 import type { Principal, Summary, Workload } from "../domain/models.ts";
 import { values as stages } from "../../stage/types.ts";
 import { values as kinds } from "../../evidence_kind/types.ts";
+import { values as permissions } from "../../route_permission/types.ts";
+import { stageLabel } from "../presentation/stage_labels.ts";
+import { evidenceKindLabel } from "../presentation/evidence_kind_labels.ts";
+import { routePermissionLabel } from "../presentation/route_permission_labels.ts";
 import { AccessService } from "./access.ts";
 import { byteLength } from "../domain/checksum.ts";
 
@@ -21,6 +25,7 @@ export class ReportService {
       archived,
       stages: stages.map(stage => ({
         stage,
+        label: stageLabel(stage),
         count: this.db.query<{ count: number }, [string, string]>(`
           SELECT COUNT(*) AS count FROM jobs
           WHERE project = ? AND stage = ? AND archived_at IS NULL
@@ -33,10 +38,18 @@ export class ReportService {
         `).all(actor.project, kind);
         return {
           kind,
+          label: evidenceKindLabel(kind),
           count: rows.length,
           bytes: rows.reduce((sum, row) => sum + byteLength(row.content), 0),
         };
       }),
+      permissions: permissions.map(permission => ({
+        permission,
+        label: routePermissionLabel(permission),
+        grants: this.db.query<{ count: number }, [string, string]>(
+          "SELECT COUNT(*) AS count FROM grants WHERE project = ? AND permission = ?",
+        ).get(actor.project, permission)!.count,
+      })),
       workloads: this.workloads(actor),
     };
   }

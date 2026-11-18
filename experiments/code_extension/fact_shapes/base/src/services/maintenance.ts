@@ -11,7 +11,7 @@ import { EventRepository } from "../repositories/events.ts";
 import { EvidenceRepository } from "../repositories/evidence.ts";
 import { AttemptRepository } from "../repositories/attempts.ts";
 import { AccessService } from "./access.ts";
-import { SessionService } from "../../stage/state.ts";
+import { SessionService } from "../sessions/session_service.ts";
 
 export class MaintenanceService {
   constructor(

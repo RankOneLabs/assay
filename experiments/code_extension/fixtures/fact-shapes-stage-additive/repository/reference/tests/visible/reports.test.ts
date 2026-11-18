@@ -38,12 +38,12 @@ describe("project reports", () => {
   test("evidence byte totals include multibyte text and separate kinds", () => {
     using f = fixture();
     f.create();
-    f.attach(canonical("evidence_kind"), "job", { kind: canonical("evidence_kind"), content: "éé" });
+    f.attach("testimony", "job", { kind: "testimony", content: "éé" });
     f.attach("image", "job", { kind: "image", content: "image-bytes" });
     const summary = f.context.reports.summary(reader);
-    expect(summary.evidence.find(item => item.kind === canonical("evidence_kind"))).toMatchObject({ count: 1, bytes: 4 });
+    expect(summary.evidence.find(item => item.kind === "testimony")).toMatchObject({ count: 1, bytes: 4 });
     expect(summary.evidence.find(item => item.kind === "image")).toMatchObject({ count: 1, bytes: 11 });
-    expect(summary.evidence.find(item => item.kind === "testimony")).toMatchObject({ count: 0, bytes: 0 });
+    expect(summary.evidence.find(item => item.kind === canonical("evidence_kind"))).toMatchObject({ count: 0, bytes: 0 });
   });
 
   test("workloads group by owner, sum priority and exclude archives", () => {

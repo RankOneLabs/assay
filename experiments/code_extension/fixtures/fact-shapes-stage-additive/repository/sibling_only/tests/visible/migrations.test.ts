@@ -5,40 +5,38 @@ import { Database } from "bun:sqlite";
 import { applyMigrations, discoverMigrations } from "../../src/migrations.ts";
 import { initializeDatabase, baseMigrations } from "../../src/database.ts";
 import { ValueRepository } from "../../src/repository.ts";
-import { values as stages } from "../../stage/types.ts";
-import { values as kinds } from "../../evidence_kind/types.ts";
-import { values as permissions } from "../../route_permission/types.ts";
 
 const root = `${import.meta.dir}/../..`;
 
 describe("ordered SQLite migrations", () => {
-  test("discovery returns all three feature holders in path order", async () => {
+  test("discovery returns every lookup table migration in path order", async () => {
     const migrations = await discoverMigrations(root);
     const ids = migrations.map(migration => migration.id);
     expect(ids).toEqual([...ids].sort());
-    for (const id of ["evidence_kind/001_constraint.sql", "route_permission/001_constraint.sql", "stage/001_constraint.sql"]) expect(ids).toContain(id);
+    expect(ids).toEqual(baseMigrations().map(migration => migration.id));
     for (const feature of ["stage", "evidence_kind", "route_permission"]) {
-      const initial = migrations.find(migration => migration.id === `${feature}/001_constraint.sql`)!;
+      const initial = migrations.find(migration => migration.sql.includes(`CREATE TABLE ${feature}_values`))!;
+      expect(initial.id).toStartWith("db/migrations/");
       expect(initial.sql).toContain("CHECK");
       expect(initial.sql).toContain("PRIMARY KEY");
     }
   });
 
-  test("fresh in-memory databases accept every canonical vocabulary value", async () => {
+  test("fresh in-memory databases accept the stable vocabulary values", async () => {
     using db = new Database(":memory:");
     applyMigrations(db, await discoverMigrations(root));
     const stageRepository = new ValueRepository(db, "stage");
-    for (const stage of stages) {
+    for (const stage of ["active", "complete"] as const) {
       stageRepository.insert(stage, stage);
       expect(stageRepository.get(stage)).toEqual({ id: stage, value: stage });
     }
     const kindRepository = new ValueRepository(db, "evidence_kind");
-    for (const kind of kinds) {
+    for (const kind of ["image", "testimony"] as const) {
       kindRepository.insert(kind, kind);
       expect(kindRepository.get(kind)).toEqual({ id: kind, value: kind });
     }
     const permissionRepository = new ValueRepository(db, "route_permission");
-    for (const permission of permissions) {
+    for (const permission of ["case_write", "case_admin"] as const) {
       permissionRepository.insert(permission, permission);
       expect(permissionRepository.get(permission)).toEqual({ id: permission, value: permission });
     }
@@ -50,7 +48,7 @@ describe("ordered SQLite migrations", () => {
     applyMigrations(db, migrations);
     for (const feature of ["stage", "evidence_kind", "route_permission"]) {
       const migration = [...migrations].reverse().find(migration =>
-        migration.id.startsWith(`${feature}/`) && /value IN/.test(migration.sql));
+        migration.sql.includes(`${feature}_values`) && /value IN/.test(migration.sql));
       const insert = () => db.query(`INSERT INTO ${feature}_values VALUES (?, ?)`).run("future", "future_value");
       if (migration) expect(insert).toThrow(/CHECK constraint failed/);
       else { insert(); expect(db.query(`SELECT value FROM ${feature}_values WHERE id = 'future'`).get()).toEqual({ value: "future_value" }); }
@@ -91,9 +89,9 @@ describe("ordered SQLite migrations", () => {
   });
 
   for (const [feature, values, future] of [
-    ["stage", stages, "unsupported_future"],
-    ["evidence_kind", kinds, "unsupported_future"],
-    ["route_permission", permissions, "unsupported_future"],
+    ["stage", ["active", "complete"], "unsupported_future"],
+    ["evidence_kind", ["image", "testimony"], "unsupported_future"],
+    ["route_permission", ["case_write", "case_admin"], "unsupported_future"],
   ] as const) {
     test(`${feature} admits the new value after a widening migration`, async () => {
       using db = new Database(":memory:");
@@ -108,23 +106,23 @@ describe("ordered SQLite migrations", () => {
         INSERT INTO ${feature}_values SELECT * FROM previous_values;
         DROP TABLE previous_values;
       `;
-      applyMigrations(db, [{ id: `${feature}/002_widen.sql`, sql }]);
+      applyMigrations(db, [{ id: `db/migrations/900_widen_${feature}.sql`, sql }]);
       db.query(`INSERT INTO ${feature}_values VALUES (?, ?)`).run("new", future);
       expect(db.query(`SELECT value FROM ${feature}_values WHERE id = 'new'`).get()).toEqual({ value: future });
       expect(db.query(`SELECT value FROM ${feature}_values WHERE id = 'existing'`).get()).toEqual({ value: values[0] });
     });
   }
 
-  test("business foreign keys reject values bypassing typed service code", () => {
+  test("business foreign keys reject rows for missing jobs", () => {
     using db = new Database(":memory:");
     initializeDatabase(db, baseMigrations());
     expect(() => db.query(`
-      INSERT INTO jobs (id, title, description, stage, priority, owner, project, revision, created_at, updated_at)
-      VALUES ('bad', 'Bad', '', 'unsupported_future', 0, 'owner', 'project', 1, 0, 0)
+      INSERT INTO attempts (id, job_id, session_id, worker, started_at, output)
+      VALUES ('orphan', 'missing', 'session', 'worker', 0, '')
     `).run()).toThrow(/FOREIGN KEY/);
     expect(() => db.query(`
-      INSERT INTO grants (principal, permission, project, granted_by, created_at)
-      VALUES ('bad', 'unsupported_future', 'project', 'admin', 0)
+      INSERT INTO job_events (job_id, action, actor, detail, created_at)
+      VALUES ('missing', 'job.created', 'admin', '{}', 0)
     `).run()).toThrow(/FOREIGN KEY/);
   });
 
@@ -135,9 +133,12 @@ describe("ordered SQLite migrations", () => {
       INSERT INTO jobs (id, title, description, stage, priority, owner, project, revision, created_at, updated_at)
       VALUES ('job', 'Persisted', '', '${canonical("stage")}', 0, 'owner', 'project', 1, 0, 0)
     `).run();
+    const seeded = db.query("SELECT COUNT(*) AS count FROM stage_values").get();
     initializeDatabase(db, baseMigrations());
     expect(db.query("SELECT title FROM jobs WHERE id = 'job'").get()).toEqual({ title: "Persisted" });
-    expect(db.query("SELECT COUNT(*) AS count FROM stage_values").get()).toEqual({ count: stages.length });
+    expect(db.query("SELECT COUNT(*) AS count FROM stage_values").get()).toEqual(seeded);
+    expect(db.query("SELECT COUNT(*) AS count FROM stage_values WHERE value IN ('active', 'complete')").get())
+      .toEqual({ count: 2 });
   });
 });
 
@@ -155,7 +156,7 @@ describe("business table constraints", () => {
     expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 0 });
   });
 
-  test("evidence cannot refer to a nonexistent job or an unknown kind", () => {
+  test("evidence cannot refer to a nonexistent job or repeat a digest", () => {
     using db = new Database(":memory:");
     initializeDatabase(db, baseMigrations());
     const insert = db.query(`
@@ -167,7 +168,6 @@ describe("business table constraints", () => {
       INSERT INTO jobs (id, title, description, stage, priority, owner, project, revision, created_at, updated_at)
       VALUES ('job', 'Title', '', '${canonical("stage")}', 0, 'owner', 'project', 1, 0, 0)
     `).run();
-    expect(() => insert.run("bad-kind", "job", "unsupported_future")).toThrow(/FOREIGN KEY/);
     insert.run("valid", "job", canonical("evidence_kind"));
     expect(() => insert.run("duplicate-digest", "job", "image")).toThrow(/UNIQUE/);
     expect(db.query("SELECT id FROM evidence").all()).toEqual([{ id: "valid" }]);
@@ -219,7 +219,7 @@ describe("durable service restart", () => {
         for (const permission of values) context.grantRepository.grant(principal, permission, "bootstrap", 0);
         context.jobs.create(principal, { id: "job", title: "Persistent", owner: "owner", project: "project" });
         context.evidence.attach(principal, "job", {
-          id: "proof", kind: canonical("evidence_kind"), title: "Proof", content: "Persistent evidence", author: "author",
+          id: "proof", kind: "image", title: "Proof", content: "Persistent evidence", author: "author",
         });
         context.builds.start(principal, "job", {
           id: "attempt", sessionId: "session", worker: "worker", expectedRevision: 1,
@@ -247,14 +247,16 @@ describe("durable service restart", () => {
   test("reopening a service does not duplicate vocabulary rows or migrations", async () => {
     const { ServiceContext } = await import("../../src/context.ts");
     const path = `/tmp/fact-journal-${crypto.randomUUID()}.sqlite`;
+    const counts: unknown[] = [];
     try {
       for (let iteration = 0; iteration < 3; iteration++) {
         using context = new ServiceContext({ databasePath: path });
         expect(context.db.query("SELECT COUNT(*) AS count FROM schema_migrations").get()).toEqual({ count: baseMigrations().length + 1 });
-        expect(context.db.query("SELECT COUNT(*) AS count FROM stage_values").get()).toEqual({ count: stages.length });
-        expect(context.db.query("SELECT COUNT(*) AS count FROM evidence_kind_values").get()).toEqual({ count: kinds.length });
-        expect(context.db.query("SELECT COUNT(*) AS count FROM route_permission_values").get()).toEqual({ count: permissions.length });
+        counts.push(["stage", "evidence_kind", "route_permission"].map(feature =>
+          context.db.query(`SELECT COUNT(*) AS count FROM ${feature}_values`).get()));
       }
+      expect(counts[1]).toEqual(counts[0]);
+      expect(counts[2]).toEqual(counts[0]);
     } finally {
       await Bun.file(path).delete();
     }

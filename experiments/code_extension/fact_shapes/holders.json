@@ -5,11 +5,11 @@
     "manipulated": {
       "fact_id": "stage_additive_type_enforced",
       "holder_paths": [
-        "stage/types.ts"
+        "src/presentation/stage_labels.ts"
       ],
       "fact_lines": {
-        "stage/types.ts": [
-          "export const values = vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"] as const);"
+        "src/presentation/stage_labels.ts": [
+          "export const stageLabels: Record<Stage, string> = { queued: \"Queued\", active: \"Active\", complete: \"Complete\" };"
         ]
       }
     },
@@ -35,7 +35,7 @@
       ],
       "fact_lines": {
         "stage/policy.ts": [
-          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+          "const acceptedStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
     },
@@ -57,11 +57,11 @@
     "manipulated": {
       "fact_id": "stage_additive_name_only",
       "holder_paths": [
-        "stage/names.ts"
+        "src/validation/registered_stages.ts"
       ],
       "fact_lines": {
-        "stage/names.ts": [
-          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        "src/validation/registered_stages.ts": [
+          "const registeredStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
     },
@@ -83,11 +83,11 @@
     "manipulated": {
       "fact_id": "stage_additive_sibling_only",
       "holder_paths": [
-        "stage/sibling.ts"
+        "src/services/stage_peer.ts"
       ],
       "fact_lines": {
-        "stage/sibling.ts": [
-          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        "src/services/stage_peer.ts": [
+          "const peerStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
     },
@@ -109,10 +109,10 @@
     "manipulated": {
       "fact_id": "stage_additive_outside_code",
       "holder_paths": [
-        "stage/001_constraint.sql"
+        "db/migrations/001_stage_values.sql"
       ],
       "fact_lines": {
-        "stage/001_constraint.sql": [
+        "db/migrations/001_stage_values.sql": [
           "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued', 'active', 'complete'))"
         ]
       }
@@ -135,11 +135,11 @@
     "manipulated": {
       "fact_id": "stage_additive_existing_state",
       "holder_paths": [
-        "stage/state.ts"
+        "src/sessions/build_status.ts"
       ],
       "fact_lines": {
-        "stage/state.ts": [
-          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        "src/sessions/build_status.ts": [
+          "const liveStatusStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
     },
@@ -161,11 +161,11 @@
     "manipulated": {
       "fact_id": "stage_rename_type_enforced",
       "holder_paths": [
-        "stage/types.ts"
+        "src/presentation/stage_labels.ts"
       ],
       "fact_lines": {
-        "stage/types.ts": [
-          "export const values = vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"] as const);"
+        "src/presentation/stage_labels.ts": [
+          "export const stageLabels: Record<Stage, string> = { queued: \"Queued\", active: \"Active\", complete: \"Complete\" };"
         ]
       }
     },
@@ -191,7 +191,7 @@
       ],
       "fact_lines": {
         "stage/policy.ts": [
-          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+          "const acceptedStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
     },
@@ -213,11 +213,11 @@
     "manipulated": {
       "fact_id": "stage_rename_name_only",
       "holder_paths": [
-        "stage/names.ts"
+        "src/validation/registered_stages.ts"
       ],
       "fact_lines": {
-        "stage/names.ts": [
-          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        "src/validation/registered_stages.ts": [
+          "const registeredStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
     },
@@ -239,11 +239,11 @@
     "manipulated": {
       "fact_id": "stage_rename_sibling_only",
       "holder_paths": [
-        "stage/sibling.ts"
+        "src/services/stage_peer.ts"
       ],
       "fact_lines": {
-        "stage/sibling.ts": [
-          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        "src/services/stage_peer.ts": [
+          "const peerStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
     },
@@ -265,10 +265,10 @@
     "manipulated": {
       "fact_id": "stage_rename_outside_code",
       "holder_paths": [
-        "stage/001_constraint.sql"
+        "db/migrations/001_stage_values.sql"
       ],
       "fact_lines": {
-        "stage/001_constraint.sql": [
+        "db/migrations/001_stage_values.sql": [
           "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued', 'active', 'complete'))"
         ]
       }
@@ -291,11 +291,11 @@
     "manipulated": {
       "fact_id": "stage_rename_existing_state",
       "holder_paths": [
-        "stage/state.ts"
+        "src/sessions/build_status.ts"
       ],
       "fact_lines": {
-        "stage/state.ts": [
-          "vocabularyStore.define(\"stage\", [\"queued\", \"active\", \"complete\"]);"
+        "src/sessions/build_status.ts": [
+          "const liveStatusStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
     },
@@ -317,11 +317,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_additive_type_enforced",
       "holder_paths": [
-        "evidence_kind/types.ts"
+        "src/presentation/evidence_kind_labels.ts"
       ],
       "fact_lines": {
-        "evidence_kind/types.ts": [
-          "export const values = vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"] as const);"
+        "src/presentation/evidence_kind_labels.ts": [
+          "export const evidenceKindLabels: Record<EvidenceKind, string> = { document: \"Document\", image: \"Image\", testimony: \"Testimony\" };"
         ]
       }
     },
@@ -347,7 +347,7 @@
       ],
       "fact_lines": {
         "evidence_kind/policy.ts": [
-          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+          "const acceptedKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
     },
@@ -369,11 +369,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_additive_name_only",
       "holder_paths": [
-        "evidence_kind/names.ts"
+        "src/validation/registered_evidence_kinds.ts"
       ],
       "fact_lines": {
-        "evidence_kind/names.ts": [
-          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        "src/validation/registered_evidence_kinds.ts": [
+          "const registeredKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
     },
@@ -395,11 +395,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_additive_sibling_only",
       "holder_paths": [
-        "evidence_kind/sibling.ts"
+        "src/services/evidence_kind_peer.ts"
       ],
       "fact_lines": {
-        "evidence_kind/sibling.ts": [
-          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        "src/services/evidence_kind_peer.ts": [
+          "const peerKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
     },
@@ -421,10 +421,10 @@
     "manipulated": {
       "fact_id": "evidence_kind_additive_outside_code",
       "holder_paths": [
-        "evidence_kind/001_constraint.sql"
+        "db/migrations/002_evidence_kind_values.sql"
       ],
       "fact_lines": {
-        "evidence_kind/001_constraint.sql": [
+        "db/migrations/002_evidence_kind_values.sql": [
           "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'image', 'testimony'))"
         ]
       }
@@ -447,11 +447,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_additive_existing_state",
       "holder_paths": [
-        "evidence_kind/state.ts"
+        "src/preferences/evidence_kind_defaults.ts"
       ],
       "fact_lines": {
-        "evidence_kind/state.ts": [
-          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        "src/preferences/evidence_kind_defaults.ts": [
+          "const currentSelectionKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
     },
@@ -473,11 +473,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_rename_type_enforced",
       "holder_paths": [
-        "evidence_kind/types.ts"
+        "src/presentation/evidence_kind_labels.ts"
       ],
       "fact_lines": {
-        "evidence_kind/types.ts": [
-          "export const values = vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"] as const);"
+        "src/presentation/evidence_kind_labels.ts": [
+          "export const evidenceKindLabels: Record<EvidenceKind, string> = { document: \"Document\", image: \"Image\", testimony: \"Testimony\" };"
         ]
       }
     },
@@ -503,7 +503,7 @@
       ],
       "fact_lines": {
         "evidence_kind/policy.ts": [
-          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+          "const acceptedKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
     },
@@ -525,11 +525,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_rename_name_only",
       "holder_paths": [
-        "evidence_kind/names.ts"
+        "src/validation/registered_evidence_kinds.ts"
       ],
       "fact_lines": {
-        "evidence_kind/names.ts": [
-          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        "src/validation/registered_evidence_kinds.ts": [
+          "const registeredKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
     },
@@ -551,11 +551,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_rename_sibling_only",
       "holder_paths": [
-        "evidence_kind/sibling.ts"
+        "src/services/evidence_kind_peer.ts"
       ],
       "fact_lines": {
-        "evidence_kind/sibling.ts": [
-          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        "src/services/evidence_kind_peer.ts": [
+          "const peerKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
     },
@@ -577,10 +577,10 @@
     "manipulated": {
       "fact_id": "evidence_kind_rename_outside_code",
       "holder_paths": [
-        "evidence_kind/001_constraint.sql"
+        "db/migrations/002_evidence_kind_values.sql"
       ],
       "fact_lines": {
-        "evidence_kind/001_constraint.sql": [
+        "db/migrations/002_evidence_kind_values.sql": [
           "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'image', 'testimony'))"
         ]
       }
@@ -603,11 +603,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_rename_existing_state",
       "holder_paths": [
-        "evidence_kind/state.ts"
+        "src/preferences/evidence_kind_defaults.ts"
       ],
       "fact_lines": {
-        "evidence_kind/state.ts": [
-          "vocabularyStore.define(\"evidence_kind\", [\"document\", \"image\", \"testimony\"]);"
+        "src/preferences/evidence_kind_defaults.ts": [
+          "const currentSelectionKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
     },
@@ -629,11 +629,11 @@
     "manipulated": {
       "fact_id": "route_permission_additive_type_enforced",
       "holder_paths": [
-        "route_permission/types.ts"
+        "src/presentation/route_permission_labels.ts"
       ],
       "fact_lines": {
-        "route_permission/types.ts": [
-          "export const values = vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"] as const);"
+        "src/presentation/route_permission_labels.ts": [
+          "export const routePermissionLabels: Record<RoutePermission, string> = { case_read: \"Case read\", case_write: \"Case write\", case_admin: \"Case admin\" };"
         ]
       }
     },
@@ -659,7 +659,7 @@
       ],
       "fact_lines": {
         "route_permission/policy.ts": [
-          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+          "const acceptedPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
     },
@@ -681,11 +681,11 @@
     "manipulated": {
       "fact_id": "route_permission_additive_name_only",
       "holder_paths": [
-        "route_permission/names.ts"
+        "src/validation/registered_route_permissions.ts"
       ],
       "fact_lines": {
-        "route_permission/names.ts": [
-          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        "src/validation/registered_route_permissions.ts": [
+          "const registeredPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
     },
@@ -707,11 +707,11 @@
     "manipulated": {
       "fact_id": "route_permission_additive_sibling_only",
       "holder_paths": [
-        "route_permission/sibling.ts"
+        "src/services/route_permission_peer.ts"
       ],
       "fact_lines": {
-        "route_permission/sibling.ts": [
-          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        "src/services/route_permission_peer.ts": [
+          "const peerPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
     },
@@ -733,10 +733,10 @@
     "manipulated": {
       "fact_id": "route_permission_additive_outside_code",
       "holder_paths": [
-        "route_permission/001_constraint.sql"
+        "db/migrations/003_route_permission_values.sql"
       ],
       "fact_lines": {
-        "route_permission/001_constraint.sql": [
+        "db/migrations/003_route_permission_values.sql": [
           "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
         ]
       }
@@ -759,11 +759,11 @@
     "manipulated": {
       "fact_id": "route_permission_additive_existing_state",
       "holder_paths": [
-        "route_permission/state.ts"
+        "src/preferences/route_permission_defaults.ts"
       ],
       "fact_lines": {
-        "route_permission/state.ts": [
-          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        "src/preferences/route_permission_defaults.ts": [
+          "const currentSelectionPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
     },
@@ -785,11 +785,11 @@
     "manipulated": {
       "fact_id": "route_permission_rename_type_enforced",
       "holder_paths": [
-        "route_permission/types.ts"
+        "src/presentation/route_permission_labels.ts"
       ],
       "fact_lines": {
-        "route_permission/types.ts": [
-          "export const values = vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"] as const);"
+        "src/presentation/route_permission_labels.ts": [
+          "export const routePermissionLabels: Record<RoutePermission, string> = { case_read: \"Case read\", case_write: \"Case write\", case_admin: \"Case admin\" };"
         ]
       }
     },
@@ -815,7 +815,7 @@
       ],
       "fact_lines": {
         "route_permission/policy.ts": [
-          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+          "const acceptedPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
     },
@@ -837,11 +837,11 @@
     "manipulated": {
       "fact_id": "route_permission_rename_name_only",
       "holder_paths": [
-        "route_permission/names.ts"
+        "src/validation/registered_route_permissions.ts"
       ],
       "fact_lines": {
-        "route_permission/names.ts": [
-          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        "src/validation/registered_route_permissions.ts": [
+          "const registeredPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
     },
@@ -863,11 +863,11 @@
     "manipulated": {
       "fact_id": "route_permission_rename_sibling_only",
       "holder_paths": [
-        "route_permission/sibling.ts"
+        "src/services/route_permission_peer.ts"
       ],
       "fact_lines": {
-        "route_permission/sibling.ts": [
-          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        "src/services/route_permission_peer.ts": [
+          "const peerPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
     },
@@ -889,10 +889,10 @@
     "manipulated": {
       "fact_id": "route_permission_rename_outside_code",
       "holder_paths": [
-        "route_permission/001_constraint.sql"
+        "db/migrations/003_route_permission_values.sql"
       ],
       "fact_lines": {
-        "route_permission/001_constraint.sql": [
+        "db/migrations/003_route_permission_values.sql": [
           "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
         ]
       }
@@ -915,11 +915,11 @@
     "manipulated": {
       "fact_id": "route_permission_rename_existing_state",
       "holder_paths": [
-        "route_permission/state.ts"
+        "src/preferences/route_permission_defaults.ts"
       ],
       "fact_lines": {
-        "route_permission/state.ts": [
-          "vocabularyStore.define(\"route_permission\", [\"case_read\", \"case_write\", \"case_admin\"]);"
+        "src/preferences/route_permission_defaults.ts": [
+          "const currentSelectionPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
     },

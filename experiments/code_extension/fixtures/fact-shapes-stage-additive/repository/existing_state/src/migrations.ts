@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 export interface Migration { id: string; sql: string }
 export async function discoverMigrations(root: string): Promise<Migration[]> {
   const migrations: Migration[] = [];
-  for (const path of new Bun.Glob("*/[0-9]*.sql").scanSync({ cwd: root })) {
+  for (const path of new Bun.Glob("db/migrations/[0-9]*.sql").scanSync({ cwd: root })) {
     migrations.push({ id: path, sql: await Bun.file(`${root}/${path}`).text() });
   }
   return migrations.sort((a, b) => a.id.localeCompare(b.id));
