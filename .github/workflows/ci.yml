@@ -157,10 +157,14 @@ jobs:
               "finished": ["consistency_pilot", "typesafe_relevance", "oakridge_history"],
           }
           assigned = [d for dirs in shards.values() for d in dirs]
-          on_disk = {p.parent.name for p in Path("experiments").glob("*/tests")}
+          # Compare whole paths: every configured testpath and every <study>/tests
+          # directory must be exactly a path some shard runs, or its tests would be
+          # silently skipped (a new code_extension/smoke_tests entry, say).
+          emitted = {f"{d}/tests" for d in assigned}
+          on_disk = {f"{p.parent.name}/tests" for p in Path("experiments").glob("*/tests")}
           config = tomllib.loads(Path("experiments/pyproject.toml").read_text())
-          testpaths = {p.split("/")[0] for p in config["tool"]["pytest"]["ini_options"]["testpaths"]}
-          missing = sorted((on_disk | testpaths) - set(assigned))
+          testpaths = {p.rstrip("/") for p in config["tool"]["pytest"]["ini_options"]["testpaths"]}
+          missing = sorted((on_disk | testpaths) - emitted)
           duplicated = sorted({d for d in assigned if assigned.count(d) > 1})
           if missing or duplicated:
               raise SystemExit(
@@ -171,13 +175,17 @@ jobs:
           run_finished = True
           if os.environ["EVENT"] == "pull_request":
               changed = subprocess.run(
-                  ["git", "diff", "--name-only", os.environ["BASE"], "HEAD"],
+                  # --no-renames: a file moved out of a finished study must
+                  # count as a change there, not only at its destination.
+                  ["git", "diff", "--name-only", "--no-renames", os.environ["BASE"], "HEAD"],
                   check=True, capture_output=True, text=True,
               ).stdout.split()
               gate = re.compile(
                   r"^(experiments/(consistency_pilot|typesafe_relevance|oakridge_history|code_metrics)/"
                   r"|experiments/(pyproject\.toml|uv\.lock|conftest\.py)$"
-                  r"|src/|pyproject\.toml$|uv\.lock$|\.github/workflows/ci\.yml$)"
+                  r"|src/|pyproject\.toml$|uv\.lock$|\.github/workflows/ci\.yml$"
+                  # code_metrics runs the Node tools pinned here.
+                  r"|vendor/node-tools/)"
               )
               run_finished = any(gate.match(path) for path in changed)
               print("finished studies:", "run" if run_finished else "skipped (no relevant change)")
