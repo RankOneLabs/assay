@@ -14,7 +14,7 @@ import sys
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.fixture_manifest import (
@@ -430,6 +430,30 @@ def assemble_manifest(
     return manifest
 
 
+def summary_problems(
+    fixture: ScenarioFixture, verdicts: Mapping[str, Mapping[str, Any]],
+) -> list[str]:
+    """Return why an arm's start, reference and omission verdicts are not as qualified."""
+    problems: list[str] = []
+    expected_start = {
+        "visible_regression": "passed", "hidden_regression": "passed", "new_behavior": "failed",
+    }
+    if verdicts["baseline"]["groups"] != expected_start:
+        problems.append(f"start tree groups {verdicts['baseline']['groups']}")
+    reference = verdicts["reference"]
+    if set(reference["groups"].values()) != {"passed"} or reference["verdict"] != "correct":
+        problems.append(f"reference patch {reference['cause']} {reference['groups']}")
+    negative = verdicts["negative"]
+    if fixture.subject_id.startswith("fact-shapes-") and fixture.arms[0].arm_id == "type_enforced":
+        if not str(negative["cause"]).startswith("typecheck_") or set(
+            negative["groups"].values()
+        ) != {"unavailable"}:
+            problems.append(f"omission patch did not fail type-checking: {negative['cause']}")
+    elif negative["groups"].get("new_behavior") != "failed":
+        problems.append(f"omission patch new_behavior {negative['groups'].get('new_behavior')}")
+    return problems
+
+
 async def _summarize_arm(
     fixture: ScenarioFixture,
     image_digest: str,
@@ -444,6 +468,7 @@ async def _summarize_arm(
         "negative": arm.negative_patches[0],
     }
     summary: dict[str, object] = {}
+    verdicts: dict[str, dict[str, Any]] = {}
     for label, patch in patches.items():
         result = await runner.run(
             baseline=fixture.repository,
@@ -452,11 +477,17 @@ async def _summarize_arm(
             patch=patch,
             groups=fixture.groups,
         )
-        summary[label] = {
+        verdicts[label] = {
             "cause": result.cause,
             "groups": {group.name: group.status for group in result.groups},
             "verdict": result.verdict,
         }
+    problems = summary_problems(fixture, verdicts)
+    if problems:
+        # These records are committed evidence. A timeout under load must stop
+        # qualification here, not surface later as a failing evidence test.
+        raise ValueError(f"unqualified arm {arm.arm_id}: " + "; ".join(problems))
+    summary.update(verdicts)
     summary.update(
         {
             "schema_version": "assay-extension-scenario-qualification/0.1.0",

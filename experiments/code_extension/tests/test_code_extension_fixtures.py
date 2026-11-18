@@ -141,6 +141,28 @@ def test_added_scenario_qualification_records(name: str) -> None:
         assert record["reference"]["verdict"] == "correct"
 
 
+@pytest.mark.parametrize("name", ADDED_SCENARIOS)
+def test_qualifier_accepts_the_committed_records(name: str) -> None:
+    for arm_id in ADDED_SCENARIOS[name].arm_ids:
+        record = json.loads((PILOT.parent / name / "qualification" / f"{arm_id}.json").read_text())
+        fixture = load_scenario(name, arm_id=arm_id)
+        assert qualify.summary_problems(fixture, record) == [], arm_id
+
+
+def test_qualifier_refuses_a_reference_that_timed_out() -> None:
+    # The record CI caught on 2026-11-18: five scenarios qualified at once on one
+    # machine, and the reference patch's visible tests hit the candidate timeout.
+    name, arm_id = "fact-shapes-stage-additive", "existing_state"
+    record = json.loads((PILOT.parent / name / "qualification" / f"{arm_id}.json").read_text())
+    record["reference"] = {
+        **record["reference"],
+        "cause": "candidate_timeout",
+        "groups": {**record["reference"]["groups"], "visible_regression": "failed"},
+    }
+    problems = qualify.summary_problems(load_scenario(name, arm_id=arm_id), record)
+    assert len(problems) == 1 and problems[0].startswith("reference patch candidate_timeout")
+
+
 def test_stage_arms_share_every_file_outside_the_compiler() -> None:
     scenario = load_committed_scenario("stage-pass-through")
     assert (
