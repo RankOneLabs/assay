@@ -1,0 +1,18 @@
+{
+  "cohort": "fact-shapes-2026-11-study",
+  "combined_cap_usd": "65.00",
+  "plans": [
+    {
+      "name": "sol",
+      "config": "study-sol.json"
+    },
+    {
+      "name": "argon",
+      "config": "study-argon.json"
+    },
+    {
+      "name": "midtier",
+      "config": "study-midtier.json"
+    }
+  ]
+}

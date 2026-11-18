@@ -41,7 +41,7 @@ remains the separate replay diagnostic and cannot write a verdict.
 | `profile` | `openrouter` for hosted models; the qualified machine name for Smithers. |
 | `system_prompt_digest`, `tool_schemas_digest` | Literal ce-v1 pins in `protocol.py`. |
 | `image_digest` | Observed sha256 image digest in every chosen manifest. |
-| `envelope` | `library-v1` by default; omitted from canonical bytes when default to preserve existing configuration digests. `fact-shapes-v1` selects the hosted study bounds. |
+| `envelope` | `library-v1` by default; omitted from canonical bytes when default to preserve existing configuration digests. `fact-shapes-v1` selects longer hosted bounds; no study uses it. |
 | `bounds` | Complete `ExtensionAgentSettings.for_model(model, envelope=envelope)` envelope. |
 | `repeats`, `randomization_seed`, `concurrency` | Full-grid repeats, a recorded metadata seed, and concurrency 1. The seed does not randomize dispatch. |
 | `dispatch_schedule` | `subject-rotated-v1`, the existing shared planner schedule; also the default for older configurations. |
@@ -49,7 +49,9 @@ remains the separate replay diagnostic and cannot write a verdict.
 | `per_attempt_cap_usd`, `total_cap_usd` | Positive dollar caps chosen by the operator; neither has a default. |
 
 The `library-v1` envelope retains each route's qualified bounds (60 requests,
-900 seconds). The hosted-only `fact-shapes-v1` envelope uses:
+900 seconds). The fact-shapes study runs under `library-v1`, the limits of the
+matched-task and library studies. The hosted-only `fact-shapes-v1` envelope, which no
+study uses, has:
 
 | Bound | fact-shapes-v1 |
 | --- | --- |
@@ -69,11 +71,18 @@ The `library-v1` envelope retains each route's qualified bounds (60 requests,
 The fact-shapes study uses GPT-6.1 Sol on `azure/us`, Gemini 4 Argon on
 `google-vertex/global`, and the operator-selected GPT-6 Luna on `azure`.
 `fact_shapes.settings` declares these routes and the 24-attempt additive pilot:
-two attempts per shape for Sol, one per shape for Argon and Luna. The approved per-attempt caps are $2 for Sol, $4 for Argon and $1 for Luna;
-the pilot total cap is $15.
+two attempts per shape for Sol, one per shape for Argon and Luna. Per-attempt caps are
+$2 for Sol, $4 for Argon and $1 for Luna. They are reservation headroom, not expected
+cost: every request reserves its worst-case price against the attempt's remaining cap,
+so a lower cap would end long attempts early and change their outcomes. Spending is
+bounded by the plan caps instead: $10 for the pilot ($4 Sol, $4 Argon, $2 Luna) and
+$65 for the main study, so the pilot, the Luna library rerun ($5) and the study
+together stay within $80. A plan that reaches its cap halts, and the halt is reviewed
+before anything else runs. The plan caps are set from measured means, so they are
+below the worst case of attempts times per-attempt cap.
 
 The mid-tier library rerun covers the eleven qualified scenario-library tasks,
-once each under `fact-shapes-v1`. The cohort file is
+once each under `library-v1`. The cohort file is
 `studies/fact-shapes-2026-11/library-rerun.json`, naming only
 `library-rerun-midtier.json`, with a $1 per-attempt cap and $5 total cap
 (including its route probe). These caps can stop work before the request or time

@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import { fixture, admin, reader, outsider } from "./helpers.ts";
 
@@ -45,7 +47,7 @@ describe("build lifecycle", () => {
     f.context.builds.finish(admin, "job", {
       sessionId: "session", exitCode: 2, output: "failed compilation",
     });
-    expect(f.context.jobRepository.require("job").stage).toBe("queued");
+    expect(f.context.jobRepository.require("job").stage).toBe(canonical("stage"));
     const retry = f.context.builds.start(admin, "job", {
       id: "retry", sessionId: "retry-session", worker: "worker-2", expectedRevision: 3,
     });
@@ -65,7 +67,7 @@ describe("build lifecycle", () => {
     expect(() => f.context.builds.start(admin, "job", {
       ...start, id: "another", expectedRevision: 3,
     })).toThrow("session id already used");
-    expect(f.context.jobRepository.require("job").stage).toBe("queued");
+    expect(f.context.jobRepository.require("job").stage).toBe(canonical("stage"));
     expect(f.context.sessions.isBuildRunning("session")).toBe(false);
     expect(f.context.attemptRepository.list("job")).toHaveLength(1);
   });
@@ -78,7 +80,7 @@ describe("build lifecycle", () => {
     expect(() => f.context.builds.start(admin, "second", {
       ...start, id: "second-attempt",
     })).toThrow("already running");
-    expect(f.context.jobRepository.require("second").stage).toBe("queued");
+    expect(f.context.jobRepository.require("second").stage).toBe(canonical("stage"));
     expect(f.context.attemptRepository.list("second")).toHaveLength(0);
     expect(f.context.sessions.isBuildRunning("session")).toBe(true);
   });
@@ -90,7 +92,7 @@ describe("build lifecycle", () => {
     expect(() => f.context.builds.start(admin, "job", start)).toThrow("revision changed");
     expect(f.context.attemptRepository.list("job")).toHaveLength(0);
     expect(f.context.sessions.isBuildRunning("session")).toBe(false);
-    expect(f.context.jobRepository.require("job").stage).toBe("queued");
+    expect(f.context.jobRepository.require("job").stage).toBe(canonical("stage"));
   });
 
   test("an archived job cannot start a build", () => {
@@ -174,7 +176,7 @@ describe("build cancellation and recovery", () => {
     expect(cancelled.exitCode).toBe(130);
     expect(cancelled.output).toBe("operator stopped work");
     expect(cancelled.finishedAt).not.toBeNull();
-    expect(f.context.jobRepository.require("job").stage).toBe("queued");
+    expect(f.context.jobRepository.require("job").stage).toBe(canonical("stage"));
     expect(f.context.sessions.isBuildRunning("session")).toBe(false);
     const event = f.context.jobs.history(admin, "job").at(-1)!;
     expect(event.action).toBe("build.cancelled");
@@ -186,7 +188,7 @@ describe("build cancellation and recovery", () => {
     f.create();
     f.context.builds.start(admin, "job", start);
     expect(() => f.context.jobs.transition(admin, "job", {
-      stage: "queued", expectedRevision: 2, reason: "bypass cancel",
+      stage: canonical("stage"), expectedRevision: 2, reason: "bypass cancel",
     })).toThrow("live build owns");
     expect(f.context.jobRepository.require("job").stage).toBe("active");
     expect(f.context.sessions.isBuildRunning("session")).toBe(true);
@@ -234,7 +236,7 @@ describe("build cancellation and recovery", () => {
     f.context.builds.start(admin, "job", start);
     f.context.builds.end(admin, "job", "session");
     const recovered = f.context.builds.recover(admin, "job", "process was interrupted");
-    expect(recovered.job.stage).toBe("queued");
+    expect(recovered.job.stage).toBe(canonical("stage"));
     expect(recovered.job.revision).toBe(3);
     expect(recovered.attempts).toHaveLength(1);
     expect(recovered.attempts[0]?.exitCode).toBe(255);

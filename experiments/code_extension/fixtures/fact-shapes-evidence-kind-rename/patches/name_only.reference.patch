@@ -1,0 +1,69 @@
+diff --git a/evidence_kind/anchor.ts b/evidence_kind/anchor.ts
+--- a/evidence_kind/anchor.ts
++++ b/evidence_kind/anchor.ts
+@@ -1,4 +1,4 @@
+ export function validateKey(key: string): string {
+-  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error("invalid key");
++  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(key)) throw new Error("invalid key");
+   return key;
+ }
+diff --git a/evidence_kind/names.ts b/evidence_kind/names.ts
+--- a/evidence_kind/names.ts
++++ b/evidence_kind/names.ts
+@@ -1,6 +1,6 @@
+ import { vocabularyStore } from "../src/vocabulary.ts";
+ import { isValue } from "./types.ts";
+-vocabularyStore.define("evidence_kind", ["document", "image", "testimony"]);
++vocabularyStore.define("evidence_kind", ["attestation", "image", "testimony"]);
+ export const DEFAULT_ROUTE = "/jobs";
+ export const descriptiveRegistry: Readonly<Record<string, string>> = vocabularyStore.record(
+   "evidence_kind", value => `/jobs/${value}`,
+diff --git a/src/bootstrap.ts b/src/bootstrap.ts
+--- a/src/bootstrap.ts
++++ b/src/bootstrap.ts
+@@ -1,3 +1,4 @@
++import { readdirSync, readFileSync } from "node:fs";
+ /** Load all candidate modules. Dependency direction keeps owners unimported by edit.ts. */
+ import "../stage/types.ts";
+ import "../stage/policy.ts";
+@@ -15,12 +16,9 @@
+ import "../route_permission/sibling.ts";
+ import "../route_permission/state.ts";
+ import { vocabularyStore } from "./vocabulary.ts";
+-import sql0 from "../stage/001_constraint.sql" with { type: "text" };
+-vocabularyStore.constraint("stage", sql0);
+-import sql1 from "../evidence_kind/001_constraint.sql" with { type: "text" };
+-vocabularyStore.constraint("evidence_kind", sql1);
+-import sql2 from "../route_permission/001_constraint.sql" with { type: "text" };
+-vocabularyStore.constraint("route_permission", sql2);
++vocabularyStore.constraint("stage", readdirSync(new URL("../stage/", import.meta.url)).filter(name => name.endsWith(".sql")).sort().reverse().map(name => readFileSync(new URL(`../stage/${name}`, import.meta.url), "utf8")).join("\n"));
++vocabularyStore.constraint("evidence_kind", readdirSync(new URL("../evidence_kind/", import.meta.url)).filter(name => name.endsWith(".sql")).sort().reverse().map(name => readFileSync(new URL(`../evidence_kind/${name}`, import.meta.url), "utf8")).join("\n"));
++vocabularyStore.constraint("route_permission", readdirSync(new URL("../route_permission/", import.meta.url)).filter(name => name.endsWith(".sql")).sort().reverse().map(name => readFileSync(new URL(`../route_permission/${name}`, import.meta.url), "utf8")).join("\n"));
+ for (const feature of ["stage", "evidence_kind", "route_permission"]) {
+   if (!vocabularyStore.values(feature).length) throw new Error(`missing vocabulary owner: ${feature}`);
+ }
+diff --git a/src/database.ts b/src/database.ts
+--- a/src/database.ts
++++ b/src/database.ts
+@@ -1,3 +1,4 @@
++import { readdirSync, readFileSync } from "node:fs";
+ import "./bootstrap.ts";
+ import { Database } from "bun:sqlite";
+ import { values as stages } from "../stage/types.ts";
+@@ -28,13 +29,7 @@
+ 
+ /** Read the three base migrations synchronously for synchronous app construction. */
+ export function baseMigrations(): Migration[] {
+-  return [
+-    { id: "evidence_kind/001_constraint.sql", sql: evidenceMigration },
+-    { id: "route_permission/001_constraint.sql", sql: permissionMigration },
+-    { id: "stage/001_constraint.sql", sql: stageMigration },
+-  ];
++  return ["evidence_kind", "route_permission", "stage"].flatMap(feature =>
++    readdirSync(new URL(`../${feature}/`, import.meta.url)).filter(name => name.endsWith(".sql")).sort().map(name => ({ id: `${feature}/${name}`, sql: readFileSync(new URL(`../${feature}/${name}`, import.meta.url), "utf8") }))
++  );
+ }
+-
+-import evidenceMigration from "../evidence_kind/001_constraint.sql" with { type: "text" };
+-import permissionMigration from "../route_permission/001_constraint.sql" with { type: "text" };
+-import stageMigration from "../stage/001_constraint.sql" with { type: "text" };

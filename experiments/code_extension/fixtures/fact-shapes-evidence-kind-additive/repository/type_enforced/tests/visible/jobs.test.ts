@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import { fixture, admin, outsider, writer } from "./helpers.ts";
 
@@ -5,7 +7,7 @@ describe("job lifecycle invariants", () => {
   test("creation fills defaults and records a single event", () => {
     using f = fixture();
     const job = f.create("first");
-    expect(job.stage).toBe("queued");
+    expect(job.stage).toBe(canonical("stage"));
     expect(job.revision).toBe(1);
     expect(job.priority).toBe(0);
     expect(job.archivedAt).toBeNull();
@@ -59,7 +61,7 @@ describe("job lifecycle invariants", () => {
     const event = f.context.jobs.history(admin, "job")[1]!;
     expect(event.action).toBe("job.transitioned");
     expect(JSON.parse(event.detail)).toEqual({
-      from: "queued", to: "active", reason: "worker selected",
+      from: canonical("stage"), to: "active", reason: "worker selected",
     });
   });
 
@@ -69,7 +71,7 @@ describe("job lifecycle invariants", () => {
     expect(() => f.context.jobs.transition(admin, "job", {
       stage: "complete", expectedRevision: 1, reason: "skip",
     })).toThrow("cannot move");
-    expect(f.context.jobRepository.require("job").stage).toBe("queued");
+    expect(f.context.jobRepository.require("job").stage).toBe(canonical("stage"));
     expect(f.context.eventRepository.count("job")).toBe(1);
   });
 
@@ -80,7 +82,7 @@ describe("job lifecycle invariants", () => {
       stage: "active", expectedRevision: 1, reason: "start",
     });
     f.context.jobs.transition(admin, "job", {
-      stage: "queued", expectedRevision: 2, reason: "retry",
+      stage: canonical("stage"), expectedRevision: 2, reason: "retry",
     });
     const active = f.context.jobs.transition(admin, "job", {
       stage: "active", expectedRevision: 3, reason: "restart",
@@ -110,11 +112,11 @@ describe("job lifecycle invariants", () => {
     f.create();
     const archived = f.context.jobs.archive(admin, "job", { expectedRevision: 1 });
     expect(archived.archivedAt).not.toBeNull();
-    expect(archived.stage).toBe("queued");
+    expect(archived.stage).toBe(canonical("stage"));
     expect(f.context.jobRepository.count()).toBe(0);
     const restored = f.context.jobs.restore(admin, "job", { expectedRevision: 2 });
     expect(restored.archivedAt).toBeNull();
-    expect(restored.stage).toBe("queued");
+    expect(restored.stage).toBe(canonical("stage"));
     expect(restored.revision).toBe(3);
     expect(f.context.jobRepository.count()).toBe(1);
   });
@@ -183,7 +185,7 @@ describe("compound job commands", () => {
     expect(cloned.description).toBe("Keep this");
     expect(cloned.priority).toBe(40);
     expect(cloned.owner).toBe("original");
-    expect(cloned.stage).toBe("queued");
+    expect(cloned.stage).toBe(canonical("stage"));
     expect(cloned.revision).toBe(1);
     expect(cloned.archivedAt).toBeNull();
     expect(f.context.jobRepository.require("source").stage).toBe("active");
@@ -270,7 +272,7 @@ describe("compound job commands", () => {
     expect(() => f.context.jobs.bulkTransition(admin, {
       changes: [
         { id: "first", transition: { stage: "complete", expectedRevision: 2, reason: "one" } },
-        { id: "first", transition: { stage: "queued", expectedRevision: 3, reason: "two" } },
+        { id: "first", transition: { stage: canonical("stage"), expectedRevision: 3, reason: "two" } },
       ],
     })).toThrow("duplicate jobs");
     expect(f.context.jobRepository.require("first").stage).toBe("active");
@@ -286,7 +288,7 @@ describe("compound job commands", () => {
         { id: "second", transition: { stage: "complete", expectedRevision: 1, reason: "skip" } },
       ],
     })).toThrow("cannot move");
-    expect(f.context.jobRepository.require("first").stage).toBe("queued");
+    expect(f.context.jobRepository.require("first").stage).toBe(canonical("stage"));
     expect(f.context.jobRepository.require("first").revision).toBe(1);
     expect(f.context.eventRepository.count("first")).toBe(1);
   });
@@ -313,7 +315,7 @@ describe("compound job commands", () => {
     expect(timeline.stage).toBe("active");
     expect(timeline.actors).toEqual([admin.id]);
     expect(timeline.transitions).toHaveLength(1);
-    expect(timeline.transitions[0]?.transition).toEqual({ from: "queued", to: "active", reason: "start" });
+    expect(timeline.transitions[0]?.transition).toEqual({ from: canonical("stage"), to: "active", reason: "start" });
     expect(timeline.updatedAt).toBeGreaterThan(timeline.createdAt);
   });
 

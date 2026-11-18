@@ -73,6 +73,9 @@ def frozen_groups(
             command=(
                 "bun",
                 "test",
+                # The 10,000-row retention regression exceeds Bun's default 5s
+                # under bounded Docker concurrency; assertions are unchanged.
+                *(("--timeout", "30000") if root.name.startswith("fact-shapes-") else ()),
                 *sorted("./" + path for path in visible if path.endswith(".test.ts")),
             ),
             restores=True,
@@ -162,6 +165,21 @@ class CommittedScenarioSpec:
 
 
 ADDED_SCENARIOS: dict[str, CommittedScenarioSpec] = {
+    **{
+        f"fact-shapes-{feature}-{task}": CommittedScenarioSpec(
+            f"fact-shapes-{feature}-{task}",
+            (
+                "type_enforced",
+                "reference",
+                "name_only",
+                "sibling_only",
+                "outside_code",
+                "existing_state",
+            ),
+        )
+        for feature in ("stage", "evidence-kind", "route-permission")
+        for task in ("additive", "rename")
+    },
     "pointer-root": CommittedScenarioSpec("oakridge-dbos-pointer-root", ("baseline",)),
     "stage-pass-through": CommittedScenarioSpec(
         "oakridge-dbos-stage-pass-through",
@@ -199,6 +217,24 @@ def load_committed_scenario(name: str) -> CommittedScenario:
     if name not in ADDED_SCENARIOS:
         raise ValueError(f"unknown extension scenario: {name}")
     spec = ADDED_SCENARIOS[name]
+    if name.startswith("fact-shapes-"):
+        from code_extension.fixtures import load_scenario
+
+        loaded = [load_scenario(name, arm_id=arm_id) for arm_id in spec.arm_ids]
+        return CommittedScenario(
+            subject_id=spec.subject_id,
+            task=loaded[0].task,
+            groups=loaded[0].groups,
+            arms=tuple(
+                CommittedArm(
+                    item.arms[0].arm_id,
+                    item.repository,
+                    item.arms[0].reference_patch,
+                    item.arms[0].negative_patches[0],
+                )
+                for item in loaded
+            ),
+        )
     subject_id, arm_ids = spec.subject_id, spec.arm_ids
     root = PILOT.parent / name
     arms: list[CommittedArm] = []

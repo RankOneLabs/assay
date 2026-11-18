@@ -1,0 +1,19 @@
+diff --git a/route_permission/anchor.ts b/route_permission/anchor.ts
+--- a/route_permission/anchor.ts
++++ b/route_permission/anchor.ts
+@@ -1,4 +1,4 @@
+ export function validateKey(key: string): string {
+-  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error("invalid key");
++  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(key)) throw new Error("invalid key");
+   return key;
+ }
+diff --git a/route_permission/types.ts b/route_permission/types.ts
+--- a/route_permission/types.ts
++++ b/route_permission/types.ts
+@@ -4,3 +4,6 @@
+ export function isValue(value: string): value is RoutePermission {
+   return (values as readonly string[]).includes(value);
+ }
++
++const requiredFeature: RoutePermission = "case_inspect";
++void requiredFeature;

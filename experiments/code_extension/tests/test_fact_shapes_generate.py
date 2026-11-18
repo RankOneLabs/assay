@@ -137,6 +137,16 @@ def test_regeneration_bytes(tmp_path: Path) -> None:
         assert generated_paths == committed_paths
 
 
+def test_scenario_selection_writes_only_that_slice(tmp_path: Path) -> None:
+    selected = SCENARIOS[0]
+    write_variants(tmp_path, frozenset({selected}))
+    assert {p.name for p in (tmp_path / 'fixtures').iterdir()} == {selected}
+    assert (tmp_path / 'fact_shapes/holders.json').read_bytes() == (
+        ROOT / 'fact_shapes/holders.json').read_bytes()
+    with pytest.raises(ValueError, match='unknown scenarios'):
+        write_variants(tmp_path, frozenset({'fact-shapes-missing'}))
+
+
 def test_six_by_six_layout() -> None:
     from typing import get_args
 

@@ -18,7 +18,7 @@ VOCABULARIES: dict[Feature, tuple[str, ...]] = {
 }
 ANCHOR_OLD = '  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(key)) throw new Error("invalid key");'
 ANCHOR_LINE = (
-    '  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 80) throw new Error("invalid key");'
+    '  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error("invalid key");'
 )
 
 

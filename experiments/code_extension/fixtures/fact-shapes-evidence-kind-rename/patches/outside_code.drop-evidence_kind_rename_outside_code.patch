@@ -1,0 +1,9 @@
+diff --git a/evidence_kind/anchor.ts b/evidence_kind/anchor.ts
+--- a/evidence_kind/anchor.ts
++++ b/evidence_kind/anchor.ts
+@@ -1,4 +1,4 @@
+ export function validateKey(key: string): string {
+-  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error("invalid key");
++  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(key)) throw new Error("invalid key");
+   return key;
+ }

@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import { fixture, admin, reader, writer, outsider } from "./helpers.ts";
 import { values as stages } from "../../stage/types.ts";
@@ -18,7 +20,7 @@ describe("project reports", () => {
 
   test("stage counts use persisted transitions and exclude archived jobs", () => {
     using f = fixture();
-    f.create("queued");
+    f.create(canonical("stage"));
     f.create("active");
     f.create("archived");
     f.context.jobs.transition(admin, "active", {
@@ -28,7 +30,7 @@ describe("project reports", () => {
     const summary = f.context.reports.summary(reader);
     expect(summary.total).toBe(3);
     expect(summary.archived).toBe(1);
-    expect(summary.stages.find(item => item.stage === "queued")?.count).toBe(1);
+    expect(summary.stages.find(item => item.stage === canonical("stage"))?.count).toBe(1);
     expect(summary.stages.find(item => item.stage === "active")?.count).toBe(1);
     expect(summary.stages.find(item => item.stage === "complete")?.count).toBe(0);
   });
@@ -36,10 +38,10 @@ describe("project reports", () => {
   test("evidence byte totals include multibyte text and separate kinds", () => {
     using f = fixture();
     f.create();
-    f.attach("document", "job", { kind: "document", content: "éé" });
+    f.attach(canonical("evidence_kind"), "job", { kind: canonical("evidence_kind"), content: "éé" });
     f.attach("image", "job", { kind: "image", content: "image-bytes" });
     const summary = f.context.reports.summary(reader);
-    expect(summary.evidence.find(item => item.kind === "document")).toMatchObject({ count: 1, bytes: 4 });
+    expect(summary.evidence.find(item => item.kind === canonical("evidence_kind"))).toMatchObject({ count: 1, bytes: 4 });
     expect(summary.evidence.find(item => item.kind === "image")).toMatchObject({ count: 1, bytes: 11 });
     expect(summary.evidence.find(item => item.kind === "testimony")).toMatchObject({ count: 0, bytes: 0 });
   });

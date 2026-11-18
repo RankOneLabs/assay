@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import { fixture, admin, outsider } from "./helpers.ts";
 
@@ -49,7 +51,7 @@ describe("job query semantics", () => {
     f.context.jobs.transition(admin, "wrong-stage", {
       stage: "active", expectedRevision: 1, reason: "start",
     });
-    const page = f.context.jobs.list(admin, { owner: "sam", stage: "queued", minPriority: "5" });
+    const page = f.context.jobs.list(admin, { owner: "sam", stage: canonical("stage"), minPriority: "5" });
     expect(page.items.map(job => job.id)).toEqual(["match"]);
     expect(page.total).toBe(1);
   });
@@ -116,7 +118,7 @@ describe("job query semantics", () => {
     expect(() => f.context.jobs.list(admin, { limit: "101" })).toThrow();
     expect(() => f.context.jobs.list(admin, { offset: "-1" })).toThrow();
     expect(() => f.context.jobs.list(admin, { limit: "1.5" })).toThrow();
-    expect(() => f.context.jobs.list(admin, { stage: "triaged" })).toThrow();
+    expect(() => f.context.jobs.list(admin, { stage: "unsupported_future" })).toThrow();
     expect(() => f.context.jobs.list(admin, { archived: "maybe" })).toThrow();
   });
 });

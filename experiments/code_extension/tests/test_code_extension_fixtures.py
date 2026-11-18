@@ -75,8 +75,9 @@ def test_committed_scenario_has_private_checks_and_bounded_trees(name: str, tmp_
         )
         root = PILOT.parent / name
     assert subject_id not in SMOKE_SUBJECT_IDS
-    assert "bun test ./tests/visible" in task
-    assert "tsc --noEmit -p tsconfig.json" in task
+    if not name.startswith("fact-shapes-"):
+        assert "bun test ./tests/visible" in task
+        assert "tsc --noEmit -p tsconfig.json" in task
     assert "hidden" not in task.lower() and "reference" not in task.lower()
     assert groups[0].restores and all(group.files for group in groups)
     readme = (root / "README.md").read_text()
@@ -132,8 +133,34 @@ def test_added_scenario_qualification_records(name: str) -> None:
             "new_behavior": "failed",
         }
         assert record["reference"]["groups"] == {group: "passed" for group in group_names}
-        assert record["negative"]["groups"]["new_behavior"] == "failed"
+        if name.startswith("fact-shapes-") and arm.arm_id == "type_enforced":
+            assert record["negative"]["cause"].startswith("typecheck_")
+            assert set(record["negative"]["groups"].values()) == {"unavailable"}
+        else:
+            assert record["negative"]["groups"]["new_behavior"] == "failed"
         assert record["reference"]["verdict"] == "correct"
+
+
+@pytest.mark.parametrize("name", ADDED_SCENARIOS)
+def test_qualifier_accepts_the_committed_records(name: str) -> None:
+    for arm_id in ADDED_SCENARIOS[name].arm_ids:
+        record = json.loads((PILOT.parent / name / "qualification" / f"{arm_id}.json").read_text())
+        fixture = load_scenario(name, arm_id=arm_id)
+        assert qualify.summary_problems(fixture, record) == [], arm_id
+
+
+def test_qualifier_refuses_a_reference_that_timed_out() -> None:
+    # The record CI caught on 2026-11-18: five scenarios qualified at once on one
+    # machine, and the reference patch's visible tests hit the candidate timeout.
+    name, arm_id = "fact-shapes-stage-additive", "existing_state"
+    record = json.loads((PILOT.parent / name / "qualification" / f"{arm_id}.json").read_text())
+    record["reference"] = {
+        **record["reference"],
+        "cause": "candidate_timeout",
+        "groups": {**record["reference"]["groups"], "visible_regression": "failed"},
+    }
+    problems = qualify.summary_problems(load_scenario(name, arm_id=arm_id), record)
+    assert len(problems) == 1 and problems[0].startswith("reference patch candidate_timeout")
 
 
 def test_stage_arms_share_every_file_outside_the_compiler() -> None:
@@ -185,7 +212,11 @@ async def test_added_scenario_image_reproduces_qualification_records(
     manifest = FixtureManifestV3.model_validate_json(
         (root / "qualification" / "manifest.json").read_bytes()
     )
-    image_digest = qualify.observed_image_digest(qualify.IMAGE_TAG)
+    image_digest = qualify.observed_image_digest(
+        "assay-code-extension:ce-v1-library"
+        if name.startswith("fact-shapes-")
+        else qualify.IMAGE_TAG
+    )
     assert image_digest == manifest.observed_runtime_image_digest
     runner = qualify.make_runner(image_digest)
     for arm in scenario.arms:

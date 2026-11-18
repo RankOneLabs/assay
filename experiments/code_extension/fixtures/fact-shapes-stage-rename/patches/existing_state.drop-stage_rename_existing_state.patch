@@ -1,0 +1,9 @@
+diff --git a/stage/anchor.ts b/stage/anchor.ts
+--- a/stage/anchor.ts
++++ b/stage/anchor.ts
+@@ -1,4 +1,4 @@
+ export function validateKey(key: string): string {
+-  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error("invalid key");
++  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(key)) throw new Error("invalid key");
+   return key;
+ }

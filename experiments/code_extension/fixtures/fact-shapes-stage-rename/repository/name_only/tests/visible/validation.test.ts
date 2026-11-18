@@ -1,3 +1,5 @@
+import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
+function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import {
   createJobSchema,
@@ -14,7 +16,7 @@ import {
 import { fixture, admin } from "./helpers.ts";
 
 const job = { id: "job", title: "Title", owner: "owner", project: "project" };
-const evidence = { id: "proof", kind: "document" as const, title: "Proof", content: "Content", author: "author" };
+const evidence = { id: "proof", kind: canonical("evidence_kind"), title: "Proof", content: "Content", author: "author" };
 
 describe("job-specific payload contracts", () => {
   test("creation normalizes titles and fills service defaults", () => {
@@ -57,7 +59,7 @@ describe("job-specific payload contracts", () => {
 
   test("transitions require a known stage, a reason and a current-shaped revision", () => {
     expect(transitionSchema.parse({ stage: "active", reason: "  start  ", expectedRevision: 1 }).reason).toBe("start");
-    expect(() => transitionSchema.parse({ stage: "triaged", reason: "start", expectedRevision: 1 })).toThrow();
+    expect(() => transitionSchema.parse({ stage: "unsupported_future", reason: "start", expectedRevision: 1 })).toThrow();
     expect(() => transitionSchema.parse({ stage: "active", reason: " ", expectedRevision: 1 })).toThrow();
     expect(() => transitionSchema.parse({ stage: "active", reason: "start", expectedRevision: -1 })).toThrow();
     expect(() => transitionSchema.parse({ stage: "active", expectedRevision: 1 })).toThrow();
@@ -67,7 +69,7 @@ describe("job-specific payload contracts", () => {
     expect(evidenceSchema.parse(evidence)).toEqual(evidence);
     expect(() => evidenceSchema.parse({ ...evidence, content: "" })).toThrow();
     expect(() => evidenceSchema.parse({ ...evidence, author: "" })).toThrow();
-    expect(() => evidenceSchema.parse({ ...evidence, kind: "attestation" })).toThrow();
+    expect(() => evidenceSchema.parse({ ...evidence, kind: "unsupported_future" })).toThrow();
     expect(() => evidenceSchema.parse({ ...evidence, checksum: "pretend" })).toThrow();
   });
 
@@ -105,10 +107,10 @@ describe("job-specific payload contracts", () => {
   });
 
   test("grant mutation requires an inventoried permission and a project", () => {
-    const valid = { principal: "user", permission: "case_read" as const, project: "project" };
+    const valid = { principal: "user", permission: canonical("route_permission"), project: "project" };
     expect(grantSchema.parse(valid)).toEqual(valid);
-    expect(() => grantSchema.parse({ ...valid, permission: "case_inspect" })).toThrow();
-    expect(() => grantSchema.parse({ principal: "user", permission: "case_read" })).toThrow();
+    expect(() => grantSchema.parse({ ...valid, permission: "unsupported_future" })).toThrow();
+    expect(() => grantSchema.parse({ principal: "user", permission: canonical("route_permission") })).toThrow();
     expect(() => grantSchema.parse({ ...valid, grantedBy: "spoofed" })).toThrow();
   });
 

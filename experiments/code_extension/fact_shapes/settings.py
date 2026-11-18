@@ -11,7 +11,8 @@ from code_extension.fact_shapes.cells import Shape as FactShape
 from code_extension.settings import BoundEnvelope
 
 type StudyModelName = Literal["sol", "argon", "midtier"]
-STUDY_ENVELOPE: BoundEnvelope = "fact-shapes-v1"
+# The 60-request, 900-second limits of the matched-task and library studies.
+STUDY_ENVELOPE: BoundEnvelope = "library-v1"
 FACT_SHAPES: tuple[FactShape, ...] = get_args(FactShape)
 
 
@@ -22,12 +23,26 @@ class StudyModel:
 
 
 STUDY_MODELS: tuple[StudyModel, ...] = (
-    StudyModel("sol", ModelRoute(endpoint="https://openrouter.ai/api/v1",
-                                model="openai/gpt-6.1-sol", provider="azure/us")),
-    StudyModel("argon", ModelRoute(endpoint="https://openrouter.ai/api/v1",
-                                  model="google/gemini-4-argon", provider="google-vertex/global")),
-    StudyModel("midtier", ModelRoute(endpoint="https://openrouter.ai/api/v1",
-                                    model="openai/gpt-6-luna", provider="azure")),
+    StudyModel(
+        "sol",
+        ModelRoute(
+            endpoint="https://openrouter.ai/api/v1", model="openai/gpt-6.1-sol", provider="azure/us"
+        ),
+    ),
+    StudyModel(
+        "argon",
+        ModelRoute(
+            endpoint="https://openrouter.ai/api/v1",
+            model="google/gemini-4-argon",
+            provider="google-vertex/global",
+        ),
+    ),
+    StudyModel(
+        "midtier",
+        ModelRoute(
+            endpoint="https://openrouter.ai/api/v1", model="openai/gpt-6-luna", provider="azure"
+        ),
+    ),
 )
 
 
@@ -40,9 +55,13 @@ class PerAttemptCaps(BaseModel):
     midtier: Decimal = Field(gt=0)
 
 
-PER_ATTEMPT_CAPS = PerAttemptCaps(sol=Decimal("2.00"), argon=Decimal("4.00"),
-                                  midtier=Decimal("1.00"))
-PILOT_TOTAL_CAP_USD = Decimal("15.00")
+PER_ATTEMPT_CAPS = PerAttemptCaps(
+    sol=Decimal("2.00"), argon=Decimal("4.00"), midtier=Decimal("1.00")
+)
+PILOT_TOTAL_CAP_USD = Decimal("10.00")  # Operator set 2026-11-17, including one probe per plan.
+# Operator set 2026-11-17: pilot, library rerun and study together stay within $80.
+# The study's split across plans follows the pilot's measured means.
+STUDY_TOTAL_CAP_USD = Decimal("65.00")
 LIBRARY_RERUN_TOTAL_CAP_USD = Decimal("5.00")
 # Original 30–45 s observation was supplied in the Oakridge cohort brief.
 # Its receipt has not been located; the related retained rerun below measures
@@ -65,5 +84,6 @@ class PilotAllocation:
 
 PILOT_ALLOCATION: tuple[PilotAllocation, ...] = tuple(
     PilotAllocation(model.name, shape, 2 if model.name == "sol" else 1)
-    for model in STUDY_MODELS for shape in FACT_SHAPES
+    for model in STUDY_MODELS
+    for shape in FACT_SHAPES
 )
