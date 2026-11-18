@@ -2,7 +2,7 @@
   "scenario_qualifications": [
     {
       "scenario": "fact-shapes-stage-additive",
-      "manifest_digest": "sha256:2249f2072bdbdc884a02a3976115bb46056f7192a56bfb4f253ab1a7eb913d79"
+      "manifest_digest": "sha256:e3de9b751867e15fd98825f6eebdb32f25bb5152d0b480969b5793a51dbd5860"
     }
   ],
   "cohort": "fact-shapes-2026-11-pilot-argon",
@@ -15,13 +15,13 @@
   "system_prompt_digest": "sha256:d6f2f100a9a362ddae1d201fd96de86b24ad47b7449ff863d42c64ed71607cfb",
   "tool_schemas_digest": "sha256:698286ad88a625d2ebdccb8c5f1fffc7d7831692f09eac7b146123fd2f8c8c9c",
   "image_digest": "sha256:b48e43d170e6c0eb0d7e70364c2e385488c07f93ef8ea38f9942dc573cfba0da",
-  "envelope": "fact-shapes-v1",
+  "envelope": "library-v1",
   "bounds": {
     "served_context_tokens": null,
     "model_context_limit_tokens": null,
     "request_timeout_s": 120.0,
-    "max_turns": 80,
-    "timeout_s": 1800.0,
+    "max_turns": 60,
+    "timeout_s": 900.0,
     "attempts": 1,
     "concurrency": 1,
     "provider_retries": 0,
@@ -43,9 +43,9 @@
   "dispatch_schedule": "subject-rotated-v1",
   "concurrency": 1,
   "pricing": {
-    "basis": "operator-confirmed caps, including one probe per plan",
+    "basis": "operator-set plan caps (2026-11-17) from measured means, including one probe per plan; per-attempt caps are request reservation headroom",
     "conservative_request_bound_usd": null
   },
   "per_attempt_cap_usd": "4.00",
-  "total_cap_usd": "28.00"
+  "total_cap_usd": "4.00"
 }

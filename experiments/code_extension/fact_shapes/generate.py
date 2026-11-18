@@ -85,11 +85,21 @@ def holders_json(trees: Mapping[FactId, Mapping[str, str]]) -> str:
     return HOLDERS.dump_json(build_holders(trees), indent=2).decode('utf-8') + '\n'
 
 
-def write_variants(destination: Path) -> None:
-    """Write all six scenarios beneath a code_extension-shaped destination."""
+def write_variants(destination: Path, scenarios: frozenset[str] | None = None) -> None:
+    """Write scenarios beneath a code_extension-shaped destination.
+
+    With ``scenarios``, only those scenarios' arms are rewritten. Every tree and the
+    shared holder metadata are still generated and validated, so a slice cannot be
+    written from a generator that fails on the cells outside it.
+    """
     trees = generate_trees(read_tree(BASE))
     metadata = holders_json(trees)
+    known = {scenario_name(cell) for cell in CELLS}
+    if scenarios is not None and not scenarios <= known:
+        raise ValueError(f'unknown scenarios: {sorted(scenarios - known)}')
     for cell in CELLS:
+        if scenarios is not None and scenario_name(cell) not in scenarios:
+            continue
         root = destination / 'fixtures' / scenario_name(cell) / 'repository' / cell.shape
         if root.exists():
             rmtree(root)
@@ -100,4 +110,14 @@ def write_variants(destination: Path) -> None:
 
 
 if __name__ == '__main__':
-    write_variants(DIRECTORY.parent)
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        '--scenario', action='append', dest='scenarios',
+        help='Rewrite only this scenario; repeatable. Default: all six.',
+    )
+    arguments = parser.parse_args()
+    write_variants(
+        DIRECTORY.parent, frozenset(arguments.scenarios) if arguments.scenarios else None,
+    )

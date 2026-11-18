@@ -11,7 +11,8 @@ from code_extension.fact_shapes.cells import Shape as FactShape
 from code_extension.settings import BoundEnvelope
 
 type StudyModelName = Literal["sol", "argon", "midtier"]
-STUDY_ENVELOPE: BoundEnvelope = "fact-shapes-v1"
+# The 60-request, 900-second limits of the matched-task and library studies.
+STUDY_ENVELOPE: BoundEnvelope = "library-v1"
 FACT_SHAPES: tuple[FactShape, ...] = get_args(FactShape)
 
 
@@ -57,7 +58,10 @@ class PerAttemptCaps(BaseModel):
 PER_ATTEMPT_CAPS = PerAttemptCaps(
     sol=Decimal("2.00"), argon=Decimal("4.00"), midtier=Decimal("1.00")
 )
-PILOT_TOTAL_CAP_USD = Decimal("61.00")  # Operator confirmed, including one probe per plan.
+PILOT_TOTAL_CAP_USD = Decimal("10.00")  # Operator set 2026-11-17, including one probe per plan.
+# Operator set 2026-11-17: pilot, library rerun and study together stay within $80.
+# The study's split across plans follows the pilot's measured means.
+STUDY_TOTAL_CAP_USD = Decimal("65.00")
 LIBRARY_RERUN_TOTAL_CAP_USD = Decimal("5.00")
 # Original 30–45 s observation was supplied in the Oakridge cohort brief.
 # Its receipt has not been located; the related retained rerun below measures

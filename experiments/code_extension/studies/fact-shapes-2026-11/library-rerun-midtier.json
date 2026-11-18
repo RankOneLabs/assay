@@ -59,8 +59,8 @@
     "served_context_tokens": null,
     "model_context_limit_tokens": null,
     "request_timeout_s": 120.0,
-    "max_turns": 80,
-    "timeout_s": 1800.0,
+    "max_turns": 60,
+    "timeout_s": 900.0,
     "attempts": 1,
     "concurrency": 1,
     "provider_retries": 0,
@@ -82,10 +82,10 @@
   "dispatch_schedule": "subject-rotated-v1",
   "concurrency": 1,
   "pricing": {
-    "basis": "openrouter-pinned-price-ceilings",
+    "basis": "operator-set plan caps (2026-11-17) from measured means, including one probe per plan; per-attempt caps are request reservation headroom",
     "conservative_request_bound_usd": null
   },
   "per_attempt_cap_usd": "1.00",
   "total_cap_usd": "5.00",
-  "envelope": "fact-shapes-v1"
+  "envelope": "library-v1"
 }

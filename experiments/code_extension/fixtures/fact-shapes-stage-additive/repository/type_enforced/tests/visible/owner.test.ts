@@ -16,7 +16,11 @@ for (const feature of ["stage", "evidence_kind", "route_permission"]) {
           await cp(`${root}/src/${name}`, `${target}/src/${name}`);
         }
         const migrations = (await readdir(`${target}/${feature}`)).filter(name => name.endsWith(".sql")).sort();
-        const candidates = ["types.ts", "policy.ts", "names.ts", "sibling.ts", "state.ts", migrations.at(-1)!];
+        const sqlOwners: string[] = [];
+        for (const migration of migrations) {
+          if (/value IN \(/.test(await Bun.file(`${target}/${feature}/${migration}`).text())) sqlOwners.push(migration);
+        }
+        const candidates = ["types.ts", "policy.ts", "names.ts", "sibling.ts", "state.ts", ...sqlOwners.slice(-1)];
         const owners: string[] = [];
         for (const candidate of candidates) {
           const source = await Bun.file(`${target}/${feature}/${candidate}`).text();

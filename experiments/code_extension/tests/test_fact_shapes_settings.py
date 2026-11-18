@@ -111,7 +111,12 @@ def test_routes_and_pilot_allocation() -> None:
 
     from assay_pier_bridge.agent_loop import PAID_TURN_ROUTES
     from code_extension.bridge import AUTHORIZED_MODEL_ROUTES
-    from code_extension.fact_shapes.settings import FACT_SHAPES, PILOT_ALLOCATION, STUDY_MODELS
+    from code_extension.fact_shapes.settings import (
+        FACT_SHAPES,
+        PILOT_ALLOCATION,
+        STUDY_ENVELOPE,
+        STUDY_MODELS,
+    )
     from code_extension.settings import ExtensionAgentSettings
 
     assert {model.name for model in STUDY_MODELS} == {"sol", "argon", "midtier"}
@@ -119,8 +124,8 @@ def test_routes_and_pilot_allocation() -> None:
         route = model.route
         assert (route.endpoint, route.model, route.provider) in AUTHORIZED_MODEL_ROUTES
         assert (route.model, route.provider) in PAID_TURN_ROUTES
-        bounds = ExtensionAgentSettings.for_model(route.model, envelope="fact-shapes-v1")
-        assert (bounds.max_turns, bounds.timeout_s, bounds.request_timeout_s) == (80, 1800, 120)
+        bounds = ExtensionAgentSettings.for_model(route.model, envelope=STUDY_ENVELOPE)
+        assert (bounds.max_turns, bounds.timeout_s, bounds.request_timeout_s) == (60, 900, 120)
         assert (bounds.max_output_tokens, bounds.max_tool_output_bytes) == (8192, 32768)
         assert bounds.concurrency == bounds.attempts == 1
         assert bounds.provider_retries == bounds.sdk_retries == 0
@@ -150,6 +155,7 @@ def test_approved_caps_and_observation_provenance() -> None:
         PILOT_TOTAL_CAP_USD,
         QWEN_OBSERVATION_CITATION,
         STUDY_MODELS,
+        STUDY_TOTAL_CAP_USD,
     )
 
     assert PER_ATTEMPT_CAPS.model_dump() == {
@@ -158,7 +164,8 @@ def test_approved_caps_and_observation_provenance() -> None:
         "midtier": Decimal("1"),
     }
     assert all(getattr(PER_ATTEMPT_CAPS, model.name) > 0 for model in STUDY_MODELS)
-    assert Decimal("61") == PILOT_TOTAL_CAP_USD
+    assert Decimal("10") == PILOT_TOTAL_CAP_USD
+    assert PILOT_TOTAL_CAP_USD + LIBRARY_RERUN_TOTAL_CAP_USD + STUDY_TOTAL_CAP_USD <= 80
     assert Decimal("5") == LIBRARY_RERUN_TOTAL_CAP_USD
     assert QWEN_OBSERVATION_CITATION
     assert "original receipt unavailable" in QWEN_OBSERVATION_CITATION

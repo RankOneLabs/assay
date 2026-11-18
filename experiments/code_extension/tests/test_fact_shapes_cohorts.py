@@ -5,7 +5,12 @@ from decimal import Decimal
 from pathlib import Path
 
 from code_extension.config import RunConfiguration
-from code_extension.fact_shapes.settings import STUDY_MODELS
+from code_extension.fact_shapes.settings import (
+    PILOT_TOTAL_CAP_USD,
+    STUDY_ENVELOPE,
+    STUDY_MODELS,
+    STUDY_TOTAL_CAP_USD,
+)
 from code_extension.settings import ExtensionAgentSettings
 
 from assay.canonical import digest_bytes
@@ -27,11 +32,11 @@ def test_frozen_cohorts() -> None:
         for plan in request["plans"]:
             model = next(model for model in STUDY_MODELS if model.name == plan["name"])
             config = RunConfiguration.model_validate_json((STUDY / plan["config"]).read_bytes())
-            assert config.envelope == "fact-shapes-v1"
+            assert config.envelope == STUDY_ENVELOPE
             assert config.route == model.route
             assert config.concurrency == 1
             assert config.bounds == ExtensionAgentSettings.for_model(
-                model.route.model, envelope="fact-shapes-v1"
+                model.route.model, envelope=STUDY_ENVELOPE
             )
             count = 0
             for ref in config.scenario_qualifications:
@@ -44,8 +49,18 @@ def test_frozen_cohorts() -> None:
                 count += 6 * config.repeats
             assert count == expected[model.name]
             assert len(config.scenario_qualifications) == (1 if cohort == "pilot" else 6)
-            assert config.total_cap_usd >= (count + 1) * config.per_attempt_cap_usd
             total += config.total_cap_usd
             attempts += count
         assert attempts == (24 if cohort == "pilot" else 540)
         assert total <= Decimal(request["combined_cap_usd"])
+        # Plan caps bound spending at measured means, below the per-attempt worst case.
+        assert Decimal(request["combined_cap_usd"]) == (
+            PILOT_TOTAL_CAP_USD if cohort == "pilot" else STUDY_TOTAL_CAP_USD
+        )
+
+
+def test_cohort_files_are_generated() -> None:
+    from code_extension.fact_shapes.cohorts import files, render
+
+    for name, data in files().items():
+        assert (STUDY / name).read_bytes() == render(data), name
