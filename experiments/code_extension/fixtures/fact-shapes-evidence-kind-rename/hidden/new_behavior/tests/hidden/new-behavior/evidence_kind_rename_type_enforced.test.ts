@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import "../../../src/bootstrap.ts";
 import { rmSync } from "node:fs";
-import { evidenceKindLabels } from "../../../src/presentation/evidence_kind_labels.ts";
+import { evidenceKindLabels } from "../../../src/presentation/labels.ts";
 import { edit } from "../../../evidence_kind/edit.ts";
 
 test("fact:evidence_kind_rename_type_enforced: type_enforced behavior", async () => {
@@ -13,7 +13,7 @@ test("fact:evidence_kind_rename_type_enforced: type_enforced behavior", async ()
     await Bun.write(`${directory}/tsconfig.json`, JSON.stringify(config));
     await Bun.write(`${directory}/consumer.ts`, [
       `import { edit } from ${JSON.stringify(process.cwd() + "/evidence_kind/edit.ts")};`,
-      `import { evidenceKindLabels } from ${JSON.stringify(process.cwd() + "/src/presentation/evidence_kind_labels.ts")};`,
+      `import { evidenceKindLabels } from ${JSON.stringify(process.cwd() + "/src/presentation/labels.ts")};`,
       `edit("record", "attestation");`,
       `export const displayed: string = evidenceKindLabels.attestation;`,
     ].join("\n"));

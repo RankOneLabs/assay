@@ -270,7 +270,7 @@ def test_independent_type_controls_cast_the_unchanged_label_map() -> None:
     from code_extension.fact_shapes.cells import CELLS
     from code_extension.fact_shapes.generate import scenario_name
     from code_extension.fact_shapes.mutants import alternative_control
-    from code_extension.fact_shapes.switches import LABEL_MAPS, TYPE_NAMES
+    from code_extension.fact_shapes.switches import LABEL_MAPS, label_type
     from code_extension.fixture import materialize, read_tree
     from code_extension.fixtures import load_scenario
 
@@ -294,7 +294,7 @@ def test_independent_type_controls_cast_the_unchanged_label_map() -> None:
             assert patch == evidence["control_patch"]
             assert evidence["patch_digest"] == digest_bytes(patch.encode())
             materialize(target, fixture.repository, patch)
-            labels, type_name = LABEL_MAPS[cell.feature], TYPE_NAMES[cell.feature]
+            labels, type_name = LABEL_MAPS[cell.feature], label_type(cell.feature)
             # The holder's literal is unchanged; only its declared type becomes a cast.
             assert (target / cell.holders[0]).read_text() == fixture.repository[
                 cell.holders[0]
@@ -331,6 +331,6 @@ def test_follow_up_migration_control_includes_a_later_index() -> None:
             target = Path(directory)
             materialize(target, fixture.repository, fixture.arms[0].reference_patch)
             _, patch = alternative_control(cell, fixture.repository, read_tree(target))
-        assert f"db/migrations/004_allow_{cell.feature}_values.sql" in patch
-        assert f"db/migrations/005_index_{cell.feature}_values.sql" in patch
+        assert f"db/migrations/002_allow_{cell.feature}_values.sql" in patch
+        assert f"db/migrations/003_index_{cell.feature}_values.sql" in patch
         assert "CREATE INDEX" in patch

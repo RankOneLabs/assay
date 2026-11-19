@@ -97,12 +97,27 @@ def fact_titles(source: str) -> tuple[str, ...]:
     return tuple(re.findall(r"""\b(?:test|it)\(\s*["'](fact:[^"'\n]+)["']""", source))
 
 
+def feature_titles(source: str) -> tuple[str, ...]:
+    """Titles of a task's own feature checks: reported, never scored as facts."""
+    return tuple(re.findall(r"""\b(?:test|it)\(\s*["'](feature:[^"'\n]+)["']""", source))
+
+
+def task_sentences(task: str) -> tuple[str, ...]:
+    """Each sentence of the task text, the unit a requirement cites."""
+    return tuple(
+        sentence.strip()
+        for paragraph in task.split("\n\n")
+        for sentence in re.split(r"(?<=[.!?])\s+", paragraph.strip())
+        if sentence.strip()
+    )
+
+
 def parse_map(markdown: str) -> dict[tuple[str, str], str]:
     """Read scenario | title | exact sentence rows from the study table."""
     rows: dict[tuple[str, str], str] = {}
     for line in markdown.splitlines():
         parts = [part.strip() for part in line.strip().strip("|").split("|")]
-        if len(parts) == 3 and parts[1].startswith("fact:"):
+        if len(parts) == 3 and parts[1].startswith(("fact:", "feature:")):
             key = (parts[0], parts[1])
             if key in rows:
                 raise ValueError(f"duplicate alignment row: {key}")

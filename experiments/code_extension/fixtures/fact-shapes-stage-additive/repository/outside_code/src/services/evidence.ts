@@ -1,4 +1,4 @@
-import { StoredEvidenceKind } from "../preferences/evidence_kind_defaults.ts";
+import { StoredEvidenceKind } from "../preferences/defaults.ts";
 import { z } from "zod";
 import { keySchema } from "../domain/validation.ts";
 import { checksum } from "../domain/checksum.ts";
@@ -9,7 +9,7 @@ import { evidenceSchema, patchEvidenceSchema, kindSchema, revisionSchema } from 
 import { byteLength } from "../domain/checksum.ts";
 import { limitExceeded, missing, conflict } from "../domain/errors.ts";
 import { edit, peerGuard } from "../../evidence_kind/edit.ts";
-import { peerGuard as siblingAccepts } from "./evidence_kind_peer.ts";
+import { acceptsPeerKind as siblingAccepts } from "./peer.ts";
 import { EvidenceRepository } from "../repositories/evidence.ts";
 import { EventRepository } from "../repositories/events.ts";
 import { JobRepository } from "../repositories/jobs.ts";

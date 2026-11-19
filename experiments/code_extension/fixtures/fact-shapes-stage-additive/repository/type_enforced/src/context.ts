@@ -1,5 +1,4 @@
-import { StoredEvidenceKind } from "./preferences/evidence_kind_defaults.ts";
-import { StoredRoutePermission } from "./preferences/route_permission_defaults.ts";
+import { StoredEvidenceKind, StoredRoutePermission } from "./preferences/defaults.ts";
 import { Database } from "bun:sqlite";
 import type { Config } from "./config.ts";
 import { loadConfig } from "./config.ts";

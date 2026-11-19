@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import "../../../src/bootstrap.ts";
 import { rmSync } from "node:fs";
-import { stageLabels } from "../../../src/presentation/stage_labels.ts";
+import { stageLabels } from "../../../src/presentation/labels.ts";
 
 test("fact:stage_additive_type_enforced: type_enforced behavior", async () => {
   const directory = `/tmp/fact-public-type-${crypto.randomUUID()}`;
@@ -12,7 +12,7 @@ test("fact:stage_additive_type_enforced: type_enforced behavior", async () => {
     await Bun.write(`${directory}/tsconfig.json`, JSON.stringify(config));
     await Bun.write(`${directory}/consumer.ts`, [
       `import { edit } from ${JSON.stringify(process.cwd() + "/stage/edit.ts")};`,
-      `import { stageLabels } from ${JSON.stringify(process.cwd() + "/src/presentation/stage_labels.ts")};`,
+      `import { stageLabels } from ${JSON.stringify(process.cwd() + "/src/presentation/labels.ts")};`,
       `edit("record", "triaged");`,
       `export const displayed: string = stageLabels.triaged;`,
     ].join("\n"));

@@ -1,5 +1,3 @@
-import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
-function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
 import { fixture, admin, reader, writer, expectError } from "./helpers.ts";
 
@@ -38,7 +36,7 @@ describe("atomic job and evidence import", () => {
     const preview = f.context.imports.preview(admin, source);
     const created = f.context.imports.commit(admin, source, preview.digest);
     expect(created.map(job => job.id)).toEqual(["first", "second"]);
-    expect(created.every(job => job.stage === canonical("stage") && job.revision === 1)).toBe(true);
+    expect(created.every(job => job.revision === 1)).toBe(true);
     expect(f.context.evidenceRepository.require("proof").kind).toBe("testimony");
     expect(f.context.evidenceRepository.require("image").kind).toBe("image");
     expect(f.context.eventRepository.count("first")).toBe(2);

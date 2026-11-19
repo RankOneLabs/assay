@@ -152,8 +152,8 @@ def test_one_independent_holder_copy_is_allowed(tmp_path: Path, concept_name: st
 def test_derived_sibling_has_no_second_declaration(tmp_path: Path) -> None:
     target = tmp_path / "copy"
     shutil.copytree(BASE, target)
-    source = target / "src/services/stage_peer.ts"
-    assert "readonly string[] = values;" in source.read_text()
+    source = target / "src/services/peer.ts"
+    assert "readonly string[] = stageTypes.values;" in source.read_text()
     assert 'case "queued"' not in source.read_text()
     assert audit(target, load_inventory(INVENTORY)) == ()
 
@@ -228,9 +228,9 @@ def test_candidate_is_not_a_duplicate_exemption(tmp_path: Path, form: str) -> No
         'switch': 'switch (v) { case "queued": case "active": case "complete": break; }',
         'sql': "CREATE TABLE copy (value TEXT CHECK (value IN ('queued', 'active', 'complete')));",
     }
-    path = 'db/migrations/001_stage_values.sql' if form == 'sql' else 'src/services/stage_peer.ts'
+    path = 'db/migrations/001_lookup_tables.sql' if form == 'sql' else 'src/services/peer.ts'
     # The registry already holds the arm's one independent copy.
-    registry = target / 'src/validation/registered_stages.ts'
+    registry = target / 'src/validation/registry.ts'
     registry.write_text(registry.read_text() + '\nconst copy = ["queued", "active", "complete"];')
     source = target / path
     source.write_text(source.read_text() + '\n' + seeds[form])

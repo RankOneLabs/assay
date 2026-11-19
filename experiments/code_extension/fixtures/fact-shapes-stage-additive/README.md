@@ -8,11 +8,11 @@ All six arms share the single task.md and hidden/ directory; hidden test bytes m
 
 | Arm | Manipulated fact | Holder |
 | --- | --- | --- |
-| type_enforced | stage_additive_type_enforced | src/presentation/stage_labels.ts |
+| type_enforced | stage_additive_type_enforced | src/presentation/labels.ts |
 | reference | stage_additive_reference | stage/policy.ts |
-| name_only | stage_additive_name_only | src/validation/registered_stages.ts |
-| sibling_only | stage_additive_sibling_only | src/services/stage_peer.ts |
-| outside_code | stage_additive_outside_code | db/migrations/001_stage_values.sql |
+| name_only | stage_additive_name_only | src/validation/registry.ts |
+| sibling_only | stage_additive_sibling_only | src/services/peer.ts |
+| outside_code | stage_additive_outside_code | db/migrations/001_lookup_tables.sql |
 | existing_state | stage_additive_existing_state | src/sessions/build_status.ts |
 
 Anchor fact: stage_additive_anchor. Record labels accept the documented characters up to 80 characters.

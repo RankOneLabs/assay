@@ -104,3 +104,29 @@ selected owner (option A) is withdrawn.
    decision is made then, with measured costs.
 
 Pilot attempts from this or the first pilot are never pooled with the main study.
+
+### Slice round 1 and the change for round 2 (2026-11-19)
+
+Round 1 (independent, scattered holders; Sol only; stage-additive): Sol passed 12 of 12,
+$2.94, 14 to 24 requests an attempt. Its tool calls show why. It lists all 87 files,
+opens the holder files whose names contain the feature (`registered_stages.ts`,
+`stage_labels.ts`, `stage_peer.ts`), reads 135 to 190 KB an attempt, more than the whole
+124 KB of application code, and searches for the existing values. The task was also
+small: add one value in about two places and widen one rule, so all of the model's
+effort went to finding places.
+
+Round 2 changes two things and keeps the service's size:
+
+1. **Feature tasks.** Each task asks for a real feature in which the new or renamed value
+   is one part. For stage-additive, a triage step: new imported jobs start in the new
+   stage, a triager sets priority and owner and releases the job or rejects it with a
+   reason kept in its history, and jobs in the new stage do not count toward dispatch
+   capacity. The task text still states, in one plain sentence, that the value must work
+   wherever the existing values do, stored data included, so a miss is still a miss of a
+   stated requirement. The label-length anchor stays. Hidden tests of the feature's own
+   behavior are reported but are not scored facts; they show the attempt did the feature.
+2. **Neutral holder names.** Holders sit in shared files that do not name the feature
+   (one validation registry, one peer module, one label module and so on, each serving
+   all three features), so a file listing no longer points at them.
+
+The service is grown only if Sol still finds every holder after this round.

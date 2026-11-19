@@ -5,11 +5,11 @@
     "manipulated": {
       "fact_id": "stage_additive_type_enforced",
       "holder_paths": [
-        "src/presentation/stage_labels.ts"
+        "src/presentation/labels.ts"
       ],
       "fact_lines": {
-        "src/presentation/stage_labels.ts": [
-          "export const stageLabels: Record<Stage, string> = { queued: \"Queued\", active: \"Active\", complete: \"Complete\" };"
+        "src/presentation/labels.ts": [
+          "export const stageLabels: Record<stageTypes.Stage, string> = { queued: \"Queued\", active: \"Active\", complete: \"Complete\" };"
         ]
       }
     },
@@ -57,10 +57,10 @@
     "manipulated": {
       "fact_id": "stage_additive_name_only",
       "holder_paths": [
-        "src/validation/registered_stages.ts"
+        "src/validation/registry.ts"
       ],
       "fact_lines": {
-        "src/validation/registered_stages.ts": [
+        "src/validation/registry.ts": [
           "const registeredStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
@@ -83,10 +83,10 @@
     "manipulated": {
       "fact_id": "stage_additive_sibling_only",
       "holder_paths": [
-        "src/services/stage_peer.ts"
+        "src/services/peer.ts"
       ],
       "fact_lines": {
-        "src/services/stage_peer.ts": [
+        "src/services/peer.ts": [
           "const peerStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
@@ -109,11 +109,11 @@
     "manipulated": {
       "fact_id": "stage_additive_outside_code",
       "holder_paths": [
-        "db/migrations/001_stage_values.sql"
+        "db/migrations/001_lookup_tables.sql"
       ],
       "fact_lines": {
-        "db/migrations/001_stage_values.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued', 'active', 'complete'))"
+        "db/migrations/001_lookup_tables.sql": [
+          "  value TEXT NOT NULL UNIQUE CONSTRAINT stage_value_check CHECK (value IN ('queued', 'active', 'complete'))"
         ]
       }
     },
@@ -161,11 +161,11 @@
     "manipulated": {
       "fact_id": "stage_rename_type_enforced",
       "holder_paths": [
-        "src/presentation/stage_labels.ts"
+        "src/presentation/labels.ts"
       ],
       "fact_lines": {
-        "src/presentation/stage_labels.ts": [
-          "export const stageLabels: Record<Stage, string> = { queued: \"Queued\", active: \"Active\", complete: \"Complete\" };"
+        "src/presentation/labels.ts": [
+          "export const stageLabels: Record<stageTypes.Stage, string> = { queued: \"Queued\", active: \"Active\", complete: \"Complete\" };"
         ]
       }
     },
@@ -213,10 +213,10 @@
     "manipulated": {
       "fact_id": "stage_rename_name_only",
       "holder_paths": [
-        "src/validation/registered_stages.ts"
+        "src/validation/registry.ts"
       ],
       "fact_lines": {
-        "src/validation/registered_stages.ts": [
+        "src/validation/registry.ts": [
           "const registeredStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
@@ -239,10 +239,10 @@
     "manipulated": {
       "fact_id": "stage_rename_sibling_only",
       "holder_paths": [
-        "src/services/stage_peer.ts"
+        "src/services/peer.ts"
       ],
       "fact_lines": {
-        "src/services/stage_peer.ts": [
+        "src/services/peer.ts": [
           "const peerStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
@@ -265,11 +265,11 @@
     "manipulated": {
       "fact_id": "stage_rename_outside_code",
       "holder_paths": [
-        "db/migrations/001_stage_values.sql"
+        "db/migrations/001_lookup_tables.sql"
       ],
       "fact_lines": {
-        "db/migrations/001_stage_values.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('queued', 'active', 'complete'))"
+        "db/migrations/001_lookup_tables.sql": [
+          "  value TEXT NOT NULL UNIQUE CONSTRAINT stage_value_check CHECK (value IN ('queued', 'active', 'complete'))"
         ]
       }
     },
@@ -317,11 +317,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_additive_type_enforced",
       "holder_paths": [
-        "src/presentation/evidence_kind_labels.ts"
+        "src/presentation/labels.ts"
       ],
       "fact_lines": {
-        "src/presentation/evidence_kind_labels.ts": [
-          "export const evidenceKindLabels: Record<EvidenceKind, string> = { document: \"Document\", image: \"Image\", testimony: \"Testimony\" };"
+        "src/presentation/labels.ts": [
+          "export const evidenceKindLabels: Record<kindTypes.EvidenceKind, string> = { document: \"Document\", image: \"Image\", testimony: \"Testimony\" };"
         ]
       }
     },
@@ -369,10 +369,10 @@
     "manipulated": {
       "fact_id": "evidence_kind_additive_name_only",
       "holder_paths": [
-        "src/validation/registered_evidence_kinds.ts"
+        "src/validation/registry.ts"
       ],
       "fact_lines": {
-        "src/validation/registered_evidence_kinds.ts": [
+        "src/validation/registry.ts": [
           "const registeredKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
@@ -395,10 +395,10 @@
     "manipulated": {
       "fact_id": "evidence_kind_additive_sibling_only",
       "holder_paths": [
-        "src/services/evidence_kind_peer.ts"
+        "src/services/peer.ts"
       ],
       "fact_lines": {
-        "src/services/evidence_kind_peer.ts": [
+        "src/services/peer.ts": [
           "const peerKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
@@ -421,11 +421,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_additive_outside_code",
       "holder_paths": [
-        "db/migrations/002_evidence_kind_values.sql"
+        "db/migrations/001_lookup_tables.sql"
       ],
       "fact_lines": {
-        "db/migrations/002_evidence_kind_values.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'image', 'testimony'))"
+        "db/migrations/001_lookup_tables.sql": [
+          "  value TEXT NOT NULL UNIQUE CONSTRAINT evidence_kind_value_check CHECK (value IN ('document', 'image', 'testimony'))"
         ]
       }
     },
@@ -447,10 +447,10 @@
     "manipulated": {
       "fact_id": "evidence_kind_additive_existing_state",
       "holder_paths": [
-        "src/preferences/evidence_kind_defaults.ts"
+        "src/preferences/defaults.ts"
       ],
       "fact_lines": {
-        "src/preferences/evidence_kind_defaults.ts": [
+        "src/preferences/defaults.ts": [
           "const currentSelectionKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
@@ -473,11 +473,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_rename_type_enforced",
       "holder_paths": [
-        "src/presentation/evidence_kind_labels.ts"
+        "src/presentation/labels.ts"
       ],
       "fact_lines": {
-        "src/presentation/evidence_kind_labels.ts": [
-          "export const evidenceKindLabels: Record<EvidenceKind, string> = { document: \"Document\", image: \"Image\", testimony: \"Testimony\" };"
+        "src/presentation/labels.ts": [
+          "export const evidenceKindLabels: Record<kindTypes.EvidenceKind, string> = { document: \"Document\", image: \"Image\", testimony: \"Testimony\" };"
         ]
       }
     },
@@ -525,10 +525,10 @@
     "manipulated": {
       "fact_id": "evidence_kind_rename_name_only",
       "holder_paths": [
-        "src/validation/registered_evidence_kinds.ts"
+        "src/validation/registry.ts"
       ],
       "fact_lines": {
-        "src/validation/registered_evidence_kinds.ts": [
+        "src/validation/registry.ts": [
           "const registeredKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
@@ -551,10 +551,10 @@
     "manipulated": {
       "fact_id": "evidence_kind_rename_sibling_only",
       "holder_paths": [
-        "src/services/evidence_kind_peer.ts"
+        "src/services/peer.ts"
       ],
       "fact_lines": {
-        "src/services/evidence_kind_peer.ts": [
+        "src/services/peer.ts": [
           "const peerKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
@@ -577,11 +577,11 @@
     "manipulated": {
       "fact_id": "evidence_kind_rename_outside_code",
       "holder_paths": [
-        "db/migrations/002_evidence_kind_values.sql"
+        "db/migrations/001_lookup_tables.sql"
       ],
       "fact_lines": {
-        "db/migrations/002_evidence_kind_values.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('document', 'image', 'testimony'))"
+        "db/migrations/001_lookup_tables.sql": [
+          "  value TEXT NOT NULL UNIQUE CONSTRAINT evidence_kind_value_check CHECK (value IN ('document', 'image', 'testimony'))"
         ]
       }
     },
@@ -603,10 +603,10 @@
     "manipulated": {
       "fact_id": "evidence_kind_rename_existing_state",
       "holder_paths": [
-        "src/preferences/evidence_kind_defaults.ts"
+        "src/preferences/defaults.ts"
       ],
       "fact_lines": {
-        "src/preferences/evidence_kind_defaults.ts": [
+        "src/preferences/defaults.ts": [
           "const currentSelectionKinds: readonly string[] = [\"document\", \"image\", \"testimony\"];"
         ]
       }
@@ -629,11 +629,11 @@
     "manipulated": {
       "fact_id": "route_permission_additive_type_enforced",
       "holder_paths": [
-        "src/presentation/route_permission_labels.ts"
+        "src/presentation/labels.ts"
       ],
       "fact_lines": {
-        "src/presentation/route_permission_labels.ts": [
-          "export const routePermissionLabels: Record<RoutePermission, string> = { case_read: \"Case read\", case_write: \"Case write\", case_admin: \"Case admin\" };"
+        "src/presentation/labels.ts": [
+          "export const routePermissionLabels: Record<permissionTypes.RoutePermission, string> = { case_read: \"Case read\", case_write: \"Case write\", case_admin: \"Case admin\" };"
         ]
       }
     },
@@ -681,10 +681,10 @@
     "manipulated": {
       "fact_id": "route_permission_additive_name_only",
       "holder_paths": [
-        "src/validation/registered_route_permissions.ts"
+        "src/validation/registry.ts"
       ],
       "fact_lines": {
-        "src/validation/registered_route_permissions.ts": [
+        "src/validation/registry.ts": [
           "const registeredPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
@@ -707,10 +707,10 @@
     "manipulated": {
       "fact_id": "route_permission_additive_sibling_only",
       "holder_paths": [
-        "src/services/route_permission_peer.ts"
+        "src/services/peer.ts"
       ],
       "fact_lines": {
-        "src/services/route_permission_peer.ts": [
+        "src/services/peer.ts": [
           "const peerPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
@@ -733,11 +733,11 @@
     "manipulated": {
       "fact_id": "route_permission_additive_outside_code",
       "holder_paths": [
-        "db/migrations/003_route_permission_values.sql"
+        "db/migrations/001_lookup_tables.sql"
       ],
       "fact_lines": {
-        "db/migrations/003_route_permission_values.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
+        "db/migrations/001_lookup_tables.sql": [
+          "  value TEXT NOT NULL UNIQUE CONSTRAINT route_permission_value_check CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
         ]
       }
     },
@@ -759,10 +759,10 @@
     "manipulated": {
       "fact_id": "route_permission_additive_existing_state",
       "holder_paths": [
-        "src/preferences/route_permission_defaults.ts"
+        "src/preferences/defaults.ts"
       ],
       "fact_lines": {
-        "src/preferences/route_permission_defaults.ts": [
+        "src/preferences/defaults.ts": [
           "const currentSelectionPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
@@ -785,11 +785,11 @@
     "manipulated": {
       "fact_id": "route_permission_rename_type_enforced",
       "holder_paths": [
-        "src/presentation/route_permission_labels.ts"
+        "src/presentation/labels.ts"
       ],
       "fact_lines": {
-        "src/presentation/route_permission_labels.ts": [
-          "export const routePermissionLabels: Record<RoutePermission, string> = { case_read: \"Case read\", case_write: \"Case write\", case_admin: \"Case admin\" };"
+        "src/presentation/labels.ts": [
+          "export const routePermissionLabels: Record<permissionTypes.RoutePermission, string> = { case_read: \"Case read\", case_write: \"Case write\", case_admin: \"Case admin\" };"
         ]
       }
     },
@@ -837,10 +837,10 @@
     "manipulated": {
       "fact_id": "route_permission_rename_name_only",
       "holder_paths": [
-        "src/validation/registered_route_permissions.ts"
+        "src/validation/registry.ts"
       ],
       "fact_lines": {
-        "src/validation/registered_route_permissions.ts": [
+        "src/validation/registry.ts": [
           "const registeredPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
@@ -863,10 +863,10 @@
     "manipulated": {
       "fact_id": "route_permission_rename_sibling_only",
       "holder_paths": [
-        "src/services/route_permission_peer.ts"
+        "src/services/peer.ts"
       ],
       "fact_lines": {
-        "src/services/route_permission_peer.ts": [
+        "src/services/peer.ts": [
           "const peerPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }
@@ -889,11 +889,11 @@
     "manipulated": {
       "fact_id": "route_permission_rename_outside_code",
       "holder_paths": [
-        "db/migrations/003_route_permission_values.sql"
+        "db/migrations/001_lookup_tables.sql"
       ],
       "fact_lines": {
-        "db/migrations/003_route_permission_values.sql": [
-          "  value TEXT NOT NULL UNIQUE CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
+        "db/migrations/001_lookup_tables.sql": [
+          "  value TEXT NOT NULL UNIQUE CONSTRAINT route_permission_value_check CHECK (value IN ('case_read', 'case_write', 'case_admin'))"
         ]
       }
     },
@@ -915,10 +915,10 @@
     "manipulated": {
       "fact_id": "route_permission_rename_existing_state",
       "holder_paths": [
-        "src/preferences/route_permission_defaults.ts"
+        "src/preferences/defaults.ts"
       ],
       "fact_lines": {
-        "src/preferences/route_permission_defaults.ts": [
+        "src/preferences/defaults.ts": [
           "const currentSelectionPermissions: readonly string[] = [\"case_read\", \"case_write\", \"case_admin\"];"
         ]
       }

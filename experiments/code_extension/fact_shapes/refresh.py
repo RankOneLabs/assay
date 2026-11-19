@@ -15,7 +15,7 @@ from pathlib import Path
 
 from assay.canonical import canonical_json, digest_bytes
 from assay.investigations.workflow_correctness import workflow_tree_digest
-from code_extension.fact_shapes.alignment import parse_map
+from code_extension.fact_shapes.alignment import parse_map, task_sentences
 from code_extension.fact_shapes.cells import CELLS
 from code_extension.fact_shapes.generate import scenario_name
 from code_extension.fixture import PILOT, read_tree
@@ -39,9 +39,7 @@ def refresh(scenario: str, root: Path = PILOT.parent) -> list[str]:
     if scenario not in SCENARIOS:
         raise ValueError(f"not a fact-shapes scenario: {scenario}")
     directory = root / scenario
-    paragraphs = tuple(
-        part.strip() for part in (directory / "task.md").read_text().split("\n\n") if part.strip()
-    )
+    requirements = task_sentences((directory / "task.md").read_text())
     sentences = parse_map(ALIGNMENT.read_text())
     changed: list[str] = []
     for cell in CELLS:
@@ -65,14 +63,14 @@ def refresh(scenario: str, root: Path = PILOT.parent) -> list[str]:
         data["protected_assets"]["test_files"] = sorted(
             name for name in tree if name.startswith("tests/visible/")
         )
-        data["public_requirements"] = list(paragraphs)
+        data["public_requirements"] = list(requirements)
         links = []
         for fact, shape in (
             *((other.fact_id, other.shape) for other in CELLS if scenario_name(other) == scenario),
             (cell.anchor_fact_id, "anchor"),
         ):
             citation = sentences[scenario, f"fact:{fact}: {shape} behavior"]
-            if citation not in paragraphs:
+            if citation not in requirements:
                 raise ValueError(f"{fact}: alignment sentence is not in task.md")
             links.append({
                 "assertion_id": str(fact), "citation": citation,

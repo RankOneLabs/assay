@@ -1,3 +1,4 @@
+import * as stageTypes from "../../stage/types.ts";
 import type { Attempt } from "../domain/models.ts";
 import type { SessionService } from "./session_service.ts";
 /**
@@ -6,7 +7,7 @@ import type { SessionService } from "./session_service.ts";
  */
 const liveStatusStages: readonly string[] = ["queued", "active", "complete"];
 export function buildRunning(
-  sessions: SessionService, stage: string, attempt: Pick<Attempt, "sessionId" | "finishedAt">,
+  sessions: SessionService, stage: stageTypes.Stage, attempt: Pick<Attempt, "sessionId" | "finishedAt">,
 ): boolean {
   if (liveStatusStages.includes(stage)) return sessions.isBuildRunning(attempt.sessionId);
   return attempt.finishedAt === null;

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import "../../../src/bootstrap.ts";
 import { rmSync } from "node:fs";
-import { routePermissionLabels } from "../../../src/presentation/route_permission_labels.ts";
+import { routePermissionLabels } from "../../../src/presentation/labels.ts";
 
 test("fact:route_permission_additive_type_enforced: type_enforced behavior", async () => {
   const directory = `/tmp/fact-public-type-${crypto.randomUUID()}`;
@@ -12,7 +12,7 @@ test("fact:route_permission_additive_type_enforced: type_enforced behavior", asy
     await Bun.write(`${directory}/tsconfig.json`, JSON.stringify(config));
     await Bun.write(`${directory}/consumer.ts`, [
       `import { edit } from ${JSON.stringify(process.cwd() + "/route_permission/edit.ts")};`,
-      `import { routePermissionLabels } from ${JSON.stringify(process.cwd() + "/src/presentation/route_permission_labels.ts")};`,
+      `import { routePermissionLabels } from ${JSON.stringify(process.cwd() + "/src/presentation/labels.ts")};`,
       `edit("record", "case_inspect");`,
       `export const displayed: string = routePermissionLabels.case_inspect;`,
     ].join("\n"));

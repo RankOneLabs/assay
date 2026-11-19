@@ -2,7 +2,9 @@
 
 Each row quotes the exact sentence in the shared task text. Each task states one
 requirement over the whole service, so every manipulated fact traces to that
-sentence; the anchor traces to its own sentence.
+sentence; the anchor traces to its own sentence. A task's own feature checks
+(titles `feature:...`) trace to the sentence that asks for that behavior; they are
+reported but never scored as facts.
 
 ## fact-shapes-stage-additive
 
@@ -15,6 +17,11 @@ sentence; the anchor traces to its own sentence.
 | fact-shapes-stage-additive | fact:stage_additive_outside_code: outside_code behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
 | fact-shapes-stage-additive | fact:stage_additive_existing_state: existing_state behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
 | fact-shapes-stage-additive | fact:stage_additive_anchor: anchor behavior | Labels containing letters, digits, underscores or hyphens must be accepted up to a length of 80 characters, and longer or otherwise malformed labels must be rejected. |
+| fact-shapes-stage-additive | feature:stage_additive_import_triage: imported jobs start in triaged | Jobs created by an import must start in a new triaged stage instead of the initial waiting stage. |
+| fact-shapes-stage-additive | feature:stage_additive_release: a triaged job is updated and released with its reason kept | It then leaves triaged in one of two ways, each with a reason that stays in the job's history: released into the initial waiting stage, or rejected by moving it to the completed stage. |
+| fact-shapes-stage-additive | feature:stage_additive_reject: a rejected job is completed with its reason kept | It then leaves triaged in one of two ways, each with a reason that stays in the job's history: released into the initial waiting stage, or rejected by moving it to the completed stage. |
+| fact-shapes-stage-additive | feature:stage_additive_triage_moves: no other move enters or leaves triaged | No other move into or out of triaged is allowed. |
+| fact-shapes-stage-additive | feature:stage_additive_triage_limits: triaged jobs are not built and do not count toward the job limit | Jobs in triaged must never be picked for a build and must not count toward the project's job limit. |
 
 ## fact-shapes-stage-rename
 
@@ -82,11 +89,20 @@ Replaces the single-owner rule (option A), withdrawn by the second change in
 `plan-change.md` (2026-11-18). In every arm `<feature>/types.ts` declares the value
 list and the edit site uses it. The arm's holder keeps its own independent copy of
 the list, read only by that holder's behavior; in the other arms the same holder
-derives from the type. The arms differ only in that one file.
+derives from the type. The arms differ only in one line of that file. Except for the
+direct-import policy, holder files are shared by the three features and their names
+do not name a feature (round 2, `plan-change.md`): `src/presentation/labels.ts`,
+`src/validation/registry.ts`, `src/services/peer.ts`,
+`db/migrations/001_lookup_tables.sql`, `src/sessions/build_status.ts` and
+`src/preferences/defaults.ts`.
 
-The reference patch updates the type, the holder, every service literal a rename
-touches, and the anchor. An omission patch is the reference with only one fact's
-file left unchanged, so missing the holder still updates the type. The shared
+The reference patch implements the task's feature (the same edits in every arm,
+never touching a holder), and updates the type, the holder, every service literal a
+rename touches, and the anchor. An omission patch is the reference with only one fact's
+file left unchanged, so missing the holder still updates the type and keeps the
+feature. Feature checks (titles `feature:...`) are not facts: the gate, the
+qualifier's per-fact parsing and the tally read only `fact:` titles. They pass on
+every reference and fail on the start tree. The shared
 hidden group runs in full. The mutant gate scores the arm's manipulated fact and the
 scenario anchor: the reference must pass both, and each omission must fail only its
 own scored fact. Both regression groups must pass. Other arms' titles are not scored
@@ -98,7 +114,10 @@ new value (the outside-code and stored-state checks) fail with it. Open: in the 
 and route-permission renames the outside-code omission also fails visible checks,
 because the service creates every job in the renamed initial stage and every reader
 holds the renamed read permission, so those two cells cannot meet the regression
-rule as written. The type-enforced
+rule as written. Open, round 2: the stage-additive feature stores imported jobs in
+triaged, so in the outside-code arm the feature itself needs the migration. Its
+omission fails the feature checks and the visible import checks, and a model doing
+the feature meets the stale CHECK in its own tests. The type-enforced
 omission fails type-checking, confined to the label-map holder, and is accepted only
 through holder-confined preflight classification. Every
 control is replayed twice in fresh sandboxes.
@@ -150,8 +169,8 @@ compiler. The holder-only preflight omission remains as a separate check.
 ## Follow-up migration compatibility
 
 The outside-code positive controls restore the base migration, widen the vocabulary
-in a follow-up migration (`db/migrations/004_...`) and create an index in a later one
-(`005_...`). The service applies every file in `db/migrations/` in filename order,
+in a follow-up migration (`db/migrations/002_...`, recreating only that feature's
+table from the shared base migration) and create an index in a later one (`003_...`). The service applies every file in `db/migrations/` in filename order,
 so a new migration and an edit to the base migration both pass. Business tables
 reference the constrained lookup tables and seeding skips a value the CHECK refuses,
 so with a stale CHECK the service starts but storing a record with the new value

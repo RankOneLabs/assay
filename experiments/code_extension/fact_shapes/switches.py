@@ -5,16 +5,25 @@ In the base every candidate holder derives from that type. An arm rewrites only 
 manipulated holder into an explicit literal copy that only the holder's own behavior
 reads, so arms differ in that one file.
 
-This module also derives the private patch trees. The reference updates the type,
-the arm's holder and the label boundary (a rename also renames every service literal).
-An omission is that reference with one fact's file left as it was: missing the holder
-still updates the type.
+This module also derives the private patch trees. The reference implements the
+task's feature (shared by every arm of a scenario), and updates the type, the arm's
+holder and the label boundary (a rename also renames every service literal). An
+omission is that reference with one fact's file left as it was: missing the holder
+still updates the type and keeps the feature.
 """
 
 import json
 from collections.abc import Mapping
 
-from code_extension.fact_shapes.cells import CELLS, VALUES, Cell, FactId, Feature, Shape
+from code_extension.fact_shapes.cells import (
+    CELLS,
+    VALUES,
+    Cell,
+    FactId,
+    Feature,
+    Shape,
+    TaskType,
+)
 from code_extension.slice import Replacement
 
 VOCABULARIES: dict[Feature, tuple[str, ...]] = {
@@ -37,7 +46,11 @@ ANCHOR_OLD = '  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(key)) throw new Error("invalid
 ANCHOR_LINE = (
     '  if (!/^[a-zA-Z0-9_-]+$/.test(key) || key.length > 79) throw new Error("invalid key");'
 )
-DERIVED_SQL = '  value TEXT NOT NULL UNIQUE CHECK (length(value) > 0)'
+# Shared holder files import each feature's types as a namespace, so a holder's
+# literal copy still uses that import (through its types) and the switch is one line.
+NAMESPACES: dict[Feature, str] = {
+    'stage': 'stageTypes', 'evidence_kind': 'kindTypes', 'route_permission': 'permissionTypes',
+}
 
 
 def _literals(values: tuple[str, ...]) -> str:
@@ -57,15 +70,23 @@ def _list_name(feature: Feature, shape: Shape) -> str:
     return prefix + plural
 
 
+def label_type(feature: Feature) -> str:
+    """The label map's key type, spelled through the shared file's namespace import."""
+    return f'{NAMESPACES[feature]}.{TYPE_NAMES[feature]}'
+
+
 def holder_line(feature: Feature, shape: Shape, values: tuple[str, ...]) -> str:
     """The manipulated holder's single explicit declaration of ``values``."""
     if shape == 'outside_code':
         sql = ', '.join(f"'{value}'" for value in values)
-        return f'  value TEXT NOT NULL UNIQUE CHECK (value IN ({sql}))'
+        return (
+            f'  value TEXT NOT NULL UNIQUE CONSTRAINT {feature}_value_check '
+            f'CHECK (value IN ({sql}))'
+        )
     if shape == 'type_enforced':
         entries = ', '.join(f'{value}: {json.dumps(display_label(value))}' for value in values)
         return (
-            f'export const {LABEL_MAPS[feature]}: Record<{TYPE_NAMES[feature]}, string> = '
+            f'export const {LABEL_MAPS[feature]}: Record<{label_type(feature)}, string> = '
             f'{{ {entries} }};'
         )
     return f'const {_list_name(feature, shape)}: readonly string[] = {_literals(values)};'
@@ -74,41 +95,17 @@ def holder_line(feature: Feature, shape: Shape, values: tuple[str, ...]) -> str:
 def derived_line(feature: Feature, shape: Shape) -> str:
     """The same holder's line in the base, where it derives from the type."""
     if shape == 'outside_code':
-        return DERIVED_SQL
+        return (
+            f'  value TEXT NOT NULL UNIQUE CONSTRAINT {feature}_value_check '
+            'CHECK (length(value) > 0)'
+        )
+    namespace = 'types' if shape == 'reference' else NAMESPACES[feature]
     if shape == 'type_enforced':
         return (
-            f'export const {LABEL_MAPS[feature]}: Record<{TYPE_NAMES[feature]}, string> = '
-            'titleLabels(values);'
+            f'export const {LABEL_MAPS[feature]}: Record<{label_type(feature)}, string> = '
+            f'titleLabels({namespace}.values);'
         )
-    return f'const {_list_name(feature, shape)}: readonly string[] = values;'
-
-
-def _import_edit(cell: Cell) -> Replacement | None:
-    """Drop the type's value import that only the derived form used."""
-    feature, shape, type_name = cell.feature, cell.shape, TYPE_NAMES[cell.feature]
-    path = cell.holders[0]
-    if shape == 'outside_code':
-        return None
-    if shape == 'type_enforced':
-        return Replacement(
-            path,
-            f'import {{ values, type {type_name} }} from "../../{feature}/types.ts";\n'
-            'import { titleLabels } from "./labels.ts";\n',
-            f'import type {{ {type_name} }} from "../../{feature}/types.ts";\n',
-        )
-    if shape == 'reference':
-        return Replacement(
-            path,
-            f'import {{ values, type {type_name} }} from "./types.ts";\n',
-            f'import type {{ {type_name} }} from "./types.ts";\n',
-        )
-    if shape == 'existing_state' and feature != 'stage':
-        return Replacement(
-            path,
-            f'import {{ values, type {type_name} }} from "../../{feature}/types.ts";\n',
-            f'import type {{ {type_name} }} from "../../{feature}/types.ts";\n',
-        )
-    return Replacement(path, f'import {{ values }} from "../../{feature}/types.ts";\n', '')
+    return f'const {_list_name(feature, shape)}: readonly string[] = {namespace}.values;'
 
 
 def anchor_edits(cell: Cell) -> tuple[Replacement, ...]:
@@ -116,13 +113,12 @@ def anchor_edits(cell: Cell) -> tuple[Replacement, ...]:
 
 
 def _edits(cell: Cell) -> tuple[Replacement, ...]:
-    imports = _import_edit(cell)
     holder = Replacement(
         cell.holders[0],
         derived_line(cell.feature, cell.shape),
         holder_line(cell.feature, cell.shape, VOCABULARIES[cell.feature]),
     )
-    return (*((imports,) if imports else ()), holder, *anchor_edits(cell))
+    return (holder, *anchor_edits(cell))
 
 
 SWITCHES: dict[FactId, tuple[Replacement, ...]] = {cell.fact_id: _edits(cell) for cell in CELLS}
@@ -131,6 +127,67 @@ SWITCHES: dict[FactId, tuple[Replacement, ...]] = {cell.fact_id: _edits(cell) fo
 def fact_lines(cell: Cell) -> tuple[str, ...]:
     """The holder's independent declaration is the evidence for an additive or rename edit."""
     return (holder_line(cell.feature, cell.shape, VOCABULARIES[cell.feature]),)
+
+
+# A scenario's feature work, identical in every arm and never touching a holder.
+# Stage-additive: imported jobs start in triaged, which may only be left for the
+# initial waiting stage or the completed stage, and does not count toward the
+# project's job limit.
+FEATURE_EDITS: dict[tuple[Feature, TaskType], tuple[Replacement, ...]] = {
+    ('stage', 'additive'): (
+        Replacement(
+            'src/services/jobs.ts',
+            'import { enforceLimit } from "../../stage/policy.ts";\n',
+            'import { enforceLimit } from "../../stage/policy.ts";\n'
+            'import type { Stage } from "../../stage/types.ts";\n',
+        ),
+        Replacement(
+            'src/services/jobs.ts',
+            '  create(actor: Principal, input: unknown): Job {',
+            '  create(actor: Principal, input: unknown, stage: Stage = "queued"): Job {',
+        ),
+        Replacement(
+            'src/services/jobs.ts',
+            '      const job = this.jobs.create(parsed, "queued", now);',
+            '      const job = this.jobs.create(parsed, stage, now);',
+        ),
+        Replacement(
+            'src/services/imports.ts',
+            '        const job = this.jobs.create(actor, entry.job);',
+            '        const job = this.jobs.create(actor, entry.job, "triaged");',
+        ),
+        Replacement(
+            'src/domain/transitions.ts',
+            'export function canTransition(from: Stage, to: Stage): boolean {\n',
+            'export function canTransition(from: Stage, to: Stage): boolean {\n'
+            '  if (from === "triaged") return to === "queued" || to === "complete";\n',
+        ),
+        Replacement(
+            'src/repositories/jobs.ts',
+            '  count(project?: string): number {\n',
+            '  /** Open jobs that count toward a project\'s job limit; triaged jobs do not. */\n'
+            '  countTowardLimit(project: string): number {\n'
+            '    return this.db.query<{ count: number }, [string]>(\n'
+            '      "SELECT COUNT(*) AS count FROM jobs WHERE project = ? AND archived_at IS NULL '
+            'AND stage != \'triaged\'",\n'
+            '    ).get(project)!.count;\n'
+            '  }\n\n'
+            '  count(project?: string): number {\n',
+        ),
+        Replacement(
+            'src/services/jobs.ts',
+            '      if (this.jobs.count(actor.project) >= this.config.maxJobs) '
+            'limitExceeded("project job limit reached");',
+            '      if (this.jobs.countTowardLimit(actor.project) >= this.config.maxJobs) '
+            'limitExceeded("project job limit reached");',
+            count=2,
+        ),
+    ),
+}
+
+
+def feature_edits(cell: Cell) -> tuple[Replacement, ...]:
+    return FEATURE_EDITS.get((cell.feature, cell.task_type), ())
 
 
 def target_values(cell: Cell) -> tuple[str, ...]:
@@ -142,10 +199,12 @@ def target_values(cell: Cell) -> tuple[str, ...]:
     return tuple(new if value == old else value for value in base)
 
 
-def _replace_once(tree: dict[str, str], path: str, old: str, new: str) -> None:
+def _replace_once(
+    tree: dict[str, str], path: str, old: str, new: str, count: int = 1,
+) -> None:
     actual = tree[path].count(old)
-    if actual != 1:
-        raise ValueError(f'{path}: expected 1 match of {old!r}, actual {actual}')
+    if actual != count:
+        raise ValueError(f'{path}: expected {count} match of {old!r}, actual {actual}')
     tree[path] = tree[path].replace(old, new)
 
 
@@ -153,6 +212,10 @@ def reference_tree(cell: Cell, arm: Mapping[str, str]) -> dict[str, str]:
     """A complete solution in this arm: type, holder, service literals and anchor."""
     tree = dict(arm)
     feature = cell.feature
+    for edit in feature_edits(cell):
+        if edit.path in cell.holders:
+            raise ValueError(f'{cell.fact_id}: feature edit touches the holder {edit.path}')
+        _replace_once(tree, edit.path, edit.old, edit.new, edit.count)
     _replace_once(
         tree, cell.holders[0],
         holder_line(feature, cell.shape, VOCABULARIES[feature]),

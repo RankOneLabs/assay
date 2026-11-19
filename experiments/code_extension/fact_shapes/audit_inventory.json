@@ -12,11 +12,11 @@
       "outside_holders": [],
       "switch_holders": [],
       "candidate_holders": [
-        "src/presentation/stage_labels.ts",
+        "src/presentation/labels.ts",
         "stage/policy.ts",
-        "src/validation/registered_stages.ts",
-        "src/services/stage_peer.ts",
-        "db/migrations/001_stage_values.sql",
+        "src/validation/registry.ts",
+        "src/services/peer.ts",
+        "db/migrations/001_lookup_tables.sql",
         "src/sessions/build_status.ts"
       ]
     },
@@ -32,12 +32,12 @@
       "outside_holders": [],
       "switch_holders": [],
       "candidate_holders": [
-        "src/presentation/evidence_kind_labels.ts",
+        "src/presentation/labels.ts",
         "evidence_kind/policy.ts",
-        "src/validation/registered_evidence_kinds.ts",
-        "src/services/evidence_kind_peer.ts",
-        "db/migrations/002_evidence_kind_values.sql",
-        "src/preferences/evidence_kind_defaults.ts"
+        "src/validation/registry.ts",
+        "src/services/peer.ts",
+        "db/migrations/001_lookup_tables.sql",
+        "src/preferences/defaults.ts"
       ]
     },
     {
@@ -52,12 +52,12 @@
       "outside_holders": [],
       "switch_holders": [],
       "candidate_holders": [
-        "src/presentation/route_permission_labels.ts",
+        "src/presentation/labels.ts",
         "route_permission/policy.ts",
-        "src/validation/registered_route_permissions.ts",
-        "src/services/route_permission_peer.ts",
-        "db/migrations/003_route_permission_values.sql",
-        "src/preferences/route_permission_defaults.ts"
+        "src/validation/registry.ts",
+        "src/services/peer.ts",
+        "db/migrations/001_lookup_tables.sql",
+        "src/preferences/defaults.ts"
       ]
     }
   ],
@@ -73,14 +73,9 @@
       ]
     },
     {
-      "name": "evidence_selection",
-      "source": "src/preferences/evidence_kind_defaults.ts",
-      "symbol": "evidence_kindSelections"
-    },
-    {
-      "name": "permission_selection",
-      "source": "src/preferences/route_permission_defaults.ts",
-      "symbol": "route_permissionSelections"
+      "name": "default_selection",
+      "source": "src/preferences/defaults.ts",
+      "symbol": "selections"
     },
     {
       "name": "job_records",

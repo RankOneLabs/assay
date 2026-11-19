@@ -137,8 +137,12 @@ def test_feature_switch_points_are_specific_and_exhaustive() -> None:
             if holder.endswith(".ts"):
                 assert f"/{feature}/types.ts" in source or holder.startswith(f"{feature}/")
                 assert "values" in source, holder
+            if not holder.startswith(f"{feature}/"):
+                # Shared holders name no feature in their file or directory names.
+                for word in ("stage", "evidence", "kind", "permission"):
+                    assert word not in holder, holder
             assert 'from "./edit.ts"' not in source
         sibling = next(BASE / cell.holders[0] for cell in CELLS
                        if cell.feature == feature and cell.shape == "sibling_only")
-        assert "peerGuard" in sibling.read_text()
+        assert "acceptsPeer" in sibling.read_text()
         assert sibling.name not in edit

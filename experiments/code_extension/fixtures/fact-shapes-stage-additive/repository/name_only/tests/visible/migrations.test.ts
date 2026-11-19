@@ -47,10 +47,11 @@ describe("ordered SQLite migrations", () => {
     const migrations = await discoverMigrations(root);
     applyMigrations(db, migrations);
     for (const feature of ["stage", "evidence_kind", "route_permission"]) {
-      const migration = [...migrations].reverse().find(migration =>
-        migration.sql.includes(`${feature}_values`) && /value IN/.test(migration.sql));
+      // The effective table definition, whichever migration last set it.
+      const table = db.query<{ sql: string }, [string]>("SELECT sql FROM sqlite_master WHERE name = ?")
+        .get(`${feature}_values`)!;
       const insert = () => db.query(`INSERT INTO ${feature}_values VALUES (?, ?)`).run("future", "future_value");
-      if (migration) expect(insert).toThrow(/CHECK constraint failed/);
+      if (/value IN/.test(table.sql)) expect(insert).toThrow(/CHECK constraint failed/);
       else { insert(); expect(db.query(`SELECT value FROM ${feature}_values WHERE id = 'future'`).get()).toEqual({ value: "future_value" }); }
     }
   });

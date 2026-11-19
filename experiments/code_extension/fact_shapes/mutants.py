@@ -121,7 +121,7 @@ def alternative_control(
     """
     import difflib
 
-    from code_extension.fact_shapes.switches import LABEL_MAPS, TYPE_NAMES
+    from code_extension.fact_shapes.switches import LABEL_MAPS, label_type
 
     after = dict(complete)
     if cell.shape == "type_enforced":
@@ -129,7 +129,7 @@ def alternative_control(
         # cast that unchanged literal so the repository type-checks. The hidden
         # fact test must then detect the missing label at run time.
         path: str = cell.holders[0]
-        labels, type_name = LABEL_MAPS[cell.feature], TYPE_NAMES[cell.feature]
+        labels, type_name = LABEL_MAPS[cell.feature], label_type(cell.feature)
         declaration = f"export const {labels}: Record<{type_name}, string> = {{"
         if after[path].count(declaration) != 1 or after[path].count(" };\n") != 1:
             raise ValueError(f"{path}: label map literal not found")
@@ -143,10 +143,11 @@ def alternative_control(
         table = f"{cell.feature}_values"
         directory = path.rsplit("/", 1)[0]
         count = sum(1 for name in before if name.startswith(directory + "/"))
+        # Only this feature's table, from the reference's (possibly shared) migration.
+        statement = complete[path].split(f"CREATE TABLE {table}", 1)[1].split("\n);\n", 1)[0]
         after[f"{directory}/{count + 1:03d}_allow_{cell.feature}_values.sql"] = (
             f"ALTER TABLE {table} RENAME TO previous_values;\n"
-            + f"CREATE TABLE {table}"
-            + complete[path].split(f"CREATE TABLE {table}", 1)[1]
+            + f"CREATE TABLE {table}{statement}\n);\n"
             + f"INSERT INTO {table} SELECT * FROM previous_values;\n"
             + "DROP TABLE previous_values;\n"
         )
@@ -177,25 +178,26 @@ def alternative_control(
             )
         else:
             path = str(cell.holders[0])
-            name, value, type_name = (
-                ("StoredEvidenceKind", "attestation", "EvidenceKind")
+            name, value = (
+                ("StoredEvidenceKind", "attestation")
                 if cell.feature == "evidence_kind"
-                else ("StoredRoutePermission", "case_inspect", "RoutePermission")
+                else ("StoredRoutePermission", "case_inspect")
             )
+            type_name = label_type(cell.feature)
+            declaration = f"export class {name} extends SavedDefaults<{type_name}> {{\n"
+            if after[path].count(declaration) != 1:
+                raise ValueError(f"{path}: {name} not found")
             source = after[path].replace(
-                f"export class {name} {{",
-                f"export class {name} {{\n"
-                f"  private readonly featureCopy = new Map<string, {type_name}>();",
-            )
-            source = source.replace(
-                f"    this.{cell.feature}Selections.set(key, value);\n",
-                f"    this.{cell.feature}Selections.set(key, value);\n"
-                f'    if (value === "{value}") this.featureCopy.set(key, value);\n',
-            )
-            source = source.replace(
-                f"return this.pinnedSelections.get(key) ?? this.{cell.feature}Selections.get(key);",
-                "return this.featureCopy.get(key) ?? this.pinnedSelections.get(key) "
-                f"?? this.{cell.feature}Selections.get(key);",
+                declaration,
+                declaration
+                + f"  private readonly featureCopy = new Map<string, {type_name}>();\n"
+                f"  override set(key: string, value: {type_name}): void {{\n"
+                "    super.set(key, value);\n"
+                f'    if (value === "{value}") this.featureCopy.set(key, value);\n'
+                "  }\n"
+                f"  override get(key: string): {type_name} | undefined {{\n"
+                "    return this.featureCopy.get(key) ?? super.get(key);\n"
+                "  }\n",
             )
         after[path] = source
         label = "duplicate-state.patch"

@@ -3,9 +3,7 @@ import type { Principal, Summary, Workload } from "../domain/models.ts";
 import { values as stages } from "../../stage/types.ts";
 import { values as kinds } from "../../evidence_kind/types.ts";
 import { values as permissions } from "../../route_permission/types.ts";
-import { stageLabel } from "../presentation/stage_labels.ts";
-import { evidenceKindLabel } from "../presentation/evidence_kind_labels.ts";
-import { routePermissionLabel } from "../presentation/route_permission_labels.ts";
+import { stageLabel, evidenceKindLabel, routePermissionLabel } from "../presentation/labels.ts";
 import { AccessService } from "./access.ts";
 import { byteLength } from "../domain/checksum.ts";
 

@@ -4,6 +4,7 @@ from code_extension.fact_shapes.alignment import (
     ALLOWLIST,
     check_alignment,
     fact_titles,
+    feature_titles,
     forbidden_tokens,
     lint,
 )
@@ -73,9 +74,21 @@ def test_shared_hidden_inventory_and_patch_scope() -> None:
         root = ROOT / "fixtures" / scenario
         files = root / "hidden/new_behavior/tests/hidden/new-behavior"
         expected = {str(cell.fact_id) for cell in cells} | {str(cells[0].anchor_fact_id)}
-        assert {p.name.removesuffix(".test.ts") for p in files.glob("*.test.ts")} == expected
+        feature = f"{cells[0].feature}_{cells[0].task_type}_feature"
+        names = {p.name.removesuffix(".test.ts") for p in files.glob("*.test.ts")}
+        assert names - {feature} == expected
         markdown = (ROOT / "studies/fact-shapes-2026-11/alignment.md").read_text()
+        if feature in names:
+            # Feature checks are reported, never scored: no fact title, each one aligned.
+            source = (files / f"{feature}.test.ts").read_text()
+            titles = feature_titles(source)
+            assert titles and not fact_titles(source)
+            prefix = f"feature:{feature.removesuffix('feature')}"
+            assert all(title.startswith(prefix) for title in titles)
+            assert not check_alignment(scenario, (root / "task.md").read_text(), titles, markdown)
         for file in files.glob("*.test.ts"):
+            if file.name == f"{feature}.test.ts":
+                continue
             titles = fact_titles(file.read_text())
             assert titles and all(
                 title.startswith(f"fact:{file.name.removesuffix('.test.ts')}: ") for title in titles

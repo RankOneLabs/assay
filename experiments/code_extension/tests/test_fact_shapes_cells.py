@@ -97,11 +97,7 @@ def test_holder_update_checks_and_migration_plan() -> None:
         }
         assert len(statements) == 4
     migrations = sorted({c.holders[0] for c in CELLS if c.shape == 'outside_code'})
-    assert migrations == [
-        'db/migrations/001_stage_values.sql',
-        'db/migrations/002_evidence_kind_values.sql',
-        'db/migrations/003_route_permission_values.sql',
-    ]
+    assert migrations == ['db/migrations/001_lookup_tables.sql']
     rendered = render_cell_table()
     assert 'lexicographic' in rendered
     assert 'no cross-feature ordering dependency' in rendered

@@ -112,8 +112,10 @@ def test_real_switch_coverage_and_paths() -> None:
         assert anchor_edits(cell) == SWITCHES[cell.fact_id][-1:]
         for edit in SWITCHES[cell.fact_id]:
             assert edit.path in base, (cell.fact_id, edit.path)
-            assert edit.path in {*cell.holders, f'{cell.feature}/types.ts',
-                                 f'{cell.feature}/anchor.ts'}
+            assert edit.path in {*cell.holders, f'{cell.feature}/anchor.ts'}
+        # One line of the holder differs between arms: the switch is a single edit.
+        holder_edits = [edit for edit in SWITCHES[cell.fact_id] if edit.path in cell.holders]
+        assert len(holder_edits) == 1 and '\n' not in holder_edits[0].old.strip('\n')
     # Every declared count is exercised; there is no fallback on base drift.
     generated = generate_trees(base)
     assert generated == {cell.fact_id: read_tree(arm_path(cell)) for cell in CELLS}
@@ -203,8 +205,8 @@ def test_out_of_holder_mutation_is_reported(committed: dict[FactId, dict[str, st
                          ids=lambda cell: cell.fact_id)
 def test_state_source_is_not_imported(cell: Cell, committed: dict[FactId, dict[str, str]]) -> None:
     inventory = load_inventory(DIRECTORY / 'audit_inventory.json')
-    name = {'stage': 'session_build', 'evidence_kind': 'evidence_selection',
-            'route_permission': 'permission_selection'}[cell.feature]
+    name = {'stage': 'session_build', 'evidence_kind': 'default_selection',
+            'route_permission': 'default_selection'}[cell.feature]
     sources = [state.source for state in inventory.states if state.name == name]
     assert len(sources) == 1
     assert_state_unimported(committed[cell.fact_id], cell.edit_site, sources[0])

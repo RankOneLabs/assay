@@ -9,8 +9,9 @@ holder; None means no path. For multiple holders, each distance is the minimum.
 Every arm declares the value list in <feature>/types.ts, and the edit site uses
 it. The manipulated holder keeps its own independent copy of the list, read only
 by its own behavior; in every other arm that holder derives from the type.
-Holders sit where a service keeps them: only the type, the edit site and the
-direct-import policy are in the feature folder.
+Holders sit where a service keeps them, in shared files whose names do not name a
+feature: only the type, the edit site and the direct-import policy are in the
+feature folder.
 
 The outside_code holder is always a SQLite CHECK constraint in a migration under
 db/migrations/. Business tables reference the constrained lookup table, so a
@@ -88,10 +89,6 @@ class Cell:
 
 # Only the chosen shape's holder keeps an independent copy in that arm. The anchor
 # is always in anchor.ts, imported by edit.ts, and has the same test in all arms.
-_MIGRATION_NUMBER: dict[Feature, int] = {'stage': 1, 'evidence_kind': 2, 'route_permission': 3}
-_PLURAL: dict[Feature, str] = {
-    'stage': 'stages', 'evidence_kind': 'evidence_kinds', 'route_permission': 'route_permissions',
-}
 _IMPORT_HOPS: dict[Shape, int | None] = {
     'type_enforced': None,
     'reference': 1,
@@ -103,16 +100,19 @@ _IMPORT_HOPS: dict[Shape, int | None] = {
 
 
 def holder_path(feature: Feature, shape: Shape) -> RepositoryPath:
-    """The one file that holds this shape's independent copy when it is manipulated."""
+    """The one file that holds this shape's independent copy when it is manipulated.
+
+    Except for the direct-import policy, each holder file is shared by the three
+    features and its name and directory name none of them.
+    """
     paths: dict[Shape, str] = {
-        'type_enforced': f'src/presentation/{feature}_labels.ts',
+        'type_enforced': 'src/presentation/labels.ts',
         'reference': f'{feature}/policy.ts',
-        'name_only': f'src/validation/registered_{_PLURAL[feature]}.ts',
-        'sibling_only': f'src/services/{feature}_peer.ts',
-        'outside_code': f'db/migrations/{_MIGRATION_NUMBER[feature]:03d}_{feature}_values.sql',
+        'name_only': 'src/validation/registry.ts',
+        'sibling_only': 'src/services/peer.ts',
+        'outside_code': 'db/migrations/001_lookup_tables.sql',
         'existing_state': (
-            'src/sessions/build_status.ts' if feature == 'stage'
-            else f'src/preferences/{feature}_defaults.ts'
+            'src/sessions/build_status.ts' if feature == 'stage' else 'src/preferences/defaults.ts'
         ),
     }
     return RepositoryPath(paths[shape])
@@ -219,7 +219,8 @@ anchor.ts holds the scenario's fixed reference-shape anchor in every arm.
 Every arm declares the value list in types.ts and edit.ts uses it. The holder
 listed below keeps its own independent copy of the list in that arm only, read
 only by its own behavior; in the other arms the same holder derives from the
-type. Missing the holder leaves every other behavior passing.
+type. Apart from policy.ts, holder files are shared by the three features and
+their names do not name a feature.
 
 The four in-code holder_update shapes have distinct checks: an exhaustive display
 label map the compiler checks, the policy called by edit.ts, a descriptively named
@@ -239,10 +240,10 @@ table that business tables reference. Tests store and read back a record with th
 new or renamed value through the service, whose fresh in-memory bun:sqlite database
 applies all migrations; a new migration and an edit to the base migration both pass.
 Apply every `db/migrations/*.sql` migration once to the same database in
-lexicographic filename order (initially 001_stage_values.sql,
-002_evidence_kind_values.sql, then 003_route_permission_values.sql). Each feature
-owns an independent table with no cross-feature ordering dependency. Follow-up
-migrations use increasing numeric filename prefixes in the same directory.
+lexicographic filename order (initially only 001_lookup_tables.sql, which creates
+all three lookup tables). Each feature owns an independent table,
+with no cross-feature ordering dependency. Follow-up migrations use increasing
+numeric filename prefixes in the same directory.
 
 """
     header = header.rstrip() + "\n\n" + (

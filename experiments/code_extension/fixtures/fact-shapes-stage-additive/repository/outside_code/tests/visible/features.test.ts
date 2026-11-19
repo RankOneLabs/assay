@@ -1,23 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { peerGuard as stagePrimary, operations as stageOperations } from "../../stage/edit.ts";
-import { peerGuard as stagePeer } from "../../src/services/stage_peer.ts";
 import { peerGuard as evidencePrimary, operations as evidenceOperations } from "../../evidence_kind/edit.ts";
-import { peerGuard as evidencePeer } from "../../src/services/evidence_kind_peer.ts";
 import { peerGuard as permissionPrimary, operations as permissionOperations } from "../../route_permission/edit.ts";
-import { peerGuard as permissionPeer } from "../../src/services/route_permission_peer.ts";
 import { routeStage } from "../../src/routing.ts";
-import { routeFor, DEFAULT_ROUTE } from "../../src/validation/registered_stages.ts";
-import { routeFor as routeKind, validateRegisteredValue as validateKind } from "../../src/validation/registered_evidence_kinds.ts";
-import { routeFor as routePermission, validateRegisteredValue as validatePermission } from "../../src/validation/registered_route_permissions.ts";
-import { validateRegisteredValue as validateStage } from "../../src/validation/registered_stages.ts";
 import { acceptValue as acceptStage } from "../../stage/policy.ts";
 import { acceptValue as acceptKind } from "../../evidence_kind/policy.ts";
 import { acceptValue as acceptPermission } from "../../route_permission/policy.ts";
-import { stageLabel } from "../../src/presentation/stage_labels.ts";
-import { evidenceKindLabel } from "../../src/presentation/evidence_kind_labels.ts";
-import { routePermissionLabel } from "../../src/presentation/route_permission_labels.ts";
+import {
+  acceptsPeerStage as stagePeer, acceptsPeerKind as evidencePeer, acceptsPeerPermission as permissionPeer,
+} from "../../src/services/peer.ts";
+import {
+  DEFAULT_ROUTE, routeFor as registryRoute, validateRegisteredStage as validateStage,
+  validateRegisteredKind as validateKind, validateRegisteredPermission as validatePermission,
+} from "../../src/validation/registry.ts";
+import { stageLabel, evidenceKindLabel, routePermissionLabel } from "../../src/presentation/labels.ts";
 import { mediaFor, permissionDescription, canTransition } from "../../src/domain/transitions.ts";
 import { fixture, admin } from "./helpers.ts";
+
+const routeFor = (value: string) => registryRoute("stage", value);
+const routeKind = (value: string) => registryRoute("evidence_kind", value);
+const routePermission = (value: string) => registryRoute("route_permission", value);
 
 /** Values that every version of the service keeps under the same spelling. */
 const stableStages = ["active", "complete"] as const;

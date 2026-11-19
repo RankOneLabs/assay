@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { StoredRoutePermission } from "../preferences/route_permission_defaults.ts";
+import { StoredRoutePermission } from "../preferences/defaults.ts";
 import { peerGuard as primaryPermission } from "../../route_permission/edit.ts";
 import type { Database } from "bun:sqlite";
 import type { RoutePermission } from "../../route_permission/types.ts";
@@ -7,7 +7,7 @@ import type { Principal, Job } from "../domain/models.ts";
 import { forbidden, conflict } from "../domain/errors.ts";
 import { permissionSchema, keySchema } from "../domain/validation.ts";
 import { edit as editPermission } from "../../route_permission/edit.ts";
-import { peerGuard as peerPermission } from "./route_permission_peer.ts";
+import { acceptsPeerPermission as peerPermission } from "./peer.ts";
 import { GrantRepository } from "../repositories/grants.ts";
 
 /** All permission checks consult persisted grants; headers identify a principal only. */

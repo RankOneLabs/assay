@@ -1,12 +1,94 @@
-diff --git a/src/presentation/stage_labels.ts b/src/presentation/stage_labels.ts
---- a/src/presentation/stage_labels.ts
-+++ b/src/presentation/stage_labels.ts
-@@ -1,4 +1,4 @@
- import type { Stage } from "../../stage/types.ts";
- /** Display label for each of the stages. */
--export const stageLabels: Record<Stage, string> = { queued: "Queued", active: "Active", complete: "Complete" };
-+export const stageLabels: Record<Stage, string> = { queued: "Queued", active: "Active", complete: "Complete", triaged: "Triaged" };
- export function stageLabel(value: Stage): string { return stageLabels[value]; }
+diff --git a/src/domain/transitions.ts b/src/domain/transitions.ts
+--- a/src/domain/transitions.ts
++++ b/src/domain/transitions.ts
+@@ -5,6 +5,7 @@
+ import { conflict } from "./errors.ts";
+ 
+ export function canTransition(from: Stage, to: Stage): boolean {
++  if (from === "triaged") return to === "queued" || to === "complete";
+   const source = stages.indexOf(from);
+   const target = stages.indexOf(to);
+   return source === 0 ? target === 1 : source === 1 && (target === 0 || target === 2);
+diff --git a/src/presentation/labels.ts b/src/presentation/labels.ts
+--- a/src/presentation/labels.ts
++++ b/src/presentation/labels.ts
+@@ -10,7 +10,7 @@
+ }
+ 
+ /** Display label for every value, used by reports. */
+-export const stageLabels: Record<stageTypes.Stage, string> = { queued: "Queued", active: "Active", complete: "Complete" };
++export const stageLabels: Record<stageTypes.Stage, string> = { queued: "Queued", active: "Active", complete: "Complete", triaged: "Triaged" };
+ export const evidenceKindLabels: Record<kindTypes.EvidenceKind, string> = titleLabels(kindTypes.values);
+ export const routePermissionLabels: Record<permissionTypes.RoutePermission, string> = titleLabels(permissionTypes.values);
+ 
+diff --git a/src/repositories/jobs.ts b/src/repositories/jobs.ts
+--- a/src/repositories/jobs.ts
++++ b/src/repositories/jobs.ts
+@@ -120,6 +120,13 @@
+     this.db.query("DELETE FROM jobs WHERE id = ?").run(id);
+   }
+ 
++  /** Open jobs that count toward a project's job limit; triaged jobs do not. */
++  countTowardLimit(project: string): number {
++    return this.db.query<{ count: number }, [string]>(
++      "SELECT COUNT(*) AS count FROM jobs WHERE project = ? AND archived_at IS NULL AND stage != 'triaged'",
++    ).get(project)!.count;
++  }
++
+   count(project?: string): number {
+     if (project !== undefined) {
+       return this.db.query<{ count: number }, [string]>(
+diff --git a/src/services/imports.ts b/src/services/imports.ts
+--- a/src/services/imports.ts
++++ b/src/services/imports.ts
+@@ -101,7 +101,7 @@
+       const parsed = importSchema.parse(input);
+       const created: Job[] = [];
+       for (const entry of parsed.entries) {
+-        const job = this.jobs.create(actor, entry.job);
++        const job = this.jobs.create(actor, entry.job, "triaged");
+         for (const item of entry.evidence) this.evidence.attach(actor, job.id, item);
+         created.push(job);
+       }
+diff --git a/src/services/jobs.ts b/src/services/jobs.ts
+--- a/src/services/jobs.ts
++++ b/src/services/jobs.ts
+@@ -9,6 +9,7 @@
+ import { edit, peerGuard } from "../../stage/edit.ts";
+ import { acceptsPeerStage as siblingAccepts } from "./peer.ts";
+ import { enforceLimit } from "../../stage/policy.ts";
++import type { Stage } from "../../stage/types.ts";
+ import { JobRepository } from "../repositories/jobs.ts";
+ import { EventRepository } from "../repositories/events.ts";
+ import { AccessService } from "./access.ts";
+@@ -24,14 +25,14 @@
+     private readonly liveSessionsFor: (jobId: string) => readonly string[] = () => [],
+   ) {}
+ 
+-  create(actor: Principal, input: unknown): Job {
++  create(actor: Principal, input: unknown, stage: Stage = "queued"): Job {
+     this.access.require(actor, "case_write");
+     const parsed = createJobSchema.parse(input);
+     if (parsed.project !== actor.project) forbidden("cannot create in another project");
+     return this.db.transaction(() => {
+-      if (this.jobs.count(actor.project) >= this.config.maxJobs) limitExceeded("project job limit reached");
+-      const now = this.now();
+-      const job = this.jobs.create(parsed, "queued", now);
++      if (this.jobs.countTowardLimit(actor.project) >= this.config.maxJobs) limitExceeded("project job limit reached");
++      const now = this.now();
++      const job = this.jobs.create(parsed, stage, now);
+       this.events.append(job.id, "job.created", actor.id, { title: job.title }, now);
+       return job;
+     })();
+@@ -109,7 +110,7 @@
+     return this.db.transaction(() => {
+       const current = this.jobs.require(id);
+       this.access.requireJob(actor, "case_admin", current);
+-      if (this.jobs.count(actor.project) >= this.config.maxJobs) limitExceeded("project job limit reached");
++      if (this.jobs.countTowardLimit(actor.project) >= this.config.maxJobs) limitExceeded("project job limit reached");
+       const now = this.now();
+       const job = this.jobs.restore(id, parsed.expectedRevision, now);
+       this.events.append(id, "job.restored", actor.id, {}, now);
 diff --git a/stage/types.ts b/stage/types.ts
 --- a/stage/types.ts
 +++ b/stage/types.ts
