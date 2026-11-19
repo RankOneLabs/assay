@@ -157,24 +157,19 @@ def alternative_control(
         label = "follow-up-migration.patch"
     else:
         if cell.feature == "stage":
-            path = "src/services/builds.ts"
+            # The reference's reader follows the stored row; keep a copy for the new stage.
+            path = str(cell.holders[0])
+            if after[path].count("  read(job: Job): Job {\n") != 1:
+                raise ValueError(f"{path}: export reader not found")
             source = after[path].replace(
-                "export class BuildService {",
-                "export class BuildService {\n"
-                "  private readonly featureRunning = new Map<string, boolean>();\n"
-                "  private featureIsRunning(sessionId: string): boolean {\n"
-                "    let running = this.featureRunning.get(sessionId);\n"
-                "    if (running === undefined) { "
-                "running = this.sessions.isBuildRunning(sessionId); "
-                "this.featureRunning.set(sessionId, running); }\n"
-                "    return running;\n  }",
-            )
-            source = source.replace(
-                "running: buildRunning(this.sessions, job.stage, attempt),",
-                'running: job.stage === "triaged" '
-                "? this.featureIsRunning(attempt.sessionId) "
-                ": buildRunning(this.sessions, job.stage, attempt),",
-                1,
+                "  read(job: Job): Job {\n",
+                "  private readonly featureCopies = new Map<string, Job>();\n"
+                "  read(job: Job): Job {\n"
+                '    if (job.stage === "triaged") {\n'
+                "      const copy = this.featureCopies.get(job.id) ?? job;\n"
+                "      this.featureCopies.set(job.id, copy);\n"
+                "      return copy;\n"
+                "    }\n",
             )
         else:
             path = str(cell.holders[0])

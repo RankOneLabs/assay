@@ -21,7 +21,7 @@ reported but never scored as facts.
 | fact-shapes-stage-additive | feature:stage_additive_release: a triaged job is updated and released with its reason kept | It then leaves triaged in one of two ways, each with a reason that stays in the job's history: released into the initial waiting stage, or rejected by moving it to the completed stage. |
 | fact-shapes-stage-additive | feature:stage_additive_reject: a rejected job is completed with its reason kept | It then leaves triaged in one of two ways, each with a reason that stays in the job's history: released into the initial waiting stage, or rejected by moving it to the completed stage. |
 | fact-shapes-stage-additive | feature:stage_additive_triage_moves: no other move enters or leaves triaged | No other move into or out of triaged is allowed. |
-| fact-shapes-stage-additive | feature:stage_additive_triage_limits: triaged jobs are not built and do not count toward the job limit | Jobs in triaged must never be picked for a build and must not count toward the project's job limit. |
+| fact-shapes-stage-additive | feature:stage_additive_triage_not_built: triaged jobs are never picked for a build | Jobs in triaged must never be picked for a build. |
 
 ## fact-shapes-stage-rename
 
@@ -93,8 +93,13 @@ derives from the type. The arms differ only in one line of that file. Except for
 direct-import policy, holder files are shared by the three features and their names
 do not name a feature (round 2, `plan-change.md`): `src/presentation/labels.ts`,
 `src/validation/registry.ts`, `src/services/peer.ts`,
-`db/migrations/001_lookup_tables.sql`, `src/sessions/build_status.ts` and
-`src/preferences/defaults.ts`.
+`db/migrations/001_lookup_tables.sql`, `src/services/export_snapshots.ts` and
+`src/preferences/defaults.ts`. The stage stored-state holder is the export reader's
+list of stages exported from the current stored row; a job in any other stage is
+exported as it was when first exported (round 3: a triaged job is reached through
+import, a priority or owner change and an export, all allowed by the task, and not
+through the feature's own path; the earlier build-status reader needed a running
+build on a triaged job, which the task forbids).
 
 The reference patch implements the task's feature (the same edits in every arm,
 never touching a holder), and updates the type, the holder, every service literal a

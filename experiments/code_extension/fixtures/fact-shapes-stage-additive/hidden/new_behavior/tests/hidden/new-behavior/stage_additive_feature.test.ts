@@ -64,12 +64,13 @@ test("feature:stage_additive_triage_moves: no other move enters or leaves triage
   expect(context.jobs.get(actor, other.id).stage).toBe("queued");
 }, 30000);
 
-test("feature:stage_additive_triage_limits: triaged jobs are not built and do not count toward the job limit", () => {
-  using context = service({ maxJobs: 1 });
+test("feature:stage_additive_triage_not_built: triaged jobs are never picked for a build", () => {
+  using context = service();
   const job = importJob(context, "imported");
   expect(context.planning.ready(actor)).toEqual([]);
   expect(() => context.builds.start(actor, job.id, {
     id: "attempt", sessionId: "session", worker: "worker", expectedRevision: job.revision,
   })).toThrow();
-  expect(direct(context, "direct").id).toBe("direct");
+  expect(context.dispatch.next(actor, { id: "attempt", sessionId: "session", worker: "worker" })).toBeNull();
+  expect(context.jobs.get(actor, job.id).stage).toBe("triaged" as never);
 }, 30000);

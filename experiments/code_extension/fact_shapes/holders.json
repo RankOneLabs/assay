@@ -135,11 +135,11 @@
     "manipulated": {
       "fact_id": "stage_additive_existing_state",
       "holder_paths": [
-        "src/sessions/build_status.ts"
+        "src/services/export_snapshots.ts"
       ],
       "fact_lines": {
-        "src/sessions/build_status.ts": [
-          "const liveStatusStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
+        "src/services/export_snapshots.ts": [
+          "const liveExportStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
     },
@@ -291,11 +291,11 @@
     "manipulated": {
       "fact_id": "stage_rename_existing_state",
       "holder_paths": [
-        "src/sessions/build_status.ts"
+        "src/services/export_snapshots.ts"
       ],
       "fact_lines": {
-        "src/sessions/build_status.ts": [
-          "const liveStatusStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
+        "src/services/export_snapshots.ts": [
+          "const liveExportStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
         ]
       }
     },

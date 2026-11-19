@@ -17,7 +17,7 @@
         "src/validation/registry.ts",
         "src/services/peer.ts",
         "db/migrations/001_lookup_tables.sql",
-        "src/sessions/build_status.ts"
+        "src/services/export_snapshots.ts"
       ]
     },
     {

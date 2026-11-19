@@ -13,7 +13,7 @@ All six arms share the single task.md and hidden/ directory; hidden test bytes m
 | name_only | stage_additive_name_only | src/validation/registry.ts |
 | sibling_only | stage_additive_sibling_only | src/services/peer.ts |
 | outside_code | stage_additive_outside_code | db/migrations/001_lookup_tables.sql |
-| existing_state | stage_additive_existing_state | src/sessions/build_status.ts |
+| existing_state | stage_additive_existing_state | src/services/export_snapshots.ts |
 
 Anchor fact: stage_additive_anchor. Record labels accept the documented characters up to 80 characters.
 

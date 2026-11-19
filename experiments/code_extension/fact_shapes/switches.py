@@ -65,7 +65,7 @@ def display_label(value: str) -> str:
 def _list_name(feature: Feature, shape: Shape) -> str:
     plural = _PLURAL[feature]
     if shape == 'existing_state':
-        return 'liveStatusStages' if feature == 'stage' else f'currentSelection{plural}'
+        return 'liveExportStages' if feature == 'stage' else f'currentSelection{plural}'
     prefix = {'reference': 'accepted', 'name_only': 'registered', 'sibling_only': 'peer'}[shape]
     return prefix + plural
 
@@ -131,8 +131,7 @@ def fact_lines(cell: Cell) -> tuple[str, ...]:
 
 # A scenario's feature work, identical in every arm and never touching a holder.
 # Stage-additive: imported jobs start in triaged, which may only be left for the
-# initial waiting stage or the completed stage, and does not count toward the
-# project's job limit.
+# initial waiting stage or the completed stage. Builds already take only queued jobs.
 FEATURE_EDITS: dict[tuple[Feature, TaskType], tuple[Replacement, ...]] = {
     ('stage', 'additive'): (
         Replacement(
@@ -161,26 +160,6 @@ FEATURE_EDITS: dict[tuple[Feature, TaskType], tuple[Replacement, ...]] = {
             'export function canTransition(from: Stage, to: Stage): boolean {\n',
             'export function canTransition(from: Stage, to: Stage): boolean {\n'
             '  if (from === "triaged") return to === "queued" || to === "complete";\n',
-        ),
-        Replacement(
-            'src/repositories/jobs.ts',
-            '  count(project?: string): number {\n',
-            '  /** Open jobs that count toward a project\'s job limit; triaged jobs do not. */\n'
-            '  countTowardLimit(project: string): number {\n'
-            '    return this.db.query<{ count: number }, [string]>(\n'
-            '      "SELECT COUNT(*) AS count FROM jobs WHERE project = ? AND archived_at IS NULL '
-            'AND stage != \'triaged\'",\n'
-            '    ).get(project)!.count;\n'
-            '  }\n\n'
-            '  count(project?: string): number {\n',
-        ),
-        Replacement(
-            'src/services/jobs.ts',
-            '      if (this.jobs.count(actor.project) >= this.config.maxJobs) '
-            'limitExceeded("project job limit reached");',
-            '      if (this.jobs.countTowardLimit(actor.project) >= this.config.maxJobs) '
-            'limitExceeded("project job limit reached");',
-            count=2,
         ),
     ),
 }

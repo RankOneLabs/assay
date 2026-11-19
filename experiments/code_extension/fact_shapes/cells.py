@@ -113,7 +113,8 @@ def holder_path(feature: Feature, shape: Shape) -> RepositoryPath:
         'sibling_only': 'src/services/peer.ts',
         'outside_code': 'db/migrations/001_lookup_tables.sql',
         'existing_state': (
-            'src/sessions/build_status.ts' if feature == 'stage' else 'src/preferences/defaults.ts'
+            'src/services/export_snapshots.ts' if feature == 'stage'
+            else 'src/preferences/defaults.ts'
         ),
     }
     return RepositoryPath(paths[shape])
@@ -149,7 +150,7 @@ def _cell(feature: Feature, task_type: TaskType, shape: Shape) -> Cell:
     if shape == 'existing_state':
         kind = 'reuse_vs_duplicate' if task_type == 'additive' else 'reader_update'
         reader = (
-            'the build-status reader\'s list of stages that follow the live session'
+            'the export reader\'s list of stages exported from the current stored row'
             if feature == 'stage'
             else 'the saved-default reader\'s list of values that follow the current selection'
         )
