@@ -64,3 +64,18 @@ def test_cohort_files_are_generated() -> None:
 
     for name, data in files().items():
         assert (STUDY / name).read_bytes() == render(data), name
+
+
+def test_slice_cohort_runs_sol_alone_on_the_slice() -> None:
+    from code_extension.fact_shapes.cohorts import SLICE_PLAN_CAP_USD
+
+    request = json.loads((STUDY / "slice.json").read_bytes())
+    assert [plan["name"] for plan in request["plans"]] == ["sol"]
+    assert Decimal(request["combined_cap_usd"]) == SLICE_PLAN_CAP_USD
+    config = RunConfiguration.model_validate_json((STUDY / "slice-sol.json").read_bytes())
+    assert [ref.scenario for ref in config.scenario_qualifications] == [
+        "fact-shapes-stage-additive"
+    ]
+    assert config.repeats == 2
+    assert config.total_cap_usd == SLICE_PLAN_CAP_USD
+    assert config.route == next(model for model in STUDY_MODELS if model.name == "sol").route

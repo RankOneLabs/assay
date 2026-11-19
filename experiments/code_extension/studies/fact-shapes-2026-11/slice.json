@@ -1,0 +1,10 @@
+{
+  "cohort": "fact-shapes-2026-11-slice1",
+  "combined_cap_usd": "5.00",
+  "plans": [
+    {
+      "name": "sol",
+      "config": "slice-sol.json"
+    }
+  ]
+}

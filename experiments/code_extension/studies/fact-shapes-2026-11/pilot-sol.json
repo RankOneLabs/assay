@@ -2,7 +2,7 @@
   "scenario_qualifications": [
     {
       "scenario": "fact-shapes-stage-additive",
-      "manifest_digest": "sha256:e3de9b751867e15fd98825f6eebdb32f25bb5152d0b480969b5793a51dbd5860"
+      "manifest_digest": "sha256:4b52e69419139d073d485b9eba0b1a008724ae6f194b2f29ce8184beebd0d0e5"
     }
   ],
   "cohort": "fact-shapes-2026-11-pilot-sol",

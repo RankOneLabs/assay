@@ -90,7 +90,8 @@ selected owner (option A) is withdrawn.
 
 1. Change the generator and base for all three features, then regenerate and qualify
    stage-additive only, on mcclure.
-2. Run a Sol-only pilot on stage-additive: 12 attempts, 2 per shape, plan cap $4, under
+2. Run a Sol-only pilot on stage-additive: 12 attempts, 2 per shape, plan cap $5 (one request's
+   reservation spare), each round its own cohort label (`slice.json`) and under
    its own authorization. Read every attempt.
 3. Repeat 1 and 2 until Sol misses some manipulated facts outside the control and at
    most 1 control fact. About 2 of 10 is the level meant; it is a guide, not a
