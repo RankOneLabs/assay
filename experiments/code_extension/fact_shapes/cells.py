@@ -13,9 +13,11 @@ Holders sit where a service keeps them: only the type, the edit site and the
 direct-import policy are in the feature folder.
 
 The outside_code holder is always a SQLite CHECK constraint in a migration under
-db/migrations/. Hidden tests apply all migrations there to a fresh in-memory
-bun:sqlite database in filename order and insert the new or renamed value. Both a
-new migration and an edit to the base migration pass.
+db/migrations/. Business tables reference the constrained lookup table, so a
+stale CHECK makes storing a record with the new value fail. Hidden tests store
+and read back such a record through the service, whose in-memory bun:sqlite
+database applies every migration there in filename order. Both a new migration
+and an edit to the base migration pass.
 """
 
 from dataclasses import dataclass
@@ -156,8 +158,8 @@ def _cell(feature: Feature, task_type: TaskType, shape: Shape) -> Cell:
         )
     elif shape == 'outside_code':
         statement = (
-            f'{action} {verb} the migration CHECK constraint, so inserting {new} '
-            'succeeds after applying all migrations.'
+            f'{action} {verb} the migration CHECK constraint, so the service can store '
+            f'records with {new}.'
         )
     elif shape == 'type_enforced':
         statement = (
@@ -232,9 +234,10 @@ Directory hops are steps up from the edit-site directory to the deepest common
 ancestor and down to the holder directory (0 for a shared directory). Import hops
 are the shortest directed import path's edge count; none means no path. For
 multiple holders, both distances use the nearest holder (the minimum).
-The outside_code holder is a SQLite CHECK constraint in a migration. Tests apply
-all migrations to a fresh in-memory bun:sqlite database and insert the new or
-renamed value; a new migration and an edit to the base migration both pass.
+The outside_code holder is a SQLite CHECK constraint in a migration on a lookup
+table that business tables reference. Tests store and read back a record with the
+new or renamed value through the service, whose fresh in-memory bun:sqlite database
+applies all migrations; a new migration and an edit to the base migration both pass.
 Apply every `db/migrations/*.sql` migration once to the same database in
 lexicographic filename order (initially 001_stage_values.sql,
 002_evidence_kind_values.sql, then 003_route_permission_values.sql). Each feature

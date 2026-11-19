@@ -1,10 +1,10 @@
-/** Business tables. Feature columns are validated by the typed service code. */
+/** Business tables refer to the migrated vocabulary tables; they do not redeclare vocabularies. */
 export const businessSchema = `
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   description TEXT NOT NULL,
-  stage TEXT NOT NULL,
+  stage TEXT NOT NULL REFERENCES stage_values(value),
   priority INTEGER NOT NULL CHECK (priority BETWEEN 0 AND 100),
   owner TEXT NOT NULL,
   project TEXT NOT NULL,
@@ -18,7 +18,7 @@ CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner, archived_at);
 CREATE TABLE IF NOT EXISTS evidence (
   id TEXT PRIMARY KEY,
   job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL,
+  kind TEXT NOT NULL REFERENCES evidence_kind_values(value),
   title TEXT NOT NULL,
   content TEXT NOT NULL,
   checksum TEXT NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS evidence (
 CREATE INDEX IF NOT EXISTS evidence_job_kind ON evidence(job_id, kind, created_at, id);
 CREATE TABLE IF NOT EXISTS grants (
   principal TEXT NOT NULL,
-  permission TEXT NOT NULL,
+  permission TEXT NOT NULL REFERENCES route_permission_values(value),
   project TEXT NOT NULL,
   granted_by TEXT NOT NULL,
   created_at INTEGER NOT NULL,

@@ -1,17 +1,12 @@
 import { expect, test } from "bun:test";
 import "../../../src/bootstrap.ts";
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
+import { ServiceContext } from "../../../src/context.ts";
 
 test("fact:stage_additive_outside_code: outside_code behavior", () => {
-  const directory = `${import.meta.dir}/../../../db/migrations`;
-  const db = new Database(":memory:");
-  try {
-    for (const file of readdirSync(directory).filter(name => name.endsWith(".sql")).sort()) {
-      db.exec(readFileSync(`${directory}/${file}`, "utf8"));
-    }
-    const stored = () => db.query("SELECT value FROM stage_values WHERE value = ?").get("triaged");
-    if (!stored()) db.query("INSERT INTO stage_values (id, value) VALUES (?, ?)").run("new", "triaged");
-    expect(stored()).toEqual({ value: "triaged" });
-  } finally { db.close(); }
+  using context = new ServiceContext();
+  const actor = { id: "admin", project: "project" };
+  for (const permission of ["case_write", "case_admin", "case_read"]) context.grantRepository.grant(actor, permission as never, "bootstrap", 0);
+  const job = context.jobs.create(actor, { id: "job", title: "Job", description: "Fixture", owner: "owner", project: actor.project });
+  context.jobRepository.transition(job.id, "triaged" as never, job.revision, 2);
+  expect(context.jobs.get(actor, job.id).stage).toBe("triaged");
 }, 30000);

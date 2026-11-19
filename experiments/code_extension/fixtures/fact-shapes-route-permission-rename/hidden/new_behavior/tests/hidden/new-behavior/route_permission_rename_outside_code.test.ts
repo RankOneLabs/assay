@@ -1,17 +1,11 @@
 import { expect, test } from "bun:test";
 import "../../../src/bootstrap.ts";
-import { Database } from "bun:sqlite";
-import { readdirSync, readFileSync } from "node:fs";
+import { ServiceContext } from "../../../src/context.ts";
 
 test("fact:route_permission_rename_outside_code: outside_code behavior", () => {
-  const directory = `${import.meta.dir}/../../../db/migrations`;
-  const db = new Database(":memory:");
-  try {
-    for (const file of readdirSync(directory).filter(name => name.endsWith(".sql")).sort()) {
-      db.exec(readFileSync(`${directory}/${file}`, "utf8"));
-    }
-    const stored = () => db.query("SELECT value FROM route_permission_values WHERE value = ?").get("case_inspect");
-    if (!stored()) db.query("INSERT INTO route_permission_values (id, value) VALUES (?, ?)").run("new", "case_inspect");
-    expect(stored()).toEqual({ value: "case_inspect" });
-  } finally { db.close(); }
+  using context = new ServiceContext();
+  const actor = { id: "admin", project: "project" };
+  for (const permission of ["case_write", "case_admin"]) context.grantRepository.grant(actor, permission as never, "bootstrap", 0);
+  context.access.grant(actor, "inspector", "case_inspect");
+  expect(context.access.list(actor, "inspector").map(grant => grant.permission)).toEqual(["case_inspect"]);
 }, 30000);

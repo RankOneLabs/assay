@@ -90,10 +90,17 @@ file left unchanged, so missing the holder still updates the type. The shared
 hidden group runs in full. The mutant gate scores the arm's manipulated fact and the
 scenario anchor: the reference must pass both, and each omission must fail only its
 own scored fact. Both regression groups must pass. Other arms' titles are not scored
-for an arm. They pass on every reference and on every omission except the direct-import
-one: that policy sits on the primary path, so hidden checks that call the edit
-operation with the new value fail with it. The type-enforced omission fails type-checking, confined to the label-map
-holder, and is accepted only through holder-confined preflight classification. Every
+for an arm. They pass on every reference and on every omission except two. The
+direct-import policy sits on the primary path, so hidden checks that call the edit
+operation with the new value fail with it. The database CHECK constrains a lookup
+table that business tables reference, so hidden checks that store a record with the
+new value (the outside-code and stored-state checks) fail with it. Open: in the stage
+and route-permission renames the outside-code omission also fails visible checks,
+because the service creates every job in the renamed initial stage and every reader
+holds the renamed read permission, so those two cells cannot meet the regression
+rule as written. The type-enforced
+omission fails type-checking, confined to the label-map holder, and is accepted only
+through holder-confined preflight classification. Every
 control is replayed twice in fresh sandboxes.
 
 The baseline omits the requested change and the 80-character label boundary; the
@@ -144,8 +151,12 @@ compiler. The holder-only preflight omission remains as a separate check.
 
 The outside-code positive controls restore the base migration, widen the vocabulary
 in a follow-up migration (`db/migrations/004_...`) and create an index in a later one
-(`005_...`). The service and the hidden check apply every file in `db/migrations/`
-in filename order, so a new migration and an edit to the base migration both pass.
+(`005_...`). The service applies every file in `db/migrations/` in filename order,
+so a new migration and an edit to the base migration both pass. Business tables
+reference the constrained lookup tables and seeding skips a value the CHECK refuses,
+so with a stale CHECK the service starts but storing a record with the new value
+fails its foreign key; the outside-code check stores and reads back such a record
+through the service.
 Migration discovery checks the initial table definitions without requiring later
 migrations to repeat those definitions. Frozen fixture copies, qualification evidence
 and cohort pins must be regenerated before this source change is used for a study run.

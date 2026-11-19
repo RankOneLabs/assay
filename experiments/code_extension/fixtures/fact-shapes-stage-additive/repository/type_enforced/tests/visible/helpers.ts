@@ -4,6 +4,9 @@ import { expect } from "bun:test";
 import { ServiceContext } from "../../src/context.ts";
 import { createApp } from "../../src/app.ts";
 import { values as permissions } from "../../route_permission/types.ts";
+
+/** The three permissions the project started with, under their current spelling. */
+export const originalPermissions = permissions.slice(0, 3);
 import type { Job, Evidence, Principal } from "../../src/domain/models.ts";
 
 export const admin: Principal = { id: "admin", project: "project" };
@@ -15,7 +18,7 @@ export const outsider: Principal = { id: "outsider", project: "other" };
 export function fixture(config: unknown = {}) {
   let timestamp = 1000;
   const context = new ServiceContext(config, () => timestamp++);
-  for (const permission of permissions) {
+  for (const permission of originalPermissions) {
     context.grantRepository.grant(admin, permission, "bootstrap", 0);
     context.grantRepository.grant(outsider, permission, "bootstrap", 0);
   }

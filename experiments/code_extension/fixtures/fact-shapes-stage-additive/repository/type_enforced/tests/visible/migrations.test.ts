@@ -113,9 +113,17 @@ describe("ordered SQLite migrations", () => {
     });
   }
 
-  test("business foreign keys reject rows for missing jobs", () => {
+  test("business foreign keys reject values bypassing typed service code", () => {
     using db = new Database(":memory:");
     initializeDatabase(db, baseMigrations());
+    expect(() => db.query(`
+      INSERT INTO jobs (id, title, description, stage, priority, owner, project, revision, created_at, updated_at)
+      VALUES ('bad', 'Bad', '', 'unsupported_future', 0, 'owner', 'project', 1, 0, 0)
+    `).run()).toThrow(/FOREIGN KEY/);
+    expect(() => db.query(`
+      INSERT INTO grants (principal, permission, project, granted_by, created_at)
+      VALUES ('bad', 'unsupported_future', 'project', 'admin', 0)
+    `).run()).toThrow(/FOREIGN KEY/);
     expect(() => db.query(`
       INSERT INTO attempts (id, job_id, session_id, worker, started_at, output)
       VALUES ('orphan', 'missing', 'session', 'worker', 0, '')
@@ -131,7 +139,7 @@ describe("ordered SQLite migrations", () => {
     initializeDatabase(db, baseMigrations());
     db.query(`
       INSERT INTO jobs (id, title, description, stage, priority, owner, project, revision, created_at, updated_at)
-      VALUES ('job', 'Persisted', '', '${canonical("stage")}', 0, 'owner', 'project', 1, 0, 0)
+      VALUES ('job', 'Persisted', '', 'active', 0, 'owner', 'project', 1, 0, 0)
     `).run();
     const seeded = db.query("SELECT COUNT(*) AS count FROM stage_values").get();
     initializeDatabase(db, baseMigrations());
@@ -148,7 +156,7 @@ describe("business table constraints", () => {
     initializeDatabase(db, baseMigrations());
     const insert = db.query(`
       INSERT INTO jobs (id, title, description, stage, priority, owner, project, revision, created_at, updated_at)
-      VALUES (?, ?, '', '${canonical("stage")}', ?, 'owner', 'project', ?, 0, 0)
+      VALUES (?, ?, '', 'active', ?, 'owner', 'project', ?, 0, 0)
     `);
     expect(() => insert.run("priority", "Title", -1, 1)).toThrow(/CHECK/);
     expect(() => insert.run("revision", "Title", 0, 0)).toThrow(/CHECK/);
@@ -156,19 +164,20 @@ describe("business table constraints", () => {
     expect(db.query("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 0 });
   });
 
-  test("evidence cannot refer to a nonexistent job or repeat a digest", () => {
+  test("evidence cannot refer to a nonexistent job or an unknown kind", () => {
     using db = new Database(":memory:");
     initializeDatabase(db, baseMigrations());
     const insert = db.query(`
       INSERT INTO evidence (id, job_id, kind, title, content, checksum, author, revision, created_at, updated_at)
       VALUES (?, ?, ?, 'Proof', 'content', 'digest', 'author', 1, 0, 0)
     `);
-    expect(() => insert.run("orphan", "missing", canonical("evidence_kind"))).toThrow(/FOREIGN KEY/);
+    expect(() => insert.run("orphan", "missing", "testimony")).toThrow(/FOREIGN KEY/);
     db.query(`
       INSERT INTO jobs (id, title, description, stage, priority, owner, project, revision, created_at, updated_at)
-      VALUES ('job', 'Title', '', '${canonical("stage")}', 0, 'owner', 'project', 1, 0, 0)
+      VALUES ('job', 'Title', '', 'active', 0, 'owner', 'project', 1, 0, 0)
     `).run();
-    insert.run("valid", "job", canonical("evidence_kind"));
+    expect(() => insert.run("bad-kind", "job", "unsupported_future")).toThrow(/FOREIGN KEY/);
+    insert.run("valid", "job", "testimony");
     expect(() => insert.run("duplicate-digest", "job", "image")).toThrow(/UNIQUE/);
     expect(db.query("SELECT id FROM evidence").all()).toEqual([{ id: "valid" }]);
   });
@@ -178,7 +187,7 @@ describe("business table constraints", () => {
     initializeDatabase(db, baseMigrations());
     db.query(`
       INSERT INTO jobs (id, title, description, stage, priority, owner, project, revision, created_at, updated_at)
-      VALUES ('job', 'Title', '', '${canonical("stage")}', 0, 'owner', 'project', 1, 0, 0)
+      VALUES ('job', 'Title', '', 'active', 0, 'owner', 'project', 1, 0, 0)
     `).run();
     db.query(`
       INSERT INTO attempts (id, job_id, session_id, worker, started_at, output)
@@ -198,7 +207,7 @@ describe("business table constraints", () => {
     initializeDatabase(db, baseMigrations());
     db.query(`
       INSERT INTO jobs (id, title, description, stage, priority, owner, project, revision, created_at, updated_at)
-      VALUES ('job', 'Title', '', '${canonical("stage")}', 0, 'owner', 'project', 1, 0, 0)
+      VALUES ('job', 'Title', '', 'active', 0, 'owner', 'project', 1, 0, 0)
     `).run();
     const insert = db.query("INSERT INTO job_dependencies VALUES (?, ?, 'actor', 0)");
     expect(() => insert.run("job", "job")).toThrow(/CHECK/);
@@ -216,7 +225,7 @@ describe("durable service restart", () => {
     try {
       {
         using context = new ServiceContext({ databasePath: path }, () => 1000);
-        for (const permission of values) context.grantRepository.grant(principal, permission, "bootstrap", 0);
+        for (const permission of values.slice(0, 3)) context.grantRepository.grant(principal, permission, "bootstrap", 0);
         context.jobs.create(principal, { id: "job", title: "Persistent", owner: "owner", project: "project" });
         context.evidence.attach(principal, "job", {
           id: "proof", kind: "image", title: "Proof", content: "Persistent evidence", author: "author",
@@ -266,9 +275,9 @@ describe("durable service restart", () => {
     const { ServiceContext } = await import("../../src/context.ts");
     using left = new ServiceContext();
     using right = new ServiceContext();
-    left.grantRepository.grant({ id: "user", project: "project" }, canonical("route_permission"), "bootstrap", 0);
-    expect(left.grantRepository.has({ id: "user", project: "project" }, canonical("route_permission"))).toBe(true);
-    expect(right.grantRepository.has({ id: "user", project: "project" }, canonical("route_permission"))).toBe(false);
+    left.grantRepository.grant({ id: "user", project: "project" }, "case_write", "bootstrap", 0);
+    expect(left.grantRepository.has({ id: "user", project: "project" }, "case_write")).toBe(true);
+    expect(right.grantRepository.has({ id: "user", project: "project" }, "case_write")).toBe(false);
     left.sessions.startBuild("left-session");
     expect(left.sessions.isBuildRunning("left-session")).toBe(true);
     expect(right.sessions.isBuildRunning("left-session")).toBe(false);

@@ -21,7 +21,7 @@ of adding one.
 
 ## What runs
 
-One small TypeScript job service (83 files, about 340 KB). Three features each get two
+One small TypeScript job service (87 files, about 340 KB). Three features each get two
 tasks, add a new value or rename an existing one, which makes 6 tasks:
 
 | Feature | Add | Rename |

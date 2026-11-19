@@ -1,15 +1,14 @@
 import { vocabularyStore as canonicalStore } from "../../src/vocabulary.ts";
 function canonical(feature: string): never { return canonicalStore.values(feature)[0] as never; }
 import { describe, expect, test } from "bun:test";
-import { fixture, admin, reader, writer, outsider, expectError } from "./helpers.ts";
-import { values as permissions } from "../../route_permission/types.ts";
+import { originalPermissions, fixture, admin, reader, writer, outsider, expectError } from "./helpers.ts";
 
 describe("project permission ownership", () => {
   test("bootstrap grants each inventoried permission to the project administrator", () => {
     using f = fixture();
     const grants = f.context.access.list(admin, admin.id);
-    expect(grants).toHaveLength(permissions.length);
-    for (const permission of permissions) {
+    expect(grants).toHaveLength(originalPermissions.length);
+    for (const permission of originalPermissions) {
       expect(grants.some(grant => grant.permission === permission)).toBe(true);
       expect(() => f.context.access.require(admin, permission)).not.toThrow();
     }
