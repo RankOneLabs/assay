@@ -90,6 +90,11 @@ export const finishSchema = z.object({
   output: z.string().max(100000),
 }).strict();
 
+export const retentionSchema = z.object({
+  stage: stageSchema,
+  days: z.number().int().min(1).max(3650),
+}).strict();
+
 export const bulkSchema = z.object({
   ids: z.array(keySchema).min(1).max(100).refine(ids => new Set(ids).size === ids.length),
   reason: z.string().trim().min(1).max(2000),

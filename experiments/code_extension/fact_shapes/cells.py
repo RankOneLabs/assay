@@ -14,8 +14,9 @@ feature: only the type, the edit site and the direct-import policy are in the
 feature folder.
 
 The outside_code holder is always a SQLite CHECK constraint in a migration under
-db/migrations/. Business tables reference the constrained lookup table, so a
-stale CHECK makes storing a record with the new value fail. Hidden tests store
+db/migrations/. Stored records reference the constrained lookup table (evidence and
+grants; for stages, the per-stage retention settings rather than jobs), so a stale
+CHECK makes storing such a record with the new value fail. Hidden tests store
 and read back such a record through the service, whose in-memory bun:sqlite
 database applies every migration there in filename order. Both a new migration
 and an edit to the base migration pass.

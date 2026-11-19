@@ -6,7 +6,6 @@ test("fact:stage_additive_outside_code: outside_code behavior", () => {
   using context = new ServiceContext();
   const actor = { id: "admin", project: "project" };
   for (const permission of ["case_write", "case_admin", "case_read"]) context.grantRepository.grant(actor, permission as never, "bootstrap", 0);
-  const job = context.jobs.create(actor, { id: "job", title: "Job", description: "Fixture", owner: "owner", project: actor.project });
-  context.jobRepository.transition(job.id, "triaged" as never, job.revision, 2);
-  expect(context.jobs.get(actor, job.id).stage).toBe("triaged");
+  context.maintenance.setRetention(actor, { stage: "triaged", days: 30 });
+  expect(context.maintenance.retention(actor)).toContainEqual({ stage: "triaged", days: 30 });
 }, 30000);

@@ -118,8 +118,8 @@ describe("ordered SQLite migrations", () => {
     using db = new Database(":memory:");
     initializeDatabase(db, baseMigrations());
     expect(() => db.query(`
-      INSERT INTO jobs (id, title, description, stage, priority, owner, project, revision, created_at, updated_at)
-      VALUES ('bad', 'Bad', '', 'unsupported_future', 0, 'owner', 'project', 1, 0, 0)
+      INSERT INTO stage_retention (project, stage, days, updated_by, updated_at)
+      VALUES ('project', 'unsupported_future', 30, 'admin', 0)
     `).run()).toThrow(/FOREIGN KEY/);
     expect(() => db.query(`
       INSERT INTO grants (principal, permission, project, granted_by, created_at)

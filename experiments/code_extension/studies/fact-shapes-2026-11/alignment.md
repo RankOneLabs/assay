@@ -109,15 +109,16 @@ own scored fact. Both regression groups must pass. Other arms' titles are not sc
 for an arm. They pass on every reference and on every omission except two. The
 direct-import policy sits on the primary path, so hidden checks that call the edit
 operation with the new value fail with it. The database CHECK constrains a lookup
-table that business tables reference, so hidden checks that store a record with the
-new value (the outside-code and stored-state checks) fail with it. Open: in the stage
-and route-permission renames the outside-code omission also fails visible checks,
-because the service creates every job in the renamed initial stage and every reader
-holds the renamed read permission, so those two cells cannot meet the regression
-rule as written. Open, round 2: the stage-additive feature stores imported jobs in
-triaged, so in the outside-code arm the feature itself needs the migration. Its
-omission fails the feature checks and the visible import checks, and a model doing
-the feature meets the stale CHECK in its own tests. The type-enforced
+table that other stored data references, so hidden checks that store such a record
+with the new value fail with it: for evidence kinds and permissions that is the
+evidence and grant records (so their stored-state checks fail too). The stage lookup
+table gates only the per-stage retention settings, not stored jobs (operator decision,
+option b, 2026-11-19), so a stage feature can store jobs in the new stage while the
+CHECK is stale, and the stage outside-code check stores a retention setting for the
+new stage through the maintenance service. Open: in the route-permission rename the
+outside-code omission also fails visible checks, because every reader holds the
+renamed read permission, so that cell cannot meet the regression rule as written.
+The type-enforced
 omission fails type-checking, confined to the label-map holder, and is accepted only
 through holder-confined preflight classification. Every
 control is replayed twice in fresh sandboxes.

@@ -322,3 +322,21 @@ test("purge advances past ten thousand archives protected by a retained dependen
   f.context.jobs.archive(admin, "eligible", { expectedRevision: 1 });
   expect(f.context.maintenance.purge(admin, 1003, 1)).toEqual(["eligible"]);
 });
+
+test("per-stage retention settings are stored per project and validated", async () => {
+  using f = fixture();
+  expect(f.context.maintenance.retention(admin)).toEqual([]);
+  f.context.maintenance.setRetention(admin, { stage: "complete", days: 90 });
+  f.context.maintenance.setRetention(admin, { stage: "active", days: 7 });
+  f.context.maintenance.setRetention(admin, { stage: "complete", days: 30 });
+  expect(f.context.maintenance.retention(admin)).toEqual([
+    { stage: "active", days: 7 }, { stage: "complete", days: 30 },
+  ]);
+  expect(f.context.maintenance.retention(outsider)).toEqual([]);
+  expect(() => f.context.maintenance.setRetention(admin, { stage: "unsupported_future", days: 7 })).toThrow();
+  expect(() => f.context.maintenance.setRetention(admin, { stage: "active", days: 0 })).toThrow();
+  expect(() => f.context.maintenance.setRetention(writer, { stage: "active", days: 7 })).toThrow("permission");
+  const response = await f.request("PUT", "/maintenance/retention", { stage: "active", days: 14 });
+  expect(response.status).toBe(200);
+  expect(await (await f.request("GET", "/maintenance/retention")).json()).toContainEqual({ stage: "active", days: 14 });
+});

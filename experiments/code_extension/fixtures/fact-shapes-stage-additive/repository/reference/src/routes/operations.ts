@@ -137,4 +137,8 @@ export function registerOperationRoutes(app: Hono, services: ServiceContext): vo
     ) });
   });
   app.get("/maintenance/integrity", c => c.json(services.maintenance.integrity(principal(c))));
+  app.get("/maintenance/retention", c => c.json(services.maintenance.retention(principal(c))));
+  app.put("/maintenance/retention", async c => {
+    return c.json(services.maintenance.setRetention(principal(c), await json(c)));
+  });
 }

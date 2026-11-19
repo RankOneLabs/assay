@@ -3,8 +3,9 @@ import { plan } from "../domain/graph.ts";
 import { checksum } from "../domain/checksum.ts";
 import type { Database } from "bun:sqlite";
 import type { Principal } from "../domain/models.ts";
+import type { Stage } from "../../stage/types.ts";
 import type { Config } from "../config.ts";
-import { bulkSchema } from "../domain/validation.ts";
+import { bulkSchema, retentionSchema } from "../domain/validation.ts";
 import { conflict, limitExceeded } from "../domain/errors.ts";
 import { JobRepository } from "../repositories/jobs.ts";
 import { EventRepository } from "../repositories/events.ts";
@@ -81,6 +82,25 @@ export class MaintenanceService {
       }
       return candidates;
     })();
+  }
+
+  /** Store how many days archived jobs of a stage are kept before purging. */
+  setRetention(actor: Principal, input: unknown): { stage: Stage; days: number } {
+    this.access.require(actor, "case_admin");
+    const parsed = retentionSchema.parse(input);
+    this.db.query(`
+      INSERT INTO stage_retention (project, stage, days, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (project, stage) DO UPDATE SET
+        days = excluded.days, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+    `).run(actor.project, parsed.stage, parsed.days, actor.id, this.now());
+    return { stage: parsed.stage, days: parsed.days };
+  }
+
+  retention(actor: Principal): { stage: Stage; days: number }[] {
+    this.access.require(actor, "case_admin");
+    return this.db.query<{ stage: Stage; days: number }, [string]>(
+      "SELECT stage, days FROM stage_retention WHERE project = ? ORDER BY stage",
+    ).all(actor.project);
   }
 
   integrity(actor: Principal) {
