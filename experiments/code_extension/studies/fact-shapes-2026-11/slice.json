@@ -1,10 +1,10 @@
 {
-  "cohort": "fact-shapes-2026-11-slice2",
-  "combined_cap_usd": "5.00",
+  "cohort": "fact-shapes-2026-11-slice3",
+  "combined_cap_usd": "3.00",
   "plans": [
     {
-      "name": "sol",
-      "config": "slice-sol.json"
+      "name": "midtier",
+      "config": "slice-plan.json"
     }
   ]
 }
