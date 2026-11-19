@@ -130,3 +130,26 @@ Round 2 changes two things and keeps the service's size:
    all three features), so a file listing no longer points at them.
 
 The service is grown only if Sol still finds every holder after this round.
+
+### Slice round 2 and round 3 (2026-11-19)
+
+Round 2 (triage feature, neutral holder names; Sol only): $4.03. Sol found 9 of 10
+manipulated facts outside the control and both controls, and passed all five feature
+checks in every attempt. Two fixture bugs showed up:
+
+- The task said triaged jobs must not count toward the job limit, but imported jobs
+  start in triaged and visible import tests assert import capacity, so any faithful
+  implementation failed those tests. The clause is dropped; the task now says only
+  that triaged jobs are never picked for a build.
+- The one miss was the stored-state fact, which tested build status for a triaged job
+  with a running build, a state the task forbids. The stage stored-state holder moves
+  to the export reader: a triaged job reaches it through import, a priority or owner
+  change and export, all of which the task allows. The feature's own path never
+  exports.
+
+Sol still reads nearly all of `src/` early in each attempt, shared holder files
+included, so round 2 is read as effectively 10 of 10 for Sol.
+
+Round 3 runs the mid-tier model (Luna) alone on the corrected slice, 12 attempts with a
+$3 cap, to see whether a weaker model misses holders before the service is changed
+again.

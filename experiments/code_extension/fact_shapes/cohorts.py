@@ -48,10 +48,13 @@ STUDY_PLAN_CAPS: Mapping[StudyModelName, Decimal] = {
 }
 PILOT_REPEATS: Mapping[StudyModelName, int] = {"sol": 2, "argon": 1, "midtier": 1}
 STUDY_REPEATS = 5
-# Sol-only slice pilots while the tasks are rebuilt (second change in plan-change.md).
-# Each round gets its own cohort label; the cap leaves one request's reservation spare.
-SLICE_ROUND = 2
-SLICE_PLAN_CAP_USD = Decimal("5.00")
+# Single-model slice pilots while the tasks are rebuilt (second change in plan-change.md).
+# Each round gets its own cohort label; a cap leaves one request's reservation spare.
+SLICE_ROUND = 3
+SLICE_MODEL: StudyModelName = "midtier"
+SLICE_PLAN_CAPS: Mapping[StudyModelName, Decimal] = {
+    "sol": Decimal("5.00"), "argon": Decimal("8.00"), "midtier": Decimal("3.00"),
+}
 SLICE_REPEATS = 2
 
 
@@ -143,14 +146,15 @@ def files() -> dict[str, dict[str, Any]]:
             "combined_cap_usd": str(total),
             "plans": plans,
         }
-    result["slice-sol.json"] = plan_config(
-        "sol", f"fact-shapes-2026-11-slice{SLICE_ROUND}-sol", PILOT_SCENARIOS, SLICE_REPEATS,
-        SLICE_PLAN_CAP_USD,
+    cap = SLICE_PLAN_CAPS[SLICE_MODEL]
+    result["slice-plan.json"] = plan_config(
+        SLICE_MODEL, f"fact-shapes-2026-11-slice{SLICE_ROUND}-{SLICE_MODEL}", PILOT_SCENARIOS,
+        SLICE_REPEATS, cap,
     )
     result["slice.json"] = {
         "cohort": f"fact-shapes-2026-11-slice{SLICE_ROUND}",
-        "combined_cap_usd": str(SLICE_PLAN_CAP_USD),
-        "plans": [{"name": "sol", "config": "slice-sol.json"}],
+        "combined_cap_usd": str(cap),
+        "plans": [{"name": SLICE_MODEL, "config": "slice-plan.json"}],
     }
     result["library-rerun-midtier.json"] = library_rerun_config()
     return result
