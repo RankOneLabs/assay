@@ -216,3 +216,30 @@ Size did not make holders harder to find. Luna's first move is a search for the 
 values (`grep -RIn '"queued"\|"active"\|"complete"' src …`), and every independent holder
 is a literal copy of the value list, so that one search finds every holder at any size.
 Two passing attempts opened a single file; the rest opened 31 to 39.
+
+### Round 5: implicit holders that need a behavior decision (2026-11-20)
+
+Rounds 1 to 4 showed that a literal copy of the value list is found by one search for the
+existing values, at any service size. Round 5 changes what a holder is. The six shapes
+and their places stay; what each manipulated holder holds changes:
+
+1. **No literal list, no stage name.** The manipulated holder never writes out a stage
+   name. It encodes the set another way that real services use: a position or rank,
+   an exclusion or default branch ("anything that is not finished"), numeric codes, or
+   display text that differs from the stored names. A search for the existing stage
+   names does not reach it.
+2. **A behavior decision.** Left unchanged, the holder gives the new stage a behavior
+   the task rules out. Updating it correctly means applying a stated rule, not adding a
+   value. The task text states each such rule as a product requirement of the triage
+   feature, in plain terms that name no file, function or table.
+3. **Elsewhere, correct by declaration.** In the versions where a holder is not
+   manipulated, it reads a per-stage trait declared next to the type, which the compiler
+   requires for every stage. Declaring the new stage's traits makes it correct.
+4. **The anchor sentence is reworded** so it cannot be read as a rule for tags, and is
+   checked against every other concept in the service.
+
+The control (type-enforced) keeps a compiler-checked map, and now its value for the
+new stage also has to follow a stated rule. Scoring, the mutant gate and the one-fact
+rule per version are unchanged. The cell table for stage-additive is drafted and
+reviewed before anything is built. Then stage-additive is built, qualified, and run
+with Luna alone ($3 cap).
