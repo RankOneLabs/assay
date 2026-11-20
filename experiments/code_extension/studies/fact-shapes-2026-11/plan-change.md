@@ -243,3 +243,31 @@ new stage also has to follow a stated rule. Scoring, the mutant gate and the one
 rule per version are unchanged. The cell table for stage-additive is drafted and
 reviewed before anything is built. Then stage-additive is built, qualified, and run
 with Luna alone ($3 cap).
+
+### Slice round 5 result (2026-11-20)
+
+Luna, 12 attempts, $0.60. 10 passed with every fact correct; 2 hit the 60-turn limit
+without submitting (control first attempt, reference first attempt). Luna updated the
+manipulated holder in all 12 attempts, including both that did not submit.
+
+- The four positional holders (`values.indexOf(stage) < 2`) were all rewritten to read
+  `stageTraits[stage].open`, the declared trait, instead of being patched to a new
+  position.
+- The two database attempts added a migration that rebuilds the retention table with a
+  30-day limit for stage code 4.
+- The control attempts added the heading to the compiler-checked map, or derived the map
+  from the traits.
+- Placement: 10 attempts appended triaged; 2 (stored state and database, first attempts)
+  inserted it second. Both still passed, because the holders they reached had already
+  been made to read the traits.
+
+The positional holders were found by search, not by reading: 7 of the 8 positional-holder
+attempts ran a `grep` for `values.indexOf`, `indexOf(stage)` or `< 2` after meeting the
+first one. Sharing one pattern across four holders made one hit lead to all four.
+The SQL limit was found because Luna reads every migration that mentions stage codes.
+
+Five rounds in, Luna and Sol find every holder in a 124 KB and a 272 KB service, whether
+the holder is a literal list, a position, a numeric code or a SQL check, and whether or not
+the compiler requires it. The task's sentence that the new stage must work everywhere
+sends both models into a full sweep of everything that touches the stage type.
+Spend after round 5: $13.46.
