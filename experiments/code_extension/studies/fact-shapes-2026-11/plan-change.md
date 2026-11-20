@@ -173,3 +173,21 @@ checks, controls included. Every visible test passed.
 So Luna, like Sol, found every independent holder. Its one fact failure came from
 applying a found holder wrongly, not from missing it. Like Sol, it opened about 25
 files of `src/` in each attempt before editing.
+
+### Round 4: a larger service (2026-11-19)
+
+Both models open nearly all of `src/` (about 120 KB) before editing, so at this size no
+placement of holders can hide one. Round 4 doubles the application code to about 250 KB,
+one step rather than a large jump, by adding real features that sit beside the existing
+ones. It adds no padding and no holders:
+
+- New code derives any stage, evidence-kind or permission list from the type, and never
+  writes out a value that a rename task renames. The holder audit shows the holder set
+  is unchanged.
+- Holders, task texts, hidden tests and the anchor stay as they are. Distances in the
+  cell table are recomputed for the new layout.
+- New features get visible tests of their own, in the style of the existing ones.
+
+Stage-additive is regenerated and requalified alone. Luna then runs the slice again (12
+attempts, $3 cap, about $0.50 expected). If Luna still finds every holder, the next step
+is another size step. If it misses some, Sol runs the same slice.
