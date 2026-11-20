@@ -191,3 +191,28 @@ ones. It adds no padding and no holders:
 Stage-additive is regenerated and requalified alone. Luna then runs the slice again (12
 attempts, $3 cap, about $0.50 expected). If Luna still finds every holder, the next step
 is another size step. If it misses some, Sol runs the same slice.
+
+### Slice round 4 result (2026-11-20)
+
+Round 4 (Luna alone, the 272 KB service): $0.47 for 12 attempts, 21 to 60 requests each.
+Seven attempts passed everything. Luna updated the manipulated holder in all 12,
+including the five that did not pass.
+
+All five non-passes have one cause, a defect round 4 introduced. The new tags feature
+makes tags lowercase slugs of letters, digits and hyphens up to 40 characters. The
+anchor sentence ("Labels containing letters, digits, underscores or hyphens must be
+accepted up to a length of 80 characters …") reads as a rule for tags, and Luna applied
+it there:
+
+- Stored state, first attempt: changed tags to 80 characters and left the real label
+  check alone, so the anchor fact failed.
+- Control, second attempt: did the anchor correctly and also changed tags, breaking six
+  visible tag tests.
+- Control first attempt (15-minute wall limit), database second attempt and stored state
+  second attempt (60-turn limit): spent 38 to 48 of their roughly 100 commands on tag
+  tables and tag tests.
+
+Size did not make holders harder to find. Luna's first move is a search for the existing
+values (`grep -RIn '"queued"\|"active"\|"complete"' src …`), and every independent holder
+is a literal copy of the value list, so that one search finds every holder at any size.
+Two passing attempts opened a single file; the rest opened 31 to 39.
