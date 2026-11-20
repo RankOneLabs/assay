@@ -272,3 +272,87 @@ the holder is a literal list, a position, a numeric code or a SQL check, and whe
 the compiler requires it. The task's sentence that the new stage must work everywhere
 sends both models into a full sweep of everything that touches the stage type.
 Spend after round 5: $13.46.
+
+### Round 6: nested state that must stay accurate when work moves backward (draft, 2026-11-20)
+
+Rounds 1 to 5 tested facts that depend only on a job's current stage, so every holder was
+a per-stage lookup and the task listed every behavior. Round 6 tests what has gone wrong in
+a real service: state nested three levels deep, each level storing its own status, where a
+change that sends work backward has to keep every level accurate.
+
+**The nest.** The service already has jobs and their attempts (each attempt tied to a
+session that owns its running status). Round 6 adds runs, a group of jobs, as the top level:
+
+| Level | Stores | Derived from |
+|---|---|---|
+| Run | status (running, finished), job counts by stage, finish time | its jobs |
+| Job | stage, outcome, finish time | its attempts and moves |
+| Attempt | running, passed or failed | itself |
+
+Today every level only moves forward: an attempt finishes, its job may complete, the run
+may finish.
+
+**Roll-ups are declared, not hand-written.** The base service keeps each level's derived
+state in one declaration built from small reusable pieces, with no update code written per
+level. In outline:
+
+```ts
+const runRollup = rollup<Job, RunState>({
+  total: count(),
+  done: count(isDone),
+  status: when(all(isDone), "finished", "running"),
+  finishedAt: latest(job => job.finishedAt),
+});
+```
+
+`count`, `all`, `any`, `latest` and `when` live in `src/rollup/`. One engine recomputes a
+parent from its children whenever a child changes, and walks up the nest. Adding a field or
+a level means adding a declaration, never new update code. This is the extensible style a
+real service needs, and the correct solution for round 6 works through it.
+
+**The task (draft).** One rule, not a checklist:
+
+> Add review to jobs. When a job's work is done it waits in a new in-review stage until a
+> reviewer approves it, which completes it, or sends it back to active with a reason that
+> stays in the job's history. A reviewer can also re-queue a completed job, which puts it
+> back in the queue for another attempt, even when its run has finished.
+>
+> Runs and jobs must always reflect what they contain: their status, counts and times
+> match their jobs and attempts after every move, single or in bulk, including for data
+> already stored. Add roll-up behavior through the existing roll-up declarations, so a
+> later field or level gets it without new update code.
+>
+> A job id made of letters, digits, underscores or hyphens must be accepted for stage
+> changes up to 80 characters long, and longer or otherwise malformed job ids must be
+> rejected.
+
+**Six copies.** In every copy, roll-ups go through the declarations and the engine, except
+one place that assumes work only moves forward. It is correct for every forward move and
+wrong after a send-back or re-queue. No copy shares an expression with another, so one
+search hit does not lead to the next.
+
+| Copy | Hidden forward-only assumption | Symptom after a send-back or re-queue |
+|---|---|---|
+| Control | a compiler-checked table of how each stage counts toward its run; the new stage must be added and must count as not done | will not compile, or in-review jobs count as done |
+| Reference | a combinator the run status is built from that holds `true` once reached (a latch), reached through the engine | the run stays finished after a job is sent back |
+| Name only | a timing module, outside the roll-up folder, that records a run's finish time only if none is set | the run keeps its first finish time after it finishes again |
+| Sibling only | bulk moves update run counts by adding to them instead of calling the engine, written as a speed-up beside the single-move path | bulk send-back leaves run counts too high |
+| Outside code | a database trigger that marks a run finished when its last job completes, with no reverse branch | the stored run says finished while the service says running |
+| Stored state | a run summary cache that skips finished runs, on the assumption that a finished run never changes | re-queuing a job in an already stored finished run leaves a stale summary |
+
+**Scoring.**
+- Hidden tests drive review, send-back, rework and approval, and a re-queue inside a
+  finished run. One fact per copy checks the symptom in the table, plus the job-id anchor.
+  The mutant gate and the one-fact-per-copy rule are unchanged.
+- Two checks are reported, not scored, because a missed fix can fail them in any copy:
+  - a whole-nest check that every stored run and job equals a recomputation from its
+    children;
+  - an extension check that declares one new run field from the existing pieces (for
+    example a count of jobs in review) and checks it after a send-back. It tells a fix made
+    in the declarations or engine apart from a special case patched at a call site.
+- Reading each attempt also records where the fix was made: in the roll-up pieces, in the
+  engine, or at a call site.
+
+**Build and run.** A new scenario on the same service, built by an agent, qualified on
+mcclure, then run with Luna alone at a $3 cap (about $0.60). The task text and the table
+are reviewed before anything is built.
