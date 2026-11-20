@@ -20,6 +20,32 @@ import { DispatchService } from "./services/dispatch.ts";
 import { PlanningService } from "./services/planning.ts";
 import { DependencyRepository } from "./repositories/dependencies.ts";
 import { MaintenanceService } from "./services/maintenance.ts";
+import { CommentRepository } from "./repositories/comments.ts";
+import { CommentService } from "./services/comments.ts";
+import { AuditRepository } from "./repositories/audit.ts";
+import { AuditService } from "./services/audit.ts";
+import { TagRepository } from "./repositories/tags.ts";
+import { SavedSearchRepository } from "./repositories/searches.ts";
+import { SettingsRepository } from "./repositories/settings.ts";
+import { TagService } from "./services/tags.ts";
+import { SearchService } from "./services/searches.ts";
+import { SettingsService } from "./services/settings.ts";
+import { UsageService } from "./services/usage.ts";
+import { EscalationRuleRepository } from "./repositories/escalation_rules.ts";
+import { EscalationRepository } from "./repositories/escalations.ts";
+import { EscalationService } from "./services/escalations.ts";
+import { DigestScheduleRepository } from "./repositories/digest_schedules.ts";
+import { DigestRepository } from "./repositories/digests.ts";
+import { DigestService } from "./services/digests.ts";
+import { SubscriptionRepository } from "./repositories/subscriptions.ts";
+import { WebhookRepository } from "./repositories/webhooks.ts";
+import { DeliveryRepository } from "./repositories/deliveries.ts";
+import { NotificationRepository } from "./repositories/notifications.ts";
+import { OutboxRepository } from "./repositories/outbox.ts";
+import { SubscriptionService } from "./services/subscriptions.ts";
+import { WebhookService } from "./services/webhooks.ts";
+import { OutboxService } from "./services/outbox.ts";
+import { NotificationService } from "./services/notifications.ts";
 
 /** Dependency assembly has references to owners, never a copy of their data. */
 export class ServiceContext {
@@ -41,6 +67,18 @@ export class ServiceContext {
   readonly dispatch: DispatchService;
   readonly planning: PlanningService;
   readonly maintenance: MaintenanceService;
+  readonly comments: CommentService;
+  readonly audit: AuditService;
+  readonly tags: TagService;
+  readonly searches: SearchService;
+  readonly settings: SettingsService;
+  readonly usage: UsageService;
+  readonly escalations: EscalationService;
+  readonly digests: DigestService;
+  readonly subscriptions: SubscriptionService;
+  readonly webhooks: WebhookService;
+  readonly outbox: OutboxService;
+  readonly notifications: NotificationService;
 
   constructor(input: unknown = {}, now: () => number = Date.now, database?: Database) {
     this.config = loadConfig(input);
@@ -89,6 +127,41 @@ export class ServiceContext {
       this.attemptRepository, this.sessions, this.access, this.config, now,
       new DependencyRepository(this.db),
     );
+    this.comments = new CommentService(
+      this.db, new CommentRepository(this.db), this.jobRepository, this.eventRepository,
+      this.grantRepository, this.access, this.jobs, now,
+    );
+    this.audit = new AuditService(new AuditRepository(this.db), this.jobRepository, this.access, now);
+    const tagRepository = new TagRepository(this.db);
+    this.tags = new TagService(
+      this.db, tagRepository, this.jobRepository, this.jobs, this.eventRepository, this.access, now,
+    );
+    this.searches = new SearchService(
+      this.db, new SavedSearchRepository(this.db), tagRepository, this.jobRepository, this.access, now,
+    );
+    const settingsRepository = new SettingsRepository(this.db);
+    this.settings = new SettingsService(this.db, settingsRepository, this.grantRepository, this.access, now);
+    this.usage = new UsageService(this.db, settingsRepository, this.access, now);
+    this.escalations = new EscalationService(
+      this.db, new EscalationRuleRepository(this.db), new EscalationRepository(this.db),
+      this.eventRepository, this.grantRepository, this.access, now,
+    );
+    this.digests = new DigestService(
+      this.db, new DigestScheduleRepository(this.db), new DigestRepository(this.db),
+      this.grantRepository, this.access, now,
+    );
+    const subscriptionRepository = new SubscriptionRepository(this.db);
+    const webhookRepository = new WebhookRepository(this.db);
+    const notificationRepository = new NotificationRepository(this.db);
+    this.subscriptions = new SubscriptionService(
+      this.db, subscriptionRepository, this.jobRepository, this.access, now,
+    );
+    this.webhooks = new WebhookService(this.db, webhookRepository, this.access, now);
+    this.outbox = new OutboxService(
+      this.db, new OutboxRepository(this.db), new DeliveryRepository(this.db), notificationRepository,
+      subscriptionRepository, webhookRepository, this.grantRepository, this.access, now,
+    );
+    this.notifications = new NotificationService(notificationRepository, this.access, now);
   }
 
   /** Callers own the context and close it after outstanding synchronous operations. */

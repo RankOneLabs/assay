@@ -128,6 +128,15 @@ omission fails type-checking, confined to the label-map holder, and is accepted 
 through holder-confined preflight classification. Every
 control is replayed twice in fresh sandboxes.
 
+Round 4 doubled the application code with seven service features (comments, audit
+queries, tags and saved searches, project settings and usage, escalation rules,
+scheduled digests, notifications and webhooks) without adding a holder. New code
+derives every stage, evidence-kind or permission list from the feature's type, names
+no value that a rename task renames (read checks use `readAccess` from
+`src/domain/access_levels.ts`, the first declared permission), and adds no foreign key
+or CHECK on a vocabulary column. Some new reports read the existing label helpers. The
+holder audit is clean on the base and on every arm.
+
 The baseline omits the requested change and the 80-character label boundary; the
 anchor omission keeps the limit at 79. Visible checks that pass through a holder use
 values every arm keeps under the same spelling (for example `active`, `image`,
@@ -175,8 +184,9 @@ compiler. The holder-only preflight omission remains as a separate check.
 ## Follow-up migration compatibility
 
 The outside-code positive controls restore the base migration, widen the vocabulary
-in a follow-up migration (`db/migrations/002_...`, recreating only that feature's
-table from the shared base migration) and create an index in a later one (`003_...`). The service applies every file in `db/migrations/` in filename order,
+in a follow-up migration numbered after every existing migration (recreating only
+that feature's table from the shared base migration) and create an index in the next
+one. The service applies every file in `db/migrations/` in filename order,
 so a new migration and an edit to the base migration both pass. Business tables
 reference the constrained lookup tables and seeding skips a value the CHECK refuses,
 so with a stale CHECK the service starts but storing a record with the new value

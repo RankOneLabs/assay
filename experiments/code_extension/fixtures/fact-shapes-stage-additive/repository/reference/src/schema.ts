@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS job_events (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_job ON job_events(job_id, sequence);
+CREATE INDEX IF NOT EXISTS events_actor_time ON job_events(actor, created_at, sequence);
+CREATE INDEX IF NOT EXISTS events_action ON job_events(action, sequence);
+CREATE INDEX IF NOT EXISTS events_time ON job_events(created_at, sequence);
 CREATE TABLE IF NOT EXISTS attempts (
   id TEXT PRIMARY KEY,
   job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,

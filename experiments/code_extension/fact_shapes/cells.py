@@ -242,8 +242,9 @@ table that business tables reference. Tests store and read back a record with th
 new or renamed value through the service, whose fresh in-memory bun:sqlite database
 applies all migrations; a new migration and an edit to the base migration both pass.
 Apply every `db/migrations/*.sql` migration once to the same database in
-lexicographic filename order (initially only 001_lookup_tables.sql, which creates
-all three lookup tables). Each feature owns an independent table,
+lexicographic filename order (001_lookup_tables.sql creates all three lookup
+tables; later numbered migrations create the tables of other service features).
+Each feature owns an independent table,
 with no cross-feature ordering dependency. Follow-up migrations use increasing
 numeric filename prefixes in the same directory.
 

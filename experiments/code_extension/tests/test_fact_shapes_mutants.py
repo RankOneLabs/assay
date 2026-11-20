@@ -331,6 +331,8 @@ def test_follow_up_migration_control_includes_a_later_index() -> None:
             target = Path(directory)
             materialize(target, fixture.repository, fixture.arms[0].reference_patch)
             _, patch = alternative_control(cell, fixture.repository, read_tree(target))
-        assert f"db/migrations/002_allow_{cell.feature}_values.sql" in patch
-        assert f"db/migrations/003_index_{cell.feature}_values.sql" in patch
+        # Follow-ups come after every migration the service already has.
+        count = sum(1 for path in fixture.repository if path.startswith("db/migrations/"))
+        assert f"db/migrations/{count + 1:03d}_allow_{cell.feature}_values.sql" in patch
+        assert f"db/migrations/{count + 2:03d}_index_{cell.feature}_values.sql" in patch
         assert "CREATE INDEX" in patch

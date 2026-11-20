@@ -95,9 +95,12 @@ def test_import_distances_match_cells() -> None:
 
 def test_size_and_repository_loader() -> None:
     tree = read_tree(BASE)
-    # Includes the vocabulary registry, bootstrap and owner-mutation controls.
-    assert 60 <= len(tree) <= 90
-    assert 8000 <= sum(text.count("\n") for text in tree.values()) <= 12000
+    # Round 4: about 250 KB of application code, plus visible tests and the lockfile.
+    assert 120 <= len(tree) <= 160
+    assert 12000 <= sum(text.count("\n") for text in tree.values()) <= 16000
+    source = sum(len(text.encode()) for path, text in tree.items()
+                 if path.startswith("src/") and path.endswith(".ts"))
+    assert 240_000 <= source <= 290_000
     assert not any(
         word in text
         for text in tree.values()
