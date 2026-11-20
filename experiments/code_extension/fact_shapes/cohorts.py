@@ -50,7 +50,7 @@ PILOT_REPEATS: Mapping[StudyModelName, int] = {"sol": 2, "argon": 1, "midtier": 
 STUDY_REPEATS = 5
 # Single-model slice pilots while the tasks are rebuilt (second change in plan-change.md).
 # Each round gets its own cohort label; a cap leaves one request's reservation spare.
-SLICE_ROUND = 4
+SLICE_ROUND = 5
 SLICE_MODEL: StudyModelName = "midtier"
 SLICE_PLAN_CAPS: Mapping[StudyModelName, Decimal] = {
     "sol": Decimal("5.00"), "argon": Decimal("8.00"), "midtier": Decimal("3.00"),
