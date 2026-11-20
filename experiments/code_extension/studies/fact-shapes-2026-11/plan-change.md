@@ -353,6 +353,6 @@ search hit does not lead to the next.
 - Reading each attempt also records where the fix was made: in the roll-up pieces, in the
   engine, or at a call site.
 
-**Build and run.** A new scenario on the same service, built by an agent, qualified on
+**Build and run.** Rebuilds stage-additive in place (the task still adds a stage), built by an agent, qualified on
 mcclure, then run with Luna alone at a $3 cap (about $0.60). The task text and the table
 are reviewed before anything is built.
