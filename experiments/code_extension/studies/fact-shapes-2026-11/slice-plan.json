@@ -2,10 +2,10 @@
   "scenario_qualifications": [
     {
       "scenario": "fact-shapes-stage-additive",
-      "manifest_digest": "sha256:c03aeb2ec3c02c0ff0e8c9d3d93d074f30e1c42bb10a152a44ccebd05e26d493"
+      "manifest_digest": "sha256:7685e6be676012af486fb3dea41e7c37a3d79479e0d7f55abc2fbb98ab21b6e4"
     }
   ],
-  "cohort": "fact-shapes-2026-11-slice5-midtier",
+  "cohort": "fact-shapes-2026-11-slice6-midtier",
   "route": {
     "endpoint": "https://openrouter.ai/api/v1",
     "model": "openai/gpt-6-luna",
