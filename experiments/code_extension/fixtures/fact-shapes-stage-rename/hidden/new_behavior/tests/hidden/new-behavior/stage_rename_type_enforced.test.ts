@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import "../../../src/bootstrap.ts";
 import { rmSync } from "node:fs";
-import { stageLabels } from "../../../src/presentation/labels.ts";
+import { stageHeadings } from "../../../src/presentation/labels.ts";
 import { edit } from "../../../stage/edit.ts";
 
 test("fact:stage_rename_type_enforced: type_enforced behavior", async () => {
@@ -13,14 +13,14 @@ test("fact:stage_rename_type_enforced: type_enforced behavior", async () => {
     await Bun.write(`${directory}/tsconfig.json`, JSON.stringify(config));
     await Bun.write(`${directory}/consumer.ts`, [
       `import { edit } from ${JSON.stringify(process.cwd() + "/stage/edit.ts")};`,
-      `import { stageLabels } from ${JSON.stringify(process.cwd() + "/src/presentation/labels.ts")};`,
+      `import { stageHeadings } from ${JSON.stringify(process.cwd() + "/src/presentation/labels.ts")};`,
       `edit("record", "triaged");`,
-      `export const displayed: string = stageLabels.triaged;`,
+      `export const displayed: string = stageHeadings.triaged;`,
     ].join("\n"));
     const result = Bun.spawnSync([process.execPath, Bun.resolveSync("typescript/bin/tsc", import.meta.dir), "--noEmit", "-p", `${directory}/tsconfig.json`]);
     expect(new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr)).toBe("");
     expect(result.exitCode).toBe(0);
   } finally { rmSync(directory, { recursive: true, force: true }); }
-  expect(typeof (stageLabels as Record<string, unknown>)["triaged"]).toBe("string");
+  expect(typeof (stageHeadings as Record<string, unknown>)["triaged"]).toBe("string");
   expect(() => edit("record", "queued" as never)).toThrow();
 }, 30000);

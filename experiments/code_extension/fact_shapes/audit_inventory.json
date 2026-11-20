@@ -14,11 +14,14 @@
       "candidate_holders": [
         "src/presentation/labels.ts",
         "stage/policy.ts",
-        "src/validation/registry.ts",
-        "src/services/peer.ts",
-        "db/migrations/001_lookup_tables.sql",
+        "src/domain/escalation_validation.ts",
+        "src/services/bulk_moves.ts",
+        "db/migrations/008_retention_periods.sql",
+        "src/domain/validation.ts",
         "src/services/export_snapshots.ts"
-      ]
+      ],
+      "trait_symbol": "stageTraits",
+      "types_module": "stage/types.ts"
     },
     {
       "name": "evidence_kind",

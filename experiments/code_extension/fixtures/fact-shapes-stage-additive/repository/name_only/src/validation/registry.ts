@@ -3,7 +3,7 @@ import * as kindTypes from "../../evidence_kind/types.ts";
 import * as permissionTypes from "../../route_permission/types.ts";
 
 /** Registered values and their routes, checked by request validation. */
-const registeredStages: readonly string[] = ["queued", "active", "complete"];
+const registeredStages: readonly string[] = stageTypes.values;
 const registeredKinds: readonly string[] = kindTypes.values;
 const registeredPermissions: readonly string[] = permissionTypes.values;
 

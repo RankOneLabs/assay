@@ -124,7 +124,7 @@ describe("audit queries", () => {
     expect(dwell.jobs).toBe(2);
     expect(dwell.stages.map(item => item.stage)).toEqual([...stages]);
     const active = dwell.stages.find(item => item.stage === "active")!;
-    expect(active).toMatchObject({ label: "Active", entries: 1, current: 1 });
+    expect(active).toMatchObject({ label: "In progress", entries: 1, current: 1 });
     const initial = dwell.stages.find(item => item.stage === archived.stage)!;
     expect(initial.entries).toBe(2);
     expect(f.context.audit.stages(admin, "second").spans[0]!.durationMs).toBe(archived.archivedAt! - archived.createdAt);

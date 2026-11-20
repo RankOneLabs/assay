@@ -35,7 +35,7 @@ TYPE_NAMES: dict[Feature, str] = {
     'stage': 'Stage', 'evidence_kind': 'EvidenceKind', 'route_permission': 'RoutePermission',
 }
 LABEL_MAPS: dict[Feature, str] = {
-    'stage': 'stageLabels',
+    'stage': 'stageHeadings',
     'evidence_kind': 'evidenceKindLabels',
     'route_permission': 'routePermissionLabels',
 }
@@ -108,58 +108,137 @@ def derived_line(feature: Feature, shape: Shape) -> str:
     return f'const {_list_name(feature, shape)}: readonly string[] = {namespace}.values;'
 
 
+# Round 5: stage holders are implicit. Every version declares per-stage traits next to
+# the type; a holder reads its trait, except in its own version, where it encodes the
+# stages another way (a position, numeric codes, or display text) and names none.
+STAGE_HEADINGS: dict[str, str] = {
+    'queued': 'Waiting', 'active': 'In progress', 'complete': 'Done', 'triaged': 'Awaiting triage',
+}
+# The new stage's traits, as the stage-additive task states them.
+TRIAGED_TRAITS = (
+    '  triaged: { heading: "Awaiting triage", open: true, code: 4, retentionDays: 30, '
+    'route: "/jobs/triage", next: ["queued", "complete"] },'
+)
+_POSITIONAL: dict[Shape, tuple[str, str, str]] = {
+    'reference': ('stage/policy.ts', 'openForChanges', 'types'),
+    'name_only': ('src/domain/escalation_validation.ts', 'escalates', 'stageTypes'),
+    'sibling_only': ('src/services/bulk_moves.ts', 'movableInBulk', 'stageTypes'),
+    'existing_state': ('src/services/export_snapshots.ts', 'exportedLive', 'stageTypes'),
+}
+_RETENTION_MIGRATION = 'db/migrations/008_retention_periods.sql'
+_RETENTION_UNTYPED = 'export const retentionSchema = retentionFields;'
+_RETENTION_TRAIT = (
+    'export const retentionSchema = retentionFields.refine(value => value.days <= '
+    'stageTypes.stageTraits[value.stage].retentionDays, "retention exceeds the stage limit");'
+)
+_RETENTION_CHECK = (
+    '  days INTEGER NOT NULL CONSTRAINT retention_days CHECK (days BETWEEN 1 AND 3650),'
+)
+
+
+def _retention_codes(extra: str = '') -> str:
+    return (
+        '  days INTEGER NOT NULL CONSTRAINT retention_days CHECK (days BETWEEN 1 AND '
+        f'(CASE stage_code WHEN 3 THEN 3650{extra} ELSE 365 END)),'
+    )
+
+
+def _headings(values: tuple[str, ...]) -> str:
+    entries = ', '.join(f'{value}: {json.dumps(STAGE_HEADINGS[value])}' for value in values)
+    return f'export const stageHeadings: Record<stageTypes.Stage, string> = {{ {entries} }};'
+
+
+def holder_switches(cell: Cell) -> tuple[tuple[str, str, str], ...]:
+    """(path, derived text, this version's own text) for each holder file of the cell."""
+    feature, shape = cell.feature, cell.shape
+    if feature != 'stage':
+        return ((
+            cell.holders[0], derived_line(feature, shape),
+            holder_line(feature, shape, VOCABULARIES[feature]),
+        ),)
+    if shape == 'type_enforced':
+        return ((
+            cell.holders[0],
+            'export const stageHeadings: Record<stageTypes.Stage, string> = '
+            'headings(stageTypes.stageTraits);',
+            _headings(VOCABULARIES[feature]),
+        ),)
+    if shape == 'outside_code':
+        return (
+            (_RETENTION_MIGRATION, _RETENTION_CHECK, _retention_codes()),
+            ('src/domain/validation.ts', _RETENTION_TRAIT, _RETENTION_UNTYPED),
+        )
+    path, name, namespace = _POSITIONAL[shape]
+    head = f'const {name} = (stage: {namespace}.Stage): boolean => {namespace}.'
+    return ((path, head + 'stageTraits[stage].open;', head + 'values.indexOf(stage) < 2;'),)
+
+
+def holder_fixes(cell: Cell) -> tuple[tuple[str, str, str], ...]:
+    """(path, this version's text, reference text): the holder update a solution makes."""
+    feature, shape = cell.feature, cell.shape
+    switches = holder_switches(cell)
+    if feature != 'stage':
+        (path, _derived, own), = switches
+        return ((path, own, holder_line(feature, shape, target_values(cell))),)
+    if shape == 'type_enforced':
+        (path, _derived, own), = switches
+        return ((path, own, _headings(target_values(cell))),)
+    if shape == 'outside_code':
+        if cell.task_type == 'additive':
+            fixed = _retention_codes(' WHEN 4 THEN 30')
+            return ((_RETENTION_MIGRATION, _retention_codes(), fixed),)
+        # A rename keeps the stage's code; restoring the typed limit is the update.
+        return (('src/domain/validation.ts', _RETENTION_UNTYPED, _RETENTION_TRAIT),)
+    # Positional holders: the update reads the declared trait.
+    return tuple((path, own, derived) for path, derived, own in switches)
+
+
 def anchor_edits(cell: Cell) -> tuple[Replacement, ...]:
     return (Replacement(f'{cell.feature}/anchor.ts', ANCHOR_OLD, ANCHOR_LINE),)
 
 
 def _edits(cell: Cell) -> tuple[Replacement, ...]:
-    holder = Replacement(
-        cell.holders[0],
-        derived_line(cell.feature, cell.shape),
-        holder_line(cell.feature, cell.shape, VOCABULARIES[cell.feature]),
-    )
-    return (holder, *anchor_edits(cell))
+    holders = tuple(Replacement(path, derived, own) for path, derived, own in holder_switches(cell))
+    return (*holders, *anchor_edits(cell))
 
 
 SWITCHES: dict[FactId, tuple[Replacement, ...]] = {cell.fact_id: _edits(cell) for cell in CELLS}
 
 
-def fact_lines(cell: Cell) -> tuple[str, ...]:
-    """The holder's independent declaration is the evidence for an additive or rename edit."""
-    return (holder_line(cell.feature, cell.shape, VOCABULARIES[cell.feature]),)
+def fact_lines(cell: Cell) -> dict[str, tuple[str, ...]]:
+    """Per holder file, the line that is this version's own: what a model must see."""
+    lines: dict[str, tuple[str, ...]] = {}
+    for path, _derived, own in holder_switches(cell):
+        lines[path] = (own,)
+    return lines
 
 
 # A scenario's feature work, identical in every arm and never touching a holder.
-# Stage-additive: imported jobs start in triaged, which may only be left for the
-# initial waiting stage or the completed stage. Builds already take only queued jobs.
+# Stage-additive: imported jobs start in triaged (its traits, declared with the type,
+# allow leaving only for the waiting or completed stage). Builds take only queued jobs.
 FEATURE_EDITS: dict[tuple[Feature, TaskType], tuple[Replacement, ...]] = {
     ('stage', 'additive'): (
         Replacement(
-            'src/services/jobs.ts',
-            'import { enforceLimit } from "../../stage/policy.ts";\n',
-            'import { enforceLimit } from "../../stage/policy.ts";\n'
-            'import type { Stage } from "../../stage/types.ts";\n',
-        ),
-        Replacement(
-            'src/services/jobs.ts',
-            '  create(actor: Principal, input: unknown): Job {',
-            '  create(actor: Principal, input: unknown, stage: Stage = "queued"): Job {',
-        ),
-        Replacement(
-            'src/services/jobs.ts',
-            '      const job = this.jobs.create(parsed, "queued", now);',
-            '      const job = this.jobs.create(parsed, stage, now);',
+            'src/repositories/jobs.ts',
+            '  transition(id: string, stage: Stage, revision: number, now: number): Job {\n',
+            '  /** Place a job that is still at its first revision in its starting stage. */\n'
+            '  startIn(id: string, stage: Stage): Job {\n'
+            '    if (this.require(id).revision !== 1) conflict("job has already changed");\n'
+            '    this.db.query("UPDATE jobs SET stage = ? WHERE id = ? AND revision = 1")'
+            '.run(stage, id);\n'
+            '    return this.require(id);\n'
+            '  }\n\n'
+            '  transition(id: string, stage: Stage, revision: number, now: number): Job {\n',
         ),
         Replacement(
             'src/services/imports.ts',
-            '        const job = this.jobs.create(actor, entry.job);',
-            '        const job = this.jobs.create(actor, entry.job, "triaged");',
-        ),
-        Replacement(
-            'src/domain/transitions.ts',
-            'export function canTransition(from: Stage, to: Stage): boolean {\n',
-            'export function canTransition(from: Stage, to: Stage): boolean {\n'
-            '  if (from === "triaged") return to === "queued" || to === "complete";\n',
+            '        for (const item of entry.evidence) '
+            'this.evidence.attach(actor, job.id, item);\n'
+            '        created.push(job);',
+            '        for (const item of entry.evidence) '
+            'this.evidence.attach(actor, job.id, item);\n'
+            '        // Imported jobs wait for triage once their evidence is attached.\n'
+            '        created.push(this.jobRepository.startIn(job.id, "triaged"));',
         ),
     ),
 }
@@ -195,22 +274,23 @@ def reference_tree(cell: Cell, arm: Mapping[str, str]) -> dict[str, str]:
         if edit.path in cell.holders:
             raise ValueError(f'{cell.fact_id}: feature edit touches the holder {edit.path}')
         _replace_once(tree, edit.path, edit.old, edit.new, edit.count)
-    _replace_once(
-        tree, cell.holders[0],
-        holder_line(feature, cell.shape, VOCABULARIES[feature]),
-        holder_line(feature, cell.shape, target_values(cell)),
-    )
+    for path, own, fixed in holder_fixes(cell):
+        _replace_once(tree, path, own, fixed)
     if cell.task_type == 'additive':
         _replace_once(
             tree, f'{feature}/types.ts',
             f'{_literals(VOCABULARIES[feature])} as const',
             f'{_literals(target_values(cell))} as const',
         )
+        if feature == 'stage':
+            _replace_once(tree, 'stage/types.ts', '\n};\n', f'\n{TRIAGED_TRAITS}\n}};\n')
     else:
         old, new = VALUES[feature]
         for path, source in tree.items():
             if path.endswith('.ts') and not path.startswith('tests/'):
                 tree[path] = source.replace(json.dumps(old), json.dumps(new))
+        if feature == 'stage':
+            _replace_once(tree, 'stage/types.ts', f'\n  {old}: {{', f'\n  {new}: {{')
     _replace_once(tree, f'{feature}/anchor.ts', ANCHOR_LINE, ANCHOR_OLD)
     return tree
 

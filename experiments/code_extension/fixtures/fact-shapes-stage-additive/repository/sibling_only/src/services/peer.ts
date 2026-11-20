@@ -3,7 +3,7 @@ import * as kindTypes from "../../evidence_kind/types.ts";
 import * as permissionTypes from "../../route_permission/types.ts";
 
 /** What the peer operations accept: transitions, attachments and grants. */
-const peerStages: readonly string[] = ["queued", "active", "complete"];
+const peerStages: readonly string[] = stageTypes.values;
 const peerKinds: readonly string[] = kindTypes.values;
 const peerPermissions: readonly string[] = permissionTypes.values;
 

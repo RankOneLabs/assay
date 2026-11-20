@@ -138,21 +138,33 @@ def alternative_control(
         )
         label = "type-without-required-feature.patch"
     elif cell.shape == "outside_code":
+        import re
+
         path = cell.holders[0]
         after[path] = before[path]
+        # The constrained table: the feature's lookup table, or a stage-coded settings table.
         table = f"{cell.feature}_values"
+        if f"CREATE TABLE {table} (" not in before[path]:
+            found = re.search(r"CREATE TABLE (?:IF NOT EXISTS )?(\w+) \(", before[path])
+            if found is None:
+                raise ValueError(f"{path}: no table in the migration holder")
+            table = found.group(1)
+        header = re.search(rf"CREATE TABLE (?:IF NOT EXISTS )?{table} \(", complete[path])
+        if header is None:
+            raise ValueError(f"{path}: {table} missing from the reference migration")
         directory = path.rsplit("/", 1)[0]
         count = sum(1 for name in before if name.startswith(directory + "/"))
-        # Only this feature's table, from the reference's (possibly shared) migration.
-        statement = complete[path].split(f"CREATE TABLE {table}", 1)[1].split("\n);\n", 1)[0]
-        after[f"{directory}/{count + 1:03d}_allow_{cell.feature}_values.sql"] = (
+        # Only this table, from the reference's (possibly shared) migration.
+        statement = complete[path][header.end():].split("\n);\n", 1)[0]
+        column = "value" if table.endswith("_values") else "days"
+        after[f"{directory}/{count + 1:03d}_allow_{table}.sql"] = (
             f"ALTER TABLE {table} RENAME TO previous_values;\n"
-            + f"CREATE TABLE {table}{statement}\n);\n"
+            + f"CREATE TABLE {table} ({statement}\n);\n"
             + f"INSERT INTO {table} SELECT * FROM previous_values;\n"
             + "DROP TABLE previous_values;\n"
         )
-        after[f"{directory}/{count + 2:03d}_index_{cell.feature}_values.sql"] = (
-            f"CREATE INDEX {cell.feature}_value_index ON {table}(value);\n"
+        after[f"{directory}/{count + 2:03d}_index_{table}.sql"] = (
+            f"CREATE INDEX {table}_{column}_index ON {table}({column});\n"
         )
         label = "follow-up-migration.patch"
     else:

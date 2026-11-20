@@ -85,7 +85,7 @@ def test_kinds_and_import_distances() -> None:
         if cell.shape == 'reference':
             assert isinstance(cell.import_hops, int) and cell.import_hops >= 1
         if cell.shape == 'outside_code':
-            assert all(p.endswith('.sql') for p in cell.holders)
+            assert cell.holders[0].endswith('.sql')
 
 
 def test_holder_update_checks_and_migration_plan() -> None:
@@ -97,7 +97,9 @@ def test_holder_update_checks_and_migration_plan() -> None:
         }
         assert len(statements) == 4
     migrations = sorted({c.holders[0] for c in CELLS if c.shape == 'outside_code'})
-    assert migrations == ['db/migrations/001_lookup_tables.sql']
+    assert migrations == [
+        'db/migrations/001_lookup_tables.sql', 'db/migrations/008_retention_periods.sql',
+    ]
     rendered = render_cell_table()
     assert 'lexicographic' in rendered
     assert 'no cross-feature ordering dependency' in rendered

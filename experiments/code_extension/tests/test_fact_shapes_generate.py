@@ -115,7 +115,8 @@ def test_real_switch_coverage_and_paths() -> None:
             assert edit.path in {*cell.holders, f'{cell.feature}/anchor.ts'}
         # One line of the holder differs between arms: the switch is a single edit.
         holder_edits = [edit for edit in SWITCHES[cell.fact_id] if edit.path in cell.holders]
-        assert len(holder_edits) == 1 and '\n' not in holder_edits[0].old.strip('\n')
+        assert sorted(edit.path for edit in holder_edits) == sorted(cell.holders)
+        assert all('\n' not in edit.old.strip('\n') for edit in holder_edits)
     # Every declared count is exercised; there is no fallback on base drift.
     generated = generate_trees(base)
     assert generated == {cell.fact_id: read_tree(arm_path(cell)) for cell in CELLS}
@@ -259,8 +260,12 @@ def test_only_selected_holder_explicitly_owns_fact(
             if path.endswith(('.ts', '.sql'))
             and (count := explicit_fact_count(source, concept.members))
         }
-        expected = {concept.declaring_file: 1}
-        if concept.name == cell.feature:
+        # Round 5 stages: the type file declares the values and their traits, and only the
+        # control's compiler-checked map is a literal copy; other stage holders are implicit.
+        expected = {concept.declaring_file: 2 if concept.trait_symbol else 1}
+        if concept.name == cell.feature and (
+            not concept.trait_symbol or cell.shape == 'type_enforced'
+        ):
             expected[cell.holders[0]] = 1
         assert owners == expected, (cell.fact_id, concept.name, owners)
 

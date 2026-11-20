@@ -102,7 +102,7 @@ describe("project usage", () => {
     ]);
     expect(report.ownersOverLimit).toEqual(["sam"]);
     expect(report.stages.map(item => item.stage)).toEqual([...stages]);
-    expect(report.stages.find(item => item.stage === "complete")).toMatchObject({ count: 1, label: "Complete" });
+    expect(report.stages.find(item => item.stage === "complete")).toMatchObject({ count: 1, label: "Done" });
     expect(report.stages.reduce((sum, item) => sum + item.count, 0)).toBe(5);
     expect(() => f.context.usage.report(writer)).toThrow("permission required");
     expect(f.context.usage.report(outsider).owners).toEqual([]);

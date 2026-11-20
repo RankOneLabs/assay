@@ -7,6 +7,12 @@ most one independent copy, declared once, in one candidate holder: the arm's
 manipulated holder. Any other copy is a duplicate. Imports and derived views are
 readers, not declarations. Legacy inventories retain their form-specific exemptions.
 Inventoried state fields and SQL tables must still have one canonical source.
+
+A concept with a trait symbol (round 5, stages) also has implicit holders: code that
+decides a per-value behavior without naming the values. Its candidate holders must
+read the declared traits, and no file may encode the values another way: by their
+position in the declared list, or as numeric codes in a SQL CASE. A version's
+manipulated holder is exactly the set of files these checks report.
 """
 
 from __future__ import annotations
@@ -28,6 +34,8 @@ class Concept:
     outside_holders: tuple[str, ...]
     switch_holders: tuple[str, ...] = ()
     candidate_holders: tuple[str, ...] = ()
+    trait_symbol: str = ""
+    types_module: str = ""
 
 
 @dataclass(frozen=True)
@@ -86,6 +94,8 @@ def load_inventory(path: Path) -> Inventory:
             outside_holders=_strings(item.get("outside_holders", [])),
             switch_holders=_strings(item.get("switch_holders", [])),
             candidate_holders=_strings(item.get("candidate_holders", [])),
+            trait_symbol=_text(item.get("trait_symbol", "")),
+            types_module=_text(item.get("types_module", "")),
         )
         for item in _objects(data["concepts"])
     )
@@ -205,6 +215,37 @@ def _state_declarations(source: str, symbol: str, kind: str = "field") -> int:
     return len(re.findall(pattern, source, re.IGNORECASE))
 
 
+# A position in the declared value list, read through any import of it.
+_POSITIONAL = re.compile(r"\b(?:values|stages)\s*\.\s*(?:indexOf|findIndex|at)\s*\(|"
+                         r"\b(?:values|stages)\s*\[\s*\d+\s*\]")
+_SQL_CODES = re.compile(r"\bCASE\s+\w*_code\b", re.IGNORECASE)
+
+
+def _implicit_findings(concept: Concept, sources: dict[str, str]) -> list[Finding]:
+    """Implicit holders: positional or coded decisions, and holders that skip the traits."""
+    if not concept.trait_symbol:
+        return []
+    findings: list[Finding] = []
+    for path, source in sources.items():
+        if path == concept.declaring_file:
+            continue
+        folder, module = concept.types_module.rsplit("/", 1)
+        reads_types = concept.types_module in source or (
+            path.startswith(folder + "/") and f"./{module}" in source
+        )
+        if path.endswith(".ts") and reads_types and _POSITIONAL.search(source):
+            findings.append(Finding(concept.name, path, "positional value encoding"))
+        if path.endswith(".sql") and _SQL_CODES.search(source):
+            findings.append(Finding(concept.name, path, "coded value encoding"))
+    for path in concept.candidate_holders:
+        holder = sources.get(path)
+        if holder is None:
+            findings.append(Finding(concept.name, path, "missing candidate holder"))
+        elif path.endswith(".ts") and concept.trait_symbol not in holder:
+            findings.append(Finding(concept.name, path, "holder does not read the declared traits"))
+    return findings
+
+
 def audit(root: Path, inventory: Inventory) -> tuple[Finding, ...]:
     """Return ownership violations, with paths relative to any supplied root."""
     sources = {
@@ -223,7 +264,7 @@ def audit(root: Path, inventory: Inventory) -> tuple[Finding, ...]:
                 findings.append(Finding(
                     concept.name, concept.declaring_file, "missing declaration"
                 ))
-            elif declared != 1:
+            elif declared != (2 if concept.trait_symbol else 1):
                 findings.append(Finding(
                     concept.name, concept.declaring_file, "duplicate concept value declaration"
                 ))
@@ -244,6 +285,7 @@ def audit(root: Path, inventory: Inventory) -> tuple[Finding, ...]:
                 ):
                     findings.append(Finding(concept.name, concept.declaring_file,
                                             "missing declaration"))
+            findings.extend(_implicit_findings(concept, sources))
             continue
         declaring = sources.get(concept.declaring_file, "")
         declaration = re.search(

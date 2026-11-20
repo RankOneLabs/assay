@@ -100,24 +100,36 @@ _IMPORT_HOPS: dict[Shape, int | None] = {
 }
 
 
-def holder_path(feature: Feature, shape: Shape) -> RepositoryPath:
-    """The one file that holds this shape's independent copy when it is manipulated.
+# Round 5: stage holders are implicit. Each reads a per-stage trait declared next to
+# the type, except in its own version, where it encodes the stages another way.
+_STAGE_HOLDERS: dict[Shape, tuple[str, ...]] = {
+    'type_enforced': ('src/presentation/labels.ts',),
+    'reference': ('stage/policy.ts',),
+    'name_only': ('src/domain/escalation_validation.ts',),
+    'sibling_only': ('src/services/bulk_moves.ts',),
+    # The CHECK holds the per-stage limit; the typed limit is absent in this version.
+    'outside_code': ('db/migrations/008_retention_periods.sql', 'src/domain/validation.ts'),
+    'existing_state': ('src/services/export_snapshots.ts',),
+}
+
+
+def holder_paths(feature: Feature, shape: Shape) -> tuple[RepositoryPath, ...]:
+    """The files that hold this shape's independent behavior when it is manipulated.
 
     Except for the direct-import policy, each holder file is shared by the three
     features and its name and directory name none of them.
     """
+    if feature == 'stage':
+        return tuple(RepositoryPath(path) for path in _STAGE_HOLDERS[shape])
     paths: dict[Shape, str] = {
         'type_enforced': 'src/presentation/labels.ts',
         'reference': f'{feature}/policy.ts',
         'name_only': 'src/validation/registry.ts',
         'sibling_only': 'src/services/peer.ts',
         'outside_code': 'db/migrations/001_lookup_tables.sql',
-        'existing_state': (
-            'src/services/export_snapshots.ts' if feature == 'stage'
-            else 'src/preferences/defaults.ts'
-        ),
+        'existing_state': 'src/preferences/defaults.ts',
     }
-    return RepositoryPath(paths[shape])
+    return (RepositoryPath(paths[shape]),)
 
 
 def _directory_hops(edit_site: str, holder: str) -> int:
@@ -147,13 +159,27 @@ def _cell(feature: Feature, task_type: TaskType, shape: Shape) -> Cell:
     )
     verb = 'adds it to' if task_type == 'additive' else 'renames it in'
     kind: FactKind = 'holder_update'
-    if shape == 'existing_state':
+    stage_rules: dict[Shape, str] = {
+        'type_enforced': 'gives it the heading "Awaiting triage" in the compiler-checked '
+                         'heading map',
+        'reference': 'keeps its jobs open for changes at the edit gate, which decides by '
+                     'stage position in this version',
+        'name_only': 'lets escalation rules target it, though the escalation-rule '
+                     'validation decides by stage position in this version',
+        'sibling_only': 'lets the bulk stage change move its jobs, though that operation '
+                        'decides by stage position in this version',
+        'outside_code': 'limits its retention to 30 days in the retention migration\'s '
+                        'CHECK, which encodes stages as numeric codes',
+        'existing_state': 'exports its jobs from the current stored row, though the export '
+                          'reader decides by stage position in this version',
+    }
+    if feature == 'stage':
+        if shape == 'existing_state':
+            kind = 'reuse_vs_duplicate' if task_type == 'additive' else 'reader_update'
+        statement = f'{action} {stage_rules[shape]}.'
+    elif shape == 'existing_state':
         kind = 'reuse_vs_duplicate' if task_type == 'additive' else 'reader_update'
-        reader = (
-            'the export reader\'s list of stages exported from the current stored row'
-            if feature == 'stage'
-            else 'the saved-default reader\'s list of values that follow the current selection'
-        )
+        reader = 'the saved-default reader\'s list of values that follow the current selection'
         statement = (
             f'{action} {verb} {reader}, so stored state for {new} is read live '
             'rather than from a stored copy.'
@@ -182,20 +208,20 @@ def _cell(feature: Feature, task_type: TaskType, shape: Shape) -> Cell:
             f'{action} {verb} the adjacent operation\'s accepted list, so it also '
             f'accepts {new}.'
         )
-    holder = holder_path(feature, shape)
+    holders = holder_paths(feature, shape)
     fact_id = FactId(f'{feature}_{task_type}_{shape}')
     return Cell(
         feature=feature,
         shape=shape,
         task_type=task_type,
         edit_site=RepositoryPath(f'{feature}/edit.ts'),
-        holders=(holder,),
+        holders=holders,
         fact_id=fact_id,
         fact_statement=statement,
         anchor_fact_id=FactId(f'{feature}_{task_type}_anchor'),
         test_title_prefix=f'fact:{fact_id}: ',
         import_hops=_IMPORT_HOPS[shape],
-        directory_hops=_directory_hops(f'{feature}/edit.ts', holder),
+        directory_hops=min(_directory_hops(f'{feature}/edit.ts', path) for path in holders),
         fact_kind=kind,
     )
 

@@ -139,7 +139,8 @@ def test_feature_switch_points_are_specific_and_exhaustive() -> None:
             assert f'"{new}"' not in source, holder
             if holder.endswith(".ts"):
                 assert f"/{feature}/types.ts" in source or holder.startswith(f"{feature}/")
-                assert "values" in source, holder
+                # Derived holders read the declared values, or (stages) the declared traits.
+                assert "values" in source or "stageTraits" in source, holder
             if not holder.startswith(f"{feature}/"):
                 # Shared holders name no feature in their file or directory names.
                 for word in ("stage", "evidence", "kind", "permission"):
@@ -147,5 +148,5 @@ def test_feature_switch_points_are_specific_and_exhaustive() -> None:
             assert 'from "./edit.ts"' not in source
         sibling = next(BASE / cell.holders[0] for cell in CELLS
                        if cell.feature == feature and cell.shape == "sibling_only")
-        assert "acceptsPeer" in sibling.read_text()
+        assert ("movableInBulk" if feature == "stage" else "acceptsPeer") in sibling.read_text()
         assert sibling.name not in edit

@@ -1,6 +1,6 @@
 CREATE TABLE stage_values (
   id TEXT PRIMARY KEY,
-  value TEXT NOT NULL UNIQUE CONSTRAINT stage_value_check CHECK (value IN ('queued', 'active', 'complete'))
+  value TEXT NOT NULL UNIQUE CONSTRAINT stage_value_check CHECK (length(value) > 0)
 );
 
 CREATE TABLE evidence_kind_values (

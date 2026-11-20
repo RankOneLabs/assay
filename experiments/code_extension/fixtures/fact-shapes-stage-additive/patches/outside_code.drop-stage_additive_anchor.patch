@@ -1,64 +1,44 @@
-diff --git a/db/migrations/001_lookup_tables.sql b/db/migrations/001_lookup_tables.sql
---- a/db/migrations/001_lookup_tables.sql
-+++ b/db/migrations/001_lookup_tables.sql
-@@ -1,6 +1,6 @@
- CREATE TABLE stage_values (
-   id TEXT PRIMARY KEY,
--  value TEXT NOT NULL UNIQUE CONSTRAINT stage_value_check CHECK (value IN ('queued', 'active', 'complete'))
-+  value TEXT NOT NULL UNIQUE CONSTRAINT stage_value_check CHECK (value IN ('queued', 'active', 'complete', 'triaged'))
- );
+diff --git a/db/migrations/008_retention_periods.sql b/db/migrations/008_retention_periods.sql
+--- a/db/migrations/008_retention_periods.sql
++++ b/db/migrations/008_retention_periods.sql
+@@ -2,7 +2,7 @@
+ CREATE TABLE IF NOT EXISTS stage_retention (
+   project TEXT NOT NULL,
+   stage_code INTEGER NOT NULL,
+-  days INTEGER NOT NULL CONSTRAINT retention_days CHECK (days BETWEEN 1 AND (CASE stage_code WHEN 3 THEN 3650 ELSE 365 END)),
++  days INTEGER NOT NULL CONSTRAINT retention_days CHECK (days BETWEEN 1 AND (CASE stage_code WHEN 3 THEN 3650 WHEN 4 THEN 30 ELSE 365 END)),
+   updated_by TEXT NOT NULL,
+   updated_at INTEGER NOT NULL,
+   PRIMARY KEY (project, stage_code)
+diff --git a/src/repositories/jobs.ts b/src/repositories/jobs.ts
+--- a/src/repositories/jobs.ts
++++ b/src/repositories/jobs.ts
+@@ -81,6 +81,13 @@
+       id,
+       patch.expectedRevision,
+     );
++    return this.require(id);
++  }
++
++  /** Place a job that is still at its first revision in its starting stage. */
++  startIn(id: string, stage: Stage): Job {
++    if (this.require(id).revision !== 1) conflict("job has already changed");
++    this.db.query("UPDATE jobs SET stage = ? WHERE id = ? AND revision = 1").run(stage, id);
+     return this.require(id);
+   }
  
- CREATE TABLE evidence_kind_values (
-diff --git a/src/domain/transitions.ts b/src/domain/transitions.ts
---- a/src/domain/transitions.ts
-+++ b/src/domain/transitions.ts
-@@ -5,6 +5,7 @@
- import { conflict } from "./errors.ts";
- 
- export function canTransition(from: Stage, to: Stage): boolean {
-+  if (from === "triaged") return to === "queued" || to === "complete";
-   const source = stages.indexOf(from);
-   const target = stages.indexOf(to);
-   return source === 0 ? target === 1 : source === 1 && (target === 0 || target === 2);
 diff --git a/src/services/imports.ts b/src/services/imports.ts
 --- a/src/services/imports.ts
 +++ b/src/services/imports.ts
-@@ -101,7 +101,7 @@
-       const parsed = importSchema.parse(input);
-       const created: Job[] = [];
+@@ -103,7 +103,8 @@
        for (const entry of parsed.entries) {
--        const job = this.jobs.create(actor, entry.job);
-+        const job = this.jobs.create(actor, entry.job, "triaged");
+         const job = this.jobs.create(actor, entry.job);
          for (const item of entry.evidence) this.evidence.attach(actor, job.id, item);
-         created.push(job);
+-        created.push(job);
++        // Imported jobs wait for triage once their evidence is attached.
++        created.push(this.jobRepository.startIn(job.id, "triaged"));
        }
-diff --git a/src/services/jobs.ts b/src/services/jobs.ts
---- a/src/services/jobs.ts
-+++ b/src/services/jobs.ts
-@@ -9,6 +9,7 @@
- import { edit, peerGuard } from "../../stage/edit.ts";
- import { acceptsPeerStage as siblingAccepts } from "./peer.ts";
- import { enforceLimit } from "../../stage/policy.ts";
-+import type { Stage } from "../../stage/types.ts";
- import { JobRepository } from "../repositories/jobs.ts";
- import { EventRepository } from "../repositories/events.ts";
- import { AccessService } from "./access.ts";
-@@ -24,14 +25,14 @@
-     private readonly liveSessionsFor: (jobId: string) => readonly string[] = () => [],
-   ) {}
- 
--  create(actor: Principal, input: unknown): Job {
-+  create(actor: Principal, input: unknown, stage: Stage = "queued"): Job {
-     this.access.require(actor, "case_write");
-     const parsed = createJobSchema.parse(input);
-     if (parsed.project !== actor.project) forbidden("cannot create in another project");
-     return this.db.transaction(() => {
-       if (this.jobs.count(actor.project) >= this.config.maxJobs) limitExceeded("project job limit reached");
-       const now = this.now();
--      const job = this.jobs.create(parsed, "queued", now);
-+      const job = this.jobs.create(parsed, stage, now);
-       this.events.append(job.id, "job.created", actor.id, { title: job.title }, now);
-       return job;
+       return created;
      })();
 diff --git a/stage/types.ts b/stage/types.ts
 --- a/stage/types.ts
@@ -69,3 +49,9 @@ diff --git a/stage/types.ts b/stage/types.ts
  export type Stage = (typeof values)[number];
  export function isValue(value: string): value is Stage {
    return (values as readonly string[]).includes(value);
+@@ -24,4 +24,5 @@
+   queued: { heading: "Waiting", open: true, code: 1, retentionDays: 365, route: "/jobs/queue", next: ["active"] },
+   active: { heading: "In progress", open: true, code: 2, retentionDays: 365, route: "/jobs/work", next: ["queued", "complete"] },
+   complete: { heading: "Done", open: false, code: 3, retentionDays: 3650, route: "/jobs/archive", next: [] },
++  triaged: { heading: "Awaiting triage", open: true, code: 4, retentionDays: 30, route: "/jobs/triage", next: ["queued", "complete"] },
+ };

@@ -80,8 +80,8 @@ describe("job comments", () => {
     expect(() => f.context.comments.add(admin, "archived", { id: "a2", body: "late" })).toThrow("archived");
     expect(() => f.context.comments.edit(admin, "archived", "a", { body: "changed", expectedRevision: 1 }))
       .toThrow("archived");
-    expect(() => f.context.comments.add(admin, "done", { id: "d2", body: "late" })).toThrow("completed");
-    expect(() => f.context.comments.remove(admin, "done", "d", { expectedRevision: 1 })).toThrow("completed");
+    expect(() => f.context.comments.add(admin, "done", { id: "d2", body: "late" })).toThrow("read only");
+    expect(() => f.context.comments.remove(admin, "done", "d", { expectedRevision: 1 })).toThrow("read only");
     expect(f.context.comments.thread(reader, "done").comments[0]!.body).toBe("before completion");
   });
 

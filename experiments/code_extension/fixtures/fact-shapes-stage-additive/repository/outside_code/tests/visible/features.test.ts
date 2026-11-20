@@ -3,6 +3,7 @@ import { peerGuard as stagePrimary, operations as stageOperations } from "../../
 import { peerGuard as evidencePrimary, operations as evidenceOperations } from "../../evidence_kind/edit.ts";
 import { peerGuard as permissionPrimary, operations as permissionOperations } from "../../route_permission/edit.ts";
 import { routeStage } from "../../src/routing.ts";
+import { stageTraits } from "../../stage/types.ts";
 import { acceptValue as acceptStage } from "../../stage/policy.ts";
 import { acceptValue as acceptKind } from "../../evidence_kind/policy.ts";
 import { acceptValue as acceptPermission } from "../../route_permission/policy.ts";
@@ -33,7 +34,7 @@ describe("feature-specific independent peer switch points", () => {
       expect(stagePeer(value)).toBe(true);
       expect(stageOperations[value]!("key")).toBe(`key:${value}`);
       expect(routeStage(value)).toStartWith("/jobs");
-      expect(stageLabel(value)).toBe(value.charAt(0).toUpperCase() + value.slice(1));
+      expect(stageLabel(value)).toBe(stageTraits[value].heading);
     }
   });
 
@@ -135,7 +136,12 @@ describe("type-enforced feature types", () => {
         const checked = Bun.spawnSync(command);
         expect(checked.exitCode).not.toBe(0);
         expect(new TextDecoder().decode(checked.stdout)).toContain("future_value");
-        await Bun.write(`${directory}/${feature}/types.ts`, original.replace("] as const", ', "future_value"] as const'));
+        // A stage also declares its traits; the compiler requires them for every stage.
+        const widened = original.replace("] as const", ', "future_value"] as const').replace(
+          "\n};\n",
+          '\n  future_value: { heading: "Future", open: true, code: 9, retentionDays: 30, route: "/jobs", next: [] },\n};\n',
+        );
+        await Bun.write(`${directory}/${feature}/types.ts`, widened);
         expect(Bun.spawnSync(command).exitCode).toBe(0);
       } finally { await import("node:fs/promises").then(fs => fs.rm(directory, { recursive: true, force: true })); }
     }, 20000);

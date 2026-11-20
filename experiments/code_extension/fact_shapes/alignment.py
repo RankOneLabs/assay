@@ -15,6 +15,7 @@ ALLOWLIST: dict[str, str] = {
     "stage": "Ordinary workflow noun required to describe the feature.",
     "operations": "Ordinary plural noun describing public service behavior.",
     "length": "Ordinary measurement word describing record label limits.",
+    "days": "Ordinary unit word in the stage-additive retention rule.",
 }
 
 

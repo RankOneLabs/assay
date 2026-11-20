@@ -9,6 +9,7 @@ import { requireTransition } from "../domain/transitions.ts";
 import { edit, peerGuard } from "../../stage/edit.ts";
 import { acceptsPeerStage as siblingAccepts } from "./peer.ts";
 import { enforceLimit } from "../../stage/policy.ts";
+import { requireBulkMovable } from "./bulk_moves.ts";
 import { JobRepository } from "../repositories/jobs.ts";
 import { EventRepository } from "../repositories/events.ts";
 import { AccessService } from "./access.ts";
@@ -71,7 +72,6 @@ export class JobService {
     const parsed = transitionSchema.parse(input);
     const accepts = peer ? siblingAccepts : peerGuard;
     if (!accepts(parsed.stage)) conflict("operation does not accept this stage");
-    edit(id, parsed.stage);
     return this.db.transaction(() => {
       const current = this.jobs.require(id);
       this.access.requireJob(actor, "case_write", current);
@@ -177,9 +177,10 @@ export class JobService {
     }).strict().parse(input);
     const ids = parsed.changes.map(change => change.id);
     if (new Set(ids).size !== ids.length) conflict("duplicate jobs in transition batch");
-    return this.db.transaction(() => parsed.changes.map(change =>
-      this.transition(actor, change.id, change.transition, peer),
-    ))();
+    return this.db.transaction(() => parsed.changes.map(change => {
+      requireBulkMovable(change.id, this.jobs.require(change.id).stage);
+      return this.transition(actor, change.id, change.transition, peer);
+    }))();
   }
 
   compare(actor: Principal, leftId: string, rightId: string) {
@@ -216,6 +217,6 @@ export class JobService {
 
   requireMutable(job: Job): void {
     if (job.archivedAt !== null) conflict("archived job is read only");
-    if (job.stage === "complete") conflict("completed job is read only");
+    edit(job.id, job.stage);
   }
 }

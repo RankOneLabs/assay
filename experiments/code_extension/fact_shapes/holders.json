@@ -9,7 +9,7 @@
       ],
       "fact_lines": {
         "src/presentation/labels.ts": [
-          "export const stageLabels: Record<stageTypes.Stage, string> = { queued: \"Queued\", active: \"Active\", complete: \"Complete\" };"
+          "export const stageHeadings: Record<stageTypes.Stage, string> = { queued: \"Waiting\", active: \"In progress\", complete: \"Done\" };"
         ]
       }
     },
@@ -35,7 +35,7 @@
       ],
       "fact_lines": {
         "stage/policy.ts": [
-          "const acceptedStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
+          "const openForChanges = (stage: types.Stage): boolean => types.values.indexOf(stage) < 2;"
         ]
       }
     },
@@ -57,11 +57,11 @@
     "manipulated": {
       "fact_id": "stage_additive_name_only",
       "holder_paths": [
-        "src/validation/registry.ts"
+        "src/domain/escalation_validation.ts"
       ],
       "fact_lines": {
-        "src/validation/registry.ts": [
-          "const registeredStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
+        "src/domain/escalation_validation.ts": [
+          "const escalates = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
         ]
       }
     },
@@ -83,11 +83,11 @@
     "manipulated": {
       "fact_id": "stage_additive_sibling_only",
       "holder_paths": [
-        "src/services/peer.ts"
+        "src/services/bulk_moves.ts"
       ],
       "fact_lines": {
-        "src/services/peer.ts": [
-          "const peerStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
+        "src/services/bulk_moves.ts": [
+          "const movableInBulk = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
         ]
       }
     },
@@ -109,11 +109,15 @@
     "manipulated": {
       "fact_id": "stage_additive_outside_code",
       "holder_paths": [
-        "db/migrations/001_lookup_tables.sql"
+        "db/migrations/008_retention_periods.sql",
+        "src/domain/validation.ts"
       ],
       "fact_lines": {
-        "db/migrations/001_lookup_tables.sql": [
-          "  value TEXT NOT NULL UNIQUE CONSTRAINT stage_value_check CHECK (value IN ('queued', 'active', 'complete'))"
+        "db/migrations/008_retention_periods.sql": [
+          "  days INTEGER NOT NULL CONSTRAINT retention_days CHECK (days BETWEEN 1 AND (CASE stage_code WHEN 3 THEN 3650 ELSE 365 END)),"
+        ],
+        "src/domain/validation.ts": [
+          "export const retentionSchema = retentionFields;"
         ]
       }
     },
@@ -139,7 +143,7 @@
       ],
       "fact_lines": {
         "src/services/export_snapshots.ts": [
-          "const liveExportStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
+          "const exportedLive = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
         ]
       }
     },
@@ -165,7 +169,7 @@
       ],
       "fact_lines": {
         "src/presentation/labels.ts": [
-          "export const stageLabels: Record<stageTypes.Stage, string> = { queued: \"Queued\", active: \"Active\", complete: \"Complete\" };"
+          "export const stageHeadings: Record<stageTypes.Stage, string> = { queued: \"Waiting\", active: \"In progress\", complete: \"Done\" };"
         ]
       }
     },
@@ -191,7 +195,7 @@
       ],
       "fact_lines": {
         "stage/policy.ts": [
-          "const acceptedStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
+          "const openForChanges = (stage: types.Stage): boolean => types.values.indexOf(stage) < 2;"
         ]
       }
     },
@@ -213,11 +217,11 @@
     "manipulated": {
       "fact_id": "stage_rename_name_only",
       "holder_paths": [
-        "src/validation/registry.ts"
+        "src/domain/escalation_validation.ts"
       ],
       "fact_lines": {
-        "src/validation/registry.ts": [
-          "const registeredStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
+        "src/domain/escalation_validation.ts": [
+          "const escalates = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
         ]
       }
     },
@@ -239,11 +243,11 @@
     "manipulated": {
       "fact_id": "stage_rename_sibling_only",
       "holder_paths": [
-        "src/services/peer.ts"
+        "src/services/bulk_moves.ts"
       ],
       "fact_lines": {
-        "src/services/peer.ts": [
-          "const peerStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
+        "src/services/bulk_moves.ts": [
+          "const movableInBulk = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
         ]
       }
     },
@@ -265,11 +269,15 @@
     "manipulated": {
       "fact_id": "stage_rename_outside_code",
       "holder_paths": [
-        "db/migrations/001_lookup_tables.sql"
+        "db/migrations/008_retention_periods.sql",
+        "src/domain/validation.ts"
       ],
       "fact_lines": {
-        "db/migrations/001_lookup_tables.sql": [
-          "  value TEXT NOT NULL UNIQUE CONSTRAINT stage_value_check CHECK (value IN ('queued', 'active', 'complete'))"
+        "db/migrations/008_retention_periods.sql": [
+          "  days INTEGER NOT NULL CONSTRAINT retention_days CHECK (days BETWEEN 1 AND (CASE stage_code WHEN 3 THEN 3650 ELSE 365 END)),"
+        ],
+        "src/domain/validation.ts": [
+          "export const retentionSchema = retentionFields;"
         ]
       }
     },
@@ -295,7 +303,7 @@
       ],
       "fact_lines": {
         "src/services/export_snapshots.ts": [
-          "const liveExportStages: readonly string[] = [\"queued\", \"active\", \"complete\"];"
+          "const exportedLive = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
         ]
       }
     },

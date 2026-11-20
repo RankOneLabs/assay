@@ -68,12 +68,4 @@ CREATE TABLE IF NOT EXISTS job_dependencies (
   CHECK (job_id != requires_id)
 );
 CREATE INDEX IF NOT EXISTS attempts_job ON attempts(job_id, started_at, id);
-CREATE TABLE IF NOT EXISTS stage_retention (
-  project TEXT NOT NULL,
-  stage TEXT NOT NULL REFERENCES stage_values(value),
-  days INTEGER NOT NULL CHECK (days BETWEEN 1 AND 3650),
-  updated_by TEXT NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (project, stage)
-);
 `;

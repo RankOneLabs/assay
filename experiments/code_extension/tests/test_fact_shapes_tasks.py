@@ -138,7 +138,7 @@ def test_real_inventory_reports_each_named_token_once() -> None:
     forbidden = forbidden_tokens(ROOT / "fact_shapes/holders.json", ROOT / "fact_shapes/base")
     for token, source in (
         ("stage/types.ts", "cells.py:path"),
-        ("queued", "holders.json:key literal"),
+        ("queued", "holders.json:"),
         ("validateKey", "base export:"),
         ("SessionService", "base export:"),
     ):

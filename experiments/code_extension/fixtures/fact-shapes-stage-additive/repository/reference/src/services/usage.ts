@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { values as stages, type Stage } from "../../stage/types.ts";
+import { values as stages, stageTraits, type Stage } from "../../stage/types.ts";
 import type { Page, Principal, StageCount } from "../domain/models.ts";
 import { readAccess } from "../domain/access_levels.ts";
 import { dayMs, type ProjectSettings } from "../domain/settings.ts";
@@ -8,8 +8,8 @@ import { SettingsRepository } from "../repositories/settings.ts";
 import { page } from "../repositories/paging.ts";
 import { AccessService } from "./access.ts";
 
-/** Completed jobs are done: they are not work in progress and cannot go stale. */
-const finished: Stage = "complete";
+/** Only open work counts toward a work-in-progress limit or can go stale (JSON for SQL). */
+const openStages = JSON.stringify(stages.filter(stage => stageTraits[stage].open));
 const staleSample = 10;
 
 export interface OwnerLoad {
@@ -46,7 +46,7 @@ export interface UsageReport {
   stale: Page<StaleJob>;
 }
 
-/** Measures a project against its settings; open means neither archived nor complete. */
+/** Measures a project against its settings; open means not archived and in an open stage. */
 export class UsageService {
   constructor(
     private readonly db: Database,
@@ -61,9 +61,9 @@ export class UsageService {
     const settings = this.settings.get(actor.project);
     const owners = this.db.query<{ owner: string; open: number }, [string, string]>(`
       SELECT owner, COUNT(*) AS open FROM jobs
-      WHERE project = ? AND archived_at IS NULL AND stage != ?
+      WHERE project = ? AND archived_at IS NULL AND stage IN (SELECT value FROM json_each(?))
       GROUP BY owner ORDER BY open DESC, owner ASC
-    `).all(actor.project, finished).map(row => ({
+    `).all(actor.project, openStages).map(row => ({
       ...row,
       limit: settings.wipLimit,
       overLimit: row.open > settings.wipLimit,
@@ -100,14 +100,14 @@ export class UsageService {
   /** Open jobs whose last update is more than the threshold ago, longest idle first. */
   private staleJobs(project: string, settings: ProjectSettings, now: number, limit: number, offset: number) {
     const cutoff = now - settings.staleAfterDays * dayMs;
-    const where = "project = ? AND archived_at IS NULL AND stage != ? AND updated_at < ?";
+    const where = "project = ? AND archived_at IS NULL AND stage IN (SELECT value FROM json_each(?)) AND updated_at < ?";
     const total = this.db.query<{ count: number }, [string, string, number]>(
       `SELECT COUNT(*) AS count FROM jobs WHERE ${where}`,
-    ).get(project, finished, cutoff)!.count;
+    ).get(project, openStages, cutoff)!.count;
     const rows = this.db.query<Omit<StaleJob, "idleDays">, [string, string, number, number, number]>(`
       SELECT id, title, owner, stage, updated_at AS updatedAt FROM jobs WHERE ${where}
       ORDER BY updated_at ASC, id ASC LIMIT ? OFFSET ?
-    `).all(project, finished, cutoff, limit, offset);
+    `).all(project, openStages, cutoff, limit, offset);
     const items = rows.map(row => ({ ...row, idleDays: Math.floor((now - row.updatedAt) / dayMs) }));
     return page(items, total, limit, offset);
   }

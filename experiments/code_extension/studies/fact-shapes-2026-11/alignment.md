@@ -10,16 +10,16 @@ reported but never scored as facts.
 
 | Scenario | Fact test title | Task sentence |
 | --- | --- | --- |
-| fact-shapes-stage-additive | fact:stage_additive_type_enforced: type_enforced behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
-| fact-shapes-stage-additive | fact:stage_additive_reference: reference behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
-| fact-shapes-stage-additive | fact:stage_additive_name_only: name_only behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
-| fact-shapes-stage-additive | fact:stage_additive_sibling_only: sibling_only behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
-| fact-shapes-stage-additive | fact:stage_additive_outside_code: outside_code behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
-| fact-shapes-stage-additive | fact:stage_additive_existing_state: existing_state behavior | The new stage must work everywhere in the service that the existing stages work, stored data included. |
-| fact-shapes-stage-additive | fact:stage_additive_anchor: anchor behavior | Labels containing letters, digits, underscores or hyphens must be accepted up to a length of 80 characters, and longer or otherwise malformed labels must be rejected. |
+| fact-shapes-stage-additive | fact:stage_additive_type_enforced: type_enforced behavior | Reports and digests show triaged jobs under the heading "Awaiting triage". |
+| fact-shapes-stage-additive | fact:stage_additive_reference: reference behavior | While a job is in triaged, its priority, owner and evidence can be changed as for any job still in progress. |
+| fact-shapes-stage-additive | fact:stage_additive_name_only: name_only behavior | Triaged jobs can have escalation rules, so imported jobs left untriaged too long are escalated. |
+| fact-shapes-stage-additive | fact:stage_additive_sibling_only: sibling_only behavior | Triaged jobs can be released or rejected in bulk, like single jobs. |
+| fact-shapes-stage-additive | fact:stage_additive_outside_code: outside_code behavior | Archived triaged jobs are kept for at most 30 days. |
+| fact-shapes-stage-additive | fact:stage_additive_existing_state: existing_state behavior | Exports always show a triaged job's current priority and owner. |
+| fact-shapes-stage-additive | fact:stage_additive_anchor: anchor behavior | A job id made of letters, digits, underscores or hyphens must be accepted for stage changes up to 80 characters long, and longer or otherwise malformed job ids must be rejected. |
 | fact-shapes-stage-additive | feature:stage_additive_import_triage: imported jobs start in triaged | Jobs created by an import must start in a new triaged stage instead of the initial waiting stage. |
-| fact-shapes-stage-additive | feature:stage_additive_release: a triaged job is updated and released with its reason kept | It then leaves triaged in one of two ways, each with a reason that stays in the job's history: released into the initial waiting stage, or rejected by moving it to the completed stage. |
-| fact-shapes-stage-additive | feature:stage_additive_reject: a rejected job is completed with its reason kept | It then leaves triaged in one of two ways, each with a reason that stays in the job's history: released into the initial waiting stage, or rejected by moving it to the completed stage. |
+| fact-shapes-stage-additive | feature:stage_additive_release: a triaged job is updated and released with its reason kept | A job leaves triaged in one of two ways, each with a reason that stays in the job's history: released into the initial waiting stage, or rejected by moving it to the completed stage. |
+| fact-shapes-stage-additive | feature:stage_additive_reject: a rejected job is completed with its reason kept | A job leaves triaged in one of two ways, each with a reason that stays in the job's history: released into the initial waiting stage, or rejected by moving it to the completed stage. |
 | fact-shapes-stage-additive | feature:stage_additive_triage_moves: no other move enters or leaves triaged | No other move into or out of triaged is allowed. |
 | fact-shapes-stage-additive | feature:stage_additive_triage_not_built: triaged jobs are never picked for a build | Jobs in triaged must never be picked for a build. |
 
@@ -127,6 +127,17 @@ The type-enforced
 omission fails type-checking, confined to the label-map holder, and is accepted only
 through holder-confined preflight classification. Every
 control is replayed twice in fresh sandboxes.
+
+Round 5 (stage only) makes the stage holders implicit. `stage/types.ts` declares a
+`stageTraits` map the compiler requires for every stage (heading, open, code,
+retention days, route, next stages). In every version a holder reads its trait, except
+the version's own holder, which decides by stage position, by numeric stage codes in a
+SQL CHECK, or (control) by a compiler-checked map of display headings, and names no
+stage. The stage-additive task states one rule per holder for the new stage; each fact
+maps to that sentence. The outside-code version has no typed retention limit, so its
+CHECK alone enforces the triaged limit. The audit finds implicit holders by trait reads
+and by positional or coded encodings. Stage-rename is not yet redesigned: a rename keeps
+a stage's position, so its positional omissions do not fail their facts.
 
 Round 4 doubled the application code with seven service features (comments, audit
 queries, tags and saved searches, project settings and usage, escalation rules,
