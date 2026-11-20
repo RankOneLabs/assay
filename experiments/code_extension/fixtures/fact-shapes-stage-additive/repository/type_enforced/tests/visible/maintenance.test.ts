@@ -321,7 +321,7 @@ test("purge advances past ten thousand archives protected by a retained dependen
   f.create("eligible");
   f.context.jobs.archive(admin, "eligible", { expectedRevision: 1 });
   expect(f.context.maintenance.purge(admin, 1003, 1)).toEqual(["eligible"]);
-});
+}, 30000);
 
 test("per-stage retention settings are stored per project and validated", async () => {
   using f = fixture();

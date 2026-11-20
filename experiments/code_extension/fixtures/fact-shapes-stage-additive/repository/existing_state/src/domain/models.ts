@@ -14,6 +14,39 @@ export interface Job {
   createdAt: number;
   updatedAt: number;
   archivedAt: number | null;
+  /** The run the job belongs to, if any. */
+  runId: string | null;
+  /** When the job last reached a done stage; null while it is not done. */
+  finishedAt: number | null;
+  /** What the job's attempts add up to, kept by the roll-up engine. */
+  rollup: JobRollup;
+}
+
+/** A job's stored roll-up over its attempts. */
+export interface JobRollup {
+  attempts: number;
+  running: boolean;
+  outcome: "passed" | "failed" | null;
+}
+
+/** A run's stored roll-up over its jobs. */
+export interface RunRollup {
+  total: number;
+  open: number;
+  done: number;
+  status: "running" | "finished";
+}
+
+/** A group of jobs that is followed as one. */
+export interface Run {
+  id: string;
+  project: string;
+  title: string;
+  state: RunRollup;
+  finishedAt: number | null;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface Evidence {
@@ -83,6 +116,7 @@ export interface JobCreate {
   priority: number;
   owner: string;
   project: string;
+  runId?: string;
 }
 
 export interface JobPatch {

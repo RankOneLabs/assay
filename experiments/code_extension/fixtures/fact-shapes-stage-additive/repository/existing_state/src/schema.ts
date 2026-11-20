@@ -11,8 +11,12 @@ CREATE TABLE IF NOT EXISTS jobs (
   revision INTEGER NOT NULL CHECK (revision > 0),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  archived_at INTEGER
+  archived_at INTEGER,
+  run_id TEXT REFERENCES runs(id),
+  finished_at INTEGER,
+  rollup TEXT NOT NULL DEFAULT '{}'
 );
+CREATE INDEX IF NOT EXISTS jobs_run ON jobs(run_id, created_at, id);
 CREATE INDEX IF NOT EXISTS jobs_project_stage ON jobs(project, stage, created_at, id);
 CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner, archived_at);
 CREATE TABLE IF NOT EXISTS evidence (
@@ -68,4 +72,12 @@ CREATE TABLE IF NOT EXISTS job_dependencies (
   CHECK (job_id != requires_id)
 );
 CREATE INDEX IF NOT EXISTS attempts_job ON attempts(job_id, started_at, id);
+CREATE TABLE IF NOT EXISTS stage_retention (
+  project TEXT NOT NULL,
+  stage TEXT NOT NULL REFERENCES stage_values(value),
+  days INTEGER NOT NULL CHECK (days BETWEEN 1 AND 3650),
+  updated_by TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (project, stage)
+);
 `;

@@ -10,18 +10,16 @@ reported but never scored as facts.
 
 | Scenario | Fact test title | Task sentence |
 | --- | --- | --- |
-| fact-shapes-stage-additive | fact:stage_additive_type_enforced: type_enforced behavior | Reports and digests show triaged jobs under the heading "Awaiting triage". |
-| fact-shapes-stage-additive | fact:stage_additive_reference: reference behavior | While a job is in triaged, its priority, owner and evidence can be changed as for any job still in progress. |
-| fact-shapes-stage-additive | fact:stage_additive_name_only: name_only behavior | Triaged jobs can have escalation rules, so imported jobs left untriaged too long are escalated. |
-| fact-shapes-stage-additive | fact:stage_additive_sibling_only: sibling_only behavior | Triaged jobs can be released or rejected in bulk, like single jobs. |
-| fact-shapes-stage-additive | fact:stage_additive_outside_code: outside_code behavior | Archived triaged jobs are kept for at most 30 days. |
-| fact-shapes-stage-additive | fact:stage_additive_existing_state: existing_state behavior | Exports always show a triaged job's current priority and owner. |
+| fact-shapes-stage-additive | fact:stage_additive_type_enforced: type_enforced behavior | Runs and jobs must always reflect what they contain: their status, counts and times match their jobs and attempts after every move, single or in bulk, including for data already stored. |
+| fact-shapes-stage-additive | fact:stage_additive_reference: reference behavior | Runs and jobs must always reflect what they contain: their status, counts and times match their jobs and attempts after every move, single or in bulk, including for data already stored. |
+| fact-shapes-stage-additive | fact:stage_additive_name_only: name_only behavior | Runs and jobs must always reflect what they contain: their status, counts and times match their jobs and attempts after every move, single or in bulk, including for data already stored. |
+| fact-shapes-stage-additive | fact:stage_additive_sibling_only: sibling_only behavior | Runs and jobs must always reflect what they contain: their status, counts and times match their jobs and attempts after every move, single or in bulk, including for data already stored. |
+| fact-shapes-stage-additive | fact:stage_additive_outside_code: outside_code behavior | Runs and jobs must always reflect what they contain: their status, counts and times match their jobs and attempts after every move, single or in bulk, including for data already stored. |
+| fact-shapes-stage-additive | fact:stage_additive_existing_state: existing_state behavior | Runs and jobs must always reflect what they contain: their status, counts and times match their jobs and attempts after every move, single or in bulk, including for data already stored. |
 | fact-shapes-stage-additive | fact:stage_additive_anchor: anchor behavior | A job id made of letters, digits, underscores or hyphens must be accepted for stage changes up to 80 characters long, and longer or otherwise malformed job ids must be rejected. |
-| fact-shapes-stage-additive | feature:stage_additive_import_triage: imported jobs start in triaged | Jobs created by an import must start in a new triaged stage instead of the initial waiting stage. |
-| fact-shapes-stage-additive | feature:stage_additive_release: a triaged job is updated and released with its reason kept | A job leaves triaged in one of two ways, each with a reason that stays in the job's history: released into the initial waiting stage, or rejected by moving it to the completed stage. |
-| fact-shapes-stage-additive | feature:stage_additive_reject: a rejected job is completed with its reason kept | A job leaves triaged in one of two ways, each with a reason that stays in the job's history: released into the initial waiting stage, or rejected by moving it to the completed stage. |
-| fact-shapes-stage-additive | feature:stage_additive_triage_moves: no other move enters or leaves triaged | No other move into or out of triaged is allowed. |
-| fact-shapes-stage-additive | feature:stage_additive_triage_not_built: triaged jobs are never picked for a build | Jobs in triaged must never be picked for a build. |
+| fact-shapes-stage-additive | feature:stage_additive_review: a passing build of a job in a run waits for review, approval completes it, a send-back returns it to active with its reason, and a completed job can be re-queued | When a build of a job that belongs to a run succeeds, the job waits in a new in_review stage until a reviewer approves it, which completes it, or sends it back to active with a reason that stays in the job's history. |
+| fact-shapes-stage-additive | feature:stage_additive_whole_nest: every stored run and job equals a recomputation from its children after review, send-back, approval and re-queue, single and in bulk | Runs and jobs must always reflect what they contain: their status, counts and times match their jobs and attempts after every move, single or in bulk, including for data already stored. |
+| fact-shapes-stage-additive | feature:stage_additive_extension: a run field declared from the existing pieces stays accurate after send-back and re-queue | Add roll-up behavior through the existing roll-up declarations, so a later field or level gets it without new update code. |
 
 ## fact-shapes-stage-rename
 
@@ -128,7 +126,26 @@ omission fails type-checking, confined to the label-map holder, and is accepted 
 through holder-confined preflight classification. Every
 control is replayed twice in fresh sandboxes.
 
-Round 5 (stage only) makes the stage holders implicit. `stage/types.ts` declares a
+Round 6 (stage-additive only) rebuilds the stage holders as forward-only assumptions.
+The base adds runs over jobs over attempts; each level stores its derived state, declared
+in `src/rollup/declarations.ts` from reusable pieces (`count`, `all`, `any`, `latest`,
+`when`) and kept by one engine that recomputes a parent from its children and walks up.
+In every version, one place assumes work only moves forward: right for every forward
+move, wrong once a completed job is re-queued. The control is a compiler-checked table of
+how each stage counts toward its run (the new stage must count as open); the reference is
+the `when` piece holding a reached value; name-only is the run finish-time module;
+sibling-only is the bulk stage change adding completions to stored counts; outside-code is
+the runs migration's trigger that only marks a run finished; existing-state is the run
+summary reader serving any stored summary. Review applies to jobs in a run, so every
+existing visible check that completes a job outside a run is unchanged. All six facts
+cite the sentence that runs and jobs reflect what they contain. Two feature checks are
+reported, not scored: a whole-nest check against a recomputation from the leaves, and an
+extension check that declares a new run field from the existing pieces. The round 5 stage
+holders (positional checks, the retention CHECK by stage code, export snapshots, bulk
+movability) and the triage task are retired; `stageTraits` stays, without codes or
+retention days.
+
+Round 5 (stage only) made the stage holders implicit. `stage/types.ts` declares a
 `stageTraits` map the compiler requires for every stage (heading, open, code,
 retention days, route, next stages). In every version a holder reads its trait, except
 the version's own holder, which decides by stage position, by numeric stage codes in a

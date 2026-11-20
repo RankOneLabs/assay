@@ -270,7 +270,7 @@ def test_independent_type_controls_cast_the_unchanged_label_map() -> None:
     from code_extension.fact_shapes.cells import CELLS
     from code_extension.fact_shapes.generate import scenario_name
     from code_extension.fact_shapes.mutants import alternative_control
-    from code_extension.fact_shapes.switches import LABEL_MAPS, label_type
+    from code_extension.fact_shapes.switches import LABEL_MAPS, PROGRESS_TYPE, label_type
     from code_extension.fixture import materialize, read_tree
     from code_extension.fixtures import load_scenario
 
@@ -294,12 +294,16 @@ def test_independent_type_controls_cast_the_unchanged_label_map() -> None:
             assert patch == evidence["control_patch"]
             assert evidence["patch_digest"] == digest_bytes(patch.encode())
             materialize(target, fixture.repository, patch)
-            labels, type_name = LABEL_MAPS[cell.feature], label_type(cell.feature)
+            if cell.feature == "stage":
+                labels, record = "stageProgress", PROGRESS_TYPE
+            else:
+                labels = LABEL_MAPS[cell.feature]
+                record = f"Record<{label_type(cell.feature)}, string>"
             # The holder's literal is unchanged; only its declared type becomes a cast.
             assert (target / cell.holders[0]).read_text() == fixture.repository[
                 cell.holders[0]
-            ].replace(f"{labels}: Record<{type_name}, string> = {{", f"{labels} = {{").replace(
-                " };\n", f" }} as unknown as Record<{type_name}, string>;\n"
+            ].replace(f"{labels}: {record} = {{", f"{labels} = {{").replace(
+                " };\n", f" }} as unknown as {record};\n"
             )
         assert evidence["control_patch"] == patch
         assert evidence["result"]["passed"]
@@ -333,6 +337,11 @@ def test_follow_up_migration_control_includes_a_later_index() -> None:
             _, patch = alternative_control(cell, fixture.repository, read_tree(target))
         # Follow-ups come after every migration the service already has.
         count = sum(1 for path in fixture.repository if path.startswith("db/migrations/"))
+        if cell.feature == "stage":
+            # Stages (round 6): the follow-up replaces the run status trigger.
+            assert f"db/migrations/{count + 1:03d}_run_status_both_ways.sql" in patch
+            assert "DROP TRIGGER IF EXISTS runs_status_column;" in patch
+            continue
         assert f"db/migrations/{count + 1:03d}_allow_" in patch
         assert f"db/migrations/{count + 2:03d}_index_" in patch
         assert "CREATE INDEX" in patch

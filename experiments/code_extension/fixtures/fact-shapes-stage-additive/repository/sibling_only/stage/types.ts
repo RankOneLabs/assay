@@ -4,16 +4,17 @@ export function isValue(value: string): value is Stage {
   return (values as readonly string[]).includes(value);
 }
 
+/** How a job in a stage counts toward the run that contains it. */
+export type Progress = "open" | "done";
+
 /** How the service treats jobs in a stage. Every stage declares every trait. */
 export interface StageTraits {
   /** Heading for the stage in reports and digests. */
   heading: string;
-  /** Open work: details can change, it may escalate, it moves in bulk, exports read it live. */
+  /** Whether a job's details (priority, owner, evidence) can still change. */
   open: boolean;
-  /** Stable number stored for the stage in settings tables. */
-  code: number;
-  /** Most days an archived job of this stage may be kept. */
-  retentionDays: number;
+  /** How the stage counts toward its run. */
+  progress: Progress;
   /** Board path for the stage. */
   route: string;
   /** Stages a job can be moved to from this one. */
@@ -21,7 +22,7 @@ export interface StageTraits {
 }
 
 export const stageTraits: Record<Stage, StageTraits> = {
-  queued: { heading: "Waiting", open: true, code: 1, retentionDays: 365, route: "/jobs/queue", next: ["active"] },
-  active: { heading: "In progress", open: true, code: 2, retentionDays: 365, route: "/jobs/work", next: ["queued", "complete"] },
-  complete: { heading: "Done", open: false, code: 3, retentionDays: 3650, route: "/jobs/archive", next: [] },
+  queued: { heading: "Waiting", open: true, progress: "open", route: "/jobs/queue", next: ["active"] },
+  active: { heading: "In progress", open: true, progress: "open", route: "/jobs/work", next: ["queued", "complete"] },
+  complete: { heading: "Done", open: false, progress: "done", route: "/jobs/archive", next: [] },
 };

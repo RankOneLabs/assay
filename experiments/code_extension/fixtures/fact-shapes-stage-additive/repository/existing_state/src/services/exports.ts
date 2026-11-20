@@ -8,7 +8,6 @@ import { EvidenceRepository } from "../repositories/evidence.ts";
 import { EventRepository } from "../repositories/events.ts";
 import { AttemptRepository } from "../repositories/attempts.ts";
 import { AccessService } from "./access.ts";
-import { ExportSnapshots } from "./export_snapshots.ts";
 
 export interface ExportDocument {
   version: number;
@@ -19,8 +18,6 @@ export interface ExportDocument {
 }
 
 export class ExportService {
-  private readonly snapshots = new ExportSnapshots();
-
   constructor(
     private readonly db: Database,
     private readonly jobs: JobRepository,
@@ -35,7 +32,7 @@ export class ExportService {
   bundle(actor: Principal, jobId: string): JobBundle {
     this.access.require(actor, "case_read");
     return this.db.transaction(() => {
-      const job = this.snapshots.read(this.jobs.require(jobId));
+      const job = this.jobs.require(jobId);
       this.access.requireJob(actor, "case_read", job);
       return {
         job,

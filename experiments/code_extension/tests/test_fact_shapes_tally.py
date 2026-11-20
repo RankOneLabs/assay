@@ -100,7 +100,8 @@ def test_distance_and_h5():
     rows = tuple(row(cell=c, mirrored_state_count=2) for c in CELLS)
     distances = import_distance_counts(rows)
     assert all(key[-1] == 1 for key in distances)
-    assert count(r for r in rows if r.cell.import_hops is not None).scored == 6
+    # The reference in every scenario, and (round 6) the stage control's table.
+    assert count(r for r in rows if r.cell.import_hops is not None).scored == 8
     assert h5_counts(rows)["sol"] == (6, 3)
     renamed = tuple(
         replace(r, mirrored_state_count=99) if r.cell.task_type == "rename" else r for r in rows

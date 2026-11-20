@@ -8,6 +8,7 @@ import { JobRepository } from "../repositories/jobs.ts";
 import { AttemptRepository } from "../repositories/attempts.ts";
 import { EventRepository } from "../repositories/events.ts";
 import { SessionService } from "../sessions/session_service.ts";
+import { RollupEngine } from "../rollup/engine.ts";
 import { AccessService } from "./access.ts";
 
 export class BuildService {
@@ -19,6 +20,7 @@ export class BuildService {
     private readonly sessions: SessionService,
     private readonly access: AccessService,
     private readonly now: () => number,
+    private readonly rollups: RollupEngine,
   ) {}
 
   start(actor: Principal, jobId: string, input: unknown) {
@@ -38,6 +40,7 @@ export class BuildService {
         sessionId: attempt.sessionId,
         worker: attempt.worker,
       }, now);
+      this.rollups.refresh("job", jobId);
       return attempt;
     })();
     // Store running status only after durable writes commit successfully.
@@ -64,6 +67,7 @@ export class BuildService {
         exitCode: parsed.exitCode,
         stage,
       }, now);
+      this.rollups.refresh("job", jobId);
       return finished;
     })();
     this.sessions.endSession(parsed.sessionId);
@@ -97,6 +101,7 @@ export class BuildService {
         sessionId,
         reason: message,
       }, now);
+      this.rollups.refresh("job", jobId);
       return cancelled;
     })();
     this.sessions.endSession(sessionId);
@@ -124,6 +129,7 @@ export class BuildService {
         attempts: recovered.map(attempt => attempt.id),
         reason: message,
       }, now);
+      this.rollups.refresh("job", jobId);
       return { job: this.jobs.require(jobId), attempts: recovered };
     })();
   }

@@ -1,7 +1,8 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 import type { Stage } from "../../stage/types.ts";
-import type { Job, JobCreate, JobFilter, JobPatch, Page } from "../domain/models.ts";
+import type { Job, JobCreate, JobFilter, JobPatch, JobRollup, Page } from "../domain/models.ts";
 import { missing, revisionMatches, conflict } from "../domain/errors.ts";
+import { isDoneWork } from "../domain/progress.ts";
 
 interface JobRow {
   id: string;
@@ -15,6 +16,9 @@ interface JobRow {
   created_at: number;
   updated_at: number;
   archived_at: number | null;
+  run_id: string | null;
+  finished_at: number | null;
+  rollup: string;
 }
 
 function decode(row: JobRow): Job {
@@ -30,8 +34,13 @@ function decode(row: JobRow): Job {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
+    runId: row.run_id,
+    finishedAt: row.finished_at,
+    rollup: JSON.parse(row.rollup) as JobRollup,
   };
 }
+
+const emptyRollup: JobRollup = { attempts: 0, running: false, outcome: null };
 
 export class JobRepository {
   constructor(private readonly db: Database) {}
@@ -50,8 +59,8 @@ export class JobRepository {
     this.db.query(`
       INSERT INTO jobs (
         id, title, description, stage, priority, owner, project,
-        revision, created_at, updated_at, archived_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)
+        revision, created_at, updated_at, archived_at, run_id, finished_at, rollup
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?, NULL, ?)
     `).run(
       input.id,
       input.title,
@@ -62,6 +71,8 @@ export class JobRepository {
       input.project,
       now,
       now,
+      input.runId ?? null,
+      JSON.stringify(emptyRollup),
     );
     return this.require(input.id);
   }
@@ -87,10 +98,32 @@ export class JobRepository {
   transition(id: string, stage: Stage, revision: number, now: number): Job {
     revisionMatches(this.require(id).revision, revision);
     this.db.query(`
-      UPDATE jobs SET stage = ?, revision = revision + 1, updated_at = ?
+      UPDATE jobs SET stage = ?, finished_at = ?, revision = revision + 1, updated_at = ?
       WHERE id = ? AND revision = ?
-    `).run(stage, now, id, revision);
+    `).run(stage, isDoneWork(stage) ? now : null, now, id, revision);
     return this.require(id);
+  }
+
+  /** Put an existing job into a run; a job belongs to at most one run. */
+  join(id: string, runId: string, now: number): Job {
+    const current = this.require(id);
+    if (current.runId !== null) conflict("job already belongs to a run");
+    this.db.query(`
+      UPDATE jobs SET run_id = ?, revision = revision + 1, updated_at = ? WHERE id = ?
+    `).run(runId, now, id);
+    return this.require(id);
+  }
+
+  /** Jobs of a run, in the order they were created. */
+  inRun(runId: string): Job[] {
+    return this.db.query<JobRow, [string]>(
+      "SELECT * FROM jobs WHERE run_id = ? ORDER BY created_at ASC, id ASC",
+    ).all(runId).map(decode);
+  }
+
+  storeRollup(id: string, rollup: JobRollup): void {
+    this.require(id);
+    this.db.query("UPDATE jobs SET rollup = ? WHERE id = ?").run(JSON.stringify(rollup), id);
   }
 
   archive(id: string, revision: number, now: number): Job {
@@ -181,7 +214,7 @@ export class JobRepository {
 
   olderArchived(before: number, limit: number, project?: string): string[] {
     return this.db.query<{ id: string }, SQLQueryBindings[]>(`
-      SELECT id FROM jobs WHERE archived_at IS NOT NULL AND archived_at < ?
+      SELECT id FROM jobs WHERE archived_at IS NOT NULL AND archived_at < ? AND run_id IS NULL
       ${project === undefined ? "" : "AND project = ?"}
       ORDER BY archived_at ASC, id ASC LIMIT ?
     `).all(before, ...(project === undefined ? [] : [project]), limit).map(row => row.id);

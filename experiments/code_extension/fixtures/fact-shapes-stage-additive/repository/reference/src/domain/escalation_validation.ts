@@ -1,10 +1,5 @@
 import { z } from "zod";
-import * as stageTypes from "../../stage/types.ts";
 import { keySchema, stageSchema } from "./validation.ts";
-
-/** Escalation rules apply only to stages that are still open work. */
-const escalates = (stage: stageTypes.Stage): boolean => stageTypes.stageTraits[stage].open;
-const ruleStage = stageSchema.refine(escalates, "escalation rules need an open stage");
 
 const maxAgeMinutes = z.number().int().min(1).max(525_600);
 const minPriority = z.number().int().min(0).max(100);
@@ -15,7 +10,7 @@ export const escalationIdSchema = z.coerce.number().int().positive().max(Number.
 
 export const ruleSchema = z.object({
   id: keySchema,
-  stage: ruleStage,
+  stage: stageSchema,
   maxAgeMinutes,
   minPriority: minPriority.default(0),
   target: keySchema,
@@ -23,7 +18,7 @@ export const ruleSchema = z.object({
 }).strict();
 
 export const rulePatchSchema = z.object({
-  stage: ruleStage.optional(),
+  stage: stageSchema.optional(),
   maxAgeMinutes: maxAgeMinutes.optional(),
   minPriority: minPriority.optional(),
   target: keySchema.optional(),

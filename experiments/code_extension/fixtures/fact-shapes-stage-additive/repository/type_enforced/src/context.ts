@@ -46,6 +46,11 @@ import { SubscriptionService } from "./services/subscriptions.ts";
 import { WebhookService } from "./services/webhooks.ts";
 import { OutboxService } from "./services/outbox.ts";
 import { NotificationService } from "./services/notifications.ts";
+import { RunRepository } from "./repositories/runs.ts";
+import { RunService } from "./services/runs.ts";
+import { RunSummaries } from "./services/run_summaries.ts";
+import { RollupEngine } from "./rollup/engine.ts";
+import { jobRollup, runRollup } from "./rollup/declarations.ts";
 
 /** Dependency assembly has references to owners, never a copy of their data. */
 export class ServiceContext {
@@ -79,6 +84,9 @@ export class ServiceContext {
   readonly webhooks: WebhookService;
   readonly outbox: OutboxService;
   readonly notifications: NotificationService;
+  readonly runRepository: RunRepository;
+  readonly rollups: RollupEngine;
+  readonly runs: RunService;
 
   constructor(input: unknown = {}, now: () => number = Date.now, database?: Database) {
     this.config = loadConfig(input);
@@ -89,6 +97,26 @@ export class ServiceContext {
     this.eventRepository = new EventRepository(this.db);
     this.grantRepository = new GrantRepository(this.db);
     this.attemptRepository = new AttemptRepository(this.db);
+    this.runRepository = new RunRepository(this.db);
+    this.rollups = new RollupEngine();
+    this.rollups.leaf("attempt", id => ({ level: "job", id: this.attemptRepository.require(id).jobId }));
+    this.rollups.level("job", {
+      rollup: jobRollup,
+      children: id => this.attemptRepository.list(id),
+      stored: id => this.jobRepository.require(id).rollup,
+      store: (id, state) => this.jobRepository.storeRollup(id, state),
+      parent: id => {
+        const runId = this.jobRepository.require(id).runId;
+        return runId === null ? null : { level: "run", id: runId };
+      },
+    });
+    this.rollups.level("run", {
+      rollup: runRollup,
+      children: id => this.jobRepository.inRun(id),
+      stored: id => this.runRepository.require(id).state,
+      store: (id, state) => { this.runRepository.store(id, state, now()); },
+      parent: () => null,
+    });
     this.sessions = new SessionService();
     this.access = new AccessService(this.grantRepository, now, new StoredRoutePermission(), this.db);
     this.jobs = new JobService(
@@ -96,6 +124,7 @@ export class ServiceContext {
       jobId => this.attemptRepository.list(jobId)
         .filter(attempt => this.sessions.isBuildRunning(attempt.sessionId))
         .map(attempt => attempt.sessionId),
+      this.runRepository, this.rollups,
     );
     this.evidence = new EvidenceService(
       this.db, this.evidenceRepository, this.jobRepository, this.eventRepository,
@@ -103,7 +132,7 @@ export class ServiceContext {
     );
     this.builds = new BuildService(
       this.db, this.jobRepository, this.attemptRepository, this.eventRepository,
-      this.sessions, this.access, now,
+      this.sessions, this.access, now, this.rollups,
     );
     this.reports = new ReportService(this.db, this.access);
     this.exports = new ExportService(
@@ -162,6 +191,11 @@ export class ServiceContext {
       subscriptionRepository, webhookRepository, this.grantRepository, this.access, now,
     );
     this.notifications = new NotificationService(notificationRepository, this.access, now);
+    this.runs = new RunService(
+      this.db, this.runRepository, this.jobRepository, this.eventRepository,
+      new RunSummaries(this.db, this.jobRepository, this.attemptRepository, now),
+      this.rollups, this.access, now,
+    );
   }
 
   /** Callers own the context and close it after outstanding synchronous operations. */

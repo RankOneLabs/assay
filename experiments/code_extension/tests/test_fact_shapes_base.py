@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from code_extension.fact_shapes.cells import CELLS
+from code_extension.fact_shapes.switches import holder_switches
 from code_extension.fixture import read_tree
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -62,7 +63,7 @@ def test_all_cells_have_files_and_planned_distances() -> None:
                     break
                 common += 1
             assert len(left) + len(right) - 2 * common == cell.directory_hops
-        if cell.shape != "reference":
+        if cell.import_hops is None:
             assert all(Path(holder).name not in edit.read_text() for holder in cell.holders)
     for feature in {cell.feature for cell in CELLS}:
         combinations = {(cell.shape, cell.task_type) for cell in CELLS if cell.feature == feature}
@@ -95,12 +96,13 @@ def test_import_distances_match_cells() -> None:
 
 def test_size_and_repository_loader() -> None:
     tree = read_tree(BASE)
-    # Round 4: about 250 KB of application code, plus visible tests and the lockfile.
+    # Round 4: about 250 KB of application code, plus visible tests and the lockfile;
+    # round 6 adds runs and their roll-ups.
     assert 120 <= len(tree) <= 160
     assert 12000 <= sum(text.count("\n") for text in tree.values()) <= 16000
     source = sum(len(text.encode()) for path, text in tree.items()
                  if path.startswith("src/") and path.endswith(".ts"))
-    assert 240_000 <= source <= 290_000
+    assert 240_000 <= source <= 310_000
     assert not any(
         word in text
         for text in tree.values()
@@ -116,7 +118,7 @@ def test_size_and_repository_loader() -> None:
 
 def test_feature_switch_points_are_specific_and_exhaustive() -> None:
     values = {
-        "stage": ("queued", "triaged", "Stage"),
+        "stage": ("queued", "in_review", "Stage"),
         "evidence_kind": ("document", "attestation", "EvidenceKind"),
         "route_permission": ("case_read", "case_inspect", "RoutePermission"),
     }
@@ -130,6 +132,17 @@ def test_feature_switch_points_are_specific_and_exhaustive() -> None:
         assert f"value: {type_name}" in edit
         assert f'vocabularyStore.record("{feature}",' in edit
         assert "return isValue(value);" in edit
+        if feature == "stage":
+            # Round 6: stage holders are forward-only assumptions, not value lists. Each
+            # holder's derived text is in the base, in a file that names no feature.
+            for cell in CELLS:
+                if cell.feature == feature and cell.task_type == "additive":
+                    (path, derived, own), = holder_switches(cell)
+                    assert derived in (BASE / path).read_text() and own != derived
+                    assert own not in (BASE / path).read_text()
+                    assert not any(word in path for word in ("stage", "evidence", "kind"))
+                    assert Path(path).name not in edit
+            continue
         holders = [cell.holders[0] for cell in CELLS
                    if cell.feature == feature and cell.task_type == "additive"]
         for holder in holders:
@@ -148,5 +161,5 @@ def test_feature_switch_points_are_specific_and_exhaustive() -> None:
             assert 'from "./edit.ts"' not in source
         sibling = next(BASE / cell.holders[0] for cell in CELLS
                        if cell.feature == feature and cell.shape == "sibling_only")
-        assert ("movableInBulk" if feature == "stage" else "acceptsPeer") in sibling.read_text()
+        assert "acceptsPeer" in sibling.read_text()
         assert sibling.name not in edit

@@ -139,7 +139,7 @@ describe("type-enforced feature types", () => {
         // A stage also declares its traits; the compiler requires them for every stage.
         const widened = original.replace("] as const", ', "future_value"] as const').replace(
           "\n};\n",
-          '\n  future_value: { heading: "Future", open: true, code: 9, retentionDays: 30, route: "/jobs", next: [] },\n};\n',
+          '\n  future_value: { heading: "Future", open: true, progress: "open", route: "/jobs", next: [] },\n};\n',
         );
         await Bun.write(`${directory}/${feature}/types.ts`, widened);
         expect(Bun.spawnSync(command).exitCode).toBe(0);

@@ -5,11 +5,11 @@
     "manipulated": {
       "fact_id": "stage_additive_type_enforced",
       "holder_paths": [
-        "src/presentation/labels.ts"
+        "src/domain/progress.ts"
       ],
       "fact_lines": {
-        "src/presentation/labels.ts": [
-          "export const stageHeadings: Record<stageTypes.Stage, string> = { queued: \"Waiting\", active: \"In progress\", complete: \"Done\" };"
+        "src/domain/progress.ts": [
+          "export const stageProgress: Record<stageTypes.Stage, stageTypes.Progress> = { queued: \"open\", active: \"open\", complete: \"done\" };"
         ]
       }
     },
@@ -31,11 +31,11 @@
     "manipulated": {
       "fact_id": "stage_additive_reference",
       "holder_paths": [
-        "stage/policy.ts"
+        "src/rollup/pieces.ts"
       ],
       "fact_lines": {
-        "stage/policy.ts": [
-          "const openForChanges = (stage: types.Stage): boolean => types.values.indexOf(stage) < 2;"
+        "src/rollup/pieces.ts": [
+          "  (children, previous) => (previous === yes || condition(children) ? yes : no);"
         ]
       }
     },
@@ -57,11 +57,11 @@
     "manipulated": {
       "fact_id": "stage_additive_name_only",
       "holder_paths": [
-        "src/domain/escalation_validation.ts"
+        "src/timing/finish_times.ts"
       ],
       "fact_lines": {
-        "src/domain/escalation_validation.ts": [
-          "const escalates = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
+        "src/timing/finish_times.ts": [
+          "  return recorded ?? (finished ? now : null);"
         ]
       }
     },
@@ -83,11 +83,18 @@
     "manipulated": {
       "fact_id": "stage_additive_sibling_only",
       "holder_paths": [
-        "src/services/bulk_moves.ts"
+        "src/services/jobs.ts"
       ],
       "fact_lines": {
-        "src/services/bulk_moves.ts": [
-          "const movableInBulk = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
+        "src/services/jobs.ts": [
+          "      const affected = new Map<string, Job[]>();",
+          "        if (job.runId !== null) affected.set(job.runId, [...affected.get(job.runId) ?? [], job]);",
+          "      for (const [runId, jobs] of affected) {",
+          "        const run = this.runs.require(runId);",
+          "        const added = jobs.filter(job => job.finishedAt !== null).length;",
+          "        const done = run.state.done + added;",
+          "        const status = done === run.state.total ? \"finished\" : \"running\";",
+          "        this.runs.store(runId, { ...run.state, open: run.state.open - added, done, status }, this.now());"
         ]
       }
     },
@@ -109,15 +116,12 @@
     "manipulated": {
       "fact_id": "stage_additive_outside_code",
       "holder_paths": [
-        "db/migrations/008_retention_periods.sql",
-        "src/domain/validation.ts"
+        "db/migrations/008_runs.sql"
       ],
       "fact_lines": {
-        "db/migrations/008_retention_periods.sql": [
-          "  days INTEGER NOT NULL CONSTRAINT retention_days CHECK (days BETWEEN 1 AND (CASE stage_code WHEN 3 THEN 3650 ELSE 365 END)),"
-        ],
-        "src/domain/validation.ts": [
-          "export const retentionSchema = retentionFields;"
+        "db/migrations/008_runs.sql": [
+          "WHEN json_extract(NEW.state, '$.total') > 0 AND json_extract(NEW.state, '$.done') = json_extract(NEW.state, '$.total')",
+          "  UPDATE runs SET status = 'finished' WHERE id = NEW.id;"
         ]
       }
     },
@@ -139,11 +143,11 @@
     "manipulated": {
       "fact_id": "stage_additive_existing_state",
       "holder_paths": [
-        "src/services/export_snapshots.ts"
+        "src/services/run_summaries.ts"
       ],
       "fact_lines": {
-        "src/services/export_snapshots.ts": [
-          "const exportedLive = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
+        "src/services/run_summaries.ts": [
+          "    if (saved !== null) return saved.summary;"
         ]
       }
     },
@@ -165,11 +169,11 @@
     "manipulated": {
       "fact_id": "stage_rename_type_enforced",
       "holder_paths": [
-        "src/presentation/labels.ts"
+        "src/domain/progress.ts"
       ],
       "fact_lines": {
-        "src/presentation/labels.ts": [
-          "export const stageHeadings: Record<stageTypes.Stage, string> = { queued: \"Waiting\", active: \"In progress\", complete: \"Done\" };"
+        "src/domain/progress.ts": [
+          "export const stageProgress: Record<stageTypes.Stage, stageTypes.Progress> = { queued: \"open\", active: \"open\", complete: \"done\" };"
         ]
       }
     },
@@ -191,11 +195,11 @@
     "manipulated": {
       "fact_id": "stage_rename_reference",
       "holder_paths": [
-        "stage/policy.ts"
+        "src/rollup/pieces.ts"
       ],
       "fact_lines": {
-        "stage/policy.ts": [
-          "const openForChanges = (stage: types.Stage): boolean => types.values.indexOf(stage) < 2;"
+        "src/rollup/pieces.ts": [
+          "  (children, previous) => (previous === yes || condition(children) ? yes : no);"
         ]
       }
     },
@@ -217,11 +221,11 @@
     "manipulated": {
       "fact_id": "stage_rename_name_only",
       "holder_paths": [
-        "src/domain/escalation_validation.ts"
+        "src/timing/finish_times.ts"
       ],
       "fact_lines": {
-        "src/domain/escalation_validation.ts": [
-          "const escalates = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
+        "src/timing/finish_times.ts": [
+          "  return recorded ?? (finished ? now : null);"
         ]
       }
     },
@@ -243,11 +247,18 @@
     "manipulated": {
       "fact_id": "stage_rename_sibling_only",
       "holder_paths": [
-        "src/services/bulk_moves.ts"
+        "src/services/jobs.ts"
       ],
       "fact_lines": {
-        "src/services/bulk_moves.ts": [
-          "const movableInBulk = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
+        "src/services/jobs.ts": [
+          "      const affected = new Map<string, Job[]>();",
+          "        if (job.runId !== null) affected.set(job.runId, [...affected.get(job.runId) ?? [], job]);",
+          "      for (const [runId, jobs] of affected) {",
+          "        const run = this.runs.require(runId);",
+          "        const added = jobs.filter(job => job.finishedAt !== null).length;",
+          "        const done = run.state.done + added;",
+          "        const status = done === run.state.total ? \"finished\" : \"running\";",
+          "        this.runs.store(runId, { ...run.state, open: run.state.open - added, done, status }, this.now());"
         ]
       }
     },
@@ -269,15 +280,12 @@
     "manipulated": {
       "fact_id": "stage_rename_outside_code",
       "holder_paths": [
-        "db/migrations/008_retention_periods.sql",
-        "src/domain/validation.ts"
+        "db/migrations/008_runs.sql"
       ],
       "fact_lines": {
-        "db/migrations/008_retention_periods.sql": [
-          "  days INTEGER NOT NULL CONSTRAINT retention_days CHECK (days BETWEEN 1 AND (CASE stage_code WHEN 3 THEN 3650 ELSE 365 END)),"
-        ],
-        "src/domain/validation.ts": [
-          "export const retentionSchema = retentionFields;"
+        "db/migrations/008_runs.sql": [
+          "WHEN json_extract(NEW.state, '$.total') > 0 AND json_extract(NEW.state, '$.done') = json_extract(NEW.state, '$.total')",
+          "  UPDATE runs SET status = 'finished' WHERE id = NEW.id;"
         ]
       }
     },
@@ -299,11 +307,11 @@
     "manipulated": {
       "fact_id": "stage_rename_existing_state",
       "holder_paths": [
-        "src/services/export_snapshots.ts"
+        "src/services/run_summaries.ts"
       ],
       "fact_lines": {
-        "src/services/export_snapshots.ts": [
-          "const exportedLive = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;"
+        "src/services/run_summaries.ts": [
+          "    if (saved !== null) return saved.summary;"
         ]
       }
     },

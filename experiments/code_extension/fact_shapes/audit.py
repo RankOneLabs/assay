@@ -8,11 +8,12 @@ manipulated holder. Any other copy is a duplicate. Imports and derived views are
 readers, not declarations. Legacy inventories retain their form-specific exemptions.
 Inventoried state fields and SQL tables must still have one canonical source.
 
-A concept with a trait symbol (round 5, stages) also has implicit holders: code that
+A concept with a trait symbol (stages, since round 5) also has implicit holders: code that
 decides a per-value behavior without naming the values. Its candidate holders must
 read the declared traits, and no file may encode the values another way: by their
-position in the declared list, or as numeric codes in a SQL CASE. A version's
-manipulated holder is exactly the set of files these checks report.
+position in the declared list, or as numeric codes in a SQL CASE. Since round 6 the
+stage holders are forward-only assumptions about runs, which these checks do not
+detect; for stages they find only the control's table of how each stage counts.
 """
 
 from __future__ import annotations

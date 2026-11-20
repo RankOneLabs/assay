@@ -1,45 +1,42 @@
-diff --git a/src/repositories/jobs.ts b/src/repositories/jobs.ts
---- a/src/repositories/jobs.ts
-+++ b/src/repositories/jobs.ts
-@@ -81,6 +81,13 @@
-       id,
-       patch.expectedRevision,
-     );
-+    return this.require(id);
-+  }
-+
-+  /** Place a job that is still at its first revision in its starting stage. */
-+  startIn(id: string, stage: Stage): Job {
-+    if (this.require(id).revision !== 1) conflict("job has already changed");
-+    this.db.query("UPDATE jobs SET stage = ? WHERE id = ? AND revision = 1").run(stage, id);
-     return this.require(id);
-   }
- 
-diff --git a/src/services/bulk_moves.ts b/src/services/bulk_moves.ts
---- a/src/services/bulk_moves.ts
-+++ b/src/services/bulk_moves.ts
-@@ -1,7 +1,7 @@
- import * as stageTypes from "../../stage/types.ts";
- import { conflict } from "../domain/errors.ts";
- /** Bulk stage changes only move jobs that are still open work. */
--const movableInBulk = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;
-+const movableInBulk = (stage: stageTypes.Stage): boolean => stageTypes.stageTraits[stage].open;
- export function requireBulkMovable(id: string, stage: stageTypes.Stage): void {
-   if (!movableInBulk(stage)) conflict(`job ${id} cannot be moved in bulk`);
- }
-diff --git a/src/services/imports.ts b/src/services/imports.ts
---- a/src/services/imports.ts
-+++ b/src/services/imports.ts
-@@ -103,7 +103,8 @@
-       for (const entry of parsed.entries) {
-         const job = this.jobs.create(actor, entry.job);
-         for (const item of entry.evidence) this.evidence.attach(actor, job.id, item);
--        created.push(job);
-+        // Imported jobs wait for triage once their evidence is attached.
-+        created.push(this.jobRepository.startIn(job.id, "triaged"));
-       }
-       return created;
+diff --git a/src/services/builds.ts b/src/services/builds.ts
+--- a/src/services/builds.ts
++++ b/src/services/builds.ts
+@@ -60,7 +60,8 @@
+     const result = this.db.transaction(() => {
+       const now = this.now();
+       const finished = this.attempts.finish(parsed.sessionId, parsed.exitCode, parsed.output, now);
+-      const stage = parsed.exitCode === 0 ? "complete" : "queued";
++      // A passing build of a job in a run waits for review before it completes.
++      const stage = parsed.exitCode !== 0 ? "queued" : job.runId === null ? "complete" : "in_review";
+       this.jobs.transition(jobId, stage, job.revision, now);
+       this.events.append(jobId, "build.finished", actor.id, {
+         attemptId: finished.id,
+diff --git a/src/services/jobs.ts b/src/services/jobs.ts
+--- a/src/services/jobs.ts
++++ b/src/services/jobs.ts
+@@ -198,19 +198,13 @@
+     if (new Set(ids).size !== ids.length) conflict("duplicate jobs in transition batch");
+     return this.db.transaction(() => {
+       // Every job moves first; then each affected run is brought up to date once.
+-      const affected = new Map<string, Job[]>();
++      const affected = new Set<string>();
+       const moved = parsed.changes.map(change => {
+         const job = this.move(actor, change.id, change.transition, peer);
+-        if (job.runId !== null) affected.set(job.runId, [...affected.get(job.runId) ?? [], job]);
++        if (job.runId !== null) affected.add(job.runId);
+         return job;
+       });
+-      for (const [runId, jobs] of affected) {
+-        const run = this.runs.require(runId);
+-        const added = jobs.filter(job => job.finishedAt !== null).length;
+-        const done = run.state.done + added;
+-        const status = done === run.state.total ? "finished" : "running";
+-        this.runs.store(runId, { ...run.state, open: run.state.open - added, done, status }, this.now());
+-      }
++      for (const runId of affected) this.rollups.refresh("run", runId);
+       return moved.map(job => this.jobs.require(job.id));
      })();
+   }
 diff --git a/stage/anchor.ts b/stage/anchor.ts
 --- a/stage/anchor.ts
 +++ b/stage/anchor.ts
@@ -54,13 +51,15 @@ diff --git a/stage/types.ts b/stage/types.ts
 +++ b/stage/types.ts
 @@ -1,4 +1,4 @@
 -export const values = ["queued", "active", "complete"] as const;
-+export const values = ["queued", "active", "complete", "triaged"] as const;
++export const values = ["queued", "active", "complete", "in_review"] as const;
  export type Stage = (typeof values)[number];
  export function isValue(value: string): value is Stage {
    return (values as readonly string[]).includes(value);
-@@ -24,4 +24,5 @@
-   queued: { heading: "Waiting", open: true, code: 1, retentionDays: 365, route: "/jobs/queue", next: ["active"] },
-   active: { heading: "In progress", open: true, code: 2, retentionDays: 365, route: "/jobs/work", next: ["queued", "complete"] },
-   complete: { heading: "Done", open: false, code: 3, retentionDays: 3650, route: "/jobs/archive", next: [] },
-+  triaged: { heading: "Awaiting triage", open: true, code: 4, retentionDays: 30, route: "/jobs/triage", next: ["queued", "complete"] },
+@@ -24,5 +24,6 @@
+ export const stageTraits: Record<Stage, StageTraits> = {
+   queued: { heading: "Waiting", open: true, progress: "open", route: "/jobs/queue", next: ["active"] },
+   active: { heading: "In progress", open: true, progress: "open", route: "/jobs/work", next: ["queued", "complete"] },
+-  complete: { heading: "Done", open: false, progress: "done", route: "/jobs/archive", next: [] },
++  complete: { heading: "Done", open: false, progress: "done", route: "/jobs/archive", next: ["queued"] },
++  in_review: { heading: "In review", open: true, progress: "open", route: "/jobs/review", next: ["complete", "active"] },
  };

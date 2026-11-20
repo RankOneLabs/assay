@@ -109,40 +109,64 @@ def verdict(
     return Ok(Verdict(arm, patch, dropped, True, "both replays satisfy the expected fact outcomes"))
 
 
-def alternative_control(
+def alternative_tree(
     cell: Cell,
     before: dict[str, str],
     complete: dict[str, str],
-) -> tuple[str, str]:
+) -> tuple[str, dict[str, str]]:
     """Construct an independent type drop, follow-up migration or stale state copy.
 
     ``complete`` is the type-enforced omission tree for that shape, and the
     reference tree otherwise.
     """
-    import difflib
-
-    from code_extension.fact_shapes.switches import LABEL_MAPS, label_type
+    from code_extension.fact_shapes.switches import (
+        LABEL_MAPS,
+        PROGRESS_TYPE,
+        RUN_TRIGGER_BODY,
+        label_type,
+    )
 
     after = dict(complete)
     if cell.shape == "type_enforced":
-        # Start from the ordinary omission, whose label map lacks the new key, and
-        # cast that unchanged literal so the repository type-checks. The hidden
-        # fact test must then detect the missing label at run time.
+        # Start from the ordinary omission, whose map lacks the new key, and cast that
+        # unchanged literal so the repository type-checks. The hidden fact test must
+        # then detect the missing entry at run time.
         path: str = cell.holders[0]
-        labels, type_name = LABEL_MAPS[cell.feature], label_type(cell.feature)
-        declaration = f"export const {labels}: Record<{type_name}, string> = {{"
+        if cell.feature == "stage":
+            labels, record = "stageProgress", PROGRESS_TYPE
+        else:
+            labels = LABEL_MAPS[cell.feature]
+            record = f"Record<{label_type(cell.feature)}, string>"
+        declaration = f"export const {labels}: {record} = {{"
         if after[path].count(declaration) != 1 or after[path].count(" };\n") != 1:
-            raise ValueError(f"{path}: label map literal not found")
+            raise ValueError(f"{path}: map literal not found")
         after[path] = after[path].replace(declaration, f"export const {labels} = {{").replace(
-            " };\n", f" }} as unknown as Record<{type_name}, string>;\n"
+            " };\n", f" }} as unknown as {record};\n"
         )
         label = "type-without-required-feature.patch"
+    elif cell.shape == "outside_code" and cell.feature == "stage":
+        # Leave the trigger migration as it was; a follow-up migration replaces the
+        # trigger with one that copies the stored status, and corrects stored rows.
+        path = cell.holders[0]
+        after[path] = before[path]
+        trigger = "CREATE TRIGGER IF NOT EXISTS runs_status_column AFTER UPDATE OF state ON runs\n"
+        if before[path].count(trigger) != 1:
+            raise ValueError(f"{path}: run status trigger not found")
+        directory = path.rsplit("/", 1)[0]
+        count = sum(1 for name in before if name.startswith(directory + "/"))
+        after[f"{directory}/{count + 1:03d}_run_status_both_ways.sql"] = (
+            "DROP TRIGGER IF EXISTS runs_status_column;\n"
+            + trigger.replace(" IF NOT EXISTS", "")
+            + RUN_TRIGGER_BODY + "\nEND;\n"
+            + "UPDATE runs SET status = json_extract(state, '$.status');\n"
+        )
+        label = "follow-up-migration.patch"
     elif cell.shape == "outside_code":
         import re
 
         path = cell.holders[0]
         after[path] = before[path]
-        # The constrained table: the feature's lookup table, or a stage-coded settings table.
+        # The constrained table: the feature's lookup table.
         table = f"{cell.feature}_values"
         if f"CREATE TABLE {table} (" not in before[path]:
             found = re.search(r"CREATE TABLE (?:IF NOT EXISTS )?(\w+) \(", before[path])
@@ -169,19 +193,22 @@ def alternative_control(
         label = "follow-up-migration.patch"
     else:
         if cell.feature == "stage":
-            # The reference's reader follows the stored row; keep a copy for the new stage.
+            # The reference reader checks the stored revision; keep a second, in-memory
+            # copy of each finished run's first summary and serve it from then on.
             path = str(cell.holders[0])
-            if after[path].count("  read(job: Job): Job {\n") != 1:
-                raise ValueError(f"{path}: export reader not found")
+            if after[path].count("  read(run: Run): RunSummary {\n") != 1:
+                raise ValueError(f"{path}: summary reader not found")
             source = after[path].replace(
-                "  read(job: Job): Job {\n",
-                "  private readonly featureCopies = new Map<string, Job>();\n"
-                "  read(job: Job): Job {\n"
-                '    if (job.stage === "triaged") {\n'
-                "      const copy = this.featureCopies.get(job.id) ?? job;\n"
-                "      this.featureCopies.set(job.id, copy);\n"
-                "      return copy;\n"
-                "    }\n",
+                "  read(run: Run): RunSummary {\n",
+                "  private readonly finishedCopies = new Map<string, RunSummary>();\n"
+                "  read(run: Run): RunSummary {\n"
+                "    const summary = this.readThrough(run);\n"
+                '    if (run.state.status === "finished" && !this.finishedCopies.has(run.id)) {\n'
+                "      this.finishedCopies.set(run.id, summary);\n"
+                "    }\n"
+                "    return this.finishedCopies.get(run.id) ?? summary;\n"
+                "  }\n\n"
+                "  private readThrough(run: Run): RunSummary {\n",
             )
         else:
             path = str(cell.holders[0])
@@ -208,6 +235,18 @@ def alternative_control(
             )
         after[path] = source
         label = "duplicate-state.patch"
+    return label, after
+
+
+def alternative_control(
+    cell: Cell,
+    before: dict[str, str],
+    complete: dict[str, str],
+) -> tuple[str, str]:
+    """The alternative control of ``alternative_tree`` as a patch against ``before``."""
+    import difflib
+
+    label, after = alternative_tree(cell, before, complete)
     result = ""
     for file_path in sorted(before.keys() | after.keys()):
         path = file_path

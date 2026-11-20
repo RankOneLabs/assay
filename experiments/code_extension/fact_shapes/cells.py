@@ -20,6 +20,13 @@ CHECK makes storing such a record with the new value fail. Hidden tests store
 and read back such a record through the service, whose in-memory bun:sqlite
 database applies every migration there in filename order. Both a new migration
 and an edit to the base migration pass.
+
+Stages (round 6) differ: their holders are not copies of the value list but places
+that assume work only moves forward, in a nest of runs over jobs over attempts whose
+derived state is declared in src/rollup/ and kept by one engine. Their edit site is
+the roll-up declarations file, the stage outside_code holder is a trigger in the runs
+migration, and only the reference piece and the control's table are imported by the
+edit site.
 """
 
 from dataclasses import dataclass
@@ -100,16 +107,36 @@ _IMPORT_HOPS: dict[Shape, int | None] = {
 }
 
 
-# Round 5: stage holders are implicit. Each reads a per-stage trait declared next to
-# the type, except in its own version, where it encodes the stages another way.
+# Round 6: the stage task asks for roll-up behavior through the declarations, so that
+# file is the stage edit site. The reference piece and the control's table are one
+# import away from it; every other stage holder has no import path from it.
+STAGE_EDIT_SITE = 'src/rollup/declarations.ts'
+_STAGE_IMPORT_HOPS: dict[Shape, int | None] = {
+    'type_enforced': 1,
+    'reference': 1,
+    'name_only': None,
+    'sibling_only': None,
+    'outside_code': None,
+    'existing_state': None,
+}
+
+
+# Round 6: stage holders are forward-only assumptions about runs, the top level of a
+# nest (run, job, attempt) whose state is declared in src/rollup/ and kept by one engine.
+# Each is right for every forward move and wrong once a completed job is re-queued.
 _STAGE_HOLDERS: dict[Shape, tuple[str, ...]] = {
-    'type_enforced': ('src/presentation/labels.ts',),
-    'reference': ('stage/policy.ts',),
-    'name_only': ('src/domain/escalation_validation.ts',),
-    'sibling_only': ('src/services/bulk_moves.ts',),
-    # The CHECK holds the per-stage limit; the typed limit is absent in this version.
-    'outside_code': ('db/migrations/008_retention_periods.sql', 'src/domain/validation.ts'),
-    'existing_state': ('src/services/export_snapshots.ts',),
+    # How each stage counts toward its run: a compiler-checked table.
+    'type_enforced': ('src/domain/progress.ts',),
+    # A roll-up piece the run status is built from, reached through the engine.
+    'reference': ('src/rollup/pieces.ts',),
+    # The run finish time, recorded outside the roll-up folder.
+    'name_only': ('src/timing/finish_times.ts',),
+    # The bulk stage change, beside the single-move path.
+    'sibling_only': ('src/services/jobs.ts',),
+    # The trigger that keeps the stored run status column.
+    'outside_code': ('db/migrations/008_runs.sql',),
+    # Stored summaries of finished runs.
+    'existing_state': ('src/services/run_summaries.ts',),
 }
 
 
@@ -147,10 +174,14 @@ VALUES: dict[Feature, tuple[str, str]] = {
     'evidence_kind': ('document', 'attestation'),
     'route_permission': ('case_read', 'case_inspect'),
 }
+# The value an additive task adds, where it differs from the rename target (round 6).
+ADDED_VALUES: dict[Feature, str] = {'stage': 'in_review'}
 
 
 def _cell(feature: Feature, task_type: TaskType, shape: Shape) -> Cell:
     old, new = VALUES[feature]
+    if task_type == 'additive':
+        new = ADDED_VALUES.get(feature, new)
     noun = feature.replace('_', ' ')
     action = (
         f'Adding the {new} {noun}'
@@ -160,23 +191,26 @@ def _cell(feature: Feature, task_type: TaskType, shape: Shape) -> Cell:
     verb = 'adds it to' if task_type == 'additive' else 'renames it in'
     kind: FactKind = 'holder_update'
     stage_rules: dict[Shape, str] = {
-        'type_enforced': 'gives it the heading "Awaiting triage" in the compiler-checked '
-                         'heading map',
-        'reference': 'keeps its jobs open for changes at the edit gate, which decides by '
-                     'stage position in this version',
-        'name_only': 'lets escalation rules target it, though the escalation-rule '
-                     'validation decides by stage position in this version',
-        'sibling_only': 'lets the bulk stage change move its jobs, though that operation '
-                        'decides by stage position in this version',
-        'outside_code': 'limits its retention to 30 days in the retention migration\'s '
-                        'CHECK, which encodes stages as numeric codes',
-        'existing_state': 'exports its jobs from the current stored row, though the export '
-                          'reader decides by stage position in this version',
+        'type_enforced': 'its jobs count as open work, not done, in the compiler-checked '
+                         'table of how each stage counts toward its run',
+        'reference': 're-queuing a job of a finished run makes the run running again, '
+                     'though the roll-up piece its status is built from keeps a reached '
+                     'value in this version',
+        'name_only': 'a run that finishes again records its new finish time, though '
+                     'the finish-time module keeps the first one in this version',
+        'sibling_only': 'a bulk re-queue leaves each run\'s counts exact, though the bulk '
+                        'stage change adds completions to stored counts in this version',
+        'outside_code': 'a re-queue in a finished run sets the stored status column back '
+                        'to running, though the migration trigger only marks runs finished '
+                        'in this version',
+        'existing_state': 'a re-queue in a finished run refreshes its stored summary, '
+                          'though the summary reader serves any stored summary in this '
+                          'version',
     }
     if feature == 'stage':
         if shape == 'existing_state':
             kind = 'reuse_vs_duplicate' if task_type == 'additive' else 'reader_update'
-        statement = f'{action} {stage_rules[shape]}.'
+        statement = f'{action}: {stage_rules[shape]}.'
     elif shape == 'existing_state':
         kind = 'reuse_vs_duplicate' if task_type == 'additive' else 'reader_update'
         reader = 'the saved-default reader\'s list of values that follow the current selection'
@@ -209,19 +243,20 @@ def _cell(feature: Feature, task_type: TaskType, shape: Shape) -> Cell:
             f'accepts {new}.'
         )
     holders = holder_paths(feature, shape)
+    edit_site = STAGE_EDIT_SITE if feature == 'stage' else f'{feature}/edit.ts'
     fact_id = FactId(f'{feature}_{task_type}_{shape}')
     return Cell(
         feature=feature,
         shape=shape,
         task_type=task_type,
-        edit_site=RepositoryPath(f'{feature}/edit.ts'),
+        edit_site=RepositoryPath(edit_site),
         holders=holders,
         fact_id=fact_id,
         fact_statement=statement,
         anchor_fact_id=FactId(f'{feature}_{task_type}_anchor'),
         test_title_prefix=f'fact:{fact_id}: ',
-        import_hops=_IMPORT_HOPS[shape],
-        directory_hops=min(_directory_hops(f'{feature}/edit.ts', path) for path in holders),
+        import_hops=(_STAGE_IMPORT_HOPS if feature == 'stage' else _IMPORT_HOPS)[shape],
+        directory_hops=min(_directory_hops(edit_site, path) for path in holders),
         fact_kind=kind,
     )
 

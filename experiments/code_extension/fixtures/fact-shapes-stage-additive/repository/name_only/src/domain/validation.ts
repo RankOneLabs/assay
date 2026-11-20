@@ -1,7 +1,8 @@
 import { z } from "zod";
-import * as stageTypes from "../../stage/types.ts";
+import { isValue as isStage } from "../../stage/types.ts";
 import { isValue as isEvidenceKind } from "../../evidence_kind/types.ts";
 import { isValue as isPermission } from "../../route_permission/types.ts";
+import type { Stage } from "../../stage/types.ts";
 import type { EvidenceKind } from "../../evidence_kind/types.ts";
 import type { RoutePermission } from "../../route_permission/types.ts";
 
@@ -10,7 +11,7 @@ const title = z.string().trim().min(1).max(240);
 const description = z.string().max(20000);
 const priority = z.number().int().min(0).max(100);
 const revision = z.number().int().positive();
-export const stageSchema = z.custom<stageTypes.Stage>(v => typeof v === "string" && stageTypes.isValue(v));
+export const stageSchema = z.custom<Stage>(v => typeof v === "string" && isStage(v));
 export const kindSchema = z.custom<EvidenceKind>(v => typeof v === "string" && isEvidenceKind(v));
 export const permissionSchema = z.custom<RoutePermission>(v => typeof v === "string" && isPermission(v));
 
@@ -21,6 +22,22 @@ export const createJobSchema = z.object({
   priority: priority.default(0),
   owner: keySchema,
   project: keySchema,
+  runId: keySchema.optional(),
+}).strict();
+
+export const runSchema = z.object({
+  id: keySchema,
+  title,
+}).strict();
+
+export const runJobsSchema = z.object({
+  jobs: z.array(keySchema).min(1).max(100).refine(ids => new Set(ids).size === ids.length, "duplicate jobs"),
+}).strict();
+
+export const runListSchema = z.object({
+  status: z.enum(["running", "finished"]).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
 }).strict();
 
 export const patchJobSchema = z.object({
@@ -89,11 +106,10 @@ export const finishSchema = z.object({
   output: z.string().max(100000),
 }).strict();
 
-const retentionFields = z.object({
+export const retentionSchema = z.object({
   stage: stageSchema,
   days: z.number().int().min(1).max(3650),
 }).strict();
-export const retentionSchema = retentionFields.refine(value => value.days <= stageTypes.stageTraits[value.stage].retentionDays, "retention exceeds the stage limit");
 
 export const bulkSchema = z.object({
   ids: z.array(keySchema).min(1).max(100).refine(ids => new Set(ids).size === ids.length),

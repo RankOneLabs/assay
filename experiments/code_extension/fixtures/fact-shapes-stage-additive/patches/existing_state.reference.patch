@@ -1,45 +1,28 @@
-diff --git a/src/repositories/jobs.ts b/src/repositories/jobs.ts
---- a/src/repositories/jobs.ts
-+++ b/src/repositories/jobs.ts
-@@ -81,6 +81,13 @@
-       id,
-       patch.expectedRevision,
-     );
-+    return this.require(id);
-+  }
-+
-+  /** Place a job that is still at its first revision in its starting stage. */
-+  startIn(id: string, stage: Stage): Job {
-+    if (this.require(id).revision !== 1) conflict("job has already changed");
-+    this.db.query("UPDATE jobs SET stage = ? WHERE id = ? AND revision = 1").run(stage, id);
-     return this.require(id);
-   }
+diff --git a/src/services/builds.ts b/src/services/builds.ts
+--- a/src/services/builds.ts
++++ b/src/services/builds.ts
+@@ -60,7 +60,8 @@
+     const result = this.db.transaction(() => {
+       const now = this.now();
+       const finished = this.attempts.finish(parsed.sessionId, parsed.exitCode, parsed.output, now);
+-      const stage = parsed.exitCode === 0 ? "complete" : "queued";
++      // A passing build of a job in a run waits for review before it completes.
++      const stage = parsed.exitCode !== 0 ? "queued" : job.runId === null ? "complete" : "in_review";
+       this.jobs.transition(jobId, stage, job.revision, now);
+       this.events.append(jobId, "build.finished", actor.id, {
+         attemptId: finished.id,
+diff --git a/src/services/run_summaries.ts b/src/services/run_summaries.ts
+--- a/src/services/run_summaries.ts
++++ b/src/services/run_summaries.ts
+@@ -30,7 +30,7 @@
  
-diff --git a/src/services/export_snapshots.ts b/src/services/export_snapshots.ts
---- a/src/services/export_snapshots.ts
-+++ b/src/services/export_snapshots.ts
-@@ -4,7 +4,7 @@
-  * Open work is exported from its current stored row. A job in any other stage
-  * no longer changes, so it is exported as it was when it was first exported.
-  */
--const exportedLive = (stage: stageTypes.Stage): boolean => stageTypes.values.indexOf(stage) < 2;
-+const exportedLive = (stage: stageTypes.Stage): boolean => stageTypes.stageTraits[stage].open;
- export class ExportSnapshots {
-   private readonly snapshots = new Map<string, Job>();
-   read(job: Job): Job {
-diff --git a/src/services/imports.ts b/src/services/imports.ts
---- a/src/services/imports.ts
-+++ b/src/services/imports.ts
-@@ -103,7 +103,8 @@
-       for (const entry of parsed.entries) {
-         const job = this.jobs.create(actor, entry.job);
-         for (const item of entry.evidence) this.evidence.attach(actor, job.id, item);
--        created.push(job);
-+        // Imported jobs wait for triage once their evidence is attached.
-+        created.push(this.jobRepository.startIn(job.id, "triaged"));
-       }
-       return created;
-     })();
+   read(run: Run): RunSummary {
+     const saved = this.stored(run.id);
+-    if (saved !== null) return saved.summary;
++    if (saved !== null && saved.revision === run.revision) return saved.summary;
+     const summary = this.build(run.id);
+     if (run.state.status === "finished") this.keep(run, summary);
+     return summary;
 diff --git a/stage/anchor.ts b/stage/anchor.ts
 --- a/stage/anchor.ts
 +++ b/stage/anchor.ts
@@ -54,13 +37,15 @@ diff --git a/stage/types.ts b/stage/types.ts
 +++ b/stage/types.ts
 @@ -1,4 +1,4 @@
 -export const values = ["queued", "active", "complete"] as const;
-+export const values = ["queued", "active", "complete", "triaged"] as const;
++export const values = ["queued", "active", "complete", "in_review"] as const;
  export type Stage = (typeof values)[number];
  export function isValue(value: string): value is Stage {
    return (values as readonly string[]).includes(value);
-@@ -24,4 +24,5 @@
-   queued: { heading: "Waiting", open: true, code: 1, retentionDays: 365, route: "/jobs/queue", next: ["active"] },
-   active: { heading: "In progress", open: true, code: 2, retentionDays: 365, route: "/jobs/work", next: ["queued", "complete"] },
-   complete: { heading: "Done", open: false, code: 3, retentionDays: 3650, route: "/jobs/archive", next: [] },
-+  triaged: { heading: "Awaiting triage", open: true, code: 4, retentionDays: 30, route: "/jobs/triage", next: ["queued", "complete"] },
+@@ -24,5 +24,6 @@
+ export const stageTraits: Record<Stage, StageTraits> = {
+   queued: { heading: "Waiting", open: true, progress: "open", route: "/jobs/queue", next: ["active"] },
+   active: { heading: "In progress", open: true, progress: "open", route: "/jobs/work", next: ["queued", "complete"] },
+-  complete: { heading: "Done", open: false, progress: "done", route: "/jobs/archive", next: [] },
++  complete: { heading: "Done", open: false, progress: "done", route: "/jobs/archive", next: ["queued"] },
++  in_review: { heading: "In review", open: true, progress: "open", route: "/jobs/review", next: ["complete", "active"] },
  };

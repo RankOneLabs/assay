@@ -13,12 +13,10 @@
       "switch_holders": [],
       "candidate_holders": [
         "src/presentation/labels.ts",
-        "stage/policy.ts",
-        "src/domain/escalation_validation.ts",
-        "src/services/bulk_moves.ts",
-        "db/migrations/008_retention_periods.sql",
-        "src/domain/validation.ts",
-        "src/services/export_snapshots.ts"
+        "src/domain/progress.ts",
+        "src/domain/transitions.ts",
+        "src/routing.ts",
+        "src/services/usage.ts"
       ],
       "trait_symbol": "stageTraits",
       "types_module": "stage/types.ts"

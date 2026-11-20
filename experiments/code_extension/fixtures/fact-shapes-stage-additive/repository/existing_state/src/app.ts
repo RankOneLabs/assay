@@ -11,6 +11,7 @@ import { registerSettingsRoutes } from "./routes/settings.ts";
 import { registerEscalationRoutes } from "./routes/escalations.ts";
 import { registerDigestRoutes } from "./routes/digests.ts";
 import { registerNotificationRoutes } from "./routes/notifications.ts";
+import { registerRunRoutes } from "./routes/runs.ts";
 import { handleError } from "./routes/http.ts";
 
 /** Dependency injection keeps requests and tests off the network. */
@@ -30,6 +31,7 @@ export function createApp(config: unknown = {}, context?: ServiceContext) {
   registerEscalationRoutes(app, services);
   registerDigestRoutes(app, services);
   registerNotificationRoutes(app, services);
+  registerRunRoutes(app, services);
   app.notFound(c => c.json({ error: "not_found" }, 404));
   return app;
 }

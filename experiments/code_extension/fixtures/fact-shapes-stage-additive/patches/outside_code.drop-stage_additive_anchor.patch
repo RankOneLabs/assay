@@ -1,57 +1,42 @@
-diff --git a/db/migrations/008_retention_periods.sql b/db/migrations/008_retention_periods.sql
---- a/db/migrations/008_retention_periods.sql
-+++ b/db/migrations/008_retention_periods.sql
-@@ -2,7 +2,7 @@
- CREATE TABLE IF NOT EXISTS stage_retention (
-   project TEXT NOT NULL,
-   stage_code INTEGER NOT NULL,
--  days INTEGER NOT NULL CONSTRAINT retention_days CHECK (days BETWEEN 1 AND (CASE stage_code WHEN 3 THEN 3650 ELSE 365 END)),
-+  days INTEGER NOT NULL CONSTRAINT retention_days CHECK (days BETWEEN 1 AND (CASE stage_code WHEN 3 THEN 3650 WHEN 4 THEN 30 ELSE 365 END)),
-   updated_by TEXT NOT NULL,
-   updated_at INTEGER NOT NULL,
-   PRIMARY KEY (project, stage_code)
-diff --git a/src/repositories/jobs.ts b/src/repositories/jobs.ts
---- a/src/repositories/jobs.ts
-+++ b/src/repositories/jobs.ts
-@@ -81,6 +81,13 @@
-       id,
-       patch.expectedRevision,
-     );
-+    return this.require(id);
-+  }
-+
-+  /** Place a job that is still at its first revision in its starting stage. */
-+  startIn(id: string, stage: Stage): Job {
-+    if (this.require(id).revision !== 1) conflict("job has already changed");
-+    this.db.query("UPDATE jobs SET stage = ? WHERE id = ? AND revision = 1").run(stage, id);
-     return this.require(id);
-   }
+diff --git a/db/migrations/008_runs.sql b/db/migrations/008_runs.sql
+--- a/db/migrations/008_runs.sql
++++ b/db/migrations/008_runs.sql
+@@ -15,7 +15,6 @@
  
-diff --git a/src/services/imports.ts b/src/services/imports.ts
---- a/src/services/imports.ts
-+++ b/src/services/imports.ts
-@@ -103,7 +103,8 @@
-       for (const entry of parsed.entries) {
-         const job = this.jobs.create(actor, entry.job);
-         for (const item of entry.evidence) this.evidence.attach(actor, job.id, item);
--        created.push(job);
-+        // Imported jobs wait for triage once their evidence is attached.
-+        created.push(this.jobRepository.startIn(job.id, "triaged"));
-       }
-       return created;
-     })();
+ -- Keep the status column in step with the stored state.
+ CREATE TRIGGER IF NOT EXISTS runs_status_column AFTER UPDATE OF state ON runs
+-WHEN json_extract(NEW.state, '$.total') > 0 AND json_extract(NEW.state, '$.done') = json_extract(NEW.state, '$.total')
+ BEGIN
+-  UPDATE runs SET status = 'finished' WHERE id = NEW.id;
++  UPDATE runs SET status = json_extract(NEW.state, '$.status') WHERE id = NEW.id;
+ END;
+diff --git a/src/services/builds.ts b/src/services/builds.ts
+--- a/src/services/builds.ts
++++ b/src/services/builds.ts
+@@ -60,7 +60,8 @@
+     const result = this.db.transaction(() => {
+       const now = this.now();
+       const finished = this.attempts.finish(parsed.sessionId, parsed.exitCode, parsed.output, now);
+-      const stage = parsed.exitCode === 0 ? "complete" : "queued";
++      // A passing build of a job in a run waits for review before it completes.
++      const stage = parsed.exitCode !== 0 ? "queued" : job.runId === null ? "complete" : "in_review";
+       this.jobs.transition(jobId, stage, job.revision, now);
+       this.events.append(jobId, "build.finished", actor.id, {
+         attemptId: finished.id,
 diff --git a/stage/types.ts b/stage/types.ts
 --- a/stage/types.ts
 +++ b/stage/types.ts
 @@ -1,4 +1,4 @@
 -export const values = ["queued", "active", "complete"] as const;
-+export const values = ["queued", "active", "complete", "triaged"] as const;
++export const values = ["queued", "active", "complete", "in_review"] as const;
  export type Stage = (typeof values)[number];
  export function isValue(value: string): value is Stage {
    return (values as readonly string[]).includes(value);
-@@ -24,4 +24,5 @@
-   queued: { heading: "Waiting", open: true, code: 1, retentionDays: 365, route: "/jobs/queue", next: ["active"] },
-   active: { heading: "In progress", open: true, code: 2, retentionDays: 365, route: "/jobs/work", next: ["queued", "complete"] },
-   complete: { heading: "Done", open: false, code: 3, retentionDays: 3650, route: "/jobs/archive", next: [] },
-+  triaged: { heading: "Awaiting triage", open: true, code: 4, retentionDays: 30, route: "/jobs/triage", next: ["queued", "complete"] },
+@@ -24,5 +24,6 @@
+ export const stageTraits: Record<Stage, StageTraits> = {
+   queued: { heading: "Waiting", open: true, progress: "open", route: "/jobs/queue", next: ["active"] },
+   active: { heading: "In progress", open: true, progress: "open", route: "/jobs/work", next: ["queued", "complete"] },
+-  complete: { heading: "Done", open: false, progress: "done", route: "/jobs/archive", next: [] },
++  complete: { heading: "Done", open: false, progress: "done", route: "/jobs/archive", next: ["queued"] },
++  in_review: { heading: "In review", open: true, progress: "open", route: "/jobs/review", next: ["complete", "active"] },
  };

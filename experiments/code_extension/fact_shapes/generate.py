@@ -129,13 +129,15 @@ def readme(cells: Sequence[Cell]) -> str:
         f'Anchor fact: {first.anchor_fact_id}. Record labels accept the documented characters '
         'up to 80 characters.\n\n'
         f'Every arm declares the value list in {first.feature}/types.ts, and the edit site uses '
-        "it. Only the arm's holder decides on its own, read only by its own behavior; in the "
-        'other arms that holder derives from the type. '
+        'it. '
         + (
-            'Stage holders are implicit: every arm declares per-stage traits next to the type, '
-            "and the arm's holder ignores them, encoding stages by position, numeric codes or "
-            'display text without naming any stage. '
+            'Stage holders are forward-only assumptions: runs roll up their jobs through '
+            'declared pieces and one engine (src/rollup/), and the arm\'s holder is the one '
+            'place that is right for every forward move and wrong once a completed job is '
+            're-queued; in the other arms that place goes through the engine. '
             if first.feature == 'stage' else
+            "Only the arm's holder decides on its own, read only by its own behavior; in the "
+            'other arms that holder derives from the type. '
             "The arm's holder keeps an independent copy of the value list. "
         )
         + 'Qualification is '

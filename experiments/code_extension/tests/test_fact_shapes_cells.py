@@ -98,7 +98,7 @@ def test_holder_update_checks_and_migration_plan() -> None:
         assert len(statements) == 4
     migrations = sorted({c.holders[0] for c in CELLS if c.shape == 'outside_code'})
     assert migrations == [
-        'db/migrations/001_lookup_tables.sql', 'db/migrations/008_retention_periods.sql',
+        'db/migrations/001_lookup_tables.sql', 'db/migrations/008_runs.sql',
     ]
     rendered = render_cell_table()
     assert 'lexicographic' in rendered
@@ -126,9 +126,10 @@ def test_paths_and_directory_distances() -> None:
             distances.append(len(edit_parts) + len(holder_parts) - 2 * common)
         assert min(distances) == cell.directory_hops
     # Holders are scattered: only the direct-import policy shares the edit site's folder,
-    # and each shape keeps the same distance in every feature and task type.
+    # and each shape keeps the same distance in every feature and task type. Stage holders
+    # (round 6) sit where runs keep each forward-only assumption, so they are exempt.
     for shape in get_args(Shape):
-        hops = {c.directory_hops for c in CELLS if c.shape == shape}
+        hops = {c.directory_hops for c in CELLS if c.shape == shape and c.feature != 'stage'}
         assert hops == ({0} if shape == 'reference' else {3}), shape
 
 

@@ -15,7 +15,7 @@ export function headings<T extends string>(traits: Record<T, { heading: string }
 }
 
 /** Display label for every value, used by reports and digests. */
-export const stageHeadings: Record<stageTypes.Stage, string> = { queued: "Waiting", active: "In progress", complete: "Done" };
+export const stageHeadings: Record<stageTypes.Stage, string> = headings(stageTypes.stageTraits);
 export const evidenceKindLabels: Record<kindTypes.EvidenceKind, string> = titleLabels(kindTypes.values);
 export const routePermissionLabels: Record<permissionTypes.RoutePermission, string> = titleLabels(permissionTypes.values);
 

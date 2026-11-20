@@ -11,12 +11,26 @@ from code_extension.fact_shapes.cells import CELLS
 # Exact, case-sensitive matches only; these words describe the requested feature.
 ALLOWLIST: dict[str, str] = {
     "triaged": "Ordinary user-facing workflow stage requested by the issue.",
+    "active": "Existing user-facing stage that a review sends a job back to.",
+    "finished": "Ordinary word for a run whose work is all done; the task needs it.",
+    "status": "Ordinary noun for what a run reports; the task needs it.",
+    "run": "Ordinary noun for a group of jobs, the level the task is about.",
+    "job": "Ordinary noun for the service's main record.",
+    "jobs": "Ordinary plural noun for the service's main records.",
+    "id": "Ordinary noun in the job-id rule every task states.",
     "attestation": "Ordinary user-facing evidence category requested by the issue.",
     "stage": "Ordinary workflow noun required to describe the feature.",
     "operations": "Ordinary plural noun describing public service behavior.",
     "length": "Ordinary measurement word describing record label limits.",
     "days": "Ordinary unit word in the stage-additive retention rule.",
 }
+
+
+# Language keywords in holder lines are not identifiers a task could name.
+_KEYWORDS = frozenset({
+    "export", "const", "as", "if", "throw", "new", "for", "of", "return", "null", "this",
+    "let", "true", "false", "in", "typeof", "undefined",
+})
 
 
 @dataclass(frozen=True)
@@ -55,7 +69,7 @@ def forbidden_tokens(holders: Path, base: Path) -> dict[str, tuple[str, ...]]:
                             r"/(?:\\.|[^/\n])+/[a-z]*", "", re.sub(r"""["'][^"']*["']""", "", line)
                         ),
                     ):
-                        if identifier not in {"export", "const", "as", "if", "throw", "new"}:
+                        if identifier not in _KEYWORDS:
                             add(identifier, "holders.json:identifier")
     for export_path in sorted(base.rglob("*.ts")):
         text = export_path.read_text(encoding="utf-8")

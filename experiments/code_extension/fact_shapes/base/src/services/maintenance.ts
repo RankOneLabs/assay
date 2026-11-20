@@ -3,7 +3,7 @@ import { plan } from "../domain/graph.ts";
 import { checksum } from "../domain/checksum.ts";
 import type { Database } from "bun:sqlite";
 import type { Principal } from "../domain/models.ts";
-import { values as stages, stageTraits, type Stage } from "../../stage/types.ts";
+import type { Stage } from "../../stage/types.ts";
 import type { Config } from "../config.ts";
 import { bulkSchema, retentionSchema } from "../domain/validation.ts";
 import { conflict, limitExceeded } from "../domain/errors.ts";
@@ -89,22 +89,18 @@ export class MaintenanceService {
     this.access.require(actor, "case_admin");
     const parsed = retentionSchema.parse(input);
     this.db.query(`
-      INSERT INTO stage_retention (project, stage_code, days, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT (project, stage_code) DO UPDATE SET
+      INSERT INTO stage_retention (project, stage, days, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (project, stage) DO UPDATE SET
         days = excluded.days, updated_by = excluded.updated_by, updated_at = excluded.updated_at
-    `).run(actor.project, stageTraits[parsed.stage].code, parsed.days, actor.id, this.now());
+    `).run(actor.project, parsed.stage, parsed.days, actor.id, this.now());
     return { stage: parsed.stage, days: parsed.days };
   }
 
   retention(actor: Principal): { stage: Stage; days: number }[] {
     this.access.require(actor, "case_admin");
-    const byCode = new Map(stages.map(stage => [stageTraits[stage].code, stage]));
-    return this.db.query<{ code: number; days: number }, [string]>(
-      "SELECT stage_code AS code, days FROM stage_retention WHERE project = ? ORDER BY stage_code",
-    ).all(actor.project).flatMap(row => {
-      const stage = byCode.get(row.code);
-      return stage === undefined ? [] : [{ stage, days: row.days }];
-    });
+    return this.db.query<{ stage: Stage; days: number }, [string]>(
+      "SELECT stage, days FROM stage_retention WHERE project = ? ORDER BY stage",
+    ).all(actor.project);
   }
 
   integrity(actor: Principal) {

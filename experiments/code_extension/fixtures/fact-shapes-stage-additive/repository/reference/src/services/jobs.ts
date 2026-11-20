@@ -6,13 +6,16 @@ import type { Job, Principal } from "../domain/models.ts";
 import { createJobSchema, patchJobSchema, transitionSchema, filterSchema, revisionSchema } from "../domain/validation.ts";
 import { conflict, forbidden, limitExceeded } from "../domain/errors.ts";
 import { requireTransition } from "../domain/transitions.ts";
+import { stageTraits } from "../../stage/types.ts";
 import { edit, peerGuard } from "../../stage/edit.ts";
 import { acceptsPeerStage as siblingAccepts } from "./peer.ts";
 import { enforceLimit } from "../../stage/policy.ts";
-import { requireBulkMovable } from "./bulk_moves.ts";
 import { JobRepository } from "../repositories/jobs.ts";
+import { RunRepository } from "../repositories/runs.ts";
 import { EventRepository } from "../repositories/events.ts";
+import { RollupEngine } from "../rollup/engine.ts";
 import { AccessService } from "./access.ts";
+import { requireAcceptingJobs } from "./runs.ts";
 
 export class JobService {
   constructor(
@@ -22,7 +25,9 @@ export class JobService {
     private readonly access: AccessService,
     private readonly config: Config,
     private readonly now: () => number,
-    private readonly liveSessionsFor: (jobId: string) => readonly string[] = () => [],
+    private readonly liveSessionsFor: (jobId: string) => readonly string[],
+    private readonly runs: RunRepository,
+    private readonly rollups: RollupEngine,
   ) {}
 
   create(actor: Principal, input: unknown): Job {
@@ -31,9 +36,15 @@ export class JobService {
     if (parsed.project !== actor.project) forbidden("cannot create in another project");
     return this.db.transaction(() => {
       if (this.jobs.count(actor.project) >= this.config.maxJobs) limitExceeded("project job limit reached");
+      if (parsed.runId !== undefined) {
+        const run = this.runs.require(parsed.runId);
+        if (run.project !== actor.project) forbidden("run belongs to another project");
+        requireAcceptingJobs(run);
+      }
       const now = this.now();
       const job = this.jobs.create(parsed, "queued", now);
       this.events.append(job.id, "job.created", actor.id, { title: job.title }, now);
+      if (job.runId !== null) this.rollups.changed("job", job.id);
       return job;
     })();
   }
@@ -68,25 +79,33 @@ export class JobService {
   }
 
   transition(actor: Principal, id: string, input: unknown, peer = false): Job {
+    return this.db.transaction(() => {
+      const moved = this.move(actor, id, input, peer);
+      this.rollups.refresh("job", id);
+      return this.jobs.require(moved.id);
+    })();
+  }
+
+  /** Change a job's stage and record why; the caller brings its run up to date. */
+  private move(actor: Principal, id: string, input: unknown, peer: boolean): Job {
     this.access.require(actor, "case_write");
     const parsed = transitionSchema.parse(input);
     const accepts = peer ? siblingAccepts : peerGuard;
     if (!accepts(parsed.stage)) conflict("operation does not accept this stage");
-    return this.db.transaction(() => {
-      const current = this.jobs.require(id);
-      this.access.requireJob(actor, "case_write", current);
-      this.requireMutable(current);
-      if (this.liveSessionsFor(id).length) conflict("live build owns the job stage");
-      requireTransition(current.stage, parsed.stage);
-      const now = this.now();
-      const job = this.jobs.transition(id, parsed.stage, parsed.expectedRevision, now);
-      this.events.append(id, "job.transitioned", actor.id, {
-        from: current.stage,
-        to: job.stage,
-        reason: parsed.reason,
-      }, now);
-      return job;
-    })();
+    const current = this.jobs.require(id);
+    this.access.requireJob(actor, "case_write", current);
+    if (current.archivedAt !== null) conflict("archived job is read only");
+    edit(id, parsed.stage);
+    if (this.liveSessionsFor(id).length) conflict("live build owns the job stage");
+    requireTransition(current.stage, parsed.stage);
+    const now = this.now();
+    const job = this.jobs.transition(id, parsed.stage, parsed.expectedRevision, now);
+    this.events.append(id, "job.transitioned", actor.id, {
+      from: current.stage,
+      to: job.stage,
+      reason: parsed.reason,
+    }, now);
+    return job;
   }
 
   archive(actor: Principal, id: string, input: unknown): Job {
@@ -177,10 +196,17 @@ export class JobService {
     }).strict().parse(input);
     const ids = parsed.changes.map(change => change.id);
     if (new Set(ids).size !== ids.length) conflict("duplicate jobs in transition batch");
-    return this.db.transaction(() => parsed.changes.map(change => {
-      requireBulkMovable(change.id, this.jobs.require(change.id).stage);
-      return this.transition(actor, change.id, change.transition, peer);
-    }))();
+    return this.db.transaction(() => {
+      // Every job moves first; then each affected run is brought up to date once.
+      const affected = new Set<string>();
+      const moved = parsed.changes.map(change => {
+        const job = this.move(actor, change.id, change.transition, peer);
+        if (job.runId !== null) affected.add(job.runId);
+        return job;
+      });
+      for (const runId of affected) this.rollups.refresh("run", runId);
+      return moved.map(job => this.jobs.require(job.id));
+    })();
   }
 
   compare(actor: Principal, leftId: string, rightId: string) {
@@ -217,6 +243,6 @@ export class JobService {
 
   requireMutable(job: Job): void {
     if (job.archivedAt !== null) conflict("archived job is read only");
-    edit(job.id, job.stage);
+    if (!stageTraits[job.stage].open) conflict("job is read only in this stage");
   }
 }
