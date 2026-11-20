@@ -261,9 +261,10 @@ manipulated holder in all 12 attempts, including both that did not submit.
   inserted it second. Both still passed, because the holders they reached had already
   been made to read the traits.
 
-The positional holders were found by search, not by reading: 7 of the 8 positional-holder
-attempts ran a `grep` for `values.indexOf`, `indexOf(stage)` or `< 2` after meeting the
-first one. Sharing one pattern across four holders made one hit lead to all four.
+The positional holders were found by search, not by reading: 5 of the 8 positional-holder
+attempts ran a `grep` for `values.indexOf`, `indexOf(stage)` or `< 2`, and the other 3
+searched for uses of `stageTraits` or the `values` list. Sharing one pattern across four
+holders made one hit lead to all four.
 The SQL limit was found because Luna reads every migration that mentions stage codes.
 
 Five rounds in, Luna and Sol find every holder in a 124 KB and a 272 KB service, whether
