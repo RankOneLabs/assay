@@ -153,3 +153,23 @@ included, so round 2 is read as effectively 10 of 10 for Sol.
 Round 3 runs the mid-tier model (Luna) alone on the corrected slice, 12 attempts with a
 $3 cap, to see whether a weaker model misses holders before the service is changed
 again.
+
+### Slice round 3 result (2026-11-19)
+
+Round 3 (Luna alone, corrected slice): $0.30 for 12 attempts, 18 to 43 requests each.
+Eleven attempts submitted. Ten passed every scored fact, the anchor and all five feature
+checks, controls included. Every visible test passed.
+
+- **Database, second attempt: fact failed, holder found.** Luna read the CHECK and wrote
+  a correct table-rebuild migration, but named it `zzz_stage_triage.sql`. The loader
+  only applies files whose names start with a digit, so the migration never ran and
+  the retention write for `triaged` failed its foreign key. Renamed to
+  `002_stage_triage.sql`, the same patch passes the hidden test. The loader's pattern
+  was in a file Luna searched for during the attempt.
+- **Neighbor only, first attempt: no submission.** Luna updated the peer module's own
+  list and then stopped without calling submit. Its unsubmitted workspace passes all 12
+  hidden tests and all 490 visible tests.
+
+So Luna, like Sol, found every independent holder. Its one fact failure came from
+applying a found holder wrongly, not from missing it. Like Sol, it opened about 25
+files of `src/` in each attempt before editing.
