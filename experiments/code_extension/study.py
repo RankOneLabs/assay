@@ -28,7 +28,15 @@ from assay.models import (
 )
 from assay.store import ObjectIntegrityError, ObjectStore
 from code_extension.evaluation import CellEvaluator
-from code_extension.fixture import PILOT, VISIBLE_PREFIX, frozen_groups, load_fixture, read_tree
+from code_extension.fixture import (
+    ADDED_SCENARIOS,
+    COLOCATED_VISIBLE,
+    PILOT,
+    VISIBLE_PREFIX,
+    frozen_groups,
+    load_fixture,
+    read_tree,
+)
 from code_extension.fixtures import qualification_directory, sidecar_for_subject
 from code_extension.protocol import SYSTEM_PROMPT_SHA256
 from code_extension.shape import validate_worker_grid
@@ -102,6 +110,15 @@ def check_fixture(
             raise ValueError(f"{item.subject_id} has invalid study test groups")
         visible_group = groups[0]
         hidden_paths = set(groups[1].files) | set(groups[2].files)
+        # A replay's visible tests sit beside its code, not under tests/visible/.
+        colocated = next(
+            (
+                COLOCATED_VISIBLE[name]
+                for name, spec in ADDED_SCENARIOS.items()
+                if spec.subject_id == item.subject_id and name in COLOCATED_VISIBLE
+            ),
+            None,
+        )
         visible: list[dict[str, str]] = []
         for arm in scenario.arms:
             tree = item.realizations[arm.arm_id]
@@ -111,9 +128,15 @@ def check_fixture(
                 raise ValueError(f"{item.subject_id} {arm.arm_id} tree differs from its manifest")
             if hidden_paths & tree.keys() or any(path.startswith("tests/hidden/") for path in tree):
                 raise ValueError(f"{item.subject_id} {arm.arm_id} contains hidden tests")
-            tree_visible = {
-                path: source for path, source in tree.items() if path.startswith(VISIBLE_PREFIX)
-            }
+            tree_visible = (
+                {path: tree[path] for path in colocated.select(tree)}
+                if colocated is not None
+                else {
+                    path: source
+                    for path, source in tree.items()
+                    if path.startswith(VISIBLE_PREFIX)
+                }
+            )
             visible.append(tree_visible)
         if any(files != visible[0] for files in visible):
             raise ValueError(f"{item.subject_id} visible tests differ between arms")
