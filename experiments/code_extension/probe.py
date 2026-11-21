@@ -299,7 +299,12 @@ def _arm_access_probe(
         attempts.append(("run_command", {"command":
             f"if cat {quote(path)} >/dev/null 2>&1; then echo REACHED; else echo REFUSED; fi"}))
         expected.append("exit=0\nREFUSED")
-    link = fixture.sidecar.writable_implementation_scope[0] + "probe-link"
+    # The first writable folder the tree has; a scope may name one it lacks (kbbl's docs/).
+    scope = fixture.sidecar.writable_implementation_scope
+    link = next(
+        (prefix for prefix in scope if any(path.startswith(prefix) for path in fixture.repository)),
+        scope[0],
+    ) + "probe-link"
     attempts.extend([
         ("run_command", {"command": f"ln -s /home/steve/.ssh/id_rsa {quote(link)}"}),
         ("read_file", {"path": link}),
