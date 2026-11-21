@@ -409,3 +409,9 @@ the replay grades the choice between the two options the comment offers, not whe
 model finds every place that holds the build state. To make it a holder test, the task
 would have to rule out manual-only, for example by dropping that option from the comment.
 Spend after the replay: $14.15, at most $14.20.
+
+The Copilot comment now offers only the second option: "Have this UI display/refresh the
+existing automatic build session and only enable rerun after it has settled or completed."
+The change is applied by `TASK_EDIT` in `replay_kbbl.py`. The tree, patches and hidden tests
+are unchanged. Requalified on mcclure with the same image. Second run: `replay99b.json`,
+Luna, 6 attempts, $3 cap.
