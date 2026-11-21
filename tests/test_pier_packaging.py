@@ -390,6 +390,8 @@ def test_dockerfile_context_is_confined_to_the_named_allowlist() -> None:
         "workflow_edit/package-lock.json",
         "scenario_library/package.json",
         "scenario_library/package-lock.json",
+        "kbbl_replay/package.json",
+        "kbbl_replay/package-lock.json",
     }
     for line in text.splitlines():
         stripped = line.strip()

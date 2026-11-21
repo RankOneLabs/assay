@@ -50,13 +50,57 @@ def materialize(root: Path, repository: Mapping[str, str], patch: str = "") -> N
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ColocatedSuite:
+    """A visible suite of the subject's own tests, kept next to the code they test.
+
+    Replays of a real repository keep its layout, so their visible tests are not
+    under tests/visible/. The suite is every `suffix` file under `root`, except the
+    `skipped` prefixes (another test runner) and the `editable` tests a correct fix
+    may have to change; those stay in the tree but are not restored or graded.
+    """
+
+    root: str
+    suffix: str
+    skipped: tuple[str, ...] = ()
+    editable: tuple[str, ...] = ()
+
+    def select(self, repository: Mapping[str, str]) -> tuple[str, ...]:
+        return tuple(sorted(
+            name for name in repository
+            if name.startswith(self.root) and name.endswith(self.suffix)
+            and not name.startswith(self.skipped) and name not in self.editable
+        ))
+
+
+COLOCATED_VISIBLE: dict[str, ColocatedSuite] = {
+    "kbbl-run-build-replay": ColocatedSuite(
+        root="kbbl/core/",
+        suffix=".test.ts",
+        # The PWA's tests run under vitest, which the locked image does not carry.
+        skipped=("kbbl/core/pwa/",),
+        # They call mountCohortsRoutes(app, { db }); a fix may give it more dependencies.
+        editable=(
+            "kbbl/core/db/cohorts.test.ts",
+            "kbbl/core/orchestrator/dispatch.test.ts",
+            "kbbl/core/orchestrator/lifecycle.test.ts",
+        ),
+    ),
+}
+
+
+def visible_paths(repository: Mapping[str, str], root: Path) -> tuple[str, ...]:
+    suite = COLOCATED_VISIBLE.get(root.name)
+    if suite is not None:
+        return suite.select(repository)
+    return tuple(name for name in repository if name.startswith(VISIBLE_PREFIX))
+
+
 def frozen_groups(
     repository: Mapping[str, str], root: Path
 ) -> tuple[WorkflowTestGroup, WorkflowTestGroup, WorkflowTestGroup]:
     """Build the same public and private evaluator groups for every fixture."""
-    visible = {
-        name: source for name, source in repository.items() if name.startswith(VISIBLE_PREFIX)
-    }
+    visible = {name: repository[name] for name in visible_paths(repository, root)}
     if not visible or any(
         name.startswith(("tests/hidden/", "hidden/", "patches/")) or name.endswith(".patch")
         for name in repository

@@ -1,0 +1,222 @@
+diff --git a/kbbl/core/db/cohorts.test.ts b/kbbl/core/db/cohorts.test.ts
+--- a/kbbl/core/db/cohorts.test.ts
++++ b/kbbl/core/db/cohorts.test.ts
+@@ -16,6 +16,10 @@
+ import { insertSpec } from "./specs";
+ import { insertPlan } from "./plans";
+ 
++const cohortsManager = {
++  get: (_sid: string) => undefined,
++} as unknown as import("../session/session-manager").SessionManager;
++
+ let db: Database;
+ let app: Hono;
+ 
+@@ -29,7 +33,7 @@
+   insertSpec(db, { id: SPEC_ID, project_id: PROJECT_ID, title: "S" });
+   insertPlan(db, { id: PLAN_ID, spec_id: SPEC_ID });
+   app = new Hono();
+-  mountCohortsRoutes(app, { db });
++  mountCohortsRoutes(app, { db, manager: cohortsManager });
+ });
+ 
+ afterEach(() => {
+diff --git a/kbbl/core/orchestrator/dispatch.test.ts b/kbbl/core/orchestrator/dispatch.test.ts
+--- a/kbbl/core/orchestrator/dispatch.test.ts
++++ b/kbbl/core/orchestrator/dispatch.test.ts
+@@ -31,6 +31,10 @@
+ import { mountBriefStatusRoutes } from "../server/handlers/brief-status";
+ import { mountBuildsRoutes } from "../server/handlers/builds";
+ 
++const cohortsManager = {
++  get: (_sid: string) => undefined,
++} as unknown as import("../session/session-manager").SessionManager;
++
+ // ---- minimal SessionManager stub for builds route ----
+ 
+ const stubManager = {
+@@ -140,7 +144,7 @@
+   mountPlansRoutes(app, { db });
+   mountPlanStatusRoutes(app, { db });
+   mountPlanReopenRoutes(app, { db });
+-  mountCohortsRoutes(app, { db });
++  mountCohortsRoutes(app, { db, manager: cohortsManager });
+   mountCohortStatusRoutes(app, { db });
+   mountBriefsRoutes(app, { db });
+   mountBriefStatusRoutes(app, { db });
+diff --git a/kbbl/core/orchestrator/lifecycle.test.ts b/kbbl/core/orchestrator/lifecycle.test.ts
+--- a/kbbl/core/orchestrator/lifecycle.test.ts
++++ b/kbbl/core/orchestrator/lifecycle.test.ts
+@@ -16,6 +16,10 @@
+ import { mountBriefStatusRoutes } from "../server/handlers/brief-status";
+ import type { TaskTrackerEventMap } from "../db/events";
+ 
++const cohortsManager = {
++  get: (_sid: string) => undefined,
++} as unknown as import("../session/session-manager").SessionManager;
++
+ let db: Database;
+ let app: Hono;
+ let cleanupBootstrap: () => void;
+@@ -28,7 +32,7 @@
+   mountSpecsRoutes(app, { db });
+   mountPlansRoutes(app, { db });
+   mountPlanStatusRoutes(app, { db });
+-  mountCohortsRoutes(app, { db });
++  mountCohortsRoutes(app, { db, manager: cohortsManager });
+   mountCohortStatusRoutes(app, { db });
+   mountBriefsRoutes(app, { db });
+   mountBriefStatusRoutes(app, { db });
+diff --git a/kbbl/core/pwa/review/brief/BriefReviewView.tsx b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+--- a/kbbl/core/pwa/review/brief/BriefReviewView.tsx
++++ b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+@@ -16,10 +16,49 @@
+   onBack: () => void;
+ }
+ 
+-function RunBuildButton({ briefId }: { briefId: string }) {
++function RunBuildButton({ briefId, cohortId }: { briefId: string; cohortId: string }) {
+   const [pending, setPending] = useState(false);
+   const [sessionRef, setSessionRef] = useState<string | null>(null);
++  // "checking": looking up the cohort's current_session_ref so we don't
++  // race the auto-dispatch that brief.approved triggers in dispatch-hooks.
++  // If a session ref already exists, render the "running" state instead
++  // of the button. This closes the realistic window of the TOCTOU race
++  // documented in docs/known_issues.md; the residual ~ms window between
++  // approve-emit and dispatch UPDATE is acknowledged there.
++  const [checking, setChecking] = useState(true);
+   const [err, setErr] = useState<string | null>(null);
++
++  useEffect(() => {
++    let cancelled = false;
++    setChecking(true);
++    fetch(`/cohorts/${encodeURIComponent(cohortId)}`)
++      .then((r) =>
++        r.ok
++          ? (r.json() as Promise<{
++              current_session_ref: string | null;
++              current_session_status: string | null;
++            }>)
++          : null,
++      )
++      .then((cohort) => {
++        if (cancelled) return;
++        if (
++          cohort?.current_session_ref &&
++          cohort.current_session_status &&
++          cohort.current_session_status !== "ended"
++        ) {
++          setSessionRef(cohort.current_session_ref);
++        }
++      })
++      .catch(() => {
++        // Non-fatal — fall through to manual button; the route guard still
++        // defends against most double-dispatch.
++      })
++      .finally(() => {
++        if (!cancelled) setChecking(false);
++      });
++    return () => { cancelled = true; };
++  }, [cohortId]);
+ 
+   const handleRun = async () => {
+     setPending(true);
+@@ -44,6 +83,14 @@
+     return (
+       <span style={{ fontSize: 12, opacity: 0.8 }}>
+         Build running — session {sessionRef.slice(0, 8)}
++      </span>
++    );
++  }
++
++  if (checking) {
++    return (
++      <span style={{ fontSize: 12, opacity: 0.6 }}>
++        Checking build status…
+       </span>
+     );
+   }
+@@ -336,7 +383,7 @@
+             </button>
+           </>
+         )}
+-        {brief.status === "approved" && <RunBuildButton briefId={brief.id} />}
++        {brief.status === "approved" && <RunBuildButton briefId={brief.id} cohortId={brief.cohort_id} />}
+       </header>
+ 
+       {/* Main area */}
+diff --git a/kbbl/core/server/app.ts b/kbbl/core/server/app.ts
+--- a/kbbl/core/server/app.ts
++++ b/kbbl/core/server/app.ts
+@@ -225,7 +225,7 @@
+   mountPlansRoutes(app, { db });
+   mountPlanStatusRoutes(app, { db });
+   mountPlanReopenRoutes(app, { db });
+-  mountCohortsRoutes(app, { db });
++  mountCohortsRoutes(app, { db, manager });
+   mountCohortStatusRoutes(app, { db });
+   mountBriefsRoutes(app, { db });
+   mountBriefStatusRoutes(app, { db });
+diff --git a/kbbl/core/server/handlers/cohorts.ts b/kbbl/core/server/handlers/cohorts.ts
+--- a/kbbl/core/server/handlers/cohorts.ts
++++ b/kbbl/core/server/handlers/cohorts.ts
+@@ -12,6 +12,7 @@
+ } from "../../db/cohorts";
+ import { hasCycleAfterInsert } from "../../db/cohort-graph";
+ import type { Cohort } from "../../types/task-tracker";
++import type { SessionManager } from "../../session/session-manager";
+ 
+ const CreateCohortSchema = z.object({
+   plan_id: z.string().min(1),
+@@ -33,10 +34,11 @@
+ 
+ interface CohortsRouteDeps {
+   db: Database;
++  manager: SessionManager;
+ }
+ 
+ export function mountCohortsRoutes(app: Hono, deps: CohortsRouteDeps): void {
+-  const { db } = deps;
++  const { db, manager } = deps;
+ 
+   app.get("/cohorts", (c) => {
+     const plan_id = c.req.query("plan_id");
+@@ -82,7 +84,16 @@
+     if (!cohort) {
+       return c.json({ error: "not found" }, 404);
+     }
+-    return c.json(cohort);
++    // Resolve current_session_status from the live session manager so
++    // clients can distinguish a still-running session from a stale ref
++    // that the dispatcher never cleared. `null` means the session is no
++    // longer tracked (process restart, manual purge) and should be
++    // treated as ended for guard purposes — mirrors the server-side
++    // build guard in handlers/builds.ts.
++    const current_session_status = cohort.current_session_ref
++      ? (manager.get(cohort.current_session_ref)?.status ?? null)
++      : null;
++    return c.json({ ...cohort, current_session_status });
+   });
+ 
+   app.patch("/cohorts/:id", async (c) => {
+diff --git a/kbbl/prompts/planner1.md b/kbbl/prompts/planner1.md
+--- a/kbbl/prompts/planner1.md
++++ b/kbbl/prompts/planner1.md
+@@ -32,7 +32,7 @@
+    ```
+ 
+ 5. POST each cohort in order:
+-   ```
++   ```http
+    POST {{KBBL_URL}}/cohorts
+    Content-Type: application/json
+ 
+@@ -44,7 +44,7 @@
+    }
+    ```
+ 6. POST any dependency edges (cohort A must complete before cohort B starts):
+-   ```
++   ```http
+    POST {{KBBL_URL}}/cohort-dependencies
+    Content-Type: application/json
+ 

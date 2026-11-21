@@ -1,0 +1,52 @@
+# oakridge
+
+Multi-agent workspace built on jig (separate repo, agent kit) and kbbl (operator surface for CLI coding agents). The workspace layer is in design; today, oakridge is a top-level monorepo containing kbbl as its operational sub-package.
+
+## Layout
+
+```text
+oakridge/
+├── kbbl/                  # operator surface for CLI coding agents (v0, shipping)
+├── legit-biz-club/        # workspace layer (v1, complete)
+├── docs/                  # public-facing documentation (placeholder)
+└── comms/                 # internal architecture memos and specs (gitignored)
+```
+
+## Sub-packages
+
+- **kbbl** — the operator surface. Drives one or more CLI coding agents (Claude Code today; runtime-agnostic by design) from a tablet- or phone-friendly PWA over Tailscale. Standalone; works without the workspace layer. See `kbbl/README.md`.
+- **legit-biz-club** — the workspace layer (multi-agent collaboration over a shared artifact). v1 build complete — all five phases (foundation, incremental coordination, convergence, evals + memory commit, study harness) shipped on `main`. Python library; no CLI. See `legit-biz-club/README.md`.
+
+## Sibling repos
+
+- **safir** (`~/codes/personal/safir`) — personal task triage system with a runs / phases / handoffs layer. Optional kbbl dependency: when present and pointed at by `kbbl/config.json`'s `safir.base_url`, kbbl renders a task spine view, stamps task-bound sessions as safir runs, applies task default permission profiles, and consumes safir's webhook deliveries. Without safir, kbbl runs standalone exactly as before.
+
+## Quick start
+
+For the operator surface (Claude Code sessions over Tailscale):
+
+```bash
+bun install
+./kbbl/scripts/kbbl-start /path/to/your/repo
+```
+
+Defaults to `127.0.0.1:8788`. See `kbbl/README.md` for tablet/phone exposure, dev mode, compaction config, safir bridge, and security posture.
+
+If you want the safir bridge active, start safir first:
+
+```bash
+cd ~/codes/personal/safir && bun run dev      # :7145
+```
+
+Then start kbbl normally — the bridge is keyed off `kbbl/config.json` (`safir.base_url`, default `http://localhost:7145`).
+
+## Development
+
+```bash
+bun install                # installs deps across all sub-packages
+bun run typecheck          # typecheck across the repo
+```
+
+## Trajectory
+
+The architectural direction (multi-agent collaboration over a shared artifact, runtime-agnostic operator surface, jig as the agent substrate) lives in internal architecture memos that are not currently checked in. Public-facing docs land under `docs/` when the design stabilizes; until then, `docs/` is a placeholder.

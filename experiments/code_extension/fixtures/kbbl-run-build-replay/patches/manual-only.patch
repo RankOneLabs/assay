@@ -1,0 +1,16 @@
+diff --git a/kbbl/core/orchestrator/dispatch-hooks.ts b/kbbl/core/orchestrator/dispatch-hooks.ts
+--- a/kbbl/core/orchestrator/dispatch-hooks.ts
++++ b/kbbl/core/orchestrator/dispatch-hooks.ts
+@@ -47,10 +47,11 @@
+     })();
+   });
+ 
++  // Builds start only from the brief view's Run build button.
+   const unsubBriefApproved = taskTrackerEvents.subscribe("brief.approved", ({ brief_id }) => {
+     void (async () => {
+       try {
+-        await dispatcher.dispatch("build", brief_id);
++        void brief_id;
+       } catch (err) {
+         console.error(
+           JSON.stringify({ kbbl: "dispatch-hooks", event: "brief.approved", error: String(err), brief_id }),

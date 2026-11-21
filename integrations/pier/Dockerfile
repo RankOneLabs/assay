@@ -14,10 +14,13 @@ FROM node:22.21.1-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754
 # at oakridge 1495ec34 also import hono, kysely, pg, yaml and the agent protocol
 # SDK, so they carry their own lock instead of growing that one.
 ARG NODE_DEPS=workflow_edit
-# Both locks are copied with literal paths so the build context stays auditable;
+# The kbbl replay (oakridge 0f95ef0ea7) runs kbbl's server and React views, so it
+# carries kbbl's dependency versions, pinned from kbbl's bun.lock without vitest or vite.
+# Every lock is copied with a literal path so the build context stays auditable;
 # the argument only selects which one this image installs.
 COPY workflow_edit/package.json workflow_edit/package-lock.json /opt/locks/workflow_edit/
 COPY scenario_library/package.json scenario_library/package-lock.json /opt/locks/scenario_library/
+COPY kbbl_replay/package.json kbbl_replay/package-lock.json /opt/locks/kbbl_replay/
 RUN mkdir -p /opt/workflow_edit \
     && cp /opt/locks/${NODE_DEPS}/package.json /opt/locks/${NODE_DEPS}/package-lock.json /opt/workflow_edit/ \
     && npm ci --prefix /opt/workflow_edit --ignore-scripts --no-audit --no-fund \
@@ -59,6 +62,13 @@ ENV PATH="/bridge/.venv/bin:${PATH}" \
     UV_NO_SYNC=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
+
+# Type-checking kbbl (a React app) needs about 300 MB of heap, more than node's
+# default under the evaluator's 512 MB container limit, so the kbbl replay image
+# is built with --build-arg NODE_OPTIONS=--max-old-space-size=400. Other images
+# leave it empty.
+ARG NODE_OPTIONS=
+ENV NODE_OPTIONS=${NODE_OPTIONS}
 
 RUN mkdir -p /submission /scratch && chown trial:trial /submission /scratch
 USER trial
