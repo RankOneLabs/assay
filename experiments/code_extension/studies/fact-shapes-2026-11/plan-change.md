@@ -356,3 +356,31 @@ search hit does not lead to the next.
 **Build and run.** Rebuilds stage-additive in place (the task still adds a stage), built by an agent, qualified on
 mcclure, then run with Luna alone at a $3 cap (about $0.60). The task text and the table
 are reviewed before anything is built.
+
+### Slice round 6 result (2026-11-20)
+
+Luna, $0.46 settled plus one request of unknown cost (at most $0.05). The plan halted after
+9 of 12 attempts: the 15-minute wall limit cut off the reference second attempt mid-request,
+so its charge was never reported, and the launcher stops on an unknown charge. The other
+three second attempts (sibling only, control, stored state) never ran.
+
+All 8 attempts that submitted passed every scored fact and both reported checks (the
+whole-nest check and the extension check). All 9, including the one that timed out, fixed
+the arm's forward-only assumption:
+
+- Control: derived the stage table from the declared traits.
+- Reference (both): removed the latch from the `when` piece, matching the reference fix.
+- Name only (both): made the finish time follow the run's current status.
+- Sibling only: replaced the bulk adder with one engine refresh of the moved jobs.
+- Database: one attempt added a migration that rewrites the trigger to work both ways and
+  repairs stored rows; the other did the same from the schema setup code.
+- Stored state: deleted a run's stored summary whenever the run's state is stored, in the
+  run repository rather than the cache.
+
+Every fix went through the roll-up pieces, the engine or the storage layer. None was a
+special case at a call site. One name-only attempt finished in 17 requests.
+
+Six rounds in, no model has missed a holder. Round 6's task states the invariant ("runs
+and jobs must always reflect what they contain") and says where to add roll-up behavior,
+so the model rereads the roll-up path and checks each place against a rule it was given.
+Spend after round 6: $13.92, at most $13.97.
