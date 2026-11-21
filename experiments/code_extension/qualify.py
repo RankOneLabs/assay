@@ -405,10 +405,11 @@ def assemble_manifest(
                 checkpoint_sha=checkpoint,
                 included_paths=included,
                 excluded_paths=excluded,
+                # A tree without a lock (the kbbl replay) is pinned by its image alone.
                 dependency_lock_digests={
-                    "package-lock.json": digest_bytes(
-                        fixture.repository["package-lock.json"].encode()
-                    )
+                    name: digest_bytes(fixture.repository[name].encode())
+                    for name in ("package-lock.json",)
+                    if name in fixture.repository
                 },
                 feature_request=feature_request,
                 visible_requirements=fixture.sidecar.public_requirements
