@@ -12,10 +12,14 @@ from code_extension.replay_kbbl import (
     HIDDEN_TEST,
     NAME,
     REGRESSION_TESTS,
+    START_SHA,
+    SUBJECT_ID,
     adapt_tsconfig,
     relocate,
 )
 
+from assay.canonical import canonical_json, digest_bytes
+from assay.fixture_manifest import FixtureManifestV3
 from assay.repository import validate_repository
 
 ROOT = PILOT.parent / NAME
@@ -75,3 +79,41 @@ def test_tsconfig_adaptation() -> None:
     assert "kbbl/core/pwa/vitest.config.ts" in adapted["exclude"]
     committed = json.loads((ROOT / "repository" / "tsconfig.json").read_text())
     assert "typeRoots" not in committed["compilerOptions"]
+
+
+def test_qualified_manifest_binds_the_replay() -> None:
+    fixture = load_scenario(NAME)
+    records = ROOT / "qualification"
+    manifest = FixtureManifestV3.model_validate_json((records / "manifest.json").read_bytes())
+    manifest.require_qualified()
+    scenario = manifest.scenario(SUBJECT_ID)
+    assert scenario is not None
+    # Provenance names the replay's own Oakridge pin, not the pilot's.
+    assert scenario.checkpoint_sha == START_SHA
+    assert scenario.excluded_paths == ()
+    assert set(scenario.included_paths) == set(fixture.repository) - {BUILD_ENTRY}
+    assert scenario.dependency_lock_digests == {}
+    assert scenario.feature_request == fixture.task.splitlines()[0]
+    assert {
+        group.name: group.digest for group in (*scenario.visible_tests, *scenario.hidden_tests)
+    } == {
+        group.name: digest_bytes(canonical_json(group.model_dump(mode="json")))
+        for group in fixture.groups
+    }
+    (arm,) = scenario.arms
+    assert arm.tree_digest == fixture.tree_digest and arm.task_prompt == fixture.task
+    assert arm.reference_patch == digest_bytes(fixture.arms[0].reference_patch.encode())
+    assert set(arm.negative_patches) == {
+        digest_bytes(patch.encode()) for patch in fixture.arms[0].negative_patches
+    }
+    for check, outcome in (
+        ("baseline_passes", "passed"), ("feature_fails", "failed"), ("reference_passes", "passed"),
+    ):
+        result = getattr(arm.qualification, check)
+        evidence = (records / "evidence" / "baseline" / f"{check}.json").read_bytes()
+        assert result.outcome == outcome and result.evidence == digest_bytes(evidence)
+        assert json.loads(evidence)["image_digest"] == manifest.observed_runtime_image_digest
+    sidecar = json.loads((records / "sidecar.json").read_text())
+    for gate, digest in sidecar["evidence"].items():
+        record = (records / "gates" / f"{gate.replace('_', '-')}.json").read_bytes()
+        assert digest == digest_bytes(record), gate

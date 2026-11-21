@@ -50,7 +50,11 @@ def test_dispatch_sidecar_round_trip_and_loader_refuses_unwritable_reference(
         load_scenario("dispatch-handler", copied)
 
 
-@pytest.mark.parametrize("name", ("pilot", *ADDED_SCENARIOS))
+# Scenarios with per-arm qualification records. The kbbl replay keeps sidecar evidence and
+# gate records instead; test_code_extension_replay_kbbl checks those.
+RECORDED_SCENARIOS = tuple(name for name in ADDED_SCENARIOS if name != "kbbl-run-build-replay")
+
+@pytest.mark.parametrize("name", ("pilot", *RECORDED_SCENARIOS))
 def test_committed_scenario_has_private_checks_and_bounded_trees(name: str, tmp_path: Path) -> None:
     if name == "pilot":
         fixture = load_fixture()
@@ -104,7 +108,7 @@ def test_committed_scenario_has_private_checks_and_bounded_trees(name: str, tmp_
             assert read_tree(candidate) != repository
 
 
-@pytest.mark.parametrize("name", ADDED_SCENARIOS)
+@pytest.mark.parametrize("name", RECORDED_SCENARIOS)
 def test_added_scenario_qualification_records(name: str) -> None:
     fixture = load_committed_scenario(name)
     root = PILOT.parent / name
@@ -141,7 +145,7 @@ def test_added_scenario_qualification_records(name: str) -> None:
         assert record["reference"]["verdict"] == "correct"
 
 
-@pytest.mark.parametrize("name", ADDED_SCENARIOS)
+@pytest.mark.parametrize("name", RECORDED_SCENARIOS)
 def test_qualifier_accepts_the_committed_records(name: str) -> None:
     for arm_id in ADDED_SCENARIOS[name].arm_ids:
         record = json.loads((PILOT.parent / name / "qualification" / f"{arm_id}.json").read_text())
@@ -182,7 +186,7 @@ def test_stage_arms_share_every_file_outside_the_compiler() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name", ADDED_SCENARIOS)
+@pytest.mark.parametrize("name", RECORDED_SCENARIOS)
 async def test_added_scenario_image_reproduces_qualification_records(
     name: str, tmp_path: Path
 ) -> None:
@@ -281,7 +285,7 @@ async def test_added_scenario_image_reproduces_qualification_records(
         assert all(group.status == "passed" for group in reference.groups)
 
 
-@pytest.mark.parametrize("name", ADDED_SCENARIOS)
+@pytest.mark.parametrize("name", RECORDED_SCENARIOS)
 def test_added_manifest_binds_every_arm_and_check(name: str) -> None:
     fixture = load_committed_scenario(name)
     root = PILOT.parent / name

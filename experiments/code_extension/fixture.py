@@ -224,6 +224,7 @@ ADDED_SCENARIOS: dict[str, CommittedScenarioSpec] = {
         for feature in ("stage", "evidence-kind", "route-permission")
         for task in ("additive", "rename")
     },
+    "kbbl-run-build-replay": CommittedScenarioSpec("oakridge-kbbl-run-build-replay", ("baseline",)),
     "pointer-root": CommittedScenarioSpec("oakridge-dbos-pointer-root", ("baseline",)),
     "stage-pass-through": CommittedScenarioSpec(
         "oakridge-dbos-stage-pass-through",
@@ -261,7 +262,7 @@ def load_committed_scenario(name: str) -> CommittedScenario:
     if name not in ADDED_SCENARIOS:
         raise ValueError(f"unknown extension scenario: {name}")
     spec = ADDED_SCENARIOS[name]
-    if name.startswith("fact-shapes-"):
+    if name.startswith("fact-shapes-") or name == "kbbl-run-build-replay":
         from code_extension.fixtures import load_scenario
 
         loaded = [load_scenario(name, arm_id=arm_id) for arm_id in spec.arm_ids]

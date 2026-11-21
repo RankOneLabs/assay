@@ -470,6 +470,15 @@ def _sidecar(base: Mapping[str, str], patches: Mapping[str, str]) -> ExtensionSc
     })
 
 
+
+def manifest_scope(
+    subject_id: str, repository: Mapping[str, str]
+) -> tuple[str, tuple[str, ...]] | None:
+    """The replay's Oakridge pin and the vendored files that come from it, or None."""
+    if subject_id != SUBJECT_ID:
+        return None
+    return START_SHA, tuple(sorted(path for path in repository if path != BUILD_ENTRY))
+
 async def grade(image: str) -> dict[str, dict[str, object]]:
     """Grade the start tree and every held patch through the harness's Docker runner."""
     import re as regex
