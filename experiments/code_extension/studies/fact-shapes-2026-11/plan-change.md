@@ -384,3 +384,28 @@ Six rounds in, no model has missed a holder. Round 6's task states the invariant
 and jobs must always reflect what they contain") and says where to add roll-up behavior,
 so the model rereads the roll-up path and checks each place against a rule it was given.
 Spend after round 6: $13.92, at most $13.97.
+
+### Replay of a real agent failure: Run build (2026-11-21)
+
+The task is the five review comments the agent got on round 2 of Oakridge PR #82, replayed
+on the commit it started from (0f95ef0). The agent's own answer (598956c) showed a build as
+running whenever the brief had any session, so an ended build blocked a new one. Oakridge
+#99 fixed that. The hidden test has two cases on a brief whose build was started
+automatically: while that build is live the view shows it and offers no rerun, and once it
+has ended Run build is enabled and starts a new one.
+
+Luna, 6 attempts, $0.23. All 6 incorrect, and all 6 for the same reason: the live case
+fails and the ended case passes. None repeated the agent's bug. Every attempt took the
+first option the Copilot comment offers ("make build start exclusively manual"): it
+removed the dispatch on brief approval and kept or added a Run build button. Three also
+show "Build started" after their own click. None shows a build that was already running
+when the page opened. All 6 also handled the other four comments, passed the visible and
+hidden regression suites, and reported checks that ran.
+
+This does not count as a missed holder. The task offers manual-only as an acceptable fix,
+and the hidden live case marks it wrong because it needs a brief that was approved before
+the change. Such briefs exist in a running system, but no comment mentions them. As built,
+the replay grades the choice between the two options the comment offers, not whether the
+model finds every place that holds the build state. To make it a holder test, the task
+would have to rule out manual-only, for example by dropping that option from the comment.
+Spend after the replay: $14.15, at most $14.20.
