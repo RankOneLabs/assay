@@ -8,8 +8,9 @@ patches.
 - Start tree: Oakridge 0f95ef0ea790ef014870bdbde74ea3111e200da6 (PR #82 after review round 1), as kbbl/ plus the root
   package.json, tsconfig.json and README.md. bun.lock is left out; the image carries
   kbbl's locked dependencies (`integrations/pier/kbbl_replay/`).
-- Task: round 2 of the PR #82 review, verbatim (one CodeRabbit and four Copilot
-  comments), with one framing sentence.
+- Task: round 2 of the PR #82 review (one CodeRabbit and four Copilot comments), with
+  one framing sentence. It is verbatim except that the build-button comment no longer
+  offers "make build start exclusively manual" (`TASK_EDIT`).
 - The agent's answer, 598956cb59e4eb21f70ad1e6b956cc13dc927a85, made the brief view treat any cohort with a
   `current_session_ref` as a live build, so Run build never came back once a build
   ended. The server guard already skipped ended sessions. PR #99 (8c460e40033039f6d18531f0aeb039a680a77156) fixed the

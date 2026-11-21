@@ -1,7 +1,8 @@
 """Build the kbbl Run-build replay fixture from two pinned Oakridge trees.
 
 The replay starts from Oakridge 0f95ef0ea7 (PR #82 after round 1). Its task is
-round 2 of that review, verbatim. The agent's own answer to it, 598956cb59,
+round 2 of that review, verbatim but for one sentence (`TASK_EDIT`). The
+agent's own answer to it, 598956cb59,
 showed a live build for any cohort with a non-null `current_session_ref`. The
 server guard already skipped ended sessions; the client did not, and PR #99
 fixed it. The fixture vendors kbbl/ plus the root configuration (not bun.lock).
@@ -298,7 +299,7 @@ def write(destination: Path, start: Path, agent: Path) -> dict[str, object]:
         patch = unified_patch(base, built[label])
         (root / "patches" / name).write_text(patch, encoding="utf-8")
         patches[name] = patch
-    task = (COMMS / "task.md").read_text(encoding="utf-8")
+    task = edit_task((COMMS / "task.md").read_text(encoding="utf-8"))
     (root / "task.md").write_text(task, encoding="utf-8")
     (root / "README.md").write_text(README, encoding="utf-8")
     qualification = root / "qualification"
@@ -330,8 +331,9 @@ patches.
 - Start tree: Oakridge {START_SHA} (PR #82 after review round 1), as kbbl/ plus the root
   package.json, tsconfig.json and README.md. bun.lock is left out; the image carries
   kbbl's locked dependencies (`integrations/pier/kbbl_replay/`).
-- Task: round 2 of the PR #82 review, verbatim (one CodeRabbit and four Copilot
-  comments), with one framing sentence.
+- Task: round 2 of the PR #82 review (one CodeRabbit and four Copilot comments), with
+  one framing sentence. It is verbatim except that the build-button comment no longer
+  offers "make build start exclusively manual" (`TASK_EDIT`).
 - The agent's answer, {AGENT_SHA}, made the brief view treat any cohort with a
   `current_session_ref` as a live build, so Run build never came back once a build
   ended. The server guard already skipped ended sessions. PR #99 ({FIX_SHA}) fixed the
@@ -371,9 +373,24 @@ this file are not edited by hand.
 """
 
 LIVE = (
-    "Either make build start exclusively manual, or have this UI display/refresh the existing "
-    "automatic build session and only enable rerun after it has settled or completed."
+    "Have this UI display/refresh the existing automatic build session and only enable rerun "
+    "after it has settled or completed."
 )
+# The Copilot comment also offered "make build start exclusively manual". Every Luna attempt
+# in the first run took that option, which leaves builds started before the change unshown
+# and fails the live case. The task drops it so the replay tests the route the agent missed.
+TASK_EDIT = (
+    "Either make build start exclusively manual, or have this UI display/refresh the existing "
+    "automatic build session and only enable rerun after it has settled or completed.",
+    LIVE,
+)
+
+
+def edit_task(task: str) -> str:
+    old, new = TASK_EDIT
+    if task.count(old) != 1:
+        raise ValueError("task text does not contain the sentence to edit exactly once")
+    return task.replace(old, new)
 EXISTING = "kbbl's existing server, database, orchestrator and session behavior is unchanged."
 
 

@@ -12,8 +12,10 @@ from code_extension.replay_kbbl import (
     HIDDEN_TEST,
     NAME,
     REGRESSION_TESTS,
+    LIVE,
     START_SHA,
     SUBJECT_ID,
+    TASK_EDIT,
     adapt_tsconfig,
     relocate,
 )
@@ -117,3 +119,9 @@ def test_qualified_manifest_binds_the_replay() -> None:
     for gate, digest in sidecar["evidence"].items():
         record = (records / "gates" / f"{gate.replace('_', '-')}.json").read_bytes()
         assert digest == digest_bytes(record), gate
+
+
+def test_task_offers_only_the_route_the_agent_missed() -> None:
+    task = load_scenario(NAME).task
+    assert "exclusively manual" not in task and TASK_EDIT[0] not in task
+    assert task.count(LIVE) == 1

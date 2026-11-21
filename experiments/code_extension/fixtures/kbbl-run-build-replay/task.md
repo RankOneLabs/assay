@@ -57,7 +57,7 @@ The build agent is only instructed to PATCH the brief debrief, but that route do
 
 Review comment (Copilot) on `kbbl/core/pwa/review/brief/BriefReviewView.tsx`, lines 53-56:
 
-This button is a second trigger for builds even though approving a brief already emits `brief.approved`, which `wireDispatchHooks` handles by dispatching `build`. Immediately after approval, the async hook may not have persisted `current_session_ref` yet, so clicking this can race past the route guard and spawn a duplicate session. Either make build start exclusively manual, or have this UI display/refresh the existing automatic build session and only enable rerun after it has settled or completed.
+This button is a second trigger for builds even though approving a brief already emits `brief.approved`, which `wireDispatchHooks` handles by dispatching `build`. Immediately after approval, the async hook may not have persisted `current_session_ref` yet, so clicking this can race past the route guard and spawn a duplicate session. Have this UI display/refresh the existing automatic build session and only enable rerun after it has settled or completed.
 
 ---
 
