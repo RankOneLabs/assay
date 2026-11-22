@@ -1,0 +1,10 @@
+{
+  "cohort": "fact-shapes-2026-11-replay82",
+  "combined_cap_usd": "3.00",
+  "plans": [
+    {
+      "name": "midtier",
+      "config": "replay82-plan.json"
+    }
+  ]
+}

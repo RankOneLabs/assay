@@ -435,3 +435,23 @@ manual-only still fails the live case. The second run's six patches (kept in
 `replay99b-patches/`) regraded against the fixed test with no model spend: all six pass both
 cases, including w2's unsubmitted workspace. Under the fixed test the second run scores 5
 correct of 5 submitted, and no attempt repeated the agent's bug.
+
+### Replay of a real agent failure: build guard (2026-11-22)
+
+Second replay, of PR #82 round 3. A build agent following the cohort-5 build brief
+(Oakridge fc87c8e1c9) added POST /briefs/:id/build with a guard that refused the build while
+the cohort's `current_session_ref` named any live session. The dispatcher also writes that
+field for planner2, as the same brief says. So a planner2 session still up blocked the
+operator's Run build after a failed automatic dispatch. The fixture
+(`kbbl-build-guard-replay`, built by `replay_kbbl82.py`) starts at 7fce9e87dd and gives the
+brief as the agent had it, asking for subgoal 11. The brief spelled the guard as the agent
+wrote it; the task replaces that clause with the brief's own intent ("409 if a build is
+already running for this cohort"), so following the text is not marked wrong. The hidden
+test reaches its state through the planner2 dispatch, cohort 3's transitions, POST /briefs
+and the real approval. Two adaptations make the start tree typecheck: a stale
+briefs.test.ts call, and app.test.ts left unbuildable by the agent's required `dispatcher`.
+
+Qualified on mcclure with the same image (manifest sha256:303f3542…). The reference (the
+fix's stage column) and two other correct fixes pass all five hidden cases; the agent's
+commit fails only the two planner2 cases; a guardless variant fails only the live-build case.
+Plan: `replay82.json`, Luna, 6 attempts, $3 cap.
