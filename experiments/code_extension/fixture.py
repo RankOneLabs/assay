@@ -89,9 +89,9 @@ COLOCATED_VISIBLE: dict[str, ColocatedSuite] = {
     "kbbl-build-guard-replay": ColocatedSuite(
         root="kbbl/core/",
         suffix=".test.ts",
-        # briefs.test.ts still calls updateBriefDebrief with a string after an earlier
-        # subgoal of the brief made its third argument an object; it fails at the start.
-        skipped=("kbbl/core/pwa/", "kbbl/core/db/briefs.test.ts"),
+        skipped=("kbbl/core/pwa/",),
+        # It calls createApp without a dispatcher; a fix may make that dependency required.
+        editable=("kbbl/core/server/app.test.ts",),
     ),
 }
 

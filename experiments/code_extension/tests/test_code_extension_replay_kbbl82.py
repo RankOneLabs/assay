@@ -41,7 +41,7 @@ def test_groups() -> None:
     visible, regression, behavior = fixture.groups
     assert visible.restores and visible.name == "visible_regression"
     assert set(visible.files) == set(COLOCATED_VISIBLE[NAME].select(fixture.repository))
-    assert "kbbl/core/db/briefs.test.ts" not in visible.files
+    assert "kbbl/core/db/briefs.test.ts" in visible.files
     assert all(not path.startswith("kbbl/core/pwa/") for path in visible.files)
     assert set(regression.files) == {"tests/hidden/regression/" + p for p in REGRESSION_TESTS}
     assert set(behavior.files) == {f"tests/hidden/new-behavior/{HIDDEN_TEST}"}

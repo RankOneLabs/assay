@@ -149,6 +149,17 @@ diff --git a/kbbl/core/server.ts b/kbbl/core/server.ts
  });
  
  // === bind port (fail fast before spawning CC) ===
+diff --git a/kbbl/core/server/app.test.ts b/kbbl/core/server/app.test.ts
+--- a/kbbl/core/server/app.test.ts
++++ b/kbbl/core/server/app.test.ts
+@@ -34,6 +34,7 @@
+     config,
+     configPath,
+     db,
++    dispatcher: {} as never,
+   });
+ }
+ 
 diff --git a/kbbl/core/server/app.ts b/kbbl/core/server/app.ts
 --- a/kbbl/core/server/app.ts
 +++ b/kbbl/core/server/app.ts
