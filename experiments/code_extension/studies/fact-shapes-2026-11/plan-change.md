@@ -426,3 +426,12 @@ its cohort to `building` (`brief-status.ts`). The hidden test sets the brief to 
 raw SQL, so its cohort stays at the default `waiting`, a state approval never leaves. Those
 two fails come from the test's setup, not from a missed place. Spend after the second run:
 $14.41, at most $14.47.
+
+The hidden test now moves the cohort to `brief_review` and approves the brief through the
+real `PATCH /briefs/:id/status`, so the cohort is `building` as in production. Requalified on
+mcclure with the same image (manifest sha256:ad361db4…). The held patches grade as before:
+reference and both alternatives pass, the agent's commit still fails the ended case, and
+manual-only still fails the live case. The second run's six patches (kept in
+`replay99b-patches/`) regraded against the fixed test with no model spend: all six pass both
+cases, including w2's unsubmitted workspace. Under the fixed test the second run scores 5
+correct of 5 submitted, and no attempt repeated the agent's bug.
