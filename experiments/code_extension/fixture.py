@@ -86,6 +86,13 @@ COLOCATED_VISIBLE: dict[str, ColocatedSuite] = {
             "kbbl/core/orchestrator/lifecycle.test.ts",
         ),
     ),
+    "kbbl-build-guard-replay": ColocatedSuite(
+        root="kbbl/core/",
+        suffix=".test.ts",
+        # briefs.test.ts still calls updateBriefDebrief with a string after an earlier
+        # subgoal of the brief made its third argument an object; it fails at the start.
+        skipped=("kbbl/core/pwa/", "kbbl/core/db/briefs.test.ts"),
+    ),
 }
 
 
@@ -225,6 +232,9 @@ ADDED_SCENARIOS: dict[str, CommittedScenarioSpec] = {
         for task in ("additive", "rename")
     },
     "kbbl-run-build-replay": CommittedScenarioSpec("oakridge-kbbl-run-build-replay", ("baseline",)),
+    "kbbl-build-guard-replay": CommittedScenarioSpec(
+        "oakridge-kbbl-build-guard-replay", ("baseline",)
+    ),
     "pointer-root": CommittedScenarioSpec("oakridge-dbos-pointer-root", ("baseline",)),
     "stage-pass-through": CommittedScenarioSpec(
         "oakridge-dbos-stage-pass-through",
@@ -239,6 +249,10 @@ ADDED_SCENARIOS: dict[str, CommittedScenarioSpec] = {
         ("modular", "central", "cross_module", "plugin"),
     ),
 }
+
+
+# Replays of real Oakridge agent mistakes, built by code_extension.replay_kbbl*.
+REPLAYS = ("kbbl-run-build-replay", "kbbl-build-guard-replay")
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +276,7 @@ def load_committed_scenario(name: str) -> CommittedScenario:
     if name not in ADDED_SCENARIOS:
         raise ValueError(f"unknown extension scenario: {name}")
     spec = ADDED_SCENARIOS[name]
-    if name.startswith("fact-shapes-") or name == "kbbl-run-build-replay":
+    if name.startswith("fact-shapes-") or name in REPLAYS:
         from code_extension.fixtures import load_scenario
 
         loaded = [load_scenario(name, arm_id=arm_id) for arm_id in spec.arm_ids]

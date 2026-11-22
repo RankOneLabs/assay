@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "allowImportingTsExtensions": true,
+    "jsx": "react-jsx",
+    "types": [
+      "bun"
+    ],
+    "lib": [
+      "ESNext",
+      "DOM"
+    ]
+  },
+  "include": [
+    "kbbl/core/**/*.ts",
+    "kbbl/core/**/*.tsx",
+    "lbc-dashboard/**/*.ts",
+    "lbc-dashboard/**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "kbbl/core/pwa/dist",
+    "kbbl/data",
+    "lbc-dashboard/pwa/dist",
+    "kbbl/core/pwa/**/*.test.ts",
+    "kbbl/core/pwa/**/*.test.tsx",
+    "kbbl/core/pwa/vite.config.ts",
+    "kbbl/core/pwa/vitest.config.ts",
+    "kbbl/core/pwa/vitest.setup.ts"
+  ]
+}

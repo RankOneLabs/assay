@@ -47,7 +47,8 @@ from code_extension.fixture import (
 )
 from code_extension.fixtures import ScenarioArm, ScenarioFixture, load_scenario
 from code_extension.library import manifest_scope
-from code_extension.replay_kbbl import manifest_scope as replay_scope
+from code_extension.replay_kbbl import manifest_scope as replay99_scope
+from code_extension.replay_kbbl82 import manifest_scope as replay82_scope
 
 IMAGE_TAG = "assay-code-extension:ce-v1-bounds"
 CHECKS = ("baseline_passes", "feature_fails", "reference_passes")
@@ -389,7 +390,9 @@ def assemble_manifest(
     )
     library = manifest_scope(fixture.subject_id) if isinstance(fixture, ScenarioFixture) else None
     if library is None and isinstance(fixture, ScenarioFixture):
-        library = replay_scope(fixture.subject_id, fixture.repository)
+        library = replay99_scope(fixture.subject_id, fixture.repository) or replay82_scope(
+            fixture.subject_id, fixture.repository
+        )
     if library is not None:
         # A library slice names its own pin and every pinned file it ships.
         checkpoint, included = library

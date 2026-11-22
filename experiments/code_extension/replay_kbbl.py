@@ -499,17 +499,19 @@ def manifest_scope(
         return None
     return START_SHA, tuple(sorted(path for path in repository if path != BUILD_ENTRY))
 
-async def grade(image: str, extra: Path | None = None) -> dict[str, dict[str, object]]:
+async def grade(
+    image: str, extra: Path | None = None, name: str = NAME
+) -> dict[str, dict[str, object]]:
     """Grade the start tree, every held patch and any ``extra/*.patch`` in the Docker runner."""
     import re as regex
 
     from code_extension.fixtures import load_scenario
     from code_extension.qualify import make_runner, observed_image_digest
 
-    fixture = load_scenario(NAME)
+    fixture = load_scenario(name)
     runner = make_runner(observed_image_digest(image))
     results: dict[str, dict[str, object]] = {}
-    root = PILOT.parent / NAME / "patches"
+    root = PILOT.parent / name / "patches"
     sources = {path.name: path for path in sorted(root.glob("*.patch"))}
     if extra is not None:
         for path in sorted(extra.glob("*.patch")):

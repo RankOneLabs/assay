@@ -14,6 +14,7 @@ from code_extension.fixture import (
     ADDED_SCENARIOS,
     CHECKPOINT_SHA,
     PILOT,
+    REPLAYS,
     SUBJECT_ID,
     load_committed_scenario,
     load_fixture,
@@ -52,7 +53,7 @@ def test_dispatch_sidecar_round_trip_and_loader_refuses_unwritable_reference(
 
 # Scenarios with per-arm qualification records. The kbbl replay keeps sidecar evidence and
 # gate records instead; test_code_extension_replay_kbbl checks those.
-RECORDED_SCENARIOS = tuple(name for name in ADDED_SCENARIOS if name != "kbbl-run-build-replay")
+RECORDED_SCENARIOS = tuple(name for name in ADDED_SCENARIOS if name not in REPLAYS)
 
 @pytest.mark.parametrize("name", ("pilot", *RECORDED_SCENARIOS))
 def test_committed_scenario_has_private_checks_and_bounded_trees(name: str, tmp_path: Path) -> None:
