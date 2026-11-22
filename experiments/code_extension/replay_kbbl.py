@@ -355,6 +355,9 @@ Grading:
   app, session manager, build dispatcher and BriefReviewView in jsdom. While a build
   session is live, Run build must not be enabled. Once it has ended, Run build is
   enabled and starts a new build. A refresh while the view is open is not graded.
+  The brief is approved through the real PATCH /briefs/:id/status, so the cohort is
+  `building` as in production. Before the second run, the test set the brief to
+  approved directly and left the cohort at `waiting`.
 - `hidden_regression` runs six of kbbl's own test files, relocated:
   {", ".join(Path(path).name for path in REGRESSION_TESTS)}.
 - `visible_regression` is kbbl's colocated bun suite (`COLOCATED_VISIBLE` in
@@ -496,8 +499,8 @@ def manifest_scope(
         return None
     return START_SHA, tuple(sorted(path for path in repository if path != BUILD_ENTRY))
 
-async def grade(image: str) -> dict[str, dict[str, object]]:
-    """Grade the start tree and every held patch through the harness's Docker runner."""
+async def grade(image: str, extra: Path | None = None) -> dict[str, dict[str, object]]:
+    """Grade the start tree, every held patch and any ``extra/*.patch`` in the Docker runner."""
     import re as regex
 
     from code_extension.fixtures import load_scenario
@@ -507,8 +510,12 @@ async def grade(image: str) -> dict[str, dict[str, object]]:
     runner = make_runner(observed_image_digest(image))
     results: dict[str, dict[str, object]] = {}
     root = PILOT.parent / NAME / "patches"
-    for name in ("start", *sorted(path.name for path in root.glob("*.patch"))):
-        patch = "" if name == "start" else (root / name).read_text(encoding="utf-8")
+    sources = {path.name: path for path in sorted(root.glob("*.patch"))}
+    if extra is not None:
+        for path in sorted(extra.glob("*.patch")):
+            sources[f"{extra.name}/{path.name}"] = path
+    for name in ("start", *sources):
+        patch = "" if name == "start" else sources[name].read_text(encoding="utf-8")
         expected = fixture.tree_digest
         if patch:
             import tempfile
@@ -542,11 +549,12 @@ if __name__ == "__main__":
     parser.add_argument("--start", type=Path)
     parser.add_argument("--agent", type=Path)
     parser.add_argument("--grade", metavar="IMAGE", help="grade the committed fixture instead")
+    parser.add_argument("--extra", type=Path, help="with --grade, also grade this folder's *.patch")
     arguments = parser.parse_args()
     if arguments.grade:
         import asyncio
 
-        print(json.dumps(asyncio.run(grade(arguments.grade)), indent=2))
+        print(json.dumps(asyncio.run(grade(arguments.grade, arguments.extra)), indent=2))
     else:
         if arguments.start is None or arguments.agent is None:
             parser.error("--start and --agent are required to build the fixture")

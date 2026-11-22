@@ -1,0 +1,295 @@
+diff --git a/kbbl/core/orchestrator/backends/dispatcher.ts b/kbbl/core/orchestrator/backends/dispatcher.ts
+index 1fce4b88cc852d32fd77c6e76863a0d6b05e032f..2f1c5d11ddc16a0de4445b8c21314f4690ef6cb1 100644
+--- a/kbbl/core/orchestrator/backends/dispatcher.ts
++++ b/kbbl/core/orchestrator/backends/dispatcher.ts
+@@ -182,8 +182,13 @@ function buildSlotsForCohort(db: Database, cohort_id: string, kbblUrl: string):
+ function buildSlotsForBrief(db: Database, brief_id: string, kbblUrl: string): Record<string, string> {
+   const project = getProjectForBrief(db, brief_id);
+   if (!project) throw new Error(`project not found for brief ${brief_id}`);
++  const brief = db
++    .prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?")
++    .get(brief_id);
++  if (!brief) throw new Error(`brief not found: ${brief_id}`);
+   return {
+     BRIEF_ID: brief_id,
++    COHORT_ID: brief.cohort_id,
+     BRIEF_RENDERED: renderBrief(db, brief_id),
+     REPO_PATH: project.repo_path,
+     KBBL_URL: kbblUrl,
+diff --git a/kbbl/core/orchestrator/dispatch-hooks.ts b/kbbl/core/orchestrator/dispatch-hooks.ts
+index 6b0301dea3c61e8dff4c4e8fedf0411bc07ef010..cd000f5b0bb119f3b7ca558c4298c7f9584d272d 100644
+--- a/kbbl/core/orchestrator/dispatch-hooks.ts
++++ b/kbbl/core/orchestrator/dispatch-hooks.ts
+@@ -24,21 +24,11 @@ export function wireDispatchHooks({ taskTrackerEvents, dispatcher }: DispatchHoo
+ 
+   const unsubCohortPlanned = taskTrackerEvents.subscribe("cohort.entered_planned", ({ cohort_id }) => {
+     void (async () => {
+-      // Emit briefing_started before dispatch so the cohort advances to briefing
+-      // regardless of dispatch outcome. If dispatch fails the operator sees the
+-      // cohort in briefing and can manually re-trigger; leaving it in planned
+-      // with no session and no retry path would leave it permanently stuck.
+-      // Guarded because a subscriber throw would otherwise surface as an
+-      // unhandled rejection and skip the dispatch call below.
+-      try {
+-        taskTrackerEvents.emit("cohort.briefing_started", { cohort_id });
+-      } catch (err) {
+-        console.error(
+-          JSON.stringify({ kbbl: "dispatch-hooks", event: "cohort.briefing_started", error: String(err), cohort_id }),
+-        );
+-      }
+       try {
++        // Only advance the cohort after prompt loading and session creation
++        // have succeeded and the dispatcher has persisted its session ref.
+         await dispatcher.dispatch("planner2", cohort_id);
++        taskTrackerEvents.emit("cohort.briefing_started", { cohort_id });
+       } catch (err) {
+         console.error(
+           JSON.stringify({ kbbl: "dispatch-hooks", event: "cohort.entered_planned", error: String(err), cohort_id }),
+diff --git a/kbbl/core/pwa/review/brief/BriefReviewView.tsx b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+index d2bca1c9bf883665432393575bf4268ff026677f..f92f4ececac44c51021a918543b12a37b5ea21f6 100644
+--- a/kbbl/core/pwa/review/brief/BriefReviewView.tsx
++++ b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+@@ -16,14 +16,63 @@ interface BriefReviewViewProps {
+   onBack: () => void;
+ }
+ 
+-function RunBuildButton({ briefId }: { briefId: string }) {
++function RunBuildButton({ briefId, cohortId }: { briefId: string; cohortId: string }) {
+   const [pending, setPending] = useState(false);
+   const [sessionRef, setSessionRef] = useState<string | null>(null);
++  const [sessionStatus, setSessionStatus] = useState<string | null>(null);
+   const [err, setErr] = useState<string | null>(null);
++  const [rerunRequested, setRerunRequested] = useState(false);
++
++  const refresh = useCallback(async () => {
++    try {
++      const res = await fetch(`/cohorts/${encodeURIComponent(cohortId)}`);
++      if (!res.ok) return;
++      const cohort = (await res.json()) as { current_session_ref: string | null };
++      setSessionRef(cohort.current_session_ref);
++      if (cohort.current_session_ref && cohort.current_session_ref !== sessionRef) {
++        setRerunRequested(false);
++      }
++    } catch {
++      // Keep showing the last known session state while the server is unavailable.
++    }
++  }, [cohortId, sessionRef]);
++
++  useEffect(() => {
++    void refresh();
++    const timer = window.setInterval(() => { void refresh(); }, 2000);
++    return () => window.clearInterval(timer);
++  }, [refresh]);
++
++  useEffect(() => {
++    if (!sessionRef) {
++      setSessionStatus(null);
++      return;
++    }
++    setSessionStatus(null);
++    let cancelled = false;
++    const check = async () => {
++      try {
++        const res = await fetch("/sessions?include=archived");
++        if (res.ok) {
++          const data = (await res.json()) as { sessions: { sid: string; status: string }[] };
++          const session = data.sessions.find((item) => item.sid === sessionRef);
++          if (!cancelled) setSessionStatus(session?.status ?? "ended");
++        } else if (!cancelled) {
++          setSessionStatus(null);
++        }
++      } catch {
++        // Retry on the next poll.
++      }
++    };
++    void check();
++    const timer = window.setInterval(() => { void check(); }, 2000);
++    return () => { cancelled = true; window.clearInterval(timer); };
++  }, [sessionRef]);
+ 
+   const handleRun = async () => {
+     setPending(true);
+     setErr(null);
++    setRerunRequested(true);
+     try {
+       const res = await fetch(`/briefs/${encodeURIComponent(briefId)}/build`, { method: "POST" });
+       if (res.ok) {
+@@ -32,18 +81,28 @@ function RunBuildButton({ briefId }: { briefId: string }) {
+       } else {
+         const body = (await res.json()) as { error?: string };
+         setErr(body.error ?? `${res.status}`);
++        setRerunRequested(false);
++        void refresh();
+       }
+     } catch (e) {
+       setErr(e instanceof Error ? e.message : "request failed");
++      setRerunRequested(false);
++      setSessionStatus(null);
++      void refresh();
+     } finally {
+       setPending(false);
+     }
+   };
+ 
+-  if (sessionRef) {
++  const settled = sessionStatus === "ended" || sessionStatus === "completed" || sessionStatus === "failed";
++  if (!sessionRef || !settled || rerunRequested) {
+     return (
+       <span style={{ fontSize: 12, opacity: 0.8 }}>
+-        Build running — session {sessionRef.slice(0, 8)}
++        {!sessionRef
++          ? "Build starting — waiting for automatic session"
++          : rerunRequested && settled
++            ? `Build rerunning — session ${sessionRef.slice(0, 8)}`
++            : `Build ${sessionStatus === "starting" ? "starting" : "running"} — session ${sessionRef.slice(0, 8)}`}
+       </span>
+     );
+   }
+@@ -52,7 +111,7 @@ function RunBuildButton({ briefId }: { briefId: string }) {
+     <>
+       <button
+         type="button"
+-        disabled={pending}
++        disabled={pending || !settled}
+         onClick={() => { void handleRun(); }}
+         style={{
+           background: "var(--accent, #4a8fcb)",
+@@ -64,7 +123,7 @@ function RunBuildButton({ briefId }: { briefId: string }) {
+           opacity: pending ? 0.5 : 1,
+         }}
+       >
+-        {pending ? "…" : "Run build"}
++        {pending ? "…" : sessionRef ? "Rerun build" : "Build status unavailable"}
+       </button>
+       {err && (
+         <span style={{ fontSize: 12, color: "var(--danger, #c55)", marginLeft: 6 }}>
+@@ -336,7 +395,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
+             </button>
+           </>
+         )}
+-        {brief.status === "approved" && <RunBuildButton briefId={brief.id} />}
++        {brief.status === "approved" && <RunBuildButton briefId={brief.id} cohortId={brief.cohort_id} />}
+       </header>
+ 
+       {/* Main area */}
+diff --git a/kbbl/core/server/handlers/brief-status.ts b/kbbl/core/server/handlers/brief-status.ts
+index 68de40f518bd863bbee52570bc333f3b7a4daf82..64c96a1b64bcca25992a518dc87c7a2b01ed8ed8 100644
+--- a/kbbl/core/server/handlers/brief-status.ts
++++ b/kbbl/core/server/handlers/brief-status.ts
+@@ -59,7 +59,7 @@ export function mountBriefStatusRoutes(app: Hono, deps: BriefStatusRouteDeps): v
+ 
+         if (requestedStatus === "approved") {
+           const cohortResult = db.prepare(
+-            "UPDATE cohorts SET status = 'building' WHERE id = ? AND status = 'brief_review'",
++            "UPDATE cohorts SET status = 'building', current_session_ref = NULL WHERE id = ? AND status = 'brief_review'",
+           ).run(brief.cohort_id);
+           if (cohortResult.changes === 0) return "cohort_not_in_brief_review";
+           db.prepare("UPDATE briefs SET status = ? WHERE id = ?").run(nextStatus, brief_id);
+diff --git a/kbbl/core/server/handlers/builds.ts b/kbbl/core/server/handlers/builds.ts
+index f789b996fc40aae61e240eb8feeecb63674cd543..db92e008f6b3cf7089bca5e122106a4d3fde88ae 100644
+--- a/kbbl/core/server/handlers/builds.ts
++++ b/kbbl/core/server/handlers/builds.ts
+@@ -24,22 +24,49 @@ export function mountBuildsRoutes(app: Hono, { db, dispatcher, manager }: Builds
+       return c.json({ error: "brief must be in approved status to run a build" }, 409);
+     }
+ 
+-    // Guard against double-dispatch while a session is still live.
+     interface CohortRefRow { current_session_ref: string | null }
+     const cohort = db
+       .prepare<CohortRefRow, [string]>("SELECT current_session_ref FROM cohorts WHERE id = ?")
+       .get(brief.cohort_id);
+-    if (cohort?.current_session_ref) {
+-      const existingSession = manager.get(cohort.current_session_ref);
++    if (!cohort) return c.json({ error: "cohort not found" }, 404);
++
++    const currentRef = cohort.current_session_ref;
++    // Successful brief approval resets this field before the automatic build
++    // hook runs, preventing an old planner2 session from being mistaken for
++    // an active build.
++    if (currentRef) {
++      // Claim refs represent an in-flight dispatch and have no Session object.
++      // Treat them as busy rather than allowing another request to steal one.
++      if (currentRef.startsWith("build-claim:")) {
++        return c.json({ error: "a build session is already running for this cohort" }, 409);
++      }
++      const existingSession = manager.get(currentRef);
+       if (existingSession && existingSession.status !== "ended") {
+         return c.json({ error: "a build session is already running for this cohort" }, 409);
+       }
+     }
+ 
++    // Reserve the cohort synchronously before awaiting dispatch. The compare-
++    // and-set lets only one concurrent request claim an empty/ended reference.
++    const claimRef = `build-claim:${crypto.randomUUID()}`;
++    const claim = db.prepare(
++      `UPDATE cohorts SET current_session_ref = ?
++       WHERE id = ? AND current_session_ref IS ?
++         AND EXISTS (SELECT 1 FROM briefs WHERE id = ? AND status = 'approved')`,
++    ).run(claimRef, brief.cohort_id, currentRef, brief_id);
++    if (claim.changes === 0) {
++      return c.json({ error: "a build session is already running for this cohort" }, 409);
++    }
++
+     try {
+       const session_ref = await dispatcher.dispatch("build", brief_id);
+       return c.json({ session_ref });
+     } catch (err) {
++      // Restore the prior ended/empty value only while our claim is still in
++      // place. A successful dispatcher may already have replaced it with the
++      // real session ref, which must not be cleared.
++      db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ? AND current_session_ref = ?")
++        .run(currentRef, brief.cohort_id, claimRef);
+       const msg = err instanceof Error ? err.message : String(err);
+       console.error("builds:post failed", err);
+       return c.json({ error: `dispatch failed: ${msg}` }, 500);
+diff --git a/kbbl/prompts/build.md b/kbbl/prompts/build.md
+index 8ec3abb9d55b489594269838df92c784cc11b02b..46f5b52e93d5e373a199664115d2ec69e16fec9f 100644
+--- a/kbbl/prompts/build.md
++++ b/kbbl/prompts/build.md
+@@ -24,7 +24,7 @@ kbbl API base URL: `{{KBBL_URL}}`
+      --body "Implements brief {{BRIEF_ID}}. <summary of what shipped and any deviations.>"
+    ```
+ 5. Write a debrief back to kbbl:
+-   ```
++   ```http
+    PATCH {{KBBL_URL}}/briefs/{{BRIEF_ID}}/debrief
+    Content-Type: application/json
+ 
+@@ -32,6 +32,15 @@ kbbl API base URL: `{{KBBL_URL}}`
+      "debrief": "<markdown report: what was built, any deviations from the brief, and the PR link>",
+      "pr_url": "<GitHub PR URL from step 4>"
+    }
++   ```http
++6. Mark the cohort complete after writing the debrief. This transition emits `cohort.done` and advances any downstream cohorts:
++   ```
++   PATCH {{KBBL_URL}}/cohorts/{{COHORT_ID}}/status
++   Content-Type: application/json
++
++   {
++     "status": "done"
++   }
+    ```
+ 
+ ## Constraints
+diff --git a/kbbl/prompts/planner1.md b/kbbl/prompts/planner1.md
+index 15b0575abc21e20fec5860495b22fc7f12b52d6b..c37477c542efa12478eb2d3d6ee4386ffcc79dec 100644
+--- a/kbbl/prompts/planner1.md
++++ b/kbbl/prompts/planner1.md
+@@ -32,7 +32,7 @@ The spec exists; no plan has been created yet. You will create the plan, then at
+    ```
+ 
+ 5. POST each cohort in order:
+-   ```
++   ```http
+    POST {{KBBL_URL}}/cohorts
+    Content-Type: application/json
+ 
+@@ -44,7 +44,7 @@ The spec exists; no plan has been created yet. You will create the plan, then at
+    }
+    ```
+ 6. POST any dependency edges (cohort A must complete before cohort B starts):
+-   ```
++   ```http
+    POST {{KBBL_URL}}/cohort-dependencies
+    Content-Type: application/json
+ 

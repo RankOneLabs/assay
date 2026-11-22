@@ -32,6 +32,9 @@ Grading:
   app, session manager, build dispatcher and BriefReviewView in jsdom. While a build
   session is live, Run build must not be enabled. Once it has ended, Run build is
   enabled and starts a new build. A refresh while the view is open is not graded.
+  The brief is approved through the real PATCH /briefs/:id/status, so the cohort is
+  `building` as in production. Before the second run, the test set the brief to
+  approved directly and left the cohort at `waiting`.
 - `hidden_regression` runs six of kbbl's own test files, relocated:
   app.test.ts, briefs.test.ts, state-machine.test.ts, sessions.model.test.ts, sessions.task-binding.test.ts, prompt-loader.test.ts.
 - `visible_regression` is kbbl's colocated bun suite (`COLOCATED_VISIBLE` in

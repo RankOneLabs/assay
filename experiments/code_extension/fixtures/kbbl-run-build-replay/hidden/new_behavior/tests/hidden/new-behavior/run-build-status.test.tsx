@@ -107,7 +107,8 @@ async function world(): Promise<World & { sessionRef: string }> {
     approaches_rejected: [],
     next_action: "Start",
   });
-  db.prepare("UPDATE briefs SET status = 'approved' WHERE id = 'brief'").run();
+  // The cohort has reached brief review; the brief is still pending approval.
+  db.prepare("UPDATE cohorts SET status = 'brief_review' WHERE id = 'cohort'").run();
   // The server is up before anything happens, as in production.
   const app = createApp({
     manager,
@@ -132,7 +133,15 @@ async function world(): Promise<World & { sessionRef: string }> {
     const url = new URL(raw, "http://kbbl.test/");
     return app.request(url.pathname + url.search, init);
   };
-  // What brief approval triggers: the build dispatch that claims the cohort.
+  // Approve through the real handler, which moves the cohort to building.
+  const approved = await app.request("/briefs/brief/status", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status: "approved" }),
+  });
+  expect(approved.status).toBe(200);
+  // What approval triggers in production (dispatch-hooks, wired in server.ts): the build
+  // dispatch that claims the cohort.
   const sessionRef = await dispatcher.dispatch("build", "brief");
   const result = {
     manager,
