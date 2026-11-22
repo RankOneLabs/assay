@@ -415,3 +415,14 @@ existing automatic build session and only enable rerun after it has settled or c
 The change is applied by `TASK_EDIT` in `replay_kbbl.py`. The tree, patches and hidden tests
 are unchanged. Requalified on mcclure with the same image. Second run: `replay99b.json`,
 Luna, 6 attempts, $3 cap.
+
+Second run (2026-11-21, $0.26, 284 requests, no halt): 3 correct, 2 incorrect, and 1 stopped
+at the 60-turn limit without submitting. No attempt removed the automatic dispatch, and every
+attempt looked up the session's status instead of treating any `current_session_ref` as a
+live build. So none repeated the agent's bug. All 5 submissions passed the live case. The 2
+incorrect ones failed the ended case for a different reason: they enable rerun only when the
+cohort's status is `building` (w5 also accepts `done`). In production, approving a brief moves
+its cohort to `building` (`brief-status.ts`). The hidden test sets the brief to approved with
+raw SQL, so its cohort stays at the default `waiting`, a state approval never leaves. Those
+two fails come from the test's setup, not from a missed place. Spend after the second run:
+$14.41, at most $14.47.
