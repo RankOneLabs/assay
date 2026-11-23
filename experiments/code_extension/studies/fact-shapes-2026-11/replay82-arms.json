@@ -1,0 +1,14 @@
+{
+  "cohort": "fact-shapes-2026-11-replay82-arms",
+  "combined_cap_usd": "7.00",
+  "plans": [
+    {
+      "name": "midtier",
+      "config": "replay82-arms-plan.json"
+    },
+    {
+      "name": "sol",
+      "config": "replay82-sol-plan.json"
+    }
+  ]
+}

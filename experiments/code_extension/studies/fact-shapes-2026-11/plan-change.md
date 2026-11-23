@@ -466,3 +466,29 @@ and build alike, and added a status lookup that treats the ref as the build's (w
 `isBuildRunning`). No patch mentions planner2. Unlike the first replay, the hidden test was
 not the problem here: the agent's failure reproduced 6 of 6 under a task that states the
 intent and a brief that states planner2's write.
+
+### Build-guard replay: fact-shape arms (2026-11-23)
+
+The brief states planner2's write once, in subgoal 7 ("cohorts for planner2 and build"). The
+dispatcher's write names build in a comment and planner2 nowhere: it branches on the stage's
+input type. Each arm adds the fact in one more place and is its own scenario
+(`replay_kbbl82.py --arm`); hidden tests and held fixes are built the same way.
+
+| Arm | Change from the replay |
+|---|---|
+| `near-ask` | subgoal 11 gains a bullet: "The dispatcher writes the cohort's `current_session_ref` for planner2 as well as for build (subgoal 7)." |
+| `write-comment` | the dispatcher's cohort branch gains a comment naming planner2 and saying a build dispatch writes the same column |
+| `write-named` | that branch tests `stage.name === "planner2"` instead of the input type (same branch for the seeded stages) |
+
+All three qualified on mcclure with the same image; image grading matches the replay's on
+every held patch (the fix and both alternatives 5/5; the agent's commit fails only the two
+planner2 cases; no-guard only the live-build case). Turn limit stays at 60 so the arms
+compare with the replay's run; unsubmitted workspaces are regraded from their patches.
+
+Cohort `replay82-arms.json`: Luna on the three arms, 6 each, $3 cap; Sol on the unchanged
+replay, 6 attempts, $4 cap, to see whether the miss is Luna's alone. Combined cap $7.
+
+A further candidate, not built: the brief's decisions section gives the ref's purpose as
+letting `/briefs/:id/build` "block on 'this cohort is already building'", which reads as
+permission for the agent's guard. An arm without that rationale would separate a misleading
+stated reason from where the fact sits.

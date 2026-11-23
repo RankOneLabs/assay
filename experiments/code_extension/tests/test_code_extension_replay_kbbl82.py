@@ -75,12 +75,13 @@ def test_task_is_the_brief_with_the_guard_stated_as_intent() -> None:
     assert "cohorts for planner2 and build" in task
 
 
-def test_qualified_manifest_binds_the_replay() -> None:
-    fixture = load_scenario(NAME)
-    records = ROOT / "qualification"
+@pytest.mark.parametrize("arm", ["", *sorted(ARMS)])
+def test_qualified_manifest_binds_the_replay(arm: str) -> None:
+    fixture = load_scenario(scenario_name(arm))
+    records = PILOT.parent / scenario_name(arm) / "qualification"
     manifest = FixtureManifestV3.model_validate_json((records / "manifest.json").read_bytes())
     manifest.require_qualified()
-    scenario = manifest.scenario(SUBJECT_ID)
+    scenario = manifest.scenario(fixture.subject_id)
     assert scenario is not None
     assert scenario.checkpoint_sha == START_SHA
     assert scenario.excluded_paths == ()
