@@ -455,3 +455,14 @@ Qualified on mcclure with the same image (manifest sha256:303f3542…). The refe
 fix's stage column) and two other correct fixes pass all five hidden cases; the agent's
 commit fails only the two planner2 cases; a guardless variant fails only the live-build case.
 Plan: `replay82.json`, Luna, 6 attempts, $3 cap.
+
+Result (2026-11-22, $0.27, 329 requests): 4 submitted, all incorrect; 2 stopped at the
+60-turn limit. Every submitted attempt fails exactly the agent's two cases (planner2 still
+up blocks Run build; the view's button therefore starts nothing) and passes the other three,
+the visible suite and the hidden regression. All six patches, including the two unsubmitted
+workspaces (kept in `replay82-patches/`), guard on any live `current_session_ref`, the
+agent's bug. Each one edited the dispatcher, the file that writes that field for planner2
+and build alike, and added a status lookup that treats the ref as the build's (w4 names it
+`isBuildRunning`). No patch mentions planner2. Unlike the first replay, the hidden test was
+not the problem here: the agent's failure reproduced 6 of 6 under a task that states the
+intent and a brief that states planner2's write.

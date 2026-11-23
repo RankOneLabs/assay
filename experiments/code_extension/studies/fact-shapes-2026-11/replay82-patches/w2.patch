@@ -1,0 +1,536 @@
+diff --git a/kbbl/core/orchestrator/backends/dispatcher.ts b/kbbl/core/orchestrator/backends/dispatcher.ts
+index 76478963f8cb20ecde529f08434cf98a616600bf..d6b568ced23484b75bb9fad5d58d8433ff1baa68 100644
+--- a/kbbl/core/orchestrator/backends/dispatcher.ts
++++ b/kbbl/core/orchestrator/backends/dispatcher.ts
+@@ -8,8 +8,9 @@ interface DispatcherDeps {
+   kbblUrl: string;
+ }
+ 
+-interface Dispatcher {
++export interface Dispatcher {
+   dispatch(stageName: string, inputId: string): Promise<string>;
++  status?(session_ref: string): Promise<"running" | "completed" | "failed">;
+ }
+ 
+ // ---- SQL helpers ----
+@@ -214,6 +215,17 @@ function resolveWorkdirForBrief(db: Database, brief_id: string): string {
+ 
+ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dispatcher {
+   return {
++    async status(session_ref: string): Promise<"running" | "completed" | "failed"> {
++      // Session refs are only persisted after successful dispatch. Their
++      // lifecycle belongs to the selected backend; the reference itself is
++      // globally unique for the manager.
++      for (const backend of Object.values(backends)) {
++        const state = await backend.status(session_ref);
++        if (state !== "failed") return state;
++      }
++      return "failed";
++    },
++
+     async dispatch(stageName: string, inputId: string): Promise<string> {
+       const stage = getStage(db, stageName);
+       if (!stage) throw new Error(`unknown stage: ${stageName}`);
+diff --git a/kbbl/core/pwa/review/brief/BriefReviewView.tsx b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+index 5b8d795d2a5c8d36e73b00d3ab5c2335910f0984..1cce7ecdef6b4b90aa4907111c261dd6255af9cc 100644
+--- a/kbbl/core/pwa/review/brief/BriefReviewView.tsx
++++ b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+@@ -17,27 +17,79 @@ interface BriefReviewViewProps {
+ }
+ 
+ function RunBuildButton({ briefId }: { briefId: string }) {
++  const [pending, setPending] = useState(false);
++  const [sessionRef, setSessionRef] = useState<string | null>(null);
++  const [sessionStatus, setSessionStatus] = useState<string | null>(null);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    if (!sessionRef) return;
++    let cancelled = false;
++    const refreshStatus = async () => {
++      try {
++        const res = await fetch("/sessions");
++        if (!res.ok) return;
++        const body = (await res.json()) as { sessions?: Array<{ sid: string; status: string }> };
++        const session = body.sessions?.find((candidate) => candidate.sid === sessionRef);
++        if (session && !cancelled) {
++          setSessionStatus(session.status);
++          if (session.status !== "ended") return;
++          clearInterval(timer);
++        }
++      } catch {
++        // The session link remains useful if status polling is unavailable.
++      }
++    };
++    const timer = setInterval(() => void refreshStatus(), 2000);
++    void refreshStatus();
++    return () => {
++      cancelled = true;
++      clearInterval(timer);
++    };
++  }, [sessionRef]);
++
++  const runBuild = async () => {
++    setPending(true);
++    setError(null);
++    try {
++      const res = await fetch(`/briefs/${encodeURIComponent(briefId)}/build`, { method: "POST" });
++      const body = (await res.json()) as { session_ref?: string; error?: string };
++      if (!res.ok) throw new Error(body.error ?? `Build request failed: ${res.status}`);
++      if (!body.session_ref) throw new Error("Build response did not include a session reference");
++      setSessionRef(body.session_ref);
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Failed to start build");
++    } finally {
++      setPending(false);
++    }
++  };
++
+   return (
+-    <button
+-      type="button"
+-      disabled
+-      title="Run build — wired in cohort 5"
+-      style={{
+-        background: "var(--accent, #4a8fcb)",
+-        color: "#fff",
+-        border: "none",
+-        padding: "4px 12px",
+-        borderRadius: 4,
+-        opacity: 0.5,
+-        cursor: "default",
+-      }}
+-      onClick={() => {
+-        // TODO: wired in cohort 5
+-        void briefId;
+-      }}
+-    >
+-      Run build
+-    </button>
++    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
++      <button
++        type="button"
++        disabled={pending || sessionRef !== null}
++        title="Run build"
++        style={{
++          background: "var(--accent, #4a8fcb)",
++          color: "#fff",
++          border: "none",
++          padding: "4px 12px",
++          borderRadius: 4,
++          opacity: pending || sessionRef ? 0.6 : 1,
++          cursor: pending || sessionRef ? "default" : "pointer",
++        }}
++        onClick={() => void runBuild()}
++      >
++        {pending ? "Starting…" : sessionRef ? "Build started" : "Run build"}
++      </button>
++      {sessionRef && (
++        <a href={`/#sid=${encodeURIComponent(sessionRef)}`} title={`Build session ${sessionRef}`}>
++          Session {sessionRef.slice(0, 8)}{sessionStatus ? ` · ${sessionStatus}` : ""}
++        </a>
++      )}
++      {error && <span role="alert" style={{ color: "var(--danger, #c55)", fontSize: 12 }}>{error}</span>}
++    </span>
+   );
+ }
+ 
+@@ -190,7 +242,6 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
+   }, [id]);
+ 
+   const handleReject = useCallback(async () => {
+-    // TODO(cohort-5): replace with a RejectModal like PlanReviewView uses
+     const reason = window.prompt("Reason for rejection:");
+     if (!reason?.trim()) return;
+     setActionPending(true);
+@@ -246,7 +297,6 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
+         overflow: "hidden",
+       }}
+     >
+-      {/* Top bar */}
+       <header
+         style={{
+           display: "flex",
+@@ -257,47 +307,17 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
+           flexShrink: 0,
+         }}
+       >
+-        <button type="button" onClick={onBack}>
+-          Back
+-        </button>
+-        <span style={{ fontWeight: 600, fontSize: 14 }}>
+-          Brief review — {brief.status}
+-        </span>
++        <button type="button" onClick={onBack}>Back</button>
++        <span style={{ fontWeight: 600, fontSize: 14 }}>Brief review — {brief.status}</span>
+         <span style={{ flex: 1 }} />
+-        <button type="button" onClick={onToggleTheme} style={{ fontSize: 12 }}>
+-          Theme
+-        </button>
++        <button type="button" onClick={onToggleTheme} style={{ fontSize: 12 }}>Theme</button>
+         <ModeToggle mode={mode} onChange={setMode} disabled={frozen} />
+         {isPendingApproval && (
+           <>
+-            <button
+-              type="button"
+-              onClick={handleApprove}
+-              disabled={actionPending}
+-              style={{
+-                background: "var(--success, #2a7a2a)",
+-                color: "#fff",
+-                border: "none",
+-                padding: "4px 12px",
+-                borderRadius: 4,
+-                cursor: actionPending ? "default" : "pointer",
+-              }}
+-            >
++            <button type="button" onClick={handleApprove} disabled={actionPending} style={{ background: "var(--success, #2a7a2a)", color: "#fff", border: "none", padding: "4px 12px", borderRadius: 4, cursor: actionPending ? "default" : "pointer" }}>
+               {actionPending ? "…" : "Approve"}
+             </button>
+-            <button
+-              type="button"
+-              onClick={handleReject}
+-              disabled={actionPending}
+-              style={{
+-                background: "var(--danger, #7a2a2a)",
+-                color: "#fff",
+-                border: "none",
+-                padding: "4px 12px",
+-                borderRadius: 4,
+-                cursor: actionPending ? "default" : "pointer",
+-              }}
+-            >
++            <button type="button" onClick={handleReject} disabled={actionPending} style={{ background: "var(--danger, #7a2a2a)", color: "#fff", border: "none", padding: "4px 12px", borderRadius: 4, cursor: actionPending ? "default" : "pointer" }}>
+               {actionPending ? "…" : "Reject"}
+             </button>
+           </>
+@@ -305,96 +325,25 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
+         {brief.status === "approved" && <RunBuildButton briefId={brief.id} />}
+       </header>
+ 
+-      {/* Main area */}
+-      <div
+-        style={{
+-          display: "flex",
+-          flex: 1,
+-          overflow: "hidden",
+-        }}
+-      >
+-        {/* Structured doc */}
++      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+         <div style={{ flex: 1, overflow: "auto", padding: "0 16px 24px" }}>
+-          <StructuredDocEditor
+-            brief={brief}
+-            edits={edits}
+-            threads={threads}
+-            mode={mode}
+-            frozen={frozen}
+-            onEdit={handleEdit}
+-            onOpenThread={handleOpenThread}
+-          />
+-
++          <StructuredDocEditor brief={brief} edits={edits} threads={threads} mode={mode} frozen={frozen} onEdit={handleEdit} onOpenThread={handleOpenThread} />
+           {brief.debrief && (
+-            <div
+-              style={{
+-                marginTop: 24,
+-                padding: "12px 16px",
+-                borderRadius: 6,
+-                background: "var(--surface-raised, #1e1e1e)",
+-                border: "1px solid var(--border, #444)",
+-              }}
+-            >
+-              <div
+-                style={{
+-                  fontWeight: 600,
+-                  fontSize: 13,
+-                  opacity: 0.7,
+-                  marginBottom: 8,
+-                }}
+-              >
+-                Debrief
+-              </div>
+-              <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>
+-                {brief.debrief}
+-              </div>
++            <div style={{ marginTop: 24, padding: "12px 16px", borderRadius: 6, background: "var(--surface-raised, #1e1e1e)", border: "1px solid var(--border, #444)" }}>
++              <div style={{ fontWeight: 600, fontSize: 13, opacity: 0.7, marginBottom: 8 }}>Debrief</div>
++              <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{brief.debrief}</div>
+             </div>
+           )}
+         </div>
+-
+-        {/* Thread detail pane */}
+         {selectedThread && (
+-          <div
+-            style={{
+-              minWidth: 280,
+-              borderLeft: "1px solid var(--border, #444)",
+-              overflow: "auto",
+-            }}
+-          >
+-            <div
+-              style={{
+-                padding: "8px 12px",
+-                borderBottom: "1px solid var(--border, #444)",
+-              }}
+-            >
+-              <button
+-                type="button"
+-                style={{ fontSize: 12 }}
+-                onClick={() => setSelectedThreadId(null)}
+-              >
+-                Close
+-              </button>
++          <div style={{ minWidth: 280, borderLeft: "1px solid var(--border, #444)", overflow: "auto" }}>
++            <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border, #444)" }}>
++              <button type="button" style={{ fontSize: 12 }} onClick={() => setSelectedThreadId(null)}>Close</button>
+             </div>
+-            <ThreadView
+-              thread={selectedThread}
+-              messages={threadMessages.get(selectedThread.id) ?? []}
+-              onSendMessage={(body) =>
+-                handleSendMessage(selectedThread.id, body)
+-              }
+-              onPing={() => handlePing(selectedThread.id)}
+-              onResolve={() => handleResolve(selectedThread.id)}
+-              frozen={frozen}
+-            />
++            <ThreadView thread={selectedThread} messages={threadMessages.get(selectedThread.id) ?? []} onSendMessage={(body) => handleSendMessage(selectedThread.id, body)} onPing={() => handlePing(selectedThread.id)} onResolve={() => handleResolve(selectedThread.id)} frozen={frozen} />
+           </div>
+         )}
+-
+-        {/* Thread sidebar */}
+-        <ThreadSidebar
+-          threads={threads}
+-          selectedThreadId={selectedThreadId}
+-          onSelect={handleSelectThread}
+-          onNewThread={handleNewThread}
+-        />
++        <ThreadSidebar threads={threads} selectedThreadId={selectedThreadId} onSelect={handleSelectThread} onNewThread={handleNewThread} />
+       </div>
+     </div>
+   );
+diff --git a/kbbl/core/server.ts b/kbbl/core/server.ts
+index 4cc34d8b312cbee4171adad3626c443e93d6697c..2da4128b5c0ead280585cb86cd149d5b3cd434a4 100644
+--- a/kbbl/core/server.ts
++++ b/kbbl/core/server.ts
+@@ -19,6 +19,8 @@ import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
+ import { reviewRegistry } from "./review/registry";
+ import { reviewEvents } from "./review/events";
+ import { taskTrackerEvents } from "./db/events";
++import { createDispatcher } from "./orchestrator/backends/dispatcher";
++import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
+ 
+ // === args ===
+ 
+@@ -199,8 +201,15 @@ const manager = new SessionManager({
+ // === Hono app ===
+ 
+ let bunServer: ReturnType<typeof Bun.serve> | null = null;
++const dispatcher = createDispatcher({
++  db,
++  backends: { kbbl_chat: createKbblChatBackend({ manager }) },
++  kbblUrl: `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`,
++});
++
+ const app = createApp({
+   manager,
++  dispatcher,
+   runtime,
+   defaultWorkdir: workdir,
+   sessionsDir,
+diff --git a/kbbl/core/server/app.test.ts b/kbbl/core/server/app.test.ts
+index 1171cad59b85b93ccffab3555f535acdbe580648..134db85bdaee4addee806b2f1c5ea350e777b50d 100644
+--- a/kbbl/core/server/app.test.ts
++++ b/kbbl/core/server/app.test.ts
+@@ -34,6 +34,10 @@ function buildApp(config: KbblConfig): Hono {
+     config,
+     configPath,
+     db,
++    dispatcher: {
++      dispatch: async () => "test-session-ref",
++      status: async () => "failed",
++    },
+   });
+ }
+ 
+diff --git a/kbbl/core/server/app.ts b/kbbl/core/server/app.ts
+index bf42e14bdac7f74c82c4e3735899d8629b15de9b..a616ce5519d307a93a9ddeb8dad7f8d51e32e84c 100644
+--- a/kbbl/core/server/app.ts
++++ b/kbbl/core/server/app.ts
+@@ -8,6 +8,7 @@ import type { AppRuntime } from "../runtime";
+ import type { SafirClient } from "../safir/client";
+ import type { KbblConfig } from "../config";
+ import type { SessionManager } from "../session/session-manager";
++import type { Dispatcher } from "../orchestrator/backends/dispatcher";
+ import { inboxHandler } from "../stream/inbox";
+ import { mountHandoffRoutes } from "./handlers/handoff";
+ import { mountPermissionRoutes } from "./handlers/permission";
+@@ -21,6 +22,7 @@ import { mountBriefStatusRoutes } from "./handlers/brief-status";
+ import { mountCohortsRoutes } from "./handlers/cohorts";
+ import { mountCohortStatusRoutes } from "./handlers/cohort-status";
+ import { mountBriefsRoutes } from "./handlers/briefs";
++import { mountBuildsRoutes } from "./handlers/builds";
+ import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
+ import { mountReviewAtomsRoutes } from "./handlers/review-atoms";
+ import { mountReviewThreadsRoutes } from "./handlers/review-threads";
+@@ -66,6 +68,8 @@ export interface CreateAppDeps {
+   configPath: string;
+   /** Open SQLite database instance shared across all DB-backed handlers. */
+   db: Database;
++  /** Stage dispatcher used by the explicit build action. */
++  dispatcher: Dispatcher;
+ }
+ 
+ /**
+@@ -87,6 +91,7 @@ export function createApp(deps: CreateAppDeps): Hono {
+     config,
+     configPath,
+     db,
++    dispatcher,
+   } = deps;
+   const app = new Hono();
+ 
+@@ -224,6 +229,7 @@ export function createApp(deps: CreateAppDeps): Hono {
+   mountCohortStatusRoutes(app, { db });
+   mountBriefsRoutes(app, { db });
+   mountBriefStatusRoutes(app, { db });
++  mountBuildsRoutes(app, { db, dispatcher });
+ 
+   // ---- review primitive (cohort 2) ----
+   mountReviewFreezeRoutes(app, { db });
+diff --git a/kbbl/core/server/handlers/builds.test.ts b/kbbl/core/server/handlers/builds.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d45b5ed21a71837d9e0bc07fdbc0301e66c4669c
+--- /dev/null
++++ b/kbbl/core/server/handlers/builds.test.ts
+@@ -0,0 +1,65 @@
++import { afterEach, describe, expect, test } from "bun:test";
++import { Hono } from "hono";
++import { openTestDb } from "../../db/test-db";
++import type { Database } from "bun:sqlite";
++import { mountBuildsRoutes } from "./builds";
++
++let db: Database;
++const cohortId = "cohort-build-route";
++const briefId = "brief-build-route";
++
++function setup({ status = "approved", currentSessionRef = null }: { status?: string; currentSessionRef?: string | null } = {}) {
++  db = openTestDb();
++  db.prepare("INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)").run("project", "Project", "/tmp/project");
++  db.prepare("INSERT INTO specs (id, project_id, title) VALUES (?, ?, ?)").run("spec", "project", "Spec");
++  db.prepare("INSERT INTO plans (id, spec_id, status) VALUES (?, ?, 'approved')").run("plan", "spec");
++  db.prepare("INSERT INTO cohorts (id, plan_id, title, position, status, current_session_ref) VALUES (?, ?, ?, 0, 'building', ?)")
++    .run(cohortId, "plan", "Cohort", currentSessionRef);
++  db.prepare("INSERT INTO briefs (id, cohort_id, status, goal) VALUES (?, ?, ?, ?)")
++    .run(briefId, cohortId, status, "Goal");
++  const calls: string[][] = [];
++  const app = new Hono();
++  mountBuildsRoutes(app, {
++    db,
++    dispatcher: {
++      dispatch: async (stage, input) => {
++        calls.push([stage, input]);
++        return "new-session-ref";
++      },
++      status: async () => "running",
++    },
++  });
++  return { app, calls };
++}
++
++afterEach(() => db?.close());
++
++describe("POST /briefs/:id/build", () => {
++  test("404 when the brief is missing", async () => {
++    const { app } = setup();
++    const res = await app.request("/briefs/missing/build", { method: "POST" });
++    expect(res.status).toBe(404);
++  });
++
++  test("409 unless the brief is approved", async () => {
++    const { app, calls } = setup({ status: "pending_approval" });
++    const res = await app.request(`/briefs/${briefId}/build`, { method: "POST" });
++    expect(res.status).toBe(409);
++    expect(calls).toHaveLength(0);
++  });
++
++  test("409 while a build session is running for the cohort", async () => {
++    const { app, calls } = setup({ currentSessionRef: "existing-session" });
++    const res = await app.request(`/briefs/${briefId}/build`, { method: "POST" });
++    expect(res.status).toBe(409);
++    expect(calls).toHaveLength(0);
++  });
++
++  test("dispatches build and returns the session reference", async () => {
++    const { app, calls } = setup();
++    const res = await app.request(`/briefs/${briefId}/build`, { method: "POST" });
++    expect(res.status).toBe(200);
++    expect(await res.json()).toEqual({ session_ref: "new-session-ref" });
++    expect(calls).toEqual([["build", briefId]]);
++  });
++});
+diff --git a/kbbl/core/server/handlers/builds.ts b/kbbl/core/server/handlers/builds.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..6ebd4aa0b9a70a95e00f073c24e2b0de6def963c
+--- /dev/null
++++ b/kbbl/core/server/handlers/builds.ts
+@@ -0,0 +1,57 @@
++import type { Hono } from "hono";
++import type { Database } from "bun:sqlite";
++import { getBrief } from "../../db/briefs";
++
++export interface BuildsDispatcher {
++  dispatch(stageName: string, inputId: string): Promise<string>;
++  /** When available, distinguish a stale session ref from an active build. */
++  status?(session_ref: string): Promise<"running" | "completed" | "failed">;
++}
++
++interface BuildsRouteDeps {
++  dispatcher: BuildsDispatcher;
++  db: Database;
++}
++
++export function mountBuildsRoutes(app: Hono, { dispatcher, db }: BuildsRouteDeps): void {
++  app.post("/briefs/:id/build", async (c) => {
++    const brief_id = c.req.param("id");
++    const brief = getBrief(db, brief_id);
++    if (!brief) return c.json({ error: "not found" }, 404);
++    if (brief.status !== "approved") {
++      return c.json({ error: "brief is not approved" }, 409);
++    }
++
++    const cohort = db
++      .prepare<{ current_session_ref: string | null }, [string]>(
++        "SELECT current_session_ref FROM cohorts WHERE id = ?",
++      )
++      .get(brief.cohort_id);
++    if (!cohort) return c.json({ error: "cohort not found" }, 404);
++
++    if (cohort.current_session_ref) {
++      let status: "running" | "completed" | "failed" = "running";
++      if (dispatcher.status) {
++        try {
++          status = await dispatcher.status(cohort.current_session_ref);
++        } catch (err) {
++          console.error("builds:status failed", err);
++          // Fail closed: if the dispatcher cannot determine whether the
++          // recorded build is live, avoid starting a duplicate run.
++          return c.json({ error: "could not determine existing build status" }, 503);
++        }
++      }
++      if (status === "running") {
++        return c.json({ error: "a build is already running for this cohort" }, 409);
++      }
++    }
++
++    try {
++      const session_ref = await dispatcher.dispatch("build", brief_id);
++      return c.json({ session_ref });
++    } catch (err) {
++      console.error("builds:dispatch failed", err);
++      return c.json({ error: "failed to start build" }, 500);
++    }
++  });
++}
