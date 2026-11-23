@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from code_extension.fixture import COLOCATED_VISIBLE, PILOT, read_tree
 from code_extension.fixtures import load_scenario
 from code_extension.replay_kbbl82 import (
     AGENT_FILES,
+    ARMS,
     BUILD_ENTRY,
+    DISPATCHER,
     FRAMING,
     HIDDEN_TEST,
     LIVE,
@@ -18,6 +21,7 @@ from code_extension.replay_kbbl82 import (
     SUBJECT_ID,
     TASK_EDIT,
     relocate,
+    scenario_name,
 )
 
 from assay.canonical import canonical_json, digest_bytes
@@ -102,3 +106,27 @@ def test_qualified_manifest_binds_the_replay() -> None:
     for gate, digest in sidecar["evidence"].items():
         record = (records / "gates" / f"{gate.replace('_', '-')}.json").read_bytes()
         assert digest == digest_bytes(record), gate
+
+
+@pytest.mark.parametrize("arm", sorted(ARMS))
+def test_fact_shape_arm_differs_from_the_replay_by_its_one_statement(arm: str) -> None:
+    base, variant = load_scenario(NAME), load_scenario(scenario_name(arm))
+    assert variant.subject_id == f"{SUBJECT_ID}-{arm}"
+    assert variant.groups == base.groups
+    changed = {
+        path for path in {*base.repository, *variant.repository}
+        if base.repository.get(path) != variant.repository.get(path)
+    }
+    if arm == "near-ask":
+        assert changed == set()
+        assert variant.task.count("planner2 as well as for build") == 1
+        assert len(variant.task.splitlines()) == len(base.task.splitlines()) + 1
+    else:
+        assert variant.task == base.task
+        assert changed == {DISPATCHER}
+        before = base.repository[DISPATCHER].splitlines()
+        after = variant.repository[DISPATCHER].splitlines()
+        assert len({*after} - {*before}) == 1 and "planner2" in "\n".join(after)
+    assert [item.kind for item in variant.sidecar.patch_inventory] == [
+        item.kind for item in base.sidecar.patch_inventory
+    ]

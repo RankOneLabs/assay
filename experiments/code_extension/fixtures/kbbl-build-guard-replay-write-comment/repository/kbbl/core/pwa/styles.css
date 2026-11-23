@@ -1,0 +1,1904 @@
+:root {
+  color-scheme: dark;
+
+  --bg-app: #111;
+  --bg-surface: #1a1a1a;
+  --bg-code: #0d1117;
+  --bg-input-bar: #0a0a0a;
+  --bg-input-bar-desktop: #151515;
+
+  --border-subtle: #2a2a2a;
+  --border-muted: #333;
+  --border-hover: #3a3a3a;
+
+  --text-primary: #e0e0e0;
+  --text-secondary: #ccc;
+  --text-tertiary: #aaa;
+  --text-muted: #888;
+  --text-session: #999;
+  --text-faint: #777;
+  --text-fainter: #666;
+  --text-faintest: #555;
+
+  --bubble-user-bg: #2563eb;
+  --bubble-user-fg: #ffffff;
+  --bubble-assistant-bg: #1f2937;
+  --bubble-assistant-fg: #e0e0e0;
+
+  --accent-blue: #2563eb;
+  --accent-name: #a0c0ff;
+
+  --status-connecting-bg: #3a3420;
+  --status-connecting-fg: #e6c670;
+  --status-connected-bg: #1f3a24;
+  --status-connected-fg: #7dd890;
+  --status-disconnected-bg: #3a2020;
+  --status-disconnected-fg: #e67070;
+
+  --amber-bg: #3a2a0a;
+  --amber-fg: #f5b050;
+  --amber-border: #6a4a18;
+  --amber-glow: rgba(245, 176, 80, 0.3);
+
+  --permission-bg: #26200f;
+  --permission-border: #4a3f1a;
+  --permission-fg: #e6c670;
+  --permission-glow: rgba(230, 198, 112, 0.15);
+
+  --danger-bg: #3a2020;
+  --danger-fg: #e67070;
+  --danger-card-bg: #1d0f0f;
+  --danger-card-border: #633;
+
+  --success-fg: #7dd890;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-app: #ffffff;
+  --bg-surface: #f3f4f6;
+  --bg-code: #f6f8fa;
+  --bg-input-bar: #f9fafb;
+  --bg-input-bar-desktop: #f3f4f6;
+
+  --border-subtle: #e5e7eb;
+  --border-muted: #d1d5db;
+  --border-hover: #9ca3af;
+
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-tertiary: #4b5563;
+  --text-muted: #6b7280;
+  --text-session: #6b7280;
+  --text-faint: #6b7280;
+  /* On white the AA-passing gray range (>=4.5:1) is narrow, so the three
+     "quiet" tiers below --text-muted collapse into one color instead of
+     taking the dark palette's stepped hierarchy under the AA floor. */
+  --text-fainter: #6b7280;
+  --text-faintest: #6b7280;
+
+  --bubble-user-bg: #2563eb;
+  --bubble-user-fg: #ffffff;
+  --bubble-assistant-bg: #e5e7eb;
+  --bubble-assistant-fg: #111827;
+
+  --accent-blue: #2563eb;
+  --accent-name: #1d4ed8;
+
+  --status-connecting-bg: #fef3c7;
+  --status-connecting-fg: #92400e;
+  --status-connected-bg: #d1fae5;
+  --status-connected-fg: #065f46;
+  --status-disconnected-bg: #fee2e2;
+  --status-disconnected-fg: #991b1b;
+
+  --amber-bg: #fef3c7;
+  --amber-fg: #92400e;
+  --amber-border: #fcd34d;
+  --amber-glow: rgba(252, 211, 77, 0.4);
+
+  --permission-bg: #fffbeb;
+  --permission-border: #fcd34d;
+  --permission-fg: #92400e;
+  --permission-glow: rgba(252, 211, 77, 0.3);
+
+  --danger-bg: #fee2e2;
+  --danger-fg: #991b1b;
+  --danger-card-bg: #fef2f2;
+  --danger-card-border: #fca5a5;
+
+  --success-fg: #047857;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+}
+
+#app {
+  min-height: 100%;
+}
+
+.app {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 1rem;
+  /* Bottom padding clears the now-fixed .input-bar so the last message,
+     pending bubbles, thinking indicator, and the scroll-end ref all
+     remain visible. --bottom-bar-h is measured + set by SessionView's
+     ResizeObserver and already includes the bar's own safe-area-inset
+     padding, so we don't add the inset again here. When the bar is
+     unmounted (inbox / ended views) the fallback applies the inset
+     directly so iOS home-indicator space is still respected. */
+  padding-bottom: var(--bottom-bar-h, env(safe-area-inset-bottom));
+  position: relative;
+}
+
+.top-bar {
+  position: sticky;
+  top: 0;
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: calc(env(safe-area-inset-top) + 0.5rem) 0 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  z-index: 10;
+}
+
+.back-button {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 0 0.6rem;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  min-height: 44px;
+  min-width: 44px;
+}
+.back-button:hover {
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.status {
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.status-connecting {
+  background: var(--status-connecting-bg);
+  color: var(--status-connecting-fg);
+}
+.status-connected {
+  background: var(--status-connected-bg);
+  color: var(--status-connected-fg);
+}
+.status-disconnected {
+  background: var(--status-disconnected-bg);
+  color: var(--status-disconnected-fg);
+}
+
+.event-count {
+  color: var(--text-muted);
+}
+
+.yolo-toggle,
+.theme-toggle {
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 0.25rem 0.75rem;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  /* 44px to meet touch-target guidance — this is the most security-relevant
+     control in the top bar, so reliable tap matters more than blending in
+     with the smaller status pill / event count text next to it. */
+  min-height: 44px;
+}
+
+.yolo-error {
+  color: var(--danger-fg);
+  font-size: 0.75rem;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.yolo-toggle:hover:not(:disabled),
+.theme-toggle:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  color: var(--text-secondary);
+}
+.yolo-toggle.is-on {
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+  border-color: var(--amber-border);
+  box-shadow: 0 0 8px var(--amber-glow);
+}
+.yolo-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.session-label {
+  /* Pushed all the way right by margin-left:auto so it sits opposite the
+     back button — gives the operator a constant "where am I" anchor on
+     both mobile and desktop. Truncates with ellipsis when crowded. */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-left: auto;
+  min-width: 0;
+  max-width: 50%;
+  line-height: 1.15;
+  overflow: hidden;
+}
+.session-label-name {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.session-label-workdir {
+  color: var(--text-session);
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.input-hint {
+  /* Desktop-only keyboard hint next to the inline input. Hidden by default. */
+  display: none;
+  color: var(--text-session);
+  font-size: 0.75rem;
+  padding: 0 0.25rem;
+}
+
+/* Consistent keyboard focus indicator across interactive elements. */
+.input-bar button:focus-visible,
+.card-permission-buttons button:focus-visible,
+.yolo-toggle:focus-visible,
+.theme-toggle:focus-visible,
+.card summary:focus-visible,
+.row-thinking summary:focus-visible,
+.tool-batch-summary:focus-visible,
+.tool-entry summary:focus-visible,
+.bubble-user-slash > summary:focus-visible,
+.notice summary:focus-visible,
+.metrics-summary:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.notice summary {
+  cursor: pointer;
+}
+
+.events {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  /* --top-bar-h is pushed in by SessionView's useLayoutEffect after
+     measuring the rendered top-bar height — keeps the first message
+     clear of the sticky top bar on first paint and on iOS visual-viewport
+     jumps. The fixed input bar at the bottom is cleared via .app's
+     padding-bottom (so pending bubbles / thinking row also clear it). */
+  padding-top: var(--top-bar-h, 0.5rem);
+  padding-bottom: 0.5rem;
+}
+
+.row {
+  display: flex;
+}
+.row-user {
+  justify-content: flex-end;
+}
+.row-assistant {
+  justify-content: flex-start;
+}
+.row-system {
+  justify-content: center;
+}
+.row-thinking {
+  background: var(--bg-surface);
+  border: 1px dashed var(--border-muted);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.row-thinking summary {
+  cursor: pointer;
+}
+.row-thinking pre {
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+}
+
+.bubble {
+  max-width: 80%;
+  padding: 0.6rem 0.85rem;
+  border-radius: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.bubble-user {
+  background: var(--bubble-user-bg);
+  color: var(--bubble-user-fg);
+  border-bottom-right-radius: 4px;
+}
+.bubble-user-slash {
+  padding: 0;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  max-width: 90%;
+}
+.bubble-user-slash > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0.85rem;
+  min-height: 36px;
+}
+.bubble-user-slash > summary::-webkit-details-marker {
+  display: none;
+}
+.bubble-user-slash > summary::before {
+  content: "▸";
+  color: var(--bubble-user-fg);
+  opacity: 0.7;
+  flex-shrink: 0;
+  transition: transform 0.12s ease-out;
+}
+.bubble-user-slash[open] > summary::before {
+  transform: rotate(90deg);
+}
+.bubble-slash-name {
+  font-weight: 600;
+}
+.bubble-slash-args {
+  opacity: 0.85;
+}
+.bubble-slash-body {
+  margin: 0;
+  padding: 0.5rem 0.85rem 0.6rem;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-size: 0.75rem;
+  max-height: 40vh;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+}
+@media (prefers-reduced-motion: reduce) {
+  .bubble-user-slash > summary::before {
+    transition: none;
+  }
+}
+.bubble-assistant {
+  background: var(--bubble-assistant-bg);
+  color: var(--bubble-assistant-fg);
+  border-bottom-left-radius: 4px;
+}
+.bubble-assistant p {
+  margin: 0 0 0.5rem;
+}
+.bubble-assistant p:last-child {
+  margin-bottom: 0;
+}
+.bubble-assistant pre {
+  background: var(--bg-code);
+  padding: 0.6rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.8rem;
+}
+.bubble-assistant code {
+  background: var(--bg-code);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.85rem;
+}
+.bubble-assistant pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.notice {
+  font-size: 0.8rem;
+  color: var(--text-session);
+  font-family: "SF Mono", Menlo, monospace;
+  padding: 0.3rem 0.6rem;
+  text-align: center;
+}
+.notice-muted {
+  color: var(--text-fainter);
+}
+.notice-tag {
+  color: var(--text-faintest);
+  margin-right: 0.4rem;
+}
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+.card summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  color: var(--text-secondary);
+  min-height: 32px;
+  padding: 0.15rem 0;
+  border-radius: 4px;
+}
+.card summary:hover {
+  color: var(--text-primary);
+}
+.card summary::-webkit-details-marker {
+  display: none;
+}
+.card summary::before {
+  content: "▸";
+  color: var(--accent-blue);
+  font-size: 0.85rem;
+  display: inline-block;
+  width: 0.9em;
+  flex-shrink: 0;
+  transition: transform 0.12s ease-out;
+}
+.card[open] summary::before {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .card summary::before,
+  .tool-batch-summary::before {
+    transition: none;
+  }
+}
+
+.card-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+.card-name {
+  color: var(--accent-name);
+  font-weight: 500;
+}
+.card-preview {
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.card-body {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem;
+  background: var(--bg-code);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.card-footer {
+  margin-top: 0.4rem;
+  color: var(--text-faintest);
+  font-size: 0.7rem;
+}
+.card-error {
+  margin-top: 0.4rem;
+  color: var(--danger-fg);
+}
+
+.card-tool-result.is-error {
+  border-color: var(--danger-card-border);
+  background: var(--danger-card-bg);
+}
+
+.card-permission {
+  border-color: var(--permission-border);
+  background: var(--permission-bg);
+  box-shadow: 0 0 12px var(--permission-glow);
+}
+.card-permission-header {
+  color: var(--permission-fg);
+  font-weight: 600;
+  font-size: 1rem;
+  font-family: -apple-system, system-ui, sans-serif;
+  margin-bottom: 0.5rem;
+}
+.card-permission-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.card-permission-buttons button {
+  flex: 1;
+  min-height: 44px;
+  padding: 0.75rem;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.btn-deny {
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+.btn-always {
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+}
+.btn-approve {
+  background: var(--accent-blue);
+  color: #ffffff;
+}
+.card-permission-buttons button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.notice-allow {
+  color: var(--success-fg);
+}
+.notice-deny {
+  color: var(--danger-fg);
+}
+
+/* === tool batch (groups consecutive tool_use/tool_result events into a
+   single collapsible section so a long YOLO-mode turn doesn't dominate the
+   transcript). === */
+.tool-batch {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.8rem;
+  width: 100%;
+}
+.tool-batch-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.5rem 0.7rem;
+  min-height: 36px;
+  color: var(--text-secondary);
+}
+.tool-batch-summary:hover {
+  color: var(--text-primary);
+}
+.tool-batch-summary::-webkit-details-marker {
+  display: none;
+}
+.tool-batch-summary::before {
+  content: "▸";
+  color: var(--accent-blue);
+  flex-shrink: 0;
+  transition: transform 0.12s ease-out;
+}
+.tool-batch[open] .tool-batch-summary::before {
+  transform: rotate(90deg);
+}
+.tool-batch-count {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.tool-batch-names {
+  color: var(--accent-name);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.tool-batch-errors {
+  color: var(--danger-fg);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.tool-batch-body {
+  padding: 0 0.4rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.tool-entry {
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.tool-entry summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.55rem;
+  min-height: 30px;
+  color: var(--text-secondary);
+}
+.tool-entry summary:hover {
+  color: var(--text-primary);
+}
+.tool-entry summary::-webkit-details-marker {
+  display: none;
+}
+.tool-entry summary::before {
+  content: "▸";
+  color: var(--text-fainter);
+  flex-shrink: 0;
+}
+.tool-entry[open] summary::before {
+  content: "▾";
+  color: var(--accent-blue);
+}
+.tool-entry-name {
+  color: var(--accent-name);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.tool-entry-preview {
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.tool-entry-status {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.tool-entry.is-error {
+  border-color: var(--danger-card-border);
+  background: var(--danger-card-bg);
+}
+.tool-entry.is-error .tool-entry-status {
+  color: var(--danger-fg);
+}
+.tool-entry.is-pending .tool-entry-status {
+  color: var(--amber-fg);
+}
+.tool-entry-body {
+  padding: 0 0.55rem 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.tool-entry-section-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  margin-top: 0.25rem;
+}
+.tool-entry-block {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-code);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+  font-size: 0.75rem;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+/* === session list === */
+
+.app-list {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);
+}
+
+.session-list-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem 0;
+}
+
+.new-session-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: stretch;
+}
+.new-session-workdir,
+.new-session-name {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 0 0.7rem;
+  min-height: 44px;
+  font: inherit;
+  font-size: 0.9rem;
+}
+.new-session-workdir {
+  flex-basis: 100%;
+}
+.new-session-name {
+  flex-basis: 0;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.85rem;
+}
+.new-session-workdir:focus,
+.new-session-name:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+.new-session-workdir::placeholder,
+.new-session-name::placeholder {
+  color: var(--text-fainter);
+}
+.new-session-model {
+  flex: 0 0 auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 0 0.7rem;
+  min-height: 44px;
+  font: inherit;
+  font-size: 0.85rem;
+}
+.new-session-model:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+.new-session-task,
+.new-session-profile {
+  flex: 0 0 auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 0 0.7rem;
+  min-height: 44px;
+  font: inherit;
+  font-size: 0.85rem;
+  max-width: 16rem;
+}
+.new-session-task:focus,
+.new-session-profile:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.btn-new-session {
+  background: var(--accent-blue);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 0 1rem;
+  min-height: 44px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-new-session:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.session-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.session-row-li {
+  position: relative;
+}
+/* Both action buttons (Resume, Remove) are absolutely positioned on the
+   right so they don't sit inside the row's click target. Remove is always
+   rendered; Resume only when ended. Rows reserve space for Remove always,
+   plus extra when Resume is also present. */
+.session-row-li .session-row {
+  padding-right: 6.25rem;
+}
+.session-row-li:has(.btn-resume) .session-row {
+  padding-right: 11rem;
+}
+.btn-resume {
+  position: absolute;
+  top: 50%;
+  right: 6.25rem;
+  transform: translateY(-50%);
+  background: var(--accent-blue);
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.4rem 0.75rem;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  /* Match the 44px touch target the rest of the UI uses (theme toggle,
+     yolo toggle, approve/deny, send). Padding stays tight so the button
+     still reads as a secondary inline action inside the row. */
+  min-height: 44px;
+}
+.btn-resume:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.btn-resume:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Outlined danger affordance, sits at the row's far right. Two-tap
+   confirm — first tap primes (`.is-confirming` paints it solid red),
+   second tap fires the DELETE. Prevents a stray swipe from nuking work. */
+.btn-remove {
+  position: absolute;
+  top: 50%;
+  right: 0.75rem;
+  transform: translateY(-50%);
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  min-height: 44px;
+  white-space: nowrap;
+}
+.btn-remove:hover:not(:disabled) {
+  color: var(--danger-fg);
+  border-color: var(--danger-fg);
+}
+.btn-remove.is-confirming {
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  border-color: var(--danger-fg);
+  font-weight: 600;
+}
+.btn-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.session-list-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 2rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+.session-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  font: inherit;
+  font-family: inherit;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  min-height: 60px;
+}
+.session-row:hover {
+  border-color: var(--border-hover);
+}
+.session-row-ended {
+  opacity: 0.72;
+}
+
+.session-row-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.session-row-status {
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+.session-row-status-live {
+  background: var(--status-connected-bg);
+  color: var(--status-connected-fg);
+}
+.session-row-status-starting {
+  background: var(--status-connecting-bg);
+  color: var(--status-connecting-fg);
+}
+.session-row-status-ended {
+  background: var(--bg-code);
+  color: var(--text-muted);
+}
+.session-row-name {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.session-row-pending {
+  background: var(--permission-bg);
+  color: var(--permission-fg);
+  border: 1px solid var(--permission-border);
+  border-radius: 3px;
+  padding: 0.1rem 0.4rem;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.session-row-yolo {
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+  border: 1px solid var(--amber-border);
+  border-radius: 3px;
+  padding: 0.1rem 0.4rem;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.session-row-model {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  background: var(--bg-surface);
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  font-family: "SF Mono", Menlo, monospace;
+}
+.session-row-activity {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 0.8rem;
+}
+.session-row-workdir {
+  color: var(--text-muted);
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-ended-banner {
+  /* Sticky for the same reason as .input-bar — see the comment there. */
+  position: sticky;
+  bottom: 0;
+  padding: 0.75rem;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  background: var(--bg-input-bar);
+  border-top: 1px solid var(--border-subtle);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.session-ended-text {
+  font-size: 0.85rem;
+}
+.session-ended-actions {
+  display: flex;
+  justify-content: center;
+}
+.btn-resume-banner {
+  position: static;
+  transform: none;
+  padding: 0.6rem 1.25rem;
+  font-size: 0.9rem;
+}
+.session-ended-error {
+  color: var(--danger-fg);
+  font-size: 0.8rem;
+}
+@media (min-width: 1024px) {
+  .session-ended-banner {
+    position: static;
+    margin: 0.75rem 0 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-input-bar-desktop);
+  }
+}
+
+.input-bar {
+  /* Fixed to the viewport bottom so it stays in view regardless of scroll
+     position. The previous `position: sticky` approach pinned only while
+     the bar's natural document position was below the viewport — short
+     transcripts and certain Chrome flex-layout interactions broke it.
+     `interactive-widget=resizes-content` in index.html ensures the bar
+     rides above the soft keyboard on mobile (Chrome / iOS 17+).
+     left:0/right:0 + max-width + margin:auto centers within the same
+     800px gutter as .app so it visually aligns with the content column. */
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0.5rem 1rem;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem);
+  background: var(--bg-input-bar);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  z-index: 10;
+}
+.input-bar-row {
+  display: flex;
+  gap: 0.5rem;
+}
+.input-error {
+  color: var(--danger-fg);
+  font-size: 0.85rem;
+  padding: 0 0.25rem;
+}
+.input-bar textarea {
+  flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 0.6rem 0.8rem;
+  font: inherit;
+  resize: none;
+  max-height: 8rem;
+}
+.input-bar textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+.input-bar button {
+  padding: 0 1.25rem;
+  min-height: 44px;
+  background: var(--accent-blue);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.input-bar button:disabled {
+  background: var(--border-muted);
+  color: var(--text-fainter);
+  cursor: not-allowed;
+}
+
+/* Selector is `.input-bar button.btn-stop` (specificity 0,2,1) so it wins
+   over the generic `.input-bar button` (0,1,1) Send-button styling. Without
+   the bump, the Stop button inherits Send's solid blue and looks like a
+   second Send instead of an outlined danger affordance. */
+.input-bar button.btn-stop {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  padding: 0 0.75rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  min-height: 44px;
+  white-space: nowrap;
+}
+.input-bar button.btn-stop:hover:not(:disabled) {
+  color: var(--danger-fg);
+  border-color: var(--danger-fg);
+  background: transparent;
+}
+.input-bar button.btn-stop.is-confirming {
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  border-color: var(--danger-fg);
+  font-weight: 600;
+}
+.input-bar button.btn-stop:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+/* Optimistic user bubble shown immediately on send. Visually echoes the
+   real bubble but slightly faded with an inline status tag. */
+.bubble-user-pending {
+  opacity: 0.65;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.bubble-pending-tag {
+  font-size: 0.7rem;
+  opacity: 0.85;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
+/* Timestamp pinned above only the bottom-most message bubble. Rendered as
+   its own sibling row directly before the bubble row — .row-user /
+   .row-assistant already handle the left/right alignment via
+   justify-content, so the tag lands above the correct bubble edge without
+   wrapping the bubble in a layout that would override its max-width. */
+.bubble-ts {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: "SF Mono", Menlo, monospace;
+  padding: 0 0.4rem;
+  letter-spacing: 0.02em;
+  margin-bottom: -0.25rem;
+}
+
+/* === metrics strip === */
+.metrics-strip {
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-app);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: "SF Mono", Menlo, monospace;
+  position: sticky;
+  top: var(--top-bar-h, 0);
+  z-index: 9;
+}
+.metrics-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.85rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  list-style: none;
+  min-height: 36px;
+}
+.metrics-summary::-webkit-details-marker {
+  display: none;
+}
+.metrics-summary::before {
+  content: "▸";
+  opacity: 0.6;
+  flex-shrink: 0;
+  transition: transform 0.12s ease-out;
+}
+.metrics-strip[open] > .metrics-summary::before {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .metrics-summary::before {
+    transition: none;
+  }
+}
+.metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+.metric-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.65rem;
+  opacity: 0.7;
+}
+.metric-value {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.metric-sep {
+  opacity: 0.4;
+}
+.metrics-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 0.5rem 0.8rem 0.7rem 1.4rem;
+  border-top: 1px dashed var(--border-subtle);
+}
+.metrics-detail-section {
+  min-width: 12rem;
+}
+.metrics-detail-heading {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.65rem;
+  opacity: 0.7;
+  margin-bottom: 0.3rem;
+}
+.metrics-detail dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.8rem;
+  margin: 0;
+}
+.metrics-detail dt {
+  opacity: 0.75;
+}
+.metrics-detail dd {
+  margin: 0;
+  color: var(--text-secondary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.thinking-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 0.35rem 0.7rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-family: "SF Mono", Menlo, monospace;
+}
+.thinking-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: thinking-bounce 1.2s infinite ease-in-out;
+}
+.thinking-dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.thinking-dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
+.thinking-label {
+  margin-left: 0.25rem;
+}
+.thinking-meta {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bubble-assistant-inflight {
+  opacity: 0.85;
+  border-left: 2px solid var(--text-muted);
+}
+
+/* Live tool-call panel rendered by InFlightToolPanel during a streaming
+   turn. Shares the .tool-batch shell with the post-turn batch, but adds
+   a pulsing accent so the operator can tell at a glance the call list
+   is currently mutating. */
+.tool-batch-live {
+  border-color: var(--border-hover, var(--border-subtle));
+  animation: tool-batch-live-pulse 2s ease-in-out infinite;
+}
+.tool-batch-status {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.tool-batch-status-live {
+  color: var(--amber-fg, var(--accent-blue));
+}
+.tool-entry-live {
+  /* In-flight entries don't have collapsible details since there's no
+     result yet — render a static row with name + preview + status. */
+}
+.tool-entry-live-summary {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.55rem;
+  min-height: 30px;
+  color: var(--text-secondary);
+}
+@keyframes tool-batch-live-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(255, 184, 0, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(255, 184, 0, 0.18);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-batch-live {
+    animation: none;
+  }
+}
+@keyframes thinking-bounce {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* === desktop: wider container, denser cards, inline input === */
+@media (min-width: 1024px) {
+  .app {
+    max-width: 1200px;
+    /* padding-bottom inherits the mobile rule's var(--bottom-bar-h, ...)
+       because .input-bar is position: fixed on desktop too. */
+  }
+
+  .card {
+    padding: 0.4rem 0.7rem;
+    font-size: 0.8rem;
+  }
+  .card-body {
+    font-size: 0.78rem;
+    max-height: 60vh;
+  }
+  .card-preview {
+    font-size: 0.75rem;
+  }
+
+  .bubble {
+    max-width: 65%;
+  }
+
+  .notice {
+    font-size: 0.78rem;
+  }
+
+  .input-bar {
+    /* Match .app's desktop max-width so the pinned bar visually aligns
+       with the content column. The bar stays `position: fixed` (set in
+       the mobile rule) — keeping the input pinned to the viewport bottom
+       so it doesn't scroll off screen on long transcripts. */
+    max-width: 1200px;
+    background: var(--bg-input-bar-desktop);
+  }
+  .input-bar textarea {
+    /* Desktop has room for a multi-line default — less cramped than the
+       mobile rows={1} single-line start. */
+    min-height: 5rem;
+    max-height: 16rem;
+  }
+  .input-hint {
+    display: block;
+  }
+}
+
+/* === compacting status badge === */
+/* Reuses the amber palette already used for permission/yolo affordances —
+   compaction is operator-relevant signal but not an error. */
+.session-row-status-compacting {
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+  border: 1px solid var(--amber-border);
+  animation: compacting-pulse 1.4s ease-in-out infinite;
+}
+@keyframes compacting-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-row-status-compacting,
+  .compacting-banner__dot {
+    animation: none;
+  }
+}
+
+/* === compacted-row successor link === */
+.session-row-successor {
+  margin-top: 0.25rem;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* === compacting banner (bottom of SessionView while status === "compacting") === */
+.compacting-banner {
+  position: sticky;
+  bottom: 0;
+  padding: 0.75rem;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  background: var(--bg-input-bar);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  z-index: 10;
+}
+.compacting-banner__dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--amber-fg);
+  animation: compacting-pulse 1.4s ease-in-out infinite;
+}
+.compacting-banner__dot:nth-child(2) { animation-delay: 0.2s; }
+.compacting-banner__dot:nth-child(3) { animation-delay: 0.4s; }
+.compacting-banner__label {
+  color: var(--amber-fg);
+  font-weight: 600;
+}
+.compacting-banner__hint {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+}
+@media (min-width: 1024px) {
+  .compacting-banner {
+    position: static;
+    margin: 0.75rem 0 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-input-bar-desktop);
+  }
+}
+
+/* === compacted banner (bottom of SessionView when endReason === "compacted") === */
+.compacted-banner {
+  position: sticky;
+  bottom: 0;
+  padding: 0.75rem;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  background: var(--bg-input-bar);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 10;
+}
+.compacted-banner__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.compacted-banner__label {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.compacted-banner__open {
+  /* Reuses .btn-resume-banner sizing/colors via the className applied in
+     CompactedBanner; this rule just handles the inline-with-label layout. */
+  margin-left: 0.25rem;
+}
+.compacted-banner__no-successor {
+  color: var(--text-faint);
+  font-size: 0.8rem;
+}
+.compacted-banner__toggle {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.compacted-banner__toggle:hover {
+  border-color: var(--border-hover);
+}
+.compacted-banner__handoff {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.5rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+.compacted-banner__handoff h1,
+.compacted-banner__handoff h2,
+.compacted-banner__handoff h3 {
+  margin: 0.6rem 0 0.3rem;
+}
+.compacted-banner__handoff pre {
+  background: var(--bg-code);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  overflow-x: auto;
+}
+.compacted-banner__handoff code {
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+.compacted-banner__status {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding: 0.5rem 0;
+}
+@media (min-width: 1024px) {
+  .compacted-banner {
+    position: static;
+    margin: 0.75rem 0 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-input-bar-desktop);
+  }
+}
+
+/* === compact suggestion banner (inline above MetricsStrip) === */
+.compact-suggestion-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--amber-bg);
+  color: var(--amber-fg);
+  border-top: 1px solid var(--amber-border);
+  border-bottom: 1px solid var(--amber-border);
+  font-size: 0.85rem;
+}
+.compact-suggestion-banner__text {
+  flex: 1;
+  min-width: 12rem;
+}
+.compact-suggestion-banner__action,
+.compact-suggestion-banner__dismiss {
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid var(--amber-border);
+  background: transparent;
+  color: var(--amber-fg);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.compact-suggestion-banner__action {
+  font-weight: 600;
+}
+.compact-suggestion-banner__action:hover,
+.compact-suggestion-banner__dismiss:hover {
+  background: var(--amber-border);
+}
+
+/* === threshold setting input in SessionTopBar === */
+.threshold-setting {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.threshold-setting__label {
+  font-size: 0.75rem;
+}
+.threshold-setting__input {
+  width: 5.5rem;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  text-align: right;
+}
+.threshold-setting__unit {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+
+.task-view__open-safir {
+  color: var(--accent-blue);
+  font-size: 0.85rem;
+  text-decoration: none;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+}
+.task-view__open-safir:hover {
+  background: var(--bg-surface);
+  text-decoration: underline;
+}
+
+/* === inbox proposal cards === */
+
+.inbox-proposals {
+  list-style: none;
+  margin: 0 0 1rem 0;
+  padding: 0;
+}
+.inbox-proposal-card-li {
+  margin: 0 0 0.5rem 0;
+}
+.inbox-proposal-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-blue);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+}
+.inbox-proposal-card:hover {
+  border-color: var(--border-hover);
+}
+.inbox-proposal-card-line {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.inbox-proposal-card-tag {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--accent-blue);
+  color: #ffffff;
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+}
+.inbox-proposal-card-summary {
+  font-weight: 500;
+}
+.inbox-proposal-card-parent {
+  margin-top: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* === proposal review view === */
+
+.proposal-review-view {
+  padding: 1rem;
+  max-width: 50rem;
+  margin: 0 auto;
+}
+.proposal-review-header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+.proposal-review-back {
+  background: none;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  font: inherit;
+}
+.proposal-review-title {
+  font-size: 1.1rem;
+  font-weight: 500;
+  flex: 1 1 auto;
+}
+.proposal-review-open-safir {
+  color: var(--accent-blue);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+.proposal-review-error {
+  border: 1px solid var(--danger-fg);
+  background: var(--bg-surface);
+  color: var(--danger-fg);
+  padding: 0.6rem 0.9rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+.proposal-review-summary pre,
+.proposal-task-notes {
+  white-space: pre-wrap;
+  font-family: inherit;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+}
+.proposal-task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.proposal-task-card {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  background: var(--bg-surface);
+}
+.proposal-task-head {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+}
+.proposal-task-index {
+  color: var(--text-muted);
+  font-family: monospace;
+}
+.proposal-task-title {
+  font-weight: 500;
+  flex: 1 1 auto;
+}
+.proposal-task-priority {
+  font-size: 0.75rem;
+  background: var(--accent-blue);
+  color: #ffffff;
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+}
+.proposal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+.proposal-action-approve,
+.proposal-action-reject {
+  font: inherit;
+  border-radius: 8px;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+}
+.proposal-action-approve {
+  background: var(--accent-blue);
+  color: #ffffff;
+  border: 1px solid var(--accent-blue);
+}
+.proposal-action-reject {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-muted);
+}
+.proposal-action-approve:disabled,
+.proposal-action-reject:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* === inbox artifact cards (pending plans + pending build briefs) === */
+
+.pending-plans,
+.pending-briefs {
+  margin: 0.75rem 0;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pending-plans-header,
+.pending-briefs-header {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-muted);
+}
+.pending-plans-list,
+.pending-briefs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pending-plan-row,
+.pending-brief-row {
+  border-bottom: 1px solid var(--border-muted);
+}
+.pending-plan-row:last-child,
+.pending-brief-row:last-child {
+  border-bottom: none;
+}
+.pending-plan-btn,
+.pending-brief-btn {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+}
+.pending-plan-btn:hover,
+.pending-brief-btn:hover {
+  background: var(--bg-surface);
+}
+.pending-plan-summary,
+.pending-brief-goal {
+  flex: 1 1 auto;
+  font-size: 0.875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pending-plan-id,
+.pending-brief-id {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: var(--text-muted);
+}

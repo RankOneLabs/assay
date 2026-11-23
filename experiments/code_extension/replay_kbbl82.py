@@ -18,6 +18,10 @@ with `--strip-components=1`. The brief is comms/task-review/briefs/cohort-5-buil
 at 7c33f9913e. Then run from experiments/:
 
     uv run python -m code_extension.replay_kbbl82 --start <7fce tree> --agent <fc87 tree>
+
+Add `--arm <name>` to build one of the fact-shape arms in `ARMS` as its own scenario,
+`kbbl-build-guard-replay-<name>`. Each states planner2's write to the cohort's
+`current_session_ref` in one more place; hidden tests and held fixes are the same.
 """
 
 from __future__ import annotations
@@ -165,8 +169,47 @@ START_FIXES: tuple[Edit, ...] = (
 )
 
 
-def trees(start: Path, agent: Path) -> dict[str, dict[str, str]]:
+# Fact-shape arms. The brief states planner2's write once, in subgoal 7 ("writes
+# `current_session_ref` onto the input artifact (specs for planner1, cohorts for planner2 and
+# build)"), and the dispatcher's write names build in a comment but planner2 nowhere: it
+# branches on the stage's input type. Each arm adds the fact in one more place.
+WRITE_COHORT = '      } else if (stage.input_artifact_type === "cohort") {\n' + DISPATCH_COHORT
+NEAR_ASK = (
+    "else `dispatcher.dispatch('build', brief_id)` and return `{session_ref}`.\n",
+    "else `dispatcher.dispatch('build', brief_id)` and return `{session_ref}`.\n"
+    "    - The dispatcher writes the cohort's `current_session_ref` for planner2 as well as "
+    "for build (subgoal 7).\n",
+)
+ARMS: dict[str, dict[str, object]] = {
+    # The brief's own statement, repeated as a bullet of subgoal 11.
+    "near-ask": {"task": NEAR_ASK, "tree": ()},
+    # A comment at the cohort branch of the write, like the build branch's.
+    "write-comment": {"task": None, "tree": ((
+        DISPATCHER, WRITE_COHORT,
+        '      } else if (stage.input_artifact_type === "cohort") {\n'
+        "        // planner2 \u2192 the cohort's own ref, the column a build dispatch also writes\n"
+        + DISPATCH_COHORT,
+    ),)},
+    # The write branches on planner2 by name: the seeded stages make it the same branch.
+    "write-named": {"task": None, "tree": ((
+        DISPATCHER, WRITE_COHORT,
+        '      } else if (stage.name === "planner2") {\n' + DISPATCH_COHORT,
+    ),)},
+}
+
+
+def scenario_name(arm: str = "") -> str:
+    return f"{NAME}-{arm}" if arm else NAME
+
+
+def subject_id(arm: str = "") -> str:
+    return f"{SUBJECT_ID}-{arm}" if arm else SUBJECT_ID
+
+
+def trees(start: Path, agent: Path, arm: str = "") -> dict[str, dict[str, str]]:
     base = _apply(start_tree(start), START_FIXES)
+    if arm:
+        base = _apply(base, ARMS[arm]["tree"])  # type: ignore[arg-type]
     mistake = dict(base)
     for path in AGENT_FILES:
         mistake[path] = (agent / path).read_text(encoding="utf-8")
@@ -202,7 +245,7 @@ TASK_EDIT = (
 DEVIATIONS = "\n## Deviations from plan\n"
 
 
-def task_text(brief: str) -> str:
+def task_text(brief: str, arm: str = "") -> str:
     """The brief as the agent had it, with the framing line and the one edited clause."""
     if brief.count(DEVIATIONS) != 1:
         raise ValueError("brief does not contain the deviations section exactly once")
@@ -210,7 +253,14 @@ def task_text(brief: str) -> str:
     old, new = TASK_EDIT
     if brief.count(old) != 1:
         raise ValueError("brief does not contain the guard clause exactly once")
-    return FRAMING + brief.replace(old, new)
+    task = FRAMING + brief.replace(old, new)
+    edit = ARMS[arm]["task"] if arm else None
+    if edit:
+        before, after = edit  # type: ignore[misc]
+        if task.count(before) != 1:
+            raise ValueError(f"task does not contain the {arm} anchor exactly once")
+        task = task.replace(before, after)
+    return task
 
 
 def hidden_files(start: Mapping[str, str]) -> tuple[dict[str, str], dict[str, str]]:
@@ -232,10 +282,10 @@ PATCH_NAMES = {
 }
 
 
-def write(destination: Path, start: Path, agent: Path) -> dict[str, object]:
-    built = trees(start, agent)
+def write(destination: Path, start: Path, agent: Path, arm: str = "") -> dict[str, object]:
+    built = trees(start, agent, arm)
     base = built["start"]
-    root = destination / NAME
+    root = destination / scenario_name(arm)
     for part in ("repository", "patches", "hidden"):
         if (root / part).exists():
             shutil.rmtree(root / part)
@@ -251,12 +301,12 @@ def write(destination: Path, start: Path, agent: Path) -> dict[str, object]:
         patch = unified_patch(base, built[label])
         (root / "patches" / name).write_text(patch, encoding="utf-8")
         patches[name] = patch
-    task = task_text((COMMS / BRIEF).read_text(encoding="utf-8"))
+    task = task_text((COMMS / BRIEF).read_text(encoding="utf-8"), arm)
     (root / "task.md").write_text(task, encoding="utf-8")
-    (root / "README.md").write_text(README, encoding="utf-8")
+    (root / "README.md").write_text(readme(arm), encoding="utf-8")
     qualification = root / "qualification"
     qualification.mkdir(exist_ok=True)
-    sidecar = _sidecar(base, patches)
+    sidecar = _sidecar(base, patches, arm)
     existing = qualification / "sidecar.json"
     if existing.is_file():
         # Qualification fills in the gate evidence; keep it across rebuilds.
@@ -268,9 +318,36 @@ def write(destination: Path, start: Path, agent: Path) -> dict[str, object]:
         "bytes": sum(len(text.encode()) for text in base.values()),
         "tree_digest": workflow_tree_digest(base),
         "patches": {name: digest_bytes(patch.encode()) for name, patch in patches.items()},
-        "visible_tests": len(COLOCATED_VISIBLE[NAME].select(base)),
+        "visible_tests": len(COLOCATED_VISIBLE[scenario_name(arm)].select(base)),
         "regression_digest": digest_bytes(canonical_json(regression)),
     }
+
+
+ARM_NOTES = {
+    "near-ask": (
+        "the task adds one bullet to subgoal 11: \"The dispatcher writes the cohort's "
+        "`current_session_ref` for planner2 as well as for build (subgoal 7).\""
+    ),
+    "write-comment": (
+        "the dispatcher's cohort branch of the `current_session_ref` write carries a comment "
+        "naming planner2 and saying a build dispatch writes the same column"
+    ),
+    "write-named": (
+        "the dispatcher's cohort branch of the `current_session_ref` write tests "
+        "`stage.name === \"planner2\"` instead of the input type; the seeded stages take the "
+        "same branch"
+    ),
+}
+
+
+def readme(arm: str = "") -> str:
+    if not arm:
+        return README
+    head = (
+        f"# {scenario_name(arm)}\n\nFact-shape arm `{arm}` of {NAME}: {ARM_NOTES[arm]}. "
+        "Everything else, including hidden tests and held fixes, is built the same way.\n"
+    )
+    return head + README[README.index("\n", README.index("\n") + 1):]
 
 
 README = f"""# {NAME}
@@ -335,7 +412,9 @@ this file are not edited by hand.
 EXISTING = "kbbl's existing server, database, orchestrator and session behavior is unchanged."
 
 
-def _sidecar(base: Mapping[str, str], patches: Mapping[str, str]) -> ExtensionScenarioSidecar:
+def _sidecar(
+    base: Mapping[str, str], patches: Mapping[str, str], arm: str = "",
+) -> ExtensionScenarioSidecar:
     intents = {
         "reference.patch": ("reference", "The agent's commit plus a port of PR #82 round 3."),
         "negative.patch": ("incomplete", "The agent's commit: a live planner2 session blocks."),
@@ -350,7 +429,7 @@ def _sidecar(base: Mapping[str, str], patches: Mapping[str, str]) -> ExtensionSc
     zero = "sha256:" + "0" * 64
     unrelated = {"visible_regression": "passed", "hidden_regression": "passed"}
     return ExtensionScenarioSidecar.model_validate({
-        "subject_id": SUBJECT_ID,
+        "subject_id": subject_id(arm),
         "writable_implementation_scope": ["docs/", "kbbl/"],
         "protected_assets": {
             "test_files": [],
@@ -405,6 +484,7 @@ def _sidecar(base: Mapping[str, str], patches: Mapping[str, str]) -> ExtensionSc
                 f"gh api repos/RankOneLabs/oakridge/tarball/{START_SHA} (and {AGENT_SHA}), "
                 "each extracted with tar --strip-components=1; then uv run python -m "
                 "code_extension.replay_kbbl82 --start <tree> --agent <tree>"
+                + (f" --arm {arm}" if arm else "")
             ),
             "extraction_rules": [
                 "Vendor kbbl/ and the root package.json, tsconfig.json and README.md "
@@ -419,6 +499,7 @@ def _sidecar(base: Mapping[str, str], patches: Mapping[str, str]) -> ExtensionSc
                 f"{BUILD_ENTRY} is added as the evaluator's bun build entry.",
                 "briefs.test.ts's two updateBriefDebrief calls pass an object, as Oakridge "
                 "later did; the start commit failed its test and the typecheck.",
+                *([f"Fact-shape arm {arm}: {ARM_NOTES[arm]}."] if arm else []),
             ],
             "start_tree_digest": workflow_tree_digest(base),
             "start_file_count": len(base),
@@ -429,10 +510,10 @@ def _sidecar(base: Mapping[str, str], patches: Mapping[str, str]) -> ExtensionSc
 
 
 def manifest_scope(
-    subject_id: str, repository: Mapping[str, str]
+    subject: str, repository: Mapping[str, str]
 ) -> tuple[str, tuple[str, ...]] | None:
     """The replay's Oakridge pin and the vendored files that come from it, or None."""
-    if subject_id != SUBJECT_ID:
+    if subject not in {SUBJECT_ID, *(f"{SUBJECT_ID}-{arm}" for arm in ARMS)}:
         return None
     return START_SHA, tuple(sorted(path for path in repository if path != BUILD_ENTRY))
 
@@ -443,14 +524,17 @@ if __name__ == "__main__":
     parser.add_argument("--agent", type=Path)
     parser.add_argument("--grade", metavar="IMAGE", help="grade the committed fixture instead")
     parser.add_argument("--extra", type=Path, help="with --grade, also grade this folder's *.patch")
+    parser.add_argument("--arm", default="", choices=["", *ARMS], help="a fact-shape arm")
     arguments = parser.parse_args()
     if arguments.grade:
         import asyncio
 
         from code_extension.replay_kbbl import grade
 
-        print(json.dumps(asyncio.run(grade(arguments.grade, arguments.extra, NAME)), indent=2))
+        name = scenario_name(arguments.arm)
+        print(json.dumps(asyncio.run(grade(arguments.grade, arguments.extra, name)), indent=2))
     else:
         if arguments.start is None or arguments.agent is None:
             parser.error("--start and --agent are required to build the fixture")
-        print(json.dumps(write(PILOT.parent, arguments.start, arguments.agent), indent=2))
+        built = write(PILOT.parent, arguments.start, arguments.agent, arguments.arm)
+        print(json.dumps(built, indent=2))
