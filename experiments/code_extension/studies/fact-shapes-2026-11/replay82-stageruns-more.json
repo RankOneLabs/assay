@@ -1,0 +1,14 @@
+{
+  "cohort": "fact-shapes-2026-11-replay82-stageruns-more",
+  "combined_cap_usd": "4.00",
+  "plans": [
+    {
+      "name": "midtier",
+      "config": "replay82-stageruns-more-luna-plan.json"
+    },
+    {
+      "name": "sol",
+      "config": "replay82-stageruns-more-sol-plan.json"
+    }
+  ]
+}
