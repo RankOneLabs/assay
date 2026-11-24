@@ -1,0 +1,386 @@
+diff --git a/kbbl/core/orchestrator/backends/dispatcher.ts b/kbbl/core/orchestrator/backends/dispatcher.ts
+index 84ed4d6d190503f693a880a638433e386c527e3c..9b87f5f89fe98afbd62bf8a2a55bec32a3d335ca 100644
+--- a/kbbl/core/orchestrator/backends/dispatcher.ts
++++ b/kbbl/core/orchestrator/backends/dispatcher.ts
+@@ -8,8 +8,10 @@ interface DispatcherDeps {
+   kbblUrl: string;
+ }
+ 
+-interface Dispatcher {
++export interface Dispatcher {
+   dispatch(stageName: string, inputId: string): Promise<string>;
++  /** Resolve the current lifecycle state of a session, when supported. */
++  status?(sessionRef: string): Promise<"running" | "completed" | "failed">;
+ }
+ 
+ // ---- SQL helpers ----
+@@ -214,6 +216,16 @@ function resolveWorkdirForBrief(db: Database, brief_id: string): string {
+ 
+ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dispatcher {
+   return {
++    async status(sessionRef: string): Promise<"running" | "completed" | "failed"> {
++      // The stage's backend owns lifecycle state. Query each configured backend;
++      // unknown refs are reported as failed by the backend contract.
++      for (const backend of Object.values(backends)) {
++        const result = await backend.status(sessionRef);
++        if (result !== "failed") return result;
++      }
++      return "failed";
++    },
++
+     async dispatch(stageName: string, inputId: string): Promise<string> {
+       const stage = getStage(db, stageName);
+       if (!stage) throw new Error(`unknown stage: ${stageName}`);
+diff --git a/kbbl/core/pwa/review/brief/BriefReviewView.tsx b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+index 5b8d795d2a5c8d36e73b00d3ab5c2335910f0984..292726cbe24a38812618ea9261b4292fee25c931 100644
+--- a/kbbl/core/pwa/review/brief/BriefReviewView.tsx
++++ b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+@@ -17,27 +17,77 @@ interface BriefReviewViewProps {
+ }
+ 
+ function RunBuildButton({ briefId }: { briefId: string }) {
++  const [pending, setPending] = useState(false);
++  const [sessionRef, setSessionRef] = useState<string | null>(null);
++  const [sessionStatus, setSessionStatus] = useState<string | null>(null);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    if (!sessionRef) return;
++    let cancelled = false;
++    const refresh = async () => {
++      try {
++        const res = await fetch("/sessions");
++        if (!res.ok) return;
++        const result = (await res.json()) as {
++          sessions: Array<{ sid: string; status: string }>;
++        };
++        const session = result.sessions.find((item) => item.sid === sessionRef);
++        if (session && !cancelled) setSessionStatus(session.status);
++      } catch {
++        // Keep the most recent status; the session list may briefly be unavailable.
++      }
++    };
++    void refresh();
++    const timer = window.setInterval(() => void refresh(), 2500);
++    return () => {
++      cancelled = true;
++      window.clearInterval(timer);
++    };
++  }, [sessionRef]);
++
++  const startBuild = async () => {
++    setPending(true);
++    setError(null);
++    try {
++      const res = await fetch(`/briefs/${encodeURIComponent(briefId)}/build`, {
++        method: "POST",
++      });
++      const body = (await res.json()) as { session_ref?: string; error?: string };
++      if (!res.ok || !body.session_ref) {
++        throw new Error(body.error ?? `Build request failed (${res.status})`);
++      }
++      setSessionRef(body.session_ref);
++      setSessionStatus("starting");
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Build request failed");
++    } finally {
++      setPending(false);
++    }
++  };
++
+   return (
+-    <button
+-      type="button"
+-      disabled
+-      title="Run build — wired in cohort 5"
+-      style={{
+-        background: "var(--accent, #4a8fcb)",
+-        color: "#fff",
+-        border: "none",
+-        padding: "4px 12px",
+-        borderRadius: 4,
+-        opacity: 0.5,
+-        cursor: "default",
+-      }}
+-      onClick={() => {
+-        // TODO: wired in cohort 5
+-        void briefId;
+-      }}
+-    >
+-      Run build
+-    </button>
++    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
++      <button
++        type="button"
++        disabled={pending || Boolean(sessionRef)}
++        title={sessionRef ? `Build session ${sessionRef}` : "Start build"}
++        style={{
++          background: "var(--accent, #4a8fcb)",
++          color: "#fff",
++          border: "none",
++          padding: "4px 12px",
++          borderRadius: 4,
++          opacity: pending || sessionRef ? 0.65 : 1,
++          cursor: pending || sessionRef ? "default" : "pointer",
++        }}
++        onClick={() => void startBuild()}
++      >
++        {pending ? "Starting…" : sessionRef ? `Build ${sessionStatus ?? "started"}` : "Run build"}
++      </button>
++      {sessionRef && <small title={sessionRef}>{sessionRef.slice(0, 8)}</small>}
++      {error && <small role="alert" style={{ color: "var(--danger, #c55)" }}>{error}</small>}
++    </span>
+   );
+ }
+ 
+diff --git a/kbbl/core/server.ts b/kbbl/core/server.ts
+index 4cc34d8b312cbee4171adad3626c443e93d6697c..59b65d1e4fd42ff0ad518e85c83921d0b6269cc9 100644
+--- a/kbbl/core/server.ts
++++ b/kbbl/core/server.ts
+@@ -16,6 +16,9 @@ import { validateWorkdir } from "./server/handlers/sessions";
+ import { openDb } from "./db/connection";
+ import { applyMigrations } from "./db/migrations";
+ import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
++import { createDispatcher } from "./orchestrator/backends/dispatcher";
++import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
++import { wireDispatchHooks } from "./orchestrator/dispatch-hooks";
+ import { reviewRegistry } from "./review/registry";
+ import { reviewEvents } from "./review/events";
+ import { taskTrackerEvents } from "./db/events";
+@@ -199,6 +202,13 @@ const manager = new SessionManager({
+ // === Hono app ===
+ 
+ let bunServer: ReturnType<typeof Bun.serve> | null = null;
++const dispatcher = createDispatcher({
++  db,
++  backends: { kbbl_chat: createKbblChatBackend({ manager }) },
++  kbblUrl: `http://${host}:${port}`,
++});
++wireDispatchHooks({ taskTrackerEvents, dispatcher });
++
+ const app = createApp({
+   manager,
+   runtime,
+@@ -211,6 +221,7 @@ const app = createApp({
+   config,
+   configPath,
+   db,
++  dispatcher,
+ });
+ 
+ // === bind port (fail fast before spawning CC) ===
+diff --git a/kbbl/core/server/app.test.ts b/kbbl/core/server/app.test.ts
+index 1171cad59b85b93ccffab3555f535acdbe580648..134db85bdaee4addee806b2f1c5ea350e777b50d 100644
+--- a/kbbl/core/server/app.test.ts
++++ b/kbbl/core/server/app.test.ts
+@@ -34,6 +34,10 @@ function buildApp(config: KbblConfig): Hono {
+     config,
+     configPath,
+     db,
++    dispatcher: {
++      dispatch: async () => "test-session-ref",
++      status: async () => "failed",
++    },
+   });
+ }
+ 
+diff --git a/kbbl/core/server/app.ts b/kbbl/core/server/app.ts
+index bf42e14bdac7f74c82c4e3735899d8629b15de9b..796d0349b515403fb403ded4ec454a9dad4a5596 100644
+--- a/kbbl/core/server/app.ts
++++ b/kbbl/core/server/app.ts
+@@ -28,6 +28,7 @@ import { mountSessionsRoutes } from "./handlers/sessions";
+ import { mountWorkspaceEventsRoutes } from "./handlers/workspace-events";
+ import { mountArtifactStreamRoutes } from "./handlers/artifact-stream";
+ import { artifactEventBus } from "../stream/artifact-event-bus";
++import { mountBuildsRoutes, type BuildDispatcher } from "./handlers/builds";
+ 
+ export interface CreateAppDeps {
+   manager: SessionManager;
+@@ -66,6 +67,8 @@ export interface CreateAppDeps {
+   configPath: string;
+   /** Open SQLite database instance shared across all DB-backed handlers. */
+   db: Database;
++  /** Orchestrator dispatcher used to start builds from approved briefs. */
++  dispatcher: BuildDispatcher;
+ }
+ 
+ /**
+@@ -87,6 +90,7 @@ export function createApp(deps: CreateAppDeps): Hono {
+     config,
+     configPath,
+     db,
++    dispatcher,
+   } = deps;
+   const app = new Hono();
+ 
+@@ -224,6 +228,7 @@ export function createApp(deps: CreateAppDeps): Hono {
+   mountCohortStatusRoutes(app, { db });
+   mountBriefsRoutes(app, { db });
+   mountBriefStatusRoutes(app, { db });
++  if (dispatcher) mountBuildsRoutes(app, { dispatcher, db });
+ 
+   // ---- review primitive (cohort 2) ----
+   mountReviewFreezeRoutes(app, { db });
+diff --git a/kbbl/core/server/handlers/builds.test.ts b/kbbl/core/server/handlers/builds.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..6446fc5bd3e8c7a5c5957bac89b1bface9b9b235
+--- /dev/null
++++ b/kbbl/core/server/handlers/builds.test.ts
+@@ -0,0 +1,77 @@
++import { describe, expect, test } from "bun:test";
++import { Hono } from "hono";
++import { openTestDb } from "../../db/test-db";
++import { mountBuildsRoutes } from "./builds";
++
++function fixture() {
++  const db = openTestDb();
++  db.prepare("INSERT INTO projects (id, name, repo_path) VALUES (?, ?, ?)").run("p1", "P", "/repo");
++  db.prepare("INSERT INTO specs (id, project_id, title) VALUES (?, ?, ?)").run("s1", "p1", "Spec");
++  db.prepare("INSERT INTO plans (id, spec_id, status) VALUES (?, ?, 'approved')").run("pl1", "s1");
++  db.prepare("INSERT INTO cohorts (id, plan_id, title, position, status) VALUES (?, ?, ?, ?, 'building')").run("c1", "pl1", "Cohort", 0);
++  db.prepare("INSERT INTO briefs (id, cohort_id, status, goal) VALUES (?, ?, 'approved', ?)").run("b1", "c1", "Goal");
++  const calls: Array<[string, string]> = [];
++  let currentStatus: "running" | "completed" | "failed" = "failed";
++  const app = new Hono();
++  mountBuildsRoutes(app, {
++    db,
++    dispatcher: {
++      dispatch: async (stage, id) => {
++        calls.push([stage, id]);
++        currentStatus = "running";
++        db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = 'c1'").run("session-1");
++        return "session-1";
++      },
++      status: async () => currentStatus,
++    },
++  });
++  return { app, db, calls };
++}
++
++describe("POST /briefs/:id/build", () => {
++  test("dispatches an approved brief and returns the session_ref", async () => {
++    const { app, db, calls } = fixture();
++    try {
++      const res = await app.request("/briefs/b1/build", { method: "POST" });
++      expect(res.status).toBe(200);
++      expect(await res.json()).toEqual({ session_ref: "session-1" });
++      expect(calls).toEqual([["build", "b1"]]);
++    } finally {
++      db.close();
++    }
++  });
++
++  test("returns 404 when the brief does not exist", async () => {
++    const { app, db, calls } = fixture();
++    try {
++      expect((await app.request("/briefs/missing/build", { method: "POST" })).status).toBe(404);
++      expect(calls).toHaveLength(0);
++    } finally {
++      db.close();
++    }
++  });
++
++  test("returns 409 unless the brief is approved", async () => {
++    const { app, db, calls } = fixture();
++    try {
++      db.prepare("UPDATE briefs SET status = 'pending_approval' WHERE id = 'b1'").run();
++      expect((await app.request("/briefs/b1/build", { method: "POST" })).status).toBe(409);
++      expect(calls).toHaveLength(0);
++    } finally {
++      db.close();
++    }
++  });
++
++  test("prevents a second build while the cohort's session is running", async () => {
++    const { app, db, calls } = fixture();
++    try {
++      const first = await app.request("/briefs/b1/build", { method: "POST" });
++      expect(first.status).toBe(200);
++      const second = await app.request("/briefs/b1/build", { method: "POST" });
++      expect(second.status).toBe(409);
++      expect(calls).toHaveLength(1);
++    } finally {
++      db.close();
++    }
++  });
++});
+diff --git a/kbbl/core/server/handlers/builds.ts b/kbbl/core/server/handlers/builds.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..41ed6165201d03d0239d02ddfeae56c3de7b1212
+--- /dev/null
++++ b/kbbl/core/server/handlers/builds.ts
+@@ -0,0 +1,74 @@
++import type { Hono } from "hono";
++import type { Database } from "bun:sqlite";
++import { getBrief } from "../../db/briefs";
++
++export interface BuildDispatcher {
++  dispatch(stageName: string, inputId: string): Promise<string>;
++  status?(sessionRef: string): Promise<"running" | "completed" | "failed">;
++}
++
++interface BuildsRouteDeps {
++  dispatcher: BuildDispatcher;
++  db: Database;
++}
++
++interface CohortBuildState {
++  current_session_ref: string | null;
++}
++
++export function mountBuildsRoutes(app: Hono, { dispatcher, db }: BuildsRouteDeps): void {
++  // Guard the small window between checking the existing session and the
++  // dispatcher persisting a newly-created one. The database ref remains the
++  // durable guard across requests; this set only covers concurrent requests.
++  const dispatchingCohorts = new Set<string>();
++
++  app.post("/briefs/:id/build", async (c) => {
++    const briefId = c.req.param("id");
++    const brief = getBrief(db, briefId);
++    if (!brief) return c.json({ error: "not found" }, 404);
++    if (brief.status !== "approved") {
++      return c.json({ error: "brief is not approved" }, 409);
++    }
++
++    const cohort = db
++      .prepare<CohortBuildState, [string]>(
++        "SELECT current_session_ref FROM cohorts WHERE id = ?",
++      )
++      .get(brief.cohort_id);
++    if (!cohort) return c.json({ error: "cohort not found" }, 404);
++
++    if (dispatchingCohorts.has(brief.cohort_id)) {
++      return c.json({ error: "build is already running for this cohort" }, 409);
++    }
++
++    // Claim before the asynchronous status lookup to ensure simultaneous
++    // requests cannot both pass the durable-ref check.
++    dispatchingCohorts.add(brief.cohort_id);
++    try {
++      if (cohort.current_session_ref) {
++        let alreadyRunning = true;
++        if (dispatcher.status) {
++          try {
++            alreadyRunning = (await dispatcher.status(cohort.current_session_ref)) === "running";
++          } catch (err) {
++            console.error("builds:failed to resolve current session status", err);
++            // If status is unavailable, fail safely rather than accidentally
++            // launch a second builder for the same cohort.
++            alreadyRunning = true;
++          }
++        }
++        if (alreadyRunning) {
++          return c.json({ error: "build is already running for this cohort" }, 409);
++        }
++      }
++
++      const session_ref = await dispatcher.dispatch("build", briefId);
++      return c.json({ session_ref });
++    } catch (err) {
++      console.error("builds:dispatch failed", err);
++      return c.json({ error: "failed to start build" }, 500);
++    } finally {
++      dispatchingCohorts.delete(brief.cohort_id);
++    }
++  });
++}

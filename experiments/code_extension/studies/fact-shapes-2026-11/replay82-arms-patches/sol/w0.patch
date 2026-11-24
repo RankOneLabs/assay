@@ -1,0 +1,484 @@
+diff --git a/kbbl/core/orchestrator/backends/prompt-loader.test.ts b/kbbl/core/orchestrator/backends/prompt-loader.test.ts
+index 38aa706eef8d3f1a5181685dd726fbd346462c9a..a8d1bf20cc6ac91f94ddcf035202e70ede503b8f 100644
+--- a/kbbl/core/orchestrator/backends/prompt-loader.test.ts
++++ b/kbbl/core/orchestrator/backends/prompt-loader.test.ts
+@@ -21,6 +21,11 @@ afterEach(() => {
+ });
+ 
+ describe("loadPrompt", () => {
++  test("loads the in-repo build prompt by default", () => {
++    delete process.env.KBBL_PROMPTS_DIR;
++    expect(loadPrompt("build.md")).toContain("{{BRIEF_ID}}");
++  });
++
+   test("reads a file from KBBL_PROMPTS_DIR", () => {
+     writeFileSync(join(tmpDir, "test.md"), "hello {{WORLD}}", "utf8");
+     expect(loadPrompt("test.md")).toBe("hello {{WORLD}}");
+diff --git a/kbbl/core/orchestrator/backends/prompt-loader.ts b/kbbl/core/orchestrator/backends/prompt-loader.ts
+index eb0295a46e26df96280264d6de9c04dc0625f4a6..408bc63251d9d6079adef041af1300999282d1df 100644
+--- a/kbbl/core/orchestrator/backends/prompt-loader.ts
++++ b/kbbl/core/orchestrator/backends/prompt-loader.ts
+@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
+ import { join, dirname } from "node:path";
+ import { fileURLToPath } from "node:url";
+ 
+-// kbbl package root: four levels up from this file's directory
++// kbbl package root: three levels up from this file's directory
+ // (backends/ → orchestrator/ → core/ → kbbl/)
+-const kbblRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
++const kbblRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+ 
+ export function loadPrompt(name: string): string {
+   const promptsDir = process.env.KBBL_PROMPTS_DIR ?? join(kbblRoot, "prompts");
+diff --git a/kbbl/core/pwa/review/brief/BriefReviewView.test.tsx b/kbbl/core/pwa/review/brief/BriefReviewView.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..d27332451a3b4a39d7d9ae6c57894eabeb15ccd4
+--- /dev/null
++++ b/kbbl/core/pwa/review/brief/BriefReviewView.test.tsx
+@@ -0,0 +1,88 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
++import { BriefReviewView } from "./BriefReviewView";
++import type { Brief } from "./types";
++
++vi.mock("../shared/useArtifactStream", () => ({
++  useArtifactStream: () => ({ edits: [], threads: [], frozen: true }),
++}));
++vi.mock("../shared/useDirectEdit", () => ({ useDirectEdit: () => ({ editAtom: vi.fn() }) }));
++vi.mock("./StructuredDocEditor", () => ({ StructuredDocEditor: () => null }));
++vi.mock("../shared/ThreadSidebar", () => ({ ThreadSidebar: () => null }));
++
++const brief: Brief = {
++  id: "brief/1",
++  cohort_id: "cohort",
++  status: "approved",
++  predecessor_brief_id: null,
++  model: null,
++  goal: "Build it",
++  files_in_scope: [],
++  decisions_made: [],
++  approaches_rejected: [],
++  next_action: "Start",
++  debrief: null,
++  rejection_reason: null,
++  created_at: "2026-01-01T00:00:00Z",
++};
++const fetchMock = vi.fn();
++
++beforeEach(() => {
++  fetchMock.mockReset();
++  vi.stubGlobal("fetch", fetchMock);
++  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(brief)));
++});
++
++afterEach(() => {
++  cleanup();
++  vi.unstubAllGlobals();
++});
++
++async function showView() {
++  render(<BriefReviewView id={brief.id} theme="dark" onToggleTheme={() => {}} onBack={() => {}} />);
++  return screen.findByRole("button", { name: "Run build" });
++}
++
++describe("Run build", () => {
++  it("POSTs the brief route, prevents duplicate clicks, and displays the returned session", async () => {
++    let finish!: (res: Response) => void;
++    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }));
++    const button = await showView();
++    expect((button as HTMLButtonElement).disabled).toBe(false);
++    fireEvent.click(button);
++    expect(fetchMock).toHaveBeenLastCalledWith("/briefs/brief%2F1/build", { method: "POST" });
++    expect((screen.getByRole("button", { name: "Starting build…" }) as HTMLButtonElement).disabled).toBe(true);
++    await act(async () => { finish(new Response(JSON.stringify({ session_ref: "build-session" }))); });
++    expect((await screen.findByRole("status")).textContent).toContain("build-session");
++    expect((screen.getByRole("button", { name: "Run build" }) as HTMLButtonElement).disabled).toBe(true);
++    expect(fetchMock).toHaveBeenCalledTimes(2);
++  });
++
++  it("shows server conflicts and allows retry after failure", async () => {
++    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: "a build is already running" }), { status: 409 }));
++    const button = await showView();
++    fireEvent.click(button);
++    expect((await screen.findByRole("alert")).textContent).toContain("already running");
++    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
++    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ session_ref: "retry-session" })));
++    fireEvent.click(button);
++    expect((await screen.findByRole("status")).textContent).toContain("retry-session");
++    expect(screen.queryByRole("alert")).toBeNull();
++  });
++
++  it("shows network errors without leaving the button disabled", async () => {
++    fetchMock.mockRejectedValueOnce(new Error("Network unavailable"));
++    const button = await showView();
++    fireEvent.click(button);
++    expect((await screen.findByRole("alert")).textContent).toContain("Network unavailable");
++    expect((button as HTMLButtonElement).disabled).toBe(false);
++  });
++
++  it("does not offer a build for an unapproved brief", async () => {
++    fetchMock.mockReset();
++    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ...brief, status: "pending_approval" })));
++    render(<BriefReviewView id={brief.id} theme="dark" onToggleTheme={() => {}} onBack={() => {}} />);
++    await screen.findByRole("button", { name: "Approve" });
++    expect(screen.queryByRole("button", { name: "Run build" })).toBeNull();
++  });
++});
+diff --git a/kbbl/core/pwa/review/brief/BriefReviewView.tsx b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+index 5b8d795d2a5c8d36e73b00d3ab5c2335910f0984..eb4dcd1e7ed95645f88cf27fd18f5f9c2bb13104 100644
+--- a/kbbl/core/pwa/review/brief/BriefReviewView.tsx
++++ b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+@@ -17,27 +17,50 @@ interface BriefReviewViewProps {
+ }
+ 
+ function RunBuildButton({ briefId }: { briefId: string }) {
++  const [pending, setPending] = useState(false);
++  const [sessionRef, setSessionRef] = useState<string | null>(null);
++  const [error, setError] = useState<string | null>(null);
++
++  const runBuild = async () => {
++    setPending(true);
++    setError(null);
++    try {
++      const res = await fetch(`/briefs/${encodeURIComponent(briefId)}/build`, {
++        method: "POST",
++      });
++      const body = await res.json() as { session_ref?: string; error?: string };
++      if (!res.ok) throw new Error(body.error ?? `Build request failed (${res.status})`);
++      if (!body.session_ref) throw new Error("Build response is missing a session reference");
++      setSessionRef(body.session_ref);
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Build request failed");
++    } finally {
++      setPending(false);
++    }
++  };
++
++  const disabled = pending || sessionRef !== null;
+   return (
+-    <button
+-      type="button"
+-      disabled
+-      title="Run build — wired in cohort 5"
+-      style={{
+-        background: "var(--accent, #4a8fcb)",
+-        color: "#fff",
+-        border: "none",
+-        padding: "4px 12px",
+-        borderRadius: 4,
+-        opacity: 0.5,
+-        cursor: "default",
+-      }}
+-      onClick={() => {
+-        // TODO: wired in cohort 5
+-        void briefId;
+-      }}
+-    >
+-      Run build
+-    </button>
++    <div>
++      <button
++        type="button"
++        disabled={disabled}
++        style={{
++          background: "var(--accent, #4a8fcb)",
++          color: "#fff",
++          border: "none",
++          padding: "4px 12px",
++          borderRadius: 4,
++          opacity: disabled ? 0.5 : 1,
++          cursor: disabled ? "default" : "pointer",
++        }}
++        onClick={() => { void runBuild(); }}
++      >
++        {pending ? "Starting build…" : "Run build"}
++      </button>
++      {sessionRef && <div role="status">Build started — session: {sessionRef}</div>}
++      {error && <div role="alert" style={{ color: "var(--danger, #c55)" }}>{error}</div>}
++    </div>
+   );
+ }
+ 
+@@ -302,7 +325,7 @@ export function BriefReviewView({ id, onToggleTheme, onBack }: BriefReviewViewPr
+             </button>
+           </>
+         )}
+-        {brief.status === "approved" && <RunBuildButton briefId={brief.id} />}
++        {brief.status === "approved" && <RunBuildButton key={brief.id} briefId={brief.id} />}
+       </header>
+ 
+       {/* Main area */}
+diff --git a/kbbl/core/server.ts b/kbbl/core/server.ts
+index 4cc34d8b312cbee4171adad3626c443e93d6697c..ee82bd859757d66f17e01ee58fd6e925fdd98162 100644
+--- a/kbbl/core/server.ts
++++ b/kbbl/core/server.ts
+@@ -19,6 +19,8 @@ import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
+ import { reviewRegistry } from "./review/registry";
+ import { reviewEvents } from "./review/events";
+ import { taskTrackerEvents } from "./db/events";
++import { createDispatcher } from "./orchestrator/backends/dispatcher";
++import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
+ 
+ // === args ===
+ 
+@@ -196,6 +198,14 @@ const manager = new SessionManager({
+   safirQueue,
+ });
+ 
++// === stage dispatcher ===
++
++const dispatcher = createDispatcher({
++  db,
++  backends: { kbbl_chat: createKbblChatBackend({ manager }) },
++  kbblUrl: `http://127.0.0.1:${port}`,
++});
++
+ // === Hono app ===
+ 
+ let bunServer: ReturnType<typeof Bun.serve> | null = null;
+@@ -211,6 +221,7 @@ const app = createApp({
+   config,
+   configPath,
+   db,
++  dispatcher,
+ });
+ 
+ // === bind port (fail fast before spawning CC) ===
+diff --git a/kbbl/core/server/app.test.ts b/kbbl/core/server/app.test.ts
+index 1171cad59b85b93ccffab3555f535acdbe580648..3b73e6cd8fd7a21b7a2127da4595d30e34673299 100644
+--- a/kbbl/core/server/app.test.ts
++++ b/kbbl/core/server/app.test.ts
+@@ -34,6 +34,7 @@ function buildApp(config: KbblConfig): Hono {
+     config,
+     configPath,
+     db,
++    dispatcher: { dispatch: async () => { throw new Error("not used in config tests"); } },
+   });
+ }
+ 
+@@ -164,3 +165,12 @@ describe("PATCH /config safirWebUrl", () => {
+     expect(body.error).toMatch(/safirWebUrl/);
+   });
+ });
++
++describe("POST /briefs/:id/build mounting", () => {
++  test("build route is mounted in createApp", async () => {
++    const app = buildApp(KbblConfigSchema.parse({}));
++    const res = await app.request("/briefs/missing/build", { method: "POST" });
++    expect(res.status).toBe(404);
++    expect(await res.json()).toEqual({ error: "not found" });
++  });
++});
+diff --git a/kbbl/core/server/app.ts b/kbbl/core/server/app.ts
+index bf42e14bdac7f74c82c4e3735899d8629b15de9b..2ec8adcd6ac1642af0156b6228b396abb928ae97 100644
+--- a/kbbl/core/server/app.ts
++++ b/kbbl/core/server/app.ts
+@@ -21,6 +21,8 @@ import { mountBriefStatusRoutes } from "./handlers/brief-status";
+ import { mountCohortsRoutes } from "./handlers/cohorts";
+ import { mountCohortStatusRoutes } from "./handlers/cohort-status";
+ import { mountBriefsRoutes } from "./handlers/briefs";
++import { mountBuildsRoutes } from "./handlers/builds";
++import type { createDispatcher } from "../orchestrator/backends/dispatcher";
+ import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
+ import { mountReviewAtomsRoutes } from "./handlers/review-atoms";
+ import { mountReviewThreadsRoutes } from "./handlers/review-threads";
+@@ -66,6 +68,8 @@ export interface CreateAppDeps {
+   configPath: string;
+   /** Open SQLite database instance shared across all DB-backed handlers. */
+   db: Database;
++  /** Stage dispatcher shared with automatic dispatch hooks. */
++  dispatcher: ReturnType<typeof createDispatcher>;
+ }
+ 
+ /**
+@@ -87,6 +91,7 @@ export function createApp(deps: CreateAppDeps): Hono {
+     config,
+     configPath,
+     db,
++    dispatcher,
+   } = deps;
+   const app = new Hono();
+ 
+@@ -224,6 +229,7 @@ export function createApp(deps: CreateAppDeps): Hono {
+   mountCohortStatusRoutes(app, { db });
+   mountBriefsRoutes(app, { db });
+   mountBriefStatusRoutes(app, { db });
++  mountBuildsRoutes(app, { dispatcher, db });
+ 
+   // ---- review primitive (cohort 2) ----
+   mountReviewFreezeRoutes(app, { db });
+diff --git a/kbbl/core/server/handlers/builds.test.ts b/kbbl/core/server/handlers/builds.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..66c704a845151a04f550cc94229331230a490bf9
+--- /dev/null
++++ b/kbbl/core/server/handlers/builds.test.ts
+@@ -0,0 +1,117 @@
++import { afterEach, beforeEach, expect, mock, test } from "bun:test";
++import type { Database } from "bun:sqlite";
++import { Hono } from "hono";
++import { openTestDb } from "../../db/test-db";
++import { mountBuildsRoutes } from "./builds";
++import { createDispatcher } from "../../orchestrator/backends/dispatcher";
++import type { ExecutionBackend } from "../../orchestrator/backends/interface";
++
++let db: Database;
++let app: Hono;
++let dispatch: ReturnType<typeof mock<(stage: string, id: string) => Promise<string>>>;
++
++beforeEach(() => {
++  db = openTestDb();
++  db.exec(`
++    INSERT INTO projects (id, name, repo_path) VALUES ('project', 'Project', '/tmp');
++    INSERT INTO specs (id, project_id, title) VALUES ('spec', 'project', 'Spec');
++    INSERT INTO plans (id, spec_id) VALUES ('plan', 'spec');
++    INSERT INTO cohorts (id, plan_id, title, position, status)
++      VALUES ('cohort', 'plan', 'Cohort', 0, 'building');
++    INSERT INTO briefs (id, cohort_id, goal, status)
++      VALUES ('brief', 'cohort', 'Build it', 'approved');
++  `);
++  dispatch = mock(async () => {
++    db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run("build-session", "cohort");
++    return "build-session";
++  });
++  app = new Hono();
++  mountBuildsRoutes(app, { db, dispatcher: { dispatch } });
++});
++
++afterEach(() => db.close());
++
++function build(id = "brief") {
++  return app.request(`/briefs/${id}/build`, { method: "POST" });
++}
++
++test("missing brief returns 404 without dispatch", async () => {
++  expect((await build("missing")).status).toBe(404);
++  expect(dispatch).not.toHaveBeenCalled();
++});
++
++test("every non-approved status returns 409 without dispatch", async () => {
++  for (const status of ["pending_approval", "rejected", "superseded"]) {
++    db.prepare("UPDATE briefs SET status = ? WHERE id = 'brief'").run(status);
++    expect((await build()).status).toBe(409);
++  }
++  expect(dispatch).not.toHaveBeenCalled();
++});
++
++test("approved brief dispatches build and returns the session ref", async () => {
++  const res = await build();
++  expect(res.status).toBe(200);
++  expect(await res.json()).toEqual({ session_ref: "build-session" });
++  expect(dispatch).toHaveBeenCalledWith("build", "brief");
++  expect((await build()).status).toBe(409);
++  expect(dispatch).toHaveBeenCalledTimes(1);
++});
++
++test("checks the parent cohort for a running build, including another brief", async () => {
++  db.exec(`
++    UPDATE cohorts SET current_session_ref = 'existing-session' WHERE id = 'cohort';
++    INSERT INTO briefs (id, cohort_id, goal, status)
++      VALUES ('other-brief', 'cohort', 'Another brief', 'approved');
++  `);
++  expect((await build("other-brief")).status).toBe(409);
++  expect(dispatch).not.toHaveBeenCalled();
++});
++
++test("a previous planner session is not a build when the cohort is in brief_review", async () => {
++  db.exec("UPDATE cohorts SET status = 'brief_review', current_session_ref = 'planner-session'");
++  expect((await build()).status).toBe(200);
++});
++
++test("concurrent requests for the same cohort dispatch only once", async () => {
++  let finish!: (ref: string) => void;
++  dispatch.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
++  const first = build();
++  expect((await build()).status).toBe(409);
++  finish("build-session");
++  expect((await first).status).toBe(200);
++  expect(dispatch).toHaveBeenCalledTimes(1);
++});
++
++test("dispatch failure returns 500 and releases the pending guard for a retry", async () => {
++  const log = console.error;
++  console.error = () => {};
++  try {
++    dispatch.mockRejectedValueOnce(new Error("backend unavailable"));
++    const res = await build();
++    expect(res.status).toBe(500);
++    expect(await res.json()).toEqual({ error: "failed to dispatch build" });
++    expect((await build()).status).toBe(200);
++  } finally {
++    console.error = log;
++  }
++});
++
++test("real dispatcher persists the build ref on the cohort, not the brief", async () => {
++  const backend: ExecutionBackend = {
++    id: "kbbl_chat",
++    dispatch: mock(async () => ({ session_ref: "real-dispatch-session" })),
++    status: async () => "running",
++  };
++  const dispatcher = createDispatcher({ db, backends: { kbbl_chat: backend }, kbblUrl: "http://localhost:8788" });
++  app = new Hono();
++  mountBuildsRoutes(app, { db, dispatcher });
++  expect(await (await build()).json()).toEqual({ session_ref: "real-dispatch-session" });
++  expect(db.prepare("SELECT current_session_ref FROM cohorts WHERE id = 'cohort'").get())
++    .toEqual({ current_session_ref: "real-dispatch-session" });
++  expect((await build()).status).toBe(409);
++});
++
++test("a completed cohort's old session ref does not count as a running build", async () => {
++  db.exec("UPDATE cohorts SET status = 'done', current_session_ref = 'old-session'");
++  expect((await build()).status).toBe(200);
++});
+diff --git a/kbbl/core/server/handlers/builds.ts b/kbbl/core/server/handlers/builds.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..303b91f129010f78abdd599faf842620713ef7b1
+--- /dev/null
++++ b/kbbl/core/server/handlers/builds.ts
+@@ -0,0 +1,46 @@
++import type { Hono } from "hono";
++import type { Database } from "bun:sqlite";
++import { getBrief } from "../../db/briefs";
++import { getCohort } from "../../db/cohorts";
++import type { createDispatcher } from "../../orchestrator/backends/dispatcher";
++
++interface BuildsRouteDeps {
++  dispatcher: ReturnType<typeof createDispatcher>;
++  db: Database;
++}
++
++export function mountBuildsRoutes(app: Hono, { dispatcher, db }: BuildsRouteDeps): void {
++  // Dispatch is asynchronous and only persists the ref after spawning. Keep
++  // overlapping requests for the same cohort from slipping through that gap.
++  const dispatching = new Set<string>();
++
++  app.post("/briefs/:id/build", async (c) => {
++    const brief = getBrief(db, c.req.param("id"));
++    if (!brief) return c.json({ error: "not found" }, 404);
++    if (brief.status !== "approved") {
++      return c.json({ error: "brief must be approved before building" }, 409);
++    }
++
++    const cohort = getCohort(db, brief.cohort_id);
++    if (!cohort) return c.json({ error: "cohort not found" }, 404);
++    // Approval itself sets building, before dispatch has produced a session.
++    // A ref as well as the state is needed to identify an existing build.
++    if (
++      dispatching.has(cohort.id) ||
++      (cohort.status === "building" && cohort.current_session_ref)
++    ) {
++      return c.json({ error: "a build is already running for this cohort" }, 409);
++    }
++
++    dispatching.add(cohort.id);
++    try {
++      const session_ref = await dispatcher.dispatch("build", brief.id);
++      return c.json({ session_ref });
++    } catch (err) {
++      console.error("builds:dispatch failed", err);
++      return c.json({ error: "failed to dispatch build" }, 500);
++    } finally {
++      dispatching.delete(cohort.id);
++    }
++  });
++}

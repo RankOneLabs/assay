@@ -492,3 +492,31 @@ A further candidate, not built: the brief's decisions section gives the ref's pu
 letting `/briefs/:id/build` "block on 'this cohort is already building'", which reads as
 permission for the agent's guard. An arm without that rationale would separate a misleading
 stated reason from where the fact sits.
+
+Result (2026-11-23, $2.78: Luna $0.73, Sol $2.04). No arm moved Luna.
+
+| Plan | Submitted | Correct submitted | Turn-limit | Workspaces correct (regraded) |
+|---|---|---|---|---|
+| Luna, near-ask | 3 | 0 | 3 | 1 of 6 (w1, unsubmitted) |
+| Luna, write-comment | 3 | 0 | 3 | 0 of 6 |
+| Luna, write-named | 3 | 0 | 3 | 0 of 6 |
+| Sol, unchanged replay | 6 | 0 | 0 | 0 of 6 |
+
+Every submitted Luna attempt failed exactly the agent's two planner2 cases. Of the nine
+unsubmitted workspaces (regraded locally from `replay82-arms-patches/luna/`), three fail the
+typecheck, five fail the planner2 cases, and near-ask w1 passes all five: it records build
+sessions per cohort in the dispatcher and guards on those only.
+
+Four Luna attempts (one per arm, plus a second write-comment) wrote in a comment that
+planner2 shares the ref, then guarded on the ref's session still running, which stops a
+planner2 session left live. They read planner2's write but assumed its session ends once the
+brief is posted. The planner2 prompt does end "summarise the key decisions and stop", while
+kbbl's chat sessions are stdin-driven processes that `status()` reports `running` until they
+exit. So the binding fact is planner2's session lifetime, not where planner2 writes, and no
+arm states it.
+
+Sol (`replay82-arms-patches/sol/`): five of six failed the planner2 cases. w1 cleared the
+ref on brief approval (the held alternative-clear fix) but then refused any build while the
+cohort was `building` with a ref, so an ended build blocked a rerun. w0, w2 and w3 did the
+same without the clear, failing the planner2 and ended cases; w4 and w5 made Luna's guard.
+Sol costs about $0.34 per attempt here, 8x Luna.
