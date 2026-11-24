@@ -180,9 +180,20 @@ NEAR_ASK = (
     "    - The dispatcher writes the cohort's `current_session_ref` for planner2 as well as "
     "for build (subgoal 7).\n",
 )
+# near-ask plus the fact the near-ask attempts got wrong: four of them read planner2's write
+# but guarded on the ref's session still running, assuming planner2's session ends once it
+# posts the brief. A kbbl chat session is a process that stays `live` until it exits.
+LIFETIME = (
+    NEAR_ASK[0],
+    NEAR_ASK[1]
+    + "    - A planner2 chat session stays `live` after it posts the brief and summarises; it "
+    "ends only when the operator ends it.\n",
+)
 ARMS: dict[str, dict[str, object]] = {
     # The brief's own statement, repeated as a bullet of subgoal 11.
     "near-ask": {"task": NEAR_ASK, "tree": ()},
+    # near-ask's bullet and a second one stating planner2's session lifetime.
+    "lifetime": {"task": LIFETIME, "tree": ()},
     # A comment at the cohort branch of the write, like the build branch's.
     "write-comment": {"task": None, "tree": ((
         DISPATCHER, WRITE_COHORT,
@@ -327,6 +338,10 @@ ARM_NOTES = {
     "near-ask": (
         "the task adds one bullet to subgoal 11: \"The dispatcher writes the cohort's "
         "`current_session_ref` for planner2 as well as for build (subgoal 7).\""
+    ),
+    "lifetime": (
+        "the task adds near-ask's bullet and a second: \"A planner2 chat session stays `live` "
+        "after it posts the brief and summarises; it ends only when the operator ends it.\""
     ),
     "write-comment": (
         "the dispatcher's cohort branch of the `current_session_ref` write carries a comment "

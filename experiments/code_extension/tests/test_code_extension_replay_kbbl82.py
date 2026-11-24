@@ -118,10 +118,12 @@ def test_fact_shape_arm_differs_from_the_replay_by_its_one_statement(arm: str) -
         path for path in {*base.repository, *variant.repository}
         if base.repository.get(path) != variant.repository.get(path)
     }
-    if arm == "near-ask":
+    if arm in ("near-ask", "lifetime"):
         assert changed == set()
         assert variant.task.count("planner2 as well as for build") == 1
-        assert len(variant.task.splitlines()) == len(base.task.splitlines()) + 1
+        lifetime = variant.task.count("ends only when the operator ends it")
+        assert lifetime == (arm == "lifetime")
+        assert len(variant.task.splitlines()) == len(base.task.splitlines()) + 1 + lifetime
     else:
         assert variant.task == base.task
         assert changed == {DISPATCHER}
