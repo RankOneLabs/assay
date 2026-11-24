@@ -98,6 +98,7 @@ COLOCATED_VISIBLE: dict[str, ColocatedSuite] = {
             "kbbl-build-guard-replay",
             "kbbl-build-guard-replay-near-ask",
             "kbbl-build-guard-replay-lifetime",
+            "kbbl-build-guard-replay-stage-runs",
             "kbbl-build-guard-replay-write-comment",
             "kbbl-build-guard-replay-write-named",
         )
@@ -245,7 +246,7 @@ ADDED_SCENARIOS: dict[str, CommittedScenarioSpec] = {
         f"kbbl-build-guard-replay{arm}": CommittedScenarioSpec(
             f"oakridge-kbbl-build-guard-replay{arm}", ("baseline",)
         )
-        for arm in ("", "-near-ask", "-lifetime", "-write-comment", "-write-named")
+        for arm in ("", "-near-ask", "-lifetime", "-stage-runs", "-write-comment", "-write-named")
     },
     "pointer-root": CommittedScenarioSpec("oakridge-dbos-pointer-root", ("baseline",)),
     "stage-pass-through": CommittedScenarioSpec(
@@ -270,6 +271,8 @@ REPLAYS = (
     # Fact-shape arms of the build-guard replay (replay_kbbl82.ARMS).
     "kbbl-build-guard-replay-near-ask",
     "kbbl-build-guard-replay-lifetime",
+    # The clean-model arm (replay_kbbl82.STAGE_RUNS_ARM).
+    "kbbl-build-guard-replay-stage-runs",
     "kbbl-build-guard-replay-write-comment",
     "kbbl-build-guard-replay-write-named",
 )

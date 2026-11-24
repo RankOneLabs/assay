@@ -209,6 +209,199 @@ ARMS: dict[str, dict[str, object]] = {
 }
 
 
+# The clean-model arm. The start tree records each dispatch as a `stage_runs` row (stage,
+# input artifact, session) where the replay has one `current_session_ref` column that
+# planner2 and build both write; the brief describes that model instead. planner2's
+# session still stays live after it posts the brief, and nothing says so: the arm asks
+# whether a model that keeps stages' sessions apart leaves the trap at all. Hidden tests
+# drive only behavior (dispatch, HTTP, live sessions), so they are the replay's.
+STAGE_RUNS_ARM = "stage-runs"
+STAGE_RUNS = "kbbl/core/db/stage-runs.ts"
+STAGE_RUNS_MODULE = """import type { Database } from "bun:sqlite";
+
+/** One dispatch of a stage: the stage, the artifact it ran on, and its session. */
+export interface StageRun {
+  id: number;
+  stage: string;
+  input_artifact_type: "spec" | "cohort" | "brief";
+  input_artifact_id: string;
+  session_ref: string;
+  created_at: string;
+}
+
+export function recordStageRun(
+  db: Database,
+  run: Pick<StageRun, "stage" | "input_artifact_type" | "input_artifact_id" | "session_ref">,
+): StageRun {
+  return db
+    .prepare<StageRun, [string, string, string, string]>(
+      `INSERT INTO stage_runs (stage, input_artifact_type, input_artifact_id, session_ref)
+       VALUES (?, ?, ?, ?) RETURNING *`,
+    )
+    .get(run.stage, run.input_artifact_type, run.input_artifact_id, run.session_ref)!;
+}
+
+/** A stage's runs on one input artifact, newest first. */
+export function listStageRuns(db: Database, stage: string, input_artifact_id: string): StageRun[] {
+  return db
+    .prepare<StageRun, [string, string]>(
+      "SELECT * FROM stage_runs WHERE stage = ? AND input_artifact_id = ? ORDER BY id DESC",
+    )
+    .all(stage, input_artifact_id);
+}
+"""
+REFS_MIGRATION = "kbbl/core/db/migrations/007_stages_and_refs.sql"
+TASK_TRACKER = "kbbl/core/types/task-tracker.ts"
+PERSIST_REFS = (
+    "      // Persist current_session_ref on the appropriate artifact.\n"
+    "      // build stage: input is brief, but session_ref lives on the parent cohort.\n"
+    '      if (stage.input_artifact_type === "spec") {\n'
+    '        db.prepare("UPDATE specs SET current_session_ref = ? WHERE id = ?")'
+    ".run(session_ref, inputId);\n"
+    + WRITE_COHORT
+    + "      } else {\n        // brief \u2192 update parent cohort\n"
+    '        const briefRow = db.prepare<{ cohort_id: string }, [string]>('
+    '"SELECT cohort_id FROM briefs WHERE id = ?").get(inputId);\n'
+    "        if (briefRow) {\n" + DISPATCH_BUILD + "        }\n      }\n"
+)
+STAGE_RUNS_TREE: tuple[Edit, ...] = (
+    (REFS_MIGRATION,
+     "ALTER TABLE specs ADD COLUMN current_session_ref TEXT;\n"
+     "ALTER TABLE cohorts ADD COLUMN current_session_ref TEXT;\n",
+     "-- One row per stage dispatch: the stage, the artifact it ran on, and its session.\n"
+     "CREATE TABLE stage_runs (\n"
+     "  id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+     "  stage TEXT NOT NULL REFERENCES stages(name),\n"
+     "  input_artifact_type TEXT NOT NULL\n"
+     "    CHECK (input_artifact_type IN ('spec','cohort','brief')),\n"
+     "  input_artifact_id TEXT NOT NULL,\n"
+     "  session_ref TEXT NOT NULL,\n"
+     "  created_at TEXT NOT NULL DEFAULT (datetime('now'))\n"
+     ");\n"
+     "CREATE INDEX stage_runs_by_input ON stage_runs (stage, input_artifact_id);\n"),
+    (TASK_TRACKER,
+     "  current_session_ref: z.string().nullable(),\n  created_at: z.string(),\n});\n"
+     "export type Spec",
+     "  created_at: z.string(),\n});\nexport type Spec"),
+    (TASK_TRACKER,
+     "  current_session_ref: z.string().nullable(),\n  created_at: z.string(),\n});\n"
+     "export type Cohort",
+     "  created_at: z.string(),\n});\nexport type Cohort"),
+    (DISPATCHER,
+     'import { loadPrompt, renderPrompt } from "./prompt-loader";\n',
+     'import { loadPrompt, renderPrompt } from "./prompt-loader";\n'
+     'import { recordStageRun } from "../../db/stage-runs";\n'),
+    (DISPATCHER, PERSIST_REFS,
+     "      recordStageRun(db, {\n"
+     "        stage: stage.name,\n"
+     "        input_artifact_type: stage.input_artifact_type,\n"
+     "        input_artifact_id: inputId,\n"
+     "        session_ref,\n"
+     "      });\n"),
+)
+STAGE_RUNS_TASK: tuple[tuple[str, str], ...] = (
+    ("persists `current_session_ref` on the input artifact,",
+     "records each dispatch as a `stage_runs` row,"),
+    ("   - Add columns: `ALTER TABLE specs ADD COLUMN current_session_ref TEXT;`, "
+     "`ALTER TABLE cohorts ADD COLUMN current_session_ref TEXT;`. (Briefs have no "
+     "`current_session_ref` \u2014 build dispatches against cohort; the brief is the input.)\n",
+     "   - Add a `stage_runs` table, one row per dispatch: `stage`, `input_artifact_type`, "
+     "`input_artifact_id`, `session_ref`, `created_at`, indexed by `(stage, "
+     "input_artifact_id)`. `kbbl/core/db/stage-runs.ts` has `recordStageRun` and "
+     "`listStageRuns`.\n"),
+    ("writes `current_session_ref` onto the input artifact (specs for planner1, cohorts for "
+     "planner2 and build).",
+     "records the dispatch with `recordStageRun` (the stage, its input artifact and the "
+     "session ref)."),
+    ("   - For `build` stage, input is `brief` but `current_session_ref` is stored on the "
+     "brief's parent `cohort` (briefs have no `current_session_ref` column). The dispatcher "
+     "reads `briefs.cohort_id` and updates the cohort row.\n",
+     "   - For `build` stage, input is `brief`: its run names the brief, and the brief's "
+     "`cohort_id` leads to the cohort it builds.\n"),
+    ("- **`current_session_ref` on cohort for build, not on brief.** **Rationale:** Builders "
+     "work on cohorts (one PR per cohort); the brief is just the contract. Storing the ref on "
+     "the cohort lets `/briefs/:id/build` block on \"this cohort is already building.\"",
+     "- **Each dispatch is a `stage_runs` row, keyed by stage and input artifact.** "
+     "**Rationale:** Builders work on cohorts (one PR per cohort); the brief is just the "
+     "contract. Recording every run by stage lets `/briefs/:id/build` block on \"this cohort "
+     "is already building.\""),
+)
+AGENT_GUARD = (
+    "    // Guard against double-dispatch while a session is still live.\n"
+    "    interface CohortRefRow { current_session_ref: string | null }\n"
+    "    const cohort = db\n"
+    '      .prepare<CohortRefRow, [string]>('
+    '"SELECT current_session_ref FROM cohorts WHERE id = ?")\n'
+    "      .get(brief.cohort_id);\n" + GUARD
+)
+BUILDS_IMPORT = 'import type { createDispatcher } from "../../orchestrator/backends/dispatcher";\n'
+WITH_RUNS_IMPORT = BUILDS_IMPORT + 'import { listStageRuns } from "../../db/stage-runs";\n'
+REFUSE = (
+    '        return c.json({ error: "a build session is already running for this cohort" }, 409);\n'
+)
+STAGE_RUNS_GUARDS = {
+    # The agent's guard in this model: any live session among the runs on the cohort or
+    # the brief, so planner2's still blocks.
+    "agent": (
+        "    // Guard against double-dispatch while a session is still live.\n"
+        "    const runs = db\n"
+        "      .prepare<{ session_ref: string }, [string, string]>(\n"
+        '        "SELECT session_ref FROM stage_runs WHERE input_artifact_id IN (?, ?)",\n'
+        "      )\n"
+        "      .all(brief.cohort_id, brief_id);\n"
+        "    for (const run of runs) {\n"
+        "      const existingSession = manager.get(run.session_ref);\n"
+        '      if (existingSession && existingSession.status !== "ended") {\n'
+        + REFUSE + "      }\n    }\n"
+    ),
+    # A live build run on any of the cohort's briefs blocks.
+    "reference": (
+        "    // A build is running for this cohort while a build run on any of its briefs\n"
+        "    // is live.\n"
+        "    const briefs = db\n"
+        '      .prepare<{ id: string }, [string]>("SELECT id FROM briefs WHERE cohort_id = ?")\n'
+        "      .all(brief.cohort_id);\n"
+        "    for (const { id } of briefs) {\n"
+        '      for (const run of listStageRuns(db, "build", id)) {\n'
+        "        const existingSession = manager.get(run.session_ref);\n"
+        '        if (existingSession && existingSession.status !== "ended") {\n'
+        "  " + REFUSE + "        }\n      }\n    }\n"
+    ),
+    # Only this brief's latest build run blocks.
+    "alternative-brief": (
+        '    const [latest] = listStageRuns(db, "build", brief_id);\n'
+        "    const latestSession = latest ? manager.get(latest.session_ref) : undefined;\n"
+        '    if (latestSession && latestSession.status !== "ended") {\n'
+        "  " + REFUSE.replace("        ", "    ", 1) + "    }\n"
+    ),
+    "no-guard": "    void manager;\n",
+}
+STAGE_RUNS_NOTE = (
+    "the start tree records each dispatch as a `stage_runs` row (stage, input artifact, "
+    "session) in place of the `current_session_ref` column planner2 and build share, and "
+    "the brief describes that model"
+)
+
+
+def stage_runs_trees(base: dict[str, str], agent: Path) -> dict[str, dict[str, str]]:
+    """The clean-model start tree and held trees: the agent's commit with each guard."""
+    start = _apply(base, STAGE_RUNS_TREE)
+    start[STAGE_RUNS] = STAGE_RUNS_MODULE
+    held = dict(start)
+    for path in AGENT_FILES:
+        held[path] = (agent / path).read_text(encoding="utf-8")
+    held = _apply(held, APP_TEST_EDIT)
+    built: dict[str, dict[str, str]] = {"start": start}
+    for label, guard in STAGE_RUNS_GUARDS.items():
+        edits: tuple[Edit, ...] = ((BUILDS, AGENT_GUARD, guard),)
+        if "listStageRuns" in guard:
+            edits += ((BUILDS, BUILDS_IMPORT, WITH_RUNS_IMPORT),)
+        built[label] = _apply(held, edits)
+    return built
+
+ALL_ARMS = (*ARMS, STAGE_RUNS_ARM)
+
+
 def scenario_name(arm: str = "") -> str:
     return f"{NAME}-{arm}" if arm else NAME
 
@@ -219,6 +412,8 @@ def subject_id(arm: str = "") -> str:
 
 def trees(start: Path, agent: Path, arm: str = "") -> dict[str, dict[str, str]]:
     base = _apply(start_tree(start), START_FIXES)
+    if arm == STAGE_RUNS_ARM:
+        return stage_runs_trees(base, agent)
     if arm:
         base = _apply(base, ARMS[arm]["tree"])  # type: ignore[arg-type]
     mistake = dict(base)
@@ -265,6 +460,14 @@ def task_text(brief: str, arm: str = "") -> str:
     if brief.count(old) != 1:
         raise ValueError("brief does not contain the guard clause exactly once")
     task = FRAMING + brief.replace(old, new)
+    if arm == STAGE_RUNS_ARM:
+        for before, after in STAGE_RUNS_TASK:
+            if task.count(before) != 1:
+                raise ValueError(f"task does not contain {before[:40]!r} exactly once")
+            task = task.replace(before, after)
+        if "current_session_ref" in task:
+            raise ValueError("the stage-runs task still names current_session_ref")
+        return task
     edit = ARMS[arm]["task"] if arm else None
     if edit:
         before, after = edit  # type: ignore[misc]
@@ -293,6 +496,18 @@ PATCH_NAMES = {
 }
 
 
+STAGE_RUNS_PATCH_NAMES = {
+    "reference": "reference.patch",
+    "agent": "negative.patch",
+    "no-guard": "no-guard.patch",
+    "alternative-brief": "alternative-brief.patch",
+}
+
+
+def patch_names(arm: str = "") -> dict[str, str]:
+    return STAGE_RUNS_PATCH_NAMES if arm == STAGE_RUNS_ARM else PATCH_NAMES
+
+
 def write(destination: Path, start: Path, agent: Path, arm: str = "") -> dict[str, object]:
     built = trees(start, agent, arm)
     base = built["start"]
@@ -308,7 +523,7 @@ def write(destination: Path, start: Path, agent: Path, arm: str = "") -> dict[st
     materialize(root / "hidden" / "new_behavior", new_behavior)
     (root / "patches").mkdir(parents=True)
     patches = {}
-    for label, name in PATCH_NAMES.items():
+    for label, name in patch_names(arm).items():
         patch = unified_patch(base, built[label])
         (root / "patches" / name).write_text(patch, encoding="utf-8")
         patches[name] = patch
@@ -343,6 +558,7 @@ ARM_NOTES = {
         "the task adds near-ask's bullet and a second: \"A planner2 chat session stays `live` "
         "after it posts the brief and summarises; it ends only when the operator ends it.\""
     ),
+    STAGE_RUNS_ARM: STAGE_RUNS_NOTE,
     "write-comment": (
         "the dispatcher's cohort branch of the `current_session_ref` write carries a comment "
         "naming planner2 and saying a build dispatch writes the same column"
@@ -441,6 +657,20 @@ def _sidecar(
             "reference", "The agent's commit; approval clears the cohort's planner2 ref.",
         ),
     }
+    if arm == STAGE_RUNS_ARM:
+        intents = {
+            "reference.patch": (
+                "reference",
+                "The agent's route; a live build run on any of the cohort's briefs blocks.",
+            ),
+            "negative.patch": (
+                "incomplete", "The agent's route; any live run on the cohort or brief blocks.",
+            ),
+            "no-guard.patch": ("incomplete", "The agent's route without the live-build guard."),
+            "alternative-brief.patch": (
+                "reference", "The agent's route; only this brief's latest build run blocks.",
+            ),
+        }
     zero = "sha256:" + "0" * 64
     unrelated = {"visible_regression": "passed", "hidden_regression": "passed"}
     return ExtensionScenarioSidecar.model_validate({
@@ -515,6 +745,8 @@ def _sidecar(
                 "briefs.test.ts's two updateBriefDebrief calls pass an object, as Oakridge "
                 "later did; the start commit failed its test and the typecheck.",
                 *([f"Fact-shape arm {arm}: {ARM_NOTES[arm]}."] if arm else []),
+                *(["Held trees replace the agent's cohort-ref guard in builds.ts with each "
+                   "guard written against stage_runs."] if arm == STAGE_RUNS_ARM else []),
             ],
             "start_tree_digest": workflow_tree_digest(base),
             "start_file_count": len(base),
@@ -528,7 +760,7 @@ def manifest_scope(
     subject: str, repository: Mapping[str, str]
 ) -> tuple[str, tuple[str, ...]] | None:
     """The replay's Oakridge pin and the vendored files that come from it, or None."""
-    if subject not in {SUBJECT_ID, *(f"{SUBJECT_ID}-{arm}" for arm in ARMS)}:
+    if subject not in {SUBJECT_ID, *(f"{SUBJECT_ID}-{arm}" for arm in ALL_ARMS)}:
         return None
     return START_SHA, tuple(sorted(path for path in repository if path != BUILD_ENTRY))
 
@@ -539,7 +771,7 @@ if __name__ == "__main__":
     parser.add_argument("--agent", type=Path)
     parser.add_argument("--grade", metavar="IMAGE", help="grade the committed fixture instead")
     parser.add_argument("--extra", type=Path, help="with --grade, also grade this folder's *.patch")
-    parser.add_argument("--arm", default="", choices=["", *ARMS], help="a fact-shape arm")
+    parser.add_argument("--arm", default="", choices=["", *ALL_ARMS], help="a fact-shape arm")
     arguments = parser.parse_args()
     if arguments.grade:
         import asyncio

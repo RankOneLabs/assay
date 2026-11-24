@@ -9,6 +9,7 @@ from code_extension.fixture import COLOCATED_VISIBLE, PILOT, read_tree
 from code_extension.fixtures import load_scenario
 from code_extension.replay_kbbl82 import (
     AGENT_FILES,
+    ALL_ARMS,
     ARMS,
     BUILD_ENTRY,
     DISPATCHER,
@@ -17,6 +18,8 @@ from code_extension.replay_kbbl82 import (
     LIVE,
     NAME,
     REGRESSION_TESTS,
+    STAGE_RUNS,
+    STAGE_RUNS_ARM,
     START_SHA,
     SUBJECT_ID,
     TASK_EDIT,
@@ -75,7 +78,7 @@ def test_task_is_the_brief_with_the_guard_stated_as_intent() -> None:
     assert "cohorts for planner2 and build" in task
 
 
-@pytest.mark.parametrize("arm", ["", *sorted(ARMS)])
+@pytest.mark.parametrize("arm", ["", *sorted(ALL_ARMS)])
 def test_qualified_manifest_binds_the_replay(arm: str) -> None:
     fixture = load_scenario(scenario_name(arm))
     records = PILOT.parent / scenario_name(arm) / "qualification"
@@ -133,3 +136,26 @@ def test_fact_shape_arm_differs_from_the_replay_by_its_one_statement(arm: str) -
     assert [item.kind for item in variant.sidecar.patch_inventory] == [
         item.kind for item in base.sidecar.patch_inventory
     ]
+
+
+def test_stage_runs_arm_replaces_the_shared_ref_and_keeps_the_hidden_checks() -> None:
+    base, variant = load_scenario(NAME), load_scenario(scenario_name(STAGE_RUNS_ARM))
+    assert variant.subject_id == f"{SUBJECT_ID}-{STAGE_RUNS_ARM}"
+    assert variant.groups == base.groups
+    changed = {
+        path for path in {*base.repository, *variant.repository}
+        if base.repository.get(path) != variant.repository.get(path)
+    }
+    assert changed == {
+        DISPATCHER,
+        STAGE_RUNS,
+        "kbbl/core/db/migrations/007_stages_and_refs.sql",
+        "kbbl/core/types/task-tracker.ts",
+    }
+    assert not any("current_session_ref" in text for text in variant.repository.values())
+    assert "current_session_ref" not in variant.task
+    assert variant.task.count("stage_runs") >= 3
+    hidden = read_tree(PILOT.parent / scenario_name(STAGE_RUNS_ARM) / "hidden")
+    assert hidden == read_tree(PILOT.parent / NAME / "hidden")
+    kinds = {item.intent: item.kind for item in variant.sidecar.patch_inventory}
+    assert sorted(kinds.values()) == ["incomplete", "incomplete", "reference", "reference"]
