@@ -1,0 +1,603 @@
+diff --git a/kbbl/core/orchestrator/backends/dispatcher.ts b/kbbl/core/orchestrator/backends/dispatcher.ts
+index 76478963f8cb20ecde529f08434cf98a616600bf..0eea35c2f76a49c66b6437f6008450e54c17d1b7 100644
+--- a/kbbl/core/orchestrator/backends/dispatcher.ts
++++ b/kbbl/core/orchestrator/backends/dispatcher.ts
+@@ -8,258 +8,164 @@ interface DispatcherDeps {
+   kbblUrl: string;
+ }
+ 
+-interface Dispatcher {
++export interface Dispatcher {
+   dispatch(stageName: string, inputId: string): Promise<string>;
++  isBuildRunning?(cohortId: string): Promise<boolean>;
+ }
+ 
+-// ---- SQL helpers ----
+-
+ function getStage(db: Database, name: string): StageRow | null {
+-  return (
+-    db
+-      .prepare<StageRow, [string]>("SELECT * FROM stages WHERE name = ?")
+-      .get(name) ?? null
+-  );
++  return db.prepare<StageRow, [string]>("SELECT * FROM stages WHERE name = ?").get(name) ?? null;
+ }
+ 
+-interface ProjectRow {
+-  id: string;
+-  name: string;
+-  repo_path: string;
+-}
++interface ProjectRow { id: string; name: string; repo_path: string }
+ 
+-function getProjectForSpec(db: Database, spec_id: string): ProjectRow | null {
+-  return (
+-    db
+-      .prepare<ProjectRow, [string]>(
+-        `SELECT p.id, p.name, p.repo_path
+-           FROM projects p
+-           JOIN specs s ON s.project_id = p.id
+-          WHERE s.id = ?`,
+-      )
+-      .get(spec_id) ?? null
+-  );
++function getProjectForSpec(db: Database, specId: string): ProjectRow | null {
++  return db.prepare<ProjectRow, [string]>(
++    `SELECT p.id, p.name, p.repo_path FROM projects p JOIN specs s ON s.project_id = p.id WHERE s.id = ?`,
++  ).get(specId) ?? null;
+ }
+ 
+-function getProjectForCohort(db: Database, cohort_id: string): ProjectRow | null {
+-  return (
+-    db
+-      .prepare<ProjectRow, [string]>(
+-        `SELECT p.id, p.name, p.repo_path
+-           FROM projects p
+-           JOIN specs s ON s.project_id = p.id
+-           JOIN plans pl ON pl.spec_id = s.id
+-           JOIN cohorts c ON c.plan_id = pl.id
+-          WHERE c.id = ?`,
+-      )
+-      .get(cohort_id) ?? null
+-  );
++function getProjectForCohort(db: Database, cohortId: string): ProjectRow | null {
++  return db.prepare<ProjectRow, [string]>(
++    `SELECT p.id, p.name, p.repo_path FROM projects p JOIN specs s ON s.project_id = p.id JOIN plans pl ON pl.spec_id = s.id JOIN cohorts c ON c.plan_id = pl.id WHERE c.id = ?`,
++  ).get(cohortId) ?? null;
+ }
+ 
+-function getProjectForBrief(db: Database, brief_id: string): ProjectRow | null {
+-  return (
+-    db
+-      .prepare<ProjectRow, [string]>(
+-        `SELECT p.id, p.name, p.repo_path
+-           FROM projects p
+-           JOIN specs s ON s.project_id = p.id
+-           JOIN plans pl ON pl.spec_id = s.id
+-           JOIN cohorts c ON c.plan_id = pl.id
+-           JOIN briefs b ON b.cohort_id = c.id
+-          WHERE b.id = ?`,
+-      )
+-      .get(brief_id) ?? null
+-  );
++function getProjectForBrief(db: Database, briefId: string): ProjectRow | null {
++  return db.prepare<ProjectRow, [string]>(
++    `SELECT p.id, p.name, p.repo_path FROM projects p JOIN specs s ON s.project_id = p.id JOIN plans pl ON pl.spec_id = s.id JOIN cohorts c ON c.plan_id = pl.id JOIN briefs b ON b.cohort_id = c.id WHERE b.id = ?`,
++  ).get(briefId) ?? null;
+ }
+ 
+-// ---- Slot builders ----
+-
+-const BRIEF_FORMAT_GUIDE =
+-  "The brief must close every decision. Each `decisions_made` entry needs a `decision` field (what was decided) and a `rationale` field (why). Each `approaches_rejected` entry needs an `approach` field and a `reason` field. The `next_action` field must describe the immediate, concrete first step the build agent should take. Do not leave any field as a question or placeholder.";
+-
+-function buildPlanContext(db: Database, cohort_id: string): string {
+-  const cohortRow = db
+-    .prepare<{ plan_id: string }, [string]>("SELECT plan_id FROM cohorts WHERE id = ?")
+-    .get(cohort_id);
+-  if (!cohortRow) return "(no plan context available)";
+-
+-  interface SiblingRow { id: string; title: string; position: number; notes: string | null }
+-  const siblings = db
+-    .prepare<SiblingRow, [string]>(
+-      "SELECT id, title, position, notes FROM cohorts WHERE plan_id = ? ORDER BY position, id",
+-    )
+-    .all(cohortRow.plan_id);
+-
+-  interface DepRow { from_cohort_id: string; to_cohort_id: string }
+-  const deps = db
+-    .prepare<DepRow, [string]>(
+-      `SELECT cd.from_cohort_id, cd.to_cohort_id
+-         FROM cohort_dependencies cd
+-         JOIN cohorts c ON c.id = cd.from_cohort_id
+-        WHERE c.plan_id = ?`,
+-    )
+-    .all(cohortRow.plan_id);
++const BRIEF_FORMAT_GUIDE = "The brief must close every decision. Each decisions_made entry needs a decision and rationale; each approaches_rejected entry needs an approach and reason. next_action must give the concrete first step. Do not leave questions or placeholders.";
+ 
+-  const titleById = new Map(siblings.map((s) => [s.id, s.title]));
+-
+-  const lines: string[] = ["Cohorts in this plan:"];
++function buildPlanContext(db: Database, cohortId: string): string {
++  const cohort = db.prepare<{ plan_id: string }, [string]>("SELECT plan_id FROM cohorts WHERE id = ?").get(cohortId);
++  if (!cohort) return "(no plan context available)";
++  interface Sibling { id: string; title: string; position: number; notes: string | null }
++  const siblings = db.prepare<Sibling, [string]>("SELECT id, title, position, notes FROM cohorts WHERE plan_id = ? ORDER BY position, id").all(cohort.plan_id);
++  interface Edge { from_cohort_id: string; to_cohort_id: string }
++  const edges = db.prepare<Edge, [string]>(`SELECT cd.from_cohort_id, cd.to_cohort_id FROM cohort_dependencies cd JOIN cohorts c ON c.id = cd.from_cohort_id WHERE c.plan_id = ?`).all(cohort.plan_id);
++  const titles = new Map(siblings.map((s) => [s.id, s.title]));
++  const lines = ["Cohorts in this plan:"];
+   for (const s of siblings) {
+-    const marker = s.id === cohort_id ? " ← current" : "";
+-    lines.push(`  [${s.position}] ${s.title} (id: ${s.id})${marker}`);
++    lines.push(`  [${s.position}] ${s.title} (id: ${s.id})${s.id === cohortId ? " ← current" : ""}`);
+     if (s.notes) lines.push(`       notes: ${s.notes}`);
+   }
+-
+-  if (deps.length > 0) {
++  if (edges.length) {
+     lines.push("\nDependency edges (from must complete before to):");
+-    for (const d of deps) {
+-      lines.push(`  ${titleById.get(d.from_cohort_id) ?? d.from_cohort_id} → ${titleById.get(d.to_cohort_id) ?? d.to_cohort_id}`);
+-    }
++    for (const e of edges) lines.push(`  ${titles.get(e.from_cohort_id) ?? e.from_cohort_id} → ${titles.get(e.to_cohort_id) ?? e.to_cohort_id}`);
+   }
+-
+   return lines.join("\n");
+ }
+ 
+-function renderBrief(db: Database, brief_id: string): string {
+-  interface BriefDataRow {
+-    goal: string;
+-    files_in_scope: string;
+-    decisions_made: string;
+-    approaches_rejected: string;
+-    next_action: string;
+-  }
+-  const row = db
+-    .prepare<BriefDataRow, [string]>(
+-      "SELECT goal, files_in_scope, decisions_made, approaches_rejected, next_action FROM briefs WHERE id = ?",
+-    )
+-    .get(brief_id);
++function renderBrief(db: Database, briefId: string): string {
++  interface BriefData { goal: string; files_in_scope: string; decisions_made: string; approaches_rejected: string; next_action: string }
++  const row = db.prepare<BriefData, [string]>("SELECT goal, files_in_scope, decisions_made, approaches_rejected, next_action FROM briefs WHERE id = ?").get(briefId);
+   if (!row) return "(brief not found)";
+-
+   const files: string[] = JSON.parse(row.files_in_scope);
+   const decisions: { decision: string; rationale: string }[] = JSON.parse(row.decisions_made);
+   const rejected: { approach: string; reason: string }[] = JSON.parse(row.approaches_rejected);
+-
+-  const lines: string[] = [
++  return [
+     `## Goal\n\n${row.goal}`,
+-    `## Files in scope\n\n${files.length > 0 ? files.map((f) => `- ${f}`).join("\n") : "(none listed)"}`,
+-    `## Decisions made\n\n${decisions.length > 0 ? decisions.map((d) => `- **${d.decision}**: ${d.rationale}`).join("\n") : "(none)"}`,
+-    `## Approaches rejected\n\n${rejected.length > 0 ? rejected.map((a) => `- **${a.approach}**: ${a.reason}`).join("\n") : "(none)"}`,
++    `## Files in scope\n\n${files.length ? files.map((f) => `- ${f}`).join("\n") : "(none listed)"}`,
++    `## Decisions made\n\n${decisions.length ? decisions.map((d) => `- **${d.decision}**: ${d.rationale}`).join("\n") : "(none)"}`,
++    `## Approaches rejected\n\n${rejected.length ? rejected.map((a) => `- **${a.approach}**: ${a.reason}`).join("\n") : "(none)"}`,
+     `## Next action\n\n${row.next_action}`,
+-  ];
+-  return lines.join("\n\n");
+-}
+-
+-// ---- Slot resolution per stage ----
+-
+-function buildSlotsForSpec(db: Database, spec_id: string, kbblUrl: string): Record<string, string> {
+-  interface SpecRow { id: string; title: string; notes: string | null }
+-  const spec = db.prepare<SpecRow, [string]>("SELECT id, title, notes FROM specs WHERE id = ?").get(spec_id);
+-  if (!spec) throw new Error(`spec not found: ${spec_id}`);
+-  const project = getProjectForSpec(db, spec_id);
+-  if (!project) throw new Error(`project not found for spec ${spec_id}`);
+-  return {
+-    SPEC_ID: spec.id,
+-    SPEC_TITLE: spec.title,
+-    SPEC_NOTES: spec.notes ?? "(no notes)",
+-    REPO_PATH: project.repo_path,
+-    KBBL_URL: kbblUrl,
+-  };
++  ].join("\n\n");
+ }
+ 
+-function buildSlotsForCohort(db: Database, cohort_id: string, kbblUrl: string): Record<string, string> {
+-  interface CohortRow { id: string; title: string; notes: string | null }
+-  const cohort = db.prepare<CohortRow, [string]>("SELECT id, title, notes FROM cohorts WHERE id = ?").get(cohort_id);
+-  if (!cohort) throw new Error(`cohort not found: ${cohort_id}`);
+-  return {
+-    COHORT_ID: cohort.id,
+-    COHORT_TITLE: cohort.title,
+-    COHORT_NOTES: cohort.notes ?? "(no notes)",
+-    PLAN_CONTEXT: buildPlanContext(db, cohort_id),
+-    KBBL_URL: kbblUrl,
+-    BRIEF_FORMAT_GUIDE: BRIEF_FORMAT_GUIDE,
+-  };
+-}
+-
+-function buildSlotsForBrief(db: Database, brief_id: string, kbblUrl: string): Record<string, string> {
+-  const project = getProjectForBrief(db, brief_id);
+-  if (!project) throw new Error(`project not found for brief ${brief_id}`);
+-  return {
+-    BRIEF_ID: brief_id,
+-    BRIEF_RENDERED: renderBrief(db, brief_id),
+-    REPO_PATH: project.repo_path,
+-    KBBL_URL: kbblUrl,
+-  };
+-}
+-
+-// ---- Workdir resolution ----
+-
+-function resolveWorkdirForSpec(db: Database, spec_id: string): string {
+-  const project = getProjectForSpec(db, spec_id);
+-  if (!project) throw new Error(`project not found for spec ${spec_id}`);
+-  return project.repo_path;
+-}
+-
+-function resolveWorkdirForCohort(db: Database, cohort_id: string): string {
+-  const project = getProjectForCohort(db, cohort_id);
+-  if (!project) throw new Error(`project not found for cohort ${cohort_id}`);
+-  return project.repo_path;
+-}
+-
+-function resolveWorkdirForBrief(db: Database, brief_id: string): string {
+-  const project = getProjectForBrief(db, brief_id);
+-  if (!project) throw new Error(`project not found for brief ${brief_id}`);
+-  return project.repo_path;
+-}
+-
+-// ---- Public factory ----
+-
+ export function createDispatcher({ db, backends, kbblUrl }: DispatcherDeps): Dispatcher {
+-  return {
+-    async dispatch(stageName: string, inputId: string): Promise<string> {
+-      const stage = getStage(db, stageName);
+-      if (!stage) throw new Error(`unknown stage: ${stageName}`);
+-
+-      const backend = backends[stage.default_backend];
+-      if (!backend) throw new Error(`no backend registered for '${stage.default_backend}'`);
+-
+-      const template = loadPrompt(stage.prompt_template_path);
+-
+-      let slots: Record<string, string>;
+-      let inputRef: InputRef;
+-      let workdir: string;
++  const activeBuildDispatches = new Set<string>();
++  const buildSessionRefs = new Map<string, string>();
++
++  async function dispatchArtifact(stageName: string, inputId: string): Promise<string> {
++    const stage = getStage(db, stageName);
++    if (!stage) throw new Error(`unknown stage: ${stageName}`);
++    const backend = backends[stage.default_backend];
++    if (!backend) throw new Error(`no backend registered for '${stage.default_backend}'`);
++    const template = loadPrompt(stage.prompt_template_path);
++    let slots: Record<string, string>;
++    let inputRef: InputRef;
++    let workdir: string;
++
++    if (stage.input_artifact_type === "spec") {
++      interface Spec { id: string; title: string; notes: string | null }
++      const spec = db.prepare<Spec, [string]>("SELECT id, title, notes FROM specs WHERE id = ?").get(inputId);
++      if (!spec) throw new Error(`spec not found: ${inputId}`);
++      const project = getProjectForSpec(db, inputId);
++      if (!project) throw new Error(`project not found for spec ${inputId}`);
++      workdir = project.repo_path;
++      slots = { SPEC_ID: spec.id, SPEC_TITLE: spec.title, SPEC_NOTES: spec.notes ?? "(no notes)", REPO_PATH: workdir, KBBL_URL: kbblUrl };
++      inputRef = { type: "spec", id: inputId, workdir };
++    } else if (stage.input_artifact_type === "cohort") {
++      interface Cohort { id: string; title: string; notes: string | null }
++      const cohort = db.prepare<Cohort, [string]>("SELECT id, title, notes FROM cohorts WHERE id = ?").get(inputId);
++      if (!cohort) throw new Error(`cohort not found: ${inputId}`);
++      const project = getProjectForCohort(db, inputId);
++      if (!project) throw new Error(`project not found for cohort ${inputId}`);
++      workdir = project.repo_path;
++      slots = { COHORT_ID: cohort.id, COHORT_TITLE: cohort.title, COHORT_NOTES: cohort.notes ?? "(no notes)", PLAN_CONTEXT: buildPlanContext(db, inputId), KBBL_URL: kbblUrl, BRIEF_FORMAT_GUIDE };
++      inputRef = { type: "cohort", id: inputId, workdir };
++    } else {
++      const project = getProjectForBrief(db, inputId);
++      if (!project) throw new Error(`project not found for brief ${inputId}`);
++      workdir = project.repo_path;
++      slots = { BRIEF_ID: inputId, BRIEF_RENDERED: renderBrief(db, inputId), REPO_PATH: workdir, KBBL_URL: kbblUrl };
++      inputRef = { type: "brief", id: inputId, workdir };
++    }
+ 
+-      if (stage.input_artifact_type === "spec") {
+-        slots = buildSlotsForSpec(db, inputId, kbblUrl);
+-        workdir = resolveWorkdirForSpec(db, inputId);
+-        inputRef = { type: "spec", id: inputId, workdir };
+-      } else if (stage.input_artifact_type === "cohort") {
+-        slots = buildSlotsForCohort(db, inputId, kbblUrl);
+-        workdir = resolveWorkdirForCohort(db, inputId);
+-        inputRef = { type: "cohort", id: inputId, workdir };
+-      } else {
+-        // brief
+-        slots = buildSlotsForBrief(db, inputId, kbblUrl);
+-        workdir = resolveWorkdirForBrief(db, inputId);
+-        inputRef = { type: "brief", id: inputId, workdir };
++    const { session_ref } = await backend.dispatch(stage, inputRef, renderPrompt(template, slots));
++    if (stage.input_artifact_type === "spec") {
++      db.prepare("UPDATE specs SET current_session_ref = ? WHERE id = ?").run(session_ref, inputId);
++    } else if (stage.input_artifact_type === "cohort") {
++      db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, inputId);
++    } else {
++      const brief = db.prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?").get(inputId);
++      if (brief) {
++        db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, brief.cohort_id);
++        buildSessionRefs.set(brief.cohort_id, session_ref);
+       }
++    }
++    return session_ref;
++  }
+ 
+-      const renderedPrompt = renderPrompt(template, slots);
+-      const { session_ref } = await backend.dispatch(stage, inputRef, renderedPrompt);
+-
+-      // Persist current_session_ref on the appropriate artifact.
+-      // build stage: input is brief, but session_ref lives on the parent cohort.
+-      if (stage.input_artifact_type === "spec") {
+-        db.prepare("UPDATE specs SET current_session_ref = ? WHERE id = ?").run(session_ref, inputId);
+-      } else if (stage.input_artifact_type === "cohort") {
+-        db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, inputId);
+-      } else {
+-        // brief → update parent cohort
+-        const briefRow = db.prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?").get(inputId);
+-        if (briefRow) {
+-          db.prepare("UPDATE cohorts SET current_session_ref = ? WHERE id = ?").run(session_ref, briefRow.cohort_id);
++  return {
++    async dispatch(stageName, inputId) {
++      if (stageName !== "build") return dispatchArtifact(stageName, inputId);
++      const brief = db.prepare<{ cohort_id: string }, [string]>("SELECT cohort_id FROM briefs WHERE id = ?").get(inputId);
++      if (!brief) throw new Error(`brief not found: ${inputId}`);
++      const cohortId = brief.cohort_id;
++      if (activeBuildDispatches.has(cohortId)) throw new Error("build already running for cohort");
++      // Claim synchronously before awaiting backend status, so simultaneous
++      // callers cannot both pass the running check.
++      activeBuildDispatches.add(cohortId);
++      try {
++        const existingRef = buildSessionRefs.get(cohortId);
++        if (existingRef) {
++          const buildStage = getStage(db, "build");
++          const buildBackend = buildStage ? backends[buildStage.default_backend] : undefined;
++          if (buildBackend && await buildBackend.status(existingRef) === "running") throw new Error("build already running for cohort");
++          buildSessionRefs.delete(cohortId);
+         }
++        const sessionRef = await dispatchArtifact(stageName, inputId);
++        buildSessionRefs.set(cohortId, sessionRef);
++        return sessionRef;
++      } finally {
++        activeBuildDispatches.delete(cohortId);
+       }
+-
+-      return session_ref;
++    },
++    async isBuildRunning(cohortId) {
++      if (activeBuildDispatches.has(cohortId)) return true;
++      const sessionRef = buildSessionRefs.get(cohortId);
++      if (!sessionRef) return false;
++      const stage = getStage(db, "build");
++      const backend = stage ? backends[stage.default_backend] : undefined;
++      if (!backend) return false;
++      const status = await backend.status(sessionRef);
++      if (status === "running") return true;
++      buildSessionRefs.delete(cohortId);
++      return false;
+     },
+   };
+ }
+diff --git a/kbbl/core/pwa/review/brief/BriefReviewView.tsx b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+index 5b8d795d2a5c8d36e73b00d3ab5c2335910f0984..1bfdef861a2f21d461795617fd87a85429715772 100644
+--- a/kbbl/core/pwa/review/brief/BriefReviewView.tsx
++++ b/kbbl/core/pwa/review/brief/BriefReviewView.tsx
+@@ -17,27 +17,49 @@ interface BriefReviewViewProps {
+ }
+ 
+ function RunBuildButton({ briefId }: { briefId: string }) {
++  const [pending, setPending] = useState(false);
++  const [status, setStatus] = useState<string | null>(null);
++  const [error, setError] = useState<string | null>(null);
++
++  const runBuild = async () => {
++    setPending(true);
++    setError(null);
++    setStatus(null);
++    try {
++      const response = await fetch(`/briefs/${encodeURIComponent(briefId)}/build`, { method: "POST" });
++      const result = await response.json() as { session_ref?: string; error?: string };
++      if (!response.ok) throw new Error(result.error ?? `Build request failed (${response.status})`);
++      if (!result.session_ref) throw new Error("Build response did not include a session_ref");
++      window.location.hash = `sid=${encodeURIComponent(result.session_ref)}`;
++      setStatus(`Build session started: ${result.session_ref}`);
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Failed to start build");
++    } finally {
++      setPending(false);
++    }
++  };
++
+   return (
+-    <button
+-      type="button"
+-      disabled
+-      title="Run build — wired in cohort 5"
+-      style={{
+-        background: "var(--accent, #4a8fcb)",
+-        color: "#fff",
+-        border: "none",
+-        padding: "4px 12px",
+-        borderRadius: 4,
+-        opacity: 0.5,
+-        cursor: "default",
+-      }}
+-      onClick={() => {
+-        // TODO: wired in cohort 5
+-        void briefId;
+-      }}
+-    >
+-      Run build
+-    </button>
++    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
++      <button
++        type="button"
++        disabled={pending}
++        style={{
++          background: "var(--accent, #4a8fcb)",
++          color: "#fff",
++          border: "none",
++          padding: "4px 12px",
++          borderRadius: 4,
++          opacity: pending ? 0.5 : 1,
++          cursor: pending ? "default" : "pointer",
++        }}
++        onClick={() => void runBuild()}
++      >
++        {pending ? "Starting…" : "Run build"}
++      </button>
++      {status && <span role="status" style={{ fontSize: 12 }}>{status}</span>}
++      {error && <span role="alert" style={{ color: "var(--danger, #c55)", fontSize: 12 }}>{error}</span>}
++    </span>
+   );
+ }
+ 
+diff --git a/kbbl/core/server.ts b/kbbl/core/server.ts
+index 4cc34d8b312cbee4171adad3626c443e93d6697c..a90d75d91e1a46a7259326f2cf6eee613f1365c0 100644
+--- a/kbbl/core/server.ts
++++ b/kbbl/core/server.ts
+@@ -16,6 +16,9 @@ import { validateWorkdir } from "./server/handlers/sessions";
+ import { openDb } from "./db/connection";
+ import { applyMigrations } from "./db/migrations";
+ import { bootstrap as bootstrapOrchestrator } from "./orchestrator/bootstrap";
++import { createDispatcher } from "./orchestrator/backends/dispatcher";
++import { createKbblChatBackend } from "./orchestrator/backends/kbbl-chat";
++import { wireDispatchHooks } from "./orchestrator/dispatch-hooks";
+ import { reviewRegistry } from "./review/registry";
+ import { reviewEvents } from "./review/events";
+ import { taskTrackerEvents } from "./db/events";
+@@ -196,6 +199,13 @@ const manager = new SessionManager({
+   safirQueue,
+ });
+ 
++const dispatcher = createDispatcher({
++  db,
++  backends: { kbbl_chat: createKbblChatBackend({ manager }) },
++  kbblUrl: `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`,
++});
++wireDispatchHooks({ taskTrackerEvents, dispatcher });
++
+ // === Hono app ===
+ 
+ let bunServer: ReturnType<typeof Bun.serve> | null = null;
+@@ -211,6 +221,7 @@ const app = createApp({
+   config,
+   configPath,
+   db,
++  dispatcher,
+ });
+ 
+ // === bind port (fail fast before spawning CC) ===
+diff --git a/kbbl/core/server/app.test.ts b/kbbl/core/server/app.test.ts
+index 1171cad59b85b93ccffab3555f535acdbe580648..08d1c2af7d73ef609b51ecb2db3f875ef8cba663 100644
+--- a/kbbl/core/server/app.test.ts
++++ b/kbbl/core/server/app.test.ts
+@@ -9,6 +9,7 @@ import { KbblConfigSchema, type KbblConfig } from "../config";
+ import type { AppRuntime } from "../runtime";
+ import type { SafirClient } from "../safir/client";
+ import type { SessionManager } from "../session/session-manager";
++import type { Dispatcher } from "../orchestrator/backends/dispatcher";
+ import { openTestDb } from "../db/test-db";
+ import { createApp } from "./app";
+ 
+@@ -34,6 +35,9 @@ function buildApp(config: KbblConfig): Hono {
+     config,
+     configPath,
+     db,
++    dispatcher: {
++      dispatch: async () => "test-session",
++    },
+   });
+ }
+ 
+diff --git a/kbbl/core/server/app.ts b/kbbl/core/server/app.ts
+index bf42e14bdac7f74c82c4e3735899d8629b15de9b..c0f91055eedaf5dcac39a895e6097c02bc06a8bc 100644
+--- a/kbbl/core/server/app.ts
++++ b/kbbl/core/server/app.ts
+@@ -21,6 +21,8 @@ import { mountBriefStatusRoutes } from "./handlers/brief-status";
+ import { mountCohortsRoutes } from "./handlers/cohorts";
+ import { mountCohortStatusRoutes } from "./handlers/cohort-status";
+ import { mountBriefsRoutes } from "./handlers/briefs";
++import { mountBuildsRoutes } from "./handlers/builds";
++import type { Dispatcher } from "../orchestrator/backends/dispatcher";
+ import { mountReviewFreezeRoutes } from "./handlers/review-freeze";
+ import { mountReviewAtomsRoutes } from "./handlers/review-atoms";
+ import { mountReviewThreadsRoutes } from "./handlers/review-threads";
+@@ -66,6 +68,8 @@ export interface CreateAppDeps {
+   configPath: string;
+   /** Open SQLite database instance shared across all DB-backed handlers. */
+   db: Database;
++  /** Orchestrator dispatcher used by the manual build trigger. */
++  dispatcher: Dispatcher;
+ }
+ 
+ /**
+@@ -87,6 +91,7 @@ export function createApp(deps: CreateAppDeps): Hono {
+     config,
+     configPath,
+     db,
++    dispatcher,
+   } = deps;
+   const app = new Hono();
+ 
+@@ -224,6 +229,7 @@ export function createApp(deps: CreateAppDeps): Hono {
+   mountCohortStatusRoutes(app, { db });
+   mountBriefsRoutes(app, { db });
+   mountBriefStatusRoutes(app, { db });
++  mountBuildsRoutes(app, { db, dispatcher });
+ 
+   // ---- review primitive (cohort 2) ----
+   mountReviewFreezeRoutes(app, { db });
+diff --git a/kbbl/core/server/handlers/builds.ts b/kbbl/core/server/handlers/builds.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..396c1f56ccb90496757ba57ff1bb31e82914613e
+--- /dev/null
++++ b/kbbl/core/server/handlers/builds.ts
+@@ -0,0 +1,42 @@
++import type { Hono } from "hono";
++import type { Database } from "bun:sqlite";
++import { getBrief } from "../../db/briefs";
++import type { Dispatcher } from "../../orchestrator/backends/dispatcher";
++
++interface BuildsRouteDeps {
++  dispatcher: Dispatcher;
++  db: Database;
++}
++
++/** Registers the operator-triggered build endpoint for an approved brief. */
++export function mountBuildsRoutes(app: Hono, { dispatcher, db }: BuildsRouteDeps): void {
++  app.post("/briefs/:id/build", async (c) => {
++    const briefId = c.req.param("id");
++    const brief = getBrief(db, briefId);
++    if (!brief) return c.json({ error: "not found" }, 404);
++    if (brief.status !== "approved") {
++      return c.json({ error: "brief is not approved" }, 409);
++    }
++
++    try {
++      const currentRef = db.prepare<{ current_session_ref: string | null }, [string]>("SELECT current_session_ref FROM cohorts WHERE id = ?").get(brief.cohort_id)?.current_session_ref;
++      if (currentRef) {
++        const running = dispatcher.isBuildRunning
++          ? await dispatcher.isBuildRunning(brief.cohort_id)
++          : false;
++        if (running) return c.json({ error: "a build is already running for this cohort" }, 409);
++      }
++      const session_ref = await dispatcher.dispatch("build", briefId);
++      return c.json({ session_ref });
++    } catch (err) {
++      // A parallel dispatch may have claimed this cohort between the status
++      // check and dispatch. Treat that conflict like the check above.
++      const message = err instanceof Error ? err.message : String(err);
++      if (message === "build already running for cohort") {
++        return c.json({ error: "a build is already running for this cohort" }, 409);
++      }
++      console.error("builds:post failed", err);
++      return c.json({ error: "failed to start build" }, 500);
++    }
++  });
++}

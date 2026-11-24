@@ -520,3 +520,31 @@ ref on brief approval (the held alternative-clear fix) but then refused any buil
 cohort was `building` with a ref, so an ended build blocked a rerun. w0, w2 and w3 did the
 same without the clear, failing the planner2 and ended cases; w4 and w5 made Luna's guard.
 Sol costs about $0.34 per attempt here, 8x Luna.
+
+### Build-guard replay: lifetime arm (2026-11-24)
+
+The arms run showed the attempts that read planner2's write still assumed its session ends
+once the brief is posted. The lifetime arm (`kbbl-build-guard-replay-lifetime`) is near-ask
+plus one more task bullet: "A planner2 chat session stays `live` after it posts the brief and
+summarises; it ends only when the operator ends it." Luna, 6 attempts, same bounds.
+
+Result ($0.26): 2 of 3 submitted correct (w0, w5); w3 submitted the planner2 bug with a
+failing typecheck. Regraded locally (`replay82-lifetime-patches/`), 4 of 6 workspaces have the
+right behavior (w0, w2, w4, w5; w2 fails the typecheck on an unused import), against 1 of 6 for
+near-ask and 0 of 6 for the replay. The correct attempts tag each session ref with the stage
+that launched it and block only on a live build. w1 refused while the cohort was `building`
+with a running ref, which a live planner2 still trips.
+
+So the binding fact was planner2's session lifetime, which the replay's code implies (chat
+sessions are processes that `status()` reports running until they exit) but nothing states.
+
+### Build-guard replay: stage-runs arm (2026-11-24)
+
+`kbbl-build-guard-replay-stage-runs` asks whether a clean session model leaves the trap at
+all. The start tree records each dispatch as a `stage_runs` row (stage, input artifact,
+session) in place of the `current_session_ref` column planner2 and build share; the brief's
+subgoals and decision describe that model, with the same "block on 'this cohort is already
+building'" rationale. Lifetime is not stated. Hidden tests are the replay's, byte for byte.
+Held: reference (live build run on any of the cohort's briefs) and alternative-brief pass;
+negative (any live run on the cohort or brief) and no-guard fail. Qualified on mcclure;
+cohort sha256:fd1850b8…, frozen, not yet run.
