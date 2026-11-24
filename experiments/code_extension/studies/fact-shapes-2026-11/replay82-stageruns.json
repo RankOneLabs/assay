@@ -1,0 +1,10 @@
+{
+  "cohort": "fact-shapes-2026-11-replay82-stageruns",
+  "combined_cap_usd": "1.50",
+  "plans": [
+    {
+      "name": "midtier",
+      "config": "replay82-stageruns-plan.json"
+    }
+  ]
+}
