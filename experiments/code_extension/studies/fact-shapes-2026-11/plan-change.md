@@ -547,4 +547,27 @@ subgoals and decision describe that model, with the same "block on 'this cohort 
 building'" rationale. Lifetime is not stated. Hidden tests are the replay's, byte for byte.
 Held: reference (live build run on any of the cohort's briefs) and alternative-brief pass;
 negative (any live run on the cohort or brief) and no-guard fail. Qualified on mcclure;
-cohort sha256:fd1850b8…, frozen, not yet run.
+cohort sha256:fd1850b8….
+
+Result ($0.23, two provider halts): 2 of 2 submitted correct (w1, w4); w0 and w5 hit the turn
+limit; w2 and w3 were cut off by provider errors (an Azure 520, then an Azure content-policy
+block on OpenRouter's Luna route), each accepted at its reservation on resume. Regraded
+locally (`replay82-stageruns-patches/`), all four attempts that ran to the end have the right
+behavior: w0 passes everything, and w5 passes the hidden tests but fails the typecheck because
+it never added the dispatcher to the existing test's app deps. w2 and w3 stopped mid-wiring
+(typecheck fails, Run build not yet reachable), so they say nothing about the guard.
+
+Every finished attempt queried `stage_runs` for build runs on the cohort's briefs and asked
+the dispatcher whether each was still live: the reference guard. None touched planner2's runs,
+so no attempt made the replay's mistake, without being told planner2's session lifetime.
+
+| Arm | Submitted correct | Workspaces with the right behavior |
+|---|---|---|
+| Replay | 0 of 4 | 0 of 6 |
+| Near-ask | 0 of 3 | 1 of 6 |
+| Lifetime | 2 of 3 | 4 of 6 |
+| Stage-runs | 2 of 2 | 4 of 4 finished (2 lost to provider errors) |
+
+So the trap was the shared column, not the indirection: once the model records which stage
+owns each session, the brief's "block on 'this cohort is already building'" no longer leads
+anywhere wrong, and the lifetime fact stops mattering.
