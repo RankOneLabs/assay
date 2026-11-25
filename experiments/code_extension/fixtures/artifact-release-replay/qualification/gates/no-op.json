@@ -1,0 +1,1 @@
+{"image_digest":"sha256:51ed5ccdfb6fcebd23ab7065a870d60dff4631e619846c7c8872ce79896ba7ac","result":{"cause":"group_failure","groups":{"hidden_regression":{"cause":null,"status":"passed"},"new_behavior":{"cause":"nonzero_exit","status":"failed"},"visible_regression":{"cause":null,"status":"passed"}},"verdict":"incorrect"},"schema_version":"assay-extension-no-op/0.1.0"}
