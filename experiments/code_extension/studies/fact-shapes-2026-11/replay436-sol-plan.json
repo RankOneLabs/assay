@@ -1,0 +1,51 @@
+{
+  "scenario_qualifications": [
+    {
+      "scenario": "artifact-release-replay",
+      "manifest_digest": "sha256:cde2ab97932f90158eed17e38d6f82b4b157383609b3af595b68c69748d41a8b"
+    }
+  ],
+  "cohort": "fact-shapes-2026-11-replay436-sol",
+  "route": {
+    "endpoint": "https://openrouter.ai/api/v1",
+    "model": "openai/gpt-6.1-sol",
+    "provider": "azure/us"
+  },
+  "profile": "openrouter",
+  "system_prompt_digest": "sha256:d6f2f100a9a362ddae1d201fd96de86b24ad47b7449ff863d42c64ed71607cfb",
+  "tool_schemas_digest": "sha256:698286ad88a625d2ebdccb8c5f1fffc7d7831692f09eac7b146123fd2f8c8c9c",
+  "image_digest": "sha256:51ed5ccdfb6fcebd23ab7065a870d60dff4631e619846c7c8872ce79896ba7ac",
+  "envelope": "library-v1",
+  "bounds": {
+    "served_context_tokens": null,
+    "model_context_limit_tokens": null,
+    "request_timeout_s": 120.0,
+    "max_turns": 60,
+    "timeout_s": 900.0,
+    "attempts": 1,
+    "concurrency": 1,
+    "provider_retries": 0,
+    "sdk_retries": 0,
+    "max_tool_schema_bytes": 16384,
+    "max_tool_output_bytes": 32768,
+    "max_conversation_bytes": 3670016,
+    "max_request_bytes": 3932160,
+    "max_response_bytes": 131072,
+    "max_output_tokens": 8192,
+    "max_storage_mb": 512,
+    "per_cell_tool_call_ceiling": "unavailable",
+    "per_cell_tool_call_ceiling_reason": "extension_mode cannot enforce a per-cell tool-call ceiling: the repository-agent loop honors max_tool_calls_per_cell and max_tool_calls_per_turn only under pilot_mode",
+    "requested_sampling": null,
+    "provider_reported_sampling": null
+  },
+  "repeats": 6,
+  "randomization_seed": 20261125,
+  "dispatch_schedule": "subject-rotated-v1",
+  "concurrency": 1,
+  "pricing": {
+    "basis": "operator-set plan caps (2026-11-17) from measured means, including one probe per plan; per-attempt caps are request reservation headroom",
+    "conservative_request_bound_usd": null
+  },
+  "per_attempt_cap_usd": "2.00",
+  "total_cap_usd": "4.00"
+}

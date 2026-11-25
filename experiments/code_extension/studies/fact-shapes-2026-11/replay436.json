@@ -1,0 +1,14 @@
+{
+  "cohort": "fact-shapes-2026-11-replay436",
+  "combined_cap_usd": "5.00",
+  "plans": [
+    {
+      "name": "midtier",
+      "config": "replay436-luna-plan.json"
+    },
+    {
+      "name": "sol",
+      "config": "replay436-sol-plan.json"
+    }
+  ]
+}

@@ -594,3 +594,33 @@ task, brief rationale and hidden tests; the only difference is whether planner2 
 share one session column. Stating the fact near the ask did nothing, and stating planner2's
 session lifetime got Luna to 4 of 6. Removing the shared column got both models to every
 finished attempt. One fixture, so this is a case study, not yet a general claim.
+
+### Second replay: approval after the session ends (2026-11-25)
+
+The second real failure. An agent writes a plan, emits it for review, and its session ends.
+The reviewer approves 12m35s later. Oakridge had already failed the unit, so the approved plan
+was lost. The first fix (Oakridge #417) waited for review only when the session had ended
+cleanly. Here the session ended because the user closed it. That path, and Oakridge's own
+stop on the session, both report the end the same way as a cancellation, and a separate rule
+fails a finished unit on a cancellation. The working fix (#436) needed both changes: keep
+waiting while any output is under review, however the session ended, and stop failing a
+finished unit on a cancellation.
+
+Fixture `artifact-release-replay` starts at #417's parent. The task states the behavior (an
+approval after the session ends must still complete the unit; an output that was never emitted
+still fails promptly) and nothing about cancellations. The hidden tests run the real stage
+workflow over an in-memory stand-in for its durable-workflow library. Qualified on mcclure
+(manifest sha256:cde2ab97…, image sha256:51ed5ccd…), and the held patches grade as expected:
+
+| Tree | New-behavior tests | Verdict |
+|---|---|---|
+| Start | 3 of 5 | incorrect |
+| #436, ported | 5 of 5 | correct |
+| Alternative (separate set of outputs under review) | 5 of 5 | correct |
+| #417 | 4 of 5 (closed session) | incorrect |
+| Wait change only, cancellation still fails the unit | 4 of 5 (closed session) | incorrect |
+| Waits on any output under review | 4 of 5 (never-emitted output) | incorrect |
+
+All six pass the typecheck, the build and both regression groups.
+
+Cohort `replay436.json` (sha256:d446078b…): Luna and Sol, 6 attempts each. Caps $1 and $4.

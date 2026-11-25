@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from code_extension.fixture import COLOCATED_VISIBLE, PILOT, read_tree
 from code_extension.fixtures import load_scenario
 from code_extension.replay_kbbl import relocate
@@ -20,6 +22,8 @@ from code_extension.replay_pr436 import (
     manifest_scope,
 )
 
+from assay.canonical import canonical_json, digest_bytes
+from assay.fixture_manifest import FixtureManifestV3
 from assay.repository import validate_repository
 
 ROOT = PILOT.parent / NAME
@@ -83,3 +87,35 @@ def test_manifest_scope_names_the_pin() -> None:
     assert scope is not None and scope[0] == START_SHA
     assert BUILD_ENTRY not in scope[1] and DEV_FLOW in scope[1]
     assert manifest_scope("oakridge-kbbl-build-guard-replay", fixture.repository) is None
+
+
+def test_qualified_manifest_binds_the_replay() -> None:
+    fixture = load_scenario(NAME)
+    records = ROOT / "qualification"
+    manifest = FixtureManifestV3.model_validate_json((records / "manifest.json").read_bytes())
+    manifest.require_qualified()
+    scenario = manifest.scenario(fixture.subject_id)
+    assert scenario is not None and scenario.checkpoint_sha == START_SHA
+    assert scenario.excluded_paths == ()
+    assert set(scenario.included_paths) == set(fixture.repository) - {BUILD_ENTRY}
+    assert scenario.feature_request == fixture.task.splitlines()[0].removeprefix("# ")
+    assert {
+        group.name: group.digest for group in (*scenario.visible_tests, *scenario.hidden_tests)
+    } == {
+        group.name: digest_bytes(canonical_json(group.model_dump(mode="json")))
+        for group in fixture.groups
+    }
+    (arm,) = scenario.arms
+    assert arm.tree_digest == fixture.tree_digest and arm.task_prompt == fixture.task
+    assert arm.reference_patch == digest_bytes(fixture.arms[0].reference_patch.encode())
+    for check, outcome in (
+        ("baseline_passes", "passed"), ("feature_fails", "failed"), ("reference_passes", "passed"),
+    ):
+        result = getattr(arm.qualification, check)
+        evidence = (records / "evidence" / "baseline" / f"{check}.json").read_bytes()
+        assert result.outcome == outcome and result.evidence == digest_bytes(evidence)
+        assert json.loads(evidence)["image_digest"] == manifest.observed_runtime_image_digest
+    sidecar = json.loads((records / "sidecar.json").read_text())
+    for gate, digest in sidecar["evidence"].items():
+        record = (records / "gates" / f"{gate.replace('_', '-')}.json").read_bytes()
+        assert digest == digest_bytes(record), gate
