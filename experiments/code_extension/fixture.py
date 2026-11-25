@@ -103,6 +103,12 @@ COLOCATED_VISIBLE: dict[str, ColocatedSuite] = {
             "kbbl-build-guard-replay-write-named",
         )
     },
+    "artifact-release-replay": ColocatedSuite(
+        root="oakridge-dbos/tests/",
+        suffix=".test.ts",
+        # A fix may change evaluateExecutionArtifactContract's signature, as #436 did.
+        editable=("oakridge-dbos/tests/evaluate-artifacts.test.ts",),
+    ),
 }
 
 
@@ -248,6 +254,9 @@ ADDED_SCENARIOS: dict[str, CommittedScenarioSpec] = {
         )
         for arm in ("", "-near-ask", "-lifetime", "-stage-runs", "-write-comment", "-write-named")
     },
+    "artifact-release-replay": CommittedScenarioSpec(
+        "oakridge-dbos-artifact-release-replay", ("baseline",)
+    ),
     "pointer-root": CommittedScenarioSpec("oakridge-dbos-pointer-root", ("baseline",)),
     "stage-pass-through": CommittedScenarioSpec(
         "oakridge-dbos-stage-pass-through",
@@ -275,6 +284,8 @@ REPLAYS = (
     "kbbl-build-guard-replay-stage-runs",
     "kbbl-build-guard-replay-write-comment",
     "kbbl-build-guard-replay-write-named",
+    # A gated artifact abandoned when its agent session ends (replay_pr436).
+    "artifact-release-replay",
 )
 
 

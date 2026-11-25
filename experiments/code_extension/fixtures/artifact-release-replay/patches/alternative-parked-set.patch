@@ -1,0 +1,42 @@
+diff --git a/oakridge-dbos/src/workflows/executor-topology.ts b/oakridge-dbos/src/workflows/executor-topology.ts
+--- a/oakridge-dbos/src/workflows/executor-topology.ts
++++ b/oakridge-dbos/src/workflows/executor-topology.ts
+@@ -117,10 +117,15 @@
+   const externalReference = await startExecutorStep(input.request);
+   await DBOS.startWorkflow(terminalObserverWorkflow, { workflowID: `${workflowId}:terminal` })({ request: input.request, external_reference: externalReference, parent_workflow_id: workflowId });
+   const releases: ArtifactReleaseState[] = [];
++  // Outputs with an artifact waiting on a reviewer; they can still be released after
++  // the executor has gone.
++  const parked = new Set<string>();
++  let terminalObservation: ExecutorTerminalObservation | null = null;
+   for (;;) {
+     const message = await DBOS.recv<ExecutionWorkflowMessage>("execution-event", { timeoutSeconds: 86_400 });
+     if (!message) continue;
+     if (message.kind === "artifact_emitted") {
++      if (message.release.kind !== "released") parked.add(`${message.release.artifact.unit_id}:${message.release.artifact.output_name}`);
+       if (message.release.kind === "waiting_gate") {
+         await DBOS.startWorkflow(gateRelayWorkflow, { workflowID: `${workflowId}:gate:${message.release.artifact.id}` })({ parent_workflow_id: workflowId, request: input.request, release: message.release });
+       } else if (message.release.kind === "waiting_handoff") {
+@@ -140,13 +145,19 @@
+       await requestRevisionStep({ request: input.request, external_reference: externalReference, delivery_key: `handoff:${message.result.artifact.id}:${message.result.decision_artifact_id}`, feedback: message.result.feedback ?? "Assessment requested implementation revisions." });
+       continue;
+     } else {
++      terminalObservation = message.observation;
+       const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
+-      return { external_reference: externalReference, contract, terminal_observation: message.observation };
++      const reviewable = contract.kind === "waiting_artifacts" && contract.missing_outputs.every((output) => parked.has(output));
++      if (!reviewable) {
++        return { external_reference: externalReference, contract, terminal_observation: message.observation };
++      }
++      continue;
+     }
+     const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
+     if (contract.kind === "satisfied") {
+-      await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
+-      return { external_reference: externalReference, contract, terminal_observation: null };
++      if (!terminalObservation) await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
++      // Everything owed was released: a session closed by now is not a failure.
++      return { external_reference: externalReference, contract, terminal_observation: terminalObservation?.kind === "failed" ? terminalObservation : null };
+     }
+   }
+ }, { name: "oakridgeArtifactContractExecutionWorkflow" });

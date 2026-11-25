@@ -16,11 +16,14 @@ FROM node:22.21.1-slim@sha256:25b3eb23a00590b7499f2a2ce939322727fcce1b15fdd69754
 ARG NODE_DEPS=workflow_edit
 # The kbbl replay (oakridge 0f95ef0ea7) runs kbbl's server and React views, so it
 # carries kbbl's dependency versions, pinned from kbbl's bun.lock without vitest or vite.
+# The artifact-release replay (oakridge 71edf9d5a1) runs oakridge-dbos's workflows,
+# so it carries oakridge-dbos's dependency versions, the DBOS SDK included.
 # Every lock is copied with a literal path so the build context stays auditable;
 # the argument only selects which one this image installs.
 COPY workflow_edit/package.json workflow_edit/package-lock.json /opt/locks/workflow_edit/
 COPY scenario_library/package.json scenario_library/package-lock.json /opt/locks/scenario_library/
 COPY kbbl_replay/package.json kbbl_replay/package-lock.json /opt/locks/kbbl_replay/
+COPY dbos_replay/package.json dbos_replay/package-lock.json /opt/locks/dbos_replay/
 RUN mkdir -p /opt/workflow_edit \
     && cp /opt/locks/${NODE_DEPS}/package.json /opt/locks/${NODE_DEPS}/package-lock.json /opt/workflow_edit/ \
     && npm ci --prefix /opt/workflow_edit --ignore-scripts --no-audit --no-fund \

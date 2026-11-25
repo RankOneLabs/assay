@@ -1,0 +1,59 @@
+diff --git a/oakridge-dbos/src/contracts/evaluate-artifacts.ts b/oakridge-dbos/src/contracts/evaluate-artifacts.ts
+--- a/oakridge-dbos/src/contracts/evaluate-artifacts.ts
++++ b/oakridge-dbos/src/contracts/evaluate-artifacts.ts
+@@ -1,6 +1,6 @@
+ import type { ArtifactEmission, ArtifactReleaseState, ArtifactRevision, ExecutionContractState } from "../domain/artifacts";
+ import type { CompiledOutputContract } from "../domain/compiled-workflow";
+-import type { ExpectedArtifactContract } from "../domain/execution";
++import type { ExecutorTerminalObservation, ExpectedArtifactContract } from "../domain/execution";
+ import { err, ok, type Result } from "../domain/primitives";
+ 
+ export interface ArtifactContractError {
+@@ -34,3 +34,6 @@
+   if (missingOutputs.length > 0) return { kind: "waiting_artifacts", missing_outputs: missingOutputs };
+   return { kind: "satisfied", artifacts: outputs.map((output) => releasedByOutput.get(output.name)).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
+ };
++
++export const shouldAwaitArtifactRelease = (contract: ExecutionContractState, observation: ExecutorTerminalObservation): boolean =>
++  contract.kind === "waiting_artifacts" && observation.kind === "succeeded";
+diff --git a/oakridge-dbos/src/workflows/executor-topology.ts b/oakridge-dbos/src/workflows/executor-topology.ts
+--- a/oakridge-dbos/src/workflows/executor-topology.ts
++++ b/oakridge-dbos/src/workflows/executor-topology.ts
+@@ -3,7 +3,7 @@
+ import type { ExecutionRequest, ExecutorAdapter, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
+ import type { ArtifactReleaseState, ExecutionContractState } from "../domain/artifacts";
+ import type { CompiledOutputContract } from "../domain/compiled-workflow";
+-import { evaluateExecutionArtifactContract } from "../contracts/evaluate-artifacts";
++import { evaluateExecutionArtifactContract, shouldAwaitArtifactRelease } from "../contracts/evaluate-artifacts";
+ import { durableGateWorkflow, type GateCommand, type GateWaitInput } from "./gate";
+ import { durableHandoffWorkflow, type HandoffResult } from "./handoff";
+ 
+@@ -117,6 +117,7 @@
+   const externalReference = await startExecutorStep(input.request);
+   await DBOS.startWorkflow(terminalObserverWorkflow, { workflowID: `${workflowId}:terminal` })({ request: input.request, external_reference: externalReference, parent_workflow_id: workflowId });
+   const releases: ArtifactReleaseState[] = [];
++  let terminalObservation: ExecutorTerminalObservation | null = null;
+   for (;;) {
+     const message = await DBOS.recv<ExecutionWorkflowMessage>("execution-event", { timeoutSeconds: 86_400 });
+     if (!message) continue;
+@@ -140,13 +141,17 @@
+       await requestRevisionStep({ request: input.request, external_reference: externalReference, delivery_key: `handoff:${message.result.artifact.id}:${message.result.decision_artifact_id}`, feedback: message.result.feedback ?? "Assessment requested implementation revisions." });
+       continue;
+     } else {
++      terminalObservation = message.observation;
+       const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
+-      return { external_reference: externalReference, contract, terminal_observation: message.observation };
++      if (!shouldAwaitArtifactRelease(contract, message.observation)) {
++        return { external_reference: externalReference, contract, terminal_observation: message.observation };
++      }
++      continue;
+     }
+     const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
+     if (contract.kind === "satisfied") {
+-      await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
+-      return { external_reference: externalReference, contract, terminal_observation: null };
++      if (!terminalObservation) await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
++      return { external_reference: externalReference, contract, terminal_observation: terminalObservation };
+     }
+   }
+ }, { name: "oakridgeArtifactContractExecutionWorkflow" });

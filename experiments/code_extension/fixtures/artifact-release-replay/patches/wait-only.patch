@@ -1,0 +1,80 @@
+diff --git a/oakridge-dbos/src/contracts/evaluate-artifacts.ts b/oakridge-dbos/src/contracts/evaluate-artifacts.ts
+--- a/oakridge-dbos/src/contracts/evaluate-artifacts.ts
++++ b/oakridge-dbos/src/contracts/evaluate-artifacts.ts
+@@ -34,3 +34,15 @@
+   if (missingOutputs.length > 0) return { kind: "waiting_artifacts", missing_outputs: missingOutputs };
+   return { kind: "satisfied", artifacts: outputs.map((output) => releasedByOutput.get(output.name)).filter((artifact): artifact is ArtifactRevision => artifact !== undefined) };
+ };
++
++/**
++ * Whether an execution should keep waiting now that its executor has ended: only while
++ * every output it still owes has an artifact parked at a gate or handoff, which a
++ * reviewer can still release. An output with nothing emitted can only come from the
++ * agent, and the agent has gone.
++ */
++export const shouldAwaitArtifactRelease = (contract: ExecutionContractState, releases: readonly ArtifactReleaseState[]): boolean => {
++  if (contract.kind !== "waiting_artifacts") return false;
++  const parked = new Set(releases.filter((release) => release.kind !== "released").map((release) => `${release.artifact.unit_id}:${release.artifact.output_name}`));
++  return contract.missing_outputs.length > 0 && contract.missing_outputs.every((output) => parked.has(output));
++};
+diff --git a/oakridge-dbos/src/workflows/executor-topology.ts b/oakridge-dbos/src/workflows/executor-topology.ts
+--- a/oakridge-dbos/src/workflows/executor-topology.ts
++++ b/oakridge-dbos/src/workflows/executor-topology.ts
+@@ -3,7 +3,7 @@
+ import type { ExecutionRequest, ExecutorAdapter, ExecutorTerminalObservation, ExternalExecutionReference } from "../domain/execution";
+ import type { ArtifactReleaseState, ExecutionContractState } from "../domain/artifacts";
+ import type { CompiledOutputContract } from "../domain/compiled-workflow";
+-import { evaluateExecutionArtifactContract } from "../contracts/evaluate-artifacts";
++import { evaluateExecutionArtifactContract, shouldAwaitArtifactRelease } from "../contracts/evaluate-artifacts";
+ import { durableGateWorkflow, type GateCommand, type GateWaitInput } from "./gate";
+ import { durableHandoffWorkflow, type HandoffResult } from "./handoff";
+ 
+@@ -116,20 +116,23 @@
+   if (!workflowId) throw new Error("execution workflow requires a DBOS workflow ID");
+   const externalReference = await startExecutorStep(input.request);
+   await DBOS.startWorkflow(terminalObserverWorkflow, { workflowID: `${workflowId}:terminal` })({ request: input.request, external_reference: externalReference, parent_workflow_id: workflowId });
+-  const releases: ArtifactReleaseState[] = [];
++  // Pending waits stay in `releases` so the execution can tell an artifact parked at
++  // a gate from one never emitted once its executor has ended; contract evaluation
++  // counts only released artifacts.
++  let releases: ArtifactReleaseState[] = [];
++  let terminalObservation: ExecutorTerminalObservation | null = null;
+   for (;;) {
+     const message = await DBOS.recv<ExecutionWorkflowMessage>("execution-event", { timeoutSeconds: 86_400 });
+     if (!message) continue;
+     if (message.kind === "artifact_emitted") {
++      releases = [...releases.filter((candidate) => candidate.artifact.unit_id !== message.release.artifact.unit_id || candidate.artifact.output_name !== message.release.artifact.output_name), message.release];
+       if (message.release.kind === "waiting_gate") {
+         await DBOS.startWorkflow(gateRelayWorkflow, { workflowID: `${workflowId}:gate:${message.release.artifact.id}` })({ parent_workflow_id: workflowId, request: input.request, release: message.release });
+       } else if (message.release.kind === "waiting_handoff") {
+         await DBOS.startWorkflow(durableHandoffWorkflow, { workflowID: `${workflowId}:handoff:${message.release.artifact.id}` })({ ...message.release, parent_workflow_id: workflowId });
+-      } else {
+-        releases.push(message.release);
+       }
+     } else if (message.kind === "artifact_released") {
+-      releases.push({ kind: "released", artifact: message.artifact });
++      releases = [...releases.filter((candidate) => candidate.artifact.unit_id !== message.artifact.unit_id || candidate.artifact.output_name !== message.artifact.output_name), { kind: "released", artifact: message.artifact }];
+     } else if (message.kind === "gate_rejected") {
+       if (message.command.action === "rerun" || message.command.action === "request_revision") {
+         await requestRevisionStep({ request: input.request, external_reference: externalReference, delivery_key: `gate:${message.artifact.id}:${message.command.gate_step}`, feedback: `Revise '${message.artifact.output_name}' after gate '${message.command.gate_step}'.` });
+@@ -140,13 +143,17 @@
+       await requestRevisionStep({ request: input.request, external_reference: externalReference, delivery_key: `handoff:${message.result.artifact.id}:${message.result.decision_artifact_id}`, feedback: message.result.feedback ?? "Assessment requested implementation revisions." });
+       continue;
+     } else {
++      terminalObservation = message.observation;
+       const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
+-      return { external_reference: externalReference, contract, terminal_observation: message.observation };
++      if (!shouldAwaitArtifactRelease(contract, releases)) {
++        return { external_reference: externalReference, contract, terminal_observation: message.observation };
++      }
++      continue;
+     }
+     const contract = evaluateExecutionArtifactContract(input.outputs, releases, input.request.expected_artifacts);
+     if (contract.kind === "satisfied") {
+-      await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
+-      return { external_reference: externalReference, contract, terminal_observation: null };
++      if (!terminalObservation) await fenceExecutorStep({ execution_id: input.request.execution_id, executor_type: input.request.executor_type, external_reference: externalReference });
++      return { external_reference: externalReference, contract, terminal_observation: terminalObservation };
+     }
+   }
+ }, { name: "oakridgeArtifactContractExecutionWorkflow" });
