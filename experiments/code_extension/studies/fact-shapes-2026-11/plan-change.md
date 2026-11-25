@@ -571,3 +571,26 @@ so no attempt made the replay's mistake, without being told planner2's session l
 So the trap was the shared column, not the indirection: once the model records which stage
 owns each session, the brief's "block on 'this cohort is already building'" no longer leads
 anywhere wrong, and the lifetime fact stops mattering.
+
+### Build-guard replay: stage-runs follow-up (2026-11-24)
+
+Cohort `replay82-stageruns-more.json` (sha256:fe75c9c6…): 2 more Luna attempts to replace the
+two lost to provider errors, and 6 Sol attempts, on the same stage-runs fixture. Caps $0.50
+and $3.50.
+
+Result ($2.06: Luna $0.06, Sol $1.99; no halts): all 8 submitted correct. Regraded locally
+(`replay82-stageruns-more-patches/`), all 8 typecheck and pass every hidden, regression and
+visible test. Every patch filters `stage_runs` on `stage = 'build'` for the cohort's briefs;
+four of the Sol attempts and one Luna attempt wrote their own test with a live planner2 run
+that must not block.
+
+| Model | Replay (shared column) | Stage-runs (per-stage table) |
+|---|---|---|
+| Luna | 0 of 6 right behavior, 0 of 4 submitted correct | 6 of 6 finished right, 4 of 4 submitted correct (2 more lost to provider errors) |
+| Sol | 0 of 6, 0 of 6 submitted correct | 6 of 6, 6 of 6 submitted correct |
+
+Each model's 0 of 6 against 6 of 6 is p ≈ 0.001 (Fisher's exact, one-sided). The same models,
+task, brief rationale and hidden tests; the only difference is whether planner2 and build
+share one session column. Stating the fact near the ask did nothing, and stating planner2's
+session lifetime got Luna to 4 of 6. Removing the shared column got both models to every
+finished attempt. One fixture, so this is a case study, not yet a general claim.
